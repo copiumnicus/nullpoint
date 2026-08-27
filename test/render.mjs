@@ -75,9 +75,10 @@ feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard', fit: [] });
 let t = 0, frames = 0;
 for (const id of Object.keys(MAPS)) {
   feed({ t: 'map', map: id });
-  feed({ t: 's', ships: [[1, 6000, 4000, 0.5, 0, 'm', 'vanguard', 100, 100],
-                         [2, 3000, 2000, 1.2, 1.4, 'h', 'kestrel', 30, 0],
-                         [3, 9000, 6000, 2, 0, 'k', 'bulwark', 5, 55]] });
+  feed({ t: 's', ships: [[1, 6000, 4000, 0.5, 0, 'm', 'vanguard', 100, 100, 2],   // self
+                         [2, 5200, 3400, 1.9, 0, 'm', 'bulwark',  80,  60, 2],   // ally
+                         [3, 3000, 2000, 1.2, 1.4, 'h', 'kestrel', 30, 0, 1],    // live contact
+                         [4, 9000, 6000, 2, 0, 'k', 'bulwark', 5, 55, 0]] });    // fading track
   frame(t += 16); frames++;                                    // world view
   listeners.keydown.forEach(fn => fn({ key: 'm' }));           // star system chart
   frame(t += 16); frames++;

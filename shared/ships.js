@@ -12,6 +12,8 @@ export const ATTRS = {
   shieldDelay: { label: 'Regen delay',  unit: 's',   dflt:    6, better: 'low',  min: 0.5 },
   speed:       { label: 'Speed',        unit: '',    dflt:  340, better: 'high', min: 40 },
   accel:       { label: 'Thrust',       unit: '',    dflt: 1200, better: 'high', min: 100 },
+  radar:       { label: 'Radar range',  unit: '',    dflt: 2600, better: 'high', min: 300 },
+  signature:   { label: 'Signature',    unit: 's',   dflt:    3, better: 'low',  min: 0.4 },
   slots:       { label: 'Slots',        unit: '',    dflt:    3, better: 'high', min: 0 },
 };
 
@@ -19,12 +21,19 @@ export const ATTRS = {
 // tiers — a bigger ship trades speed and regen for bulk, it does not simply get
 // more of everything. That is the whole point of the design.
 export const HULLS = {
+  // Radar deliberately runs WITH size, not against it. A big hull carries a big
+  // sensor array but is impossible to shake; a small one is nearly a ghost but
+  // half blind. Giving the interceptor both the best eyes and the smallest
+  // signature would make it the scouting ship AND the fastest ship.
   kestrel:  { name: 'Kestrel',  cls: 'Interceptor', r: 10,
-              attrs: { hull:  700, shield:  500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600 } },
+              attrs: { hull:  700, shield:  500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600,
+                       radar: 2000, signature: 1.5 } },
   vanguard: { name: 'Vanguard', cls: 'Fighter',     r: 13,
-              attrs: { hull: 1100, shield:  900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200 } },
+              attrs: { hull: 1100, shield:  900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200,
+                       radar: 2600, signature: 3.0 } },
   bulwark:  { name: 'Bulwark',  cls: 'Cruiser',     r: 17,
-              attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel:  800 } },
+              attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel:  800,
+                       radar: 3400, signature: 5.5 } },
 };
 export const DEFAULT_HULL = 'vanguard';
 
@@ -37,6 +46,8 @@ export const MODULES = {
   primer:    { name: 'Reflex Primer',      mods: [['shieldDelay', 'add', -2.5], ['hull', 'mul', -0.10]] },
   thruster:  { name: 'Overtuned Thruster', mods: [['speed', 'mul', 0.22],     ['accel', 'mul', 0.15], ['hull', 'mul', -0.12]] },
   ballast:   { name: 'Inertial Ballast',   mods: [['accel', 'mul', 0.40],     ['speed', 'mul', -0.10]] },
+  array:     { name: 'Sensor Array',       mods: [['radar', 'mul', 0.45],     ['signature', 'add', 1.5]] },
+  damper:    { name: 'Signal Damper',      mods: [['signature', 'mul', -0.5], ['radar', 'mul', -0.25]] },
 };
 
 export const slotsOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).attrs.slots ?? ATTRS.slots.dflt;

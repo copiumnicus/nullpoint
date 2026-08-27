@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, applyDamage, stepJump, beginJump, arrivalFor, inBase } from './shared/sim.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
+import { stepContacts } from './shared/radar.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = 3000, TICK_HZ = 30;
@@ -13,6 +14,7 @@ const FILES = {
   '/shared/maps.js':  ['shared/maps.js',    'text/javascript'],
   '/shared/chart.js': ['shared/chart.js',   'text/javascript'],
   '/shared/ships.js': ['shared/ships.js',   'text/javascript'],
+  '/shared/radar.js': ['shared/radar.js',   'text/javascript'],
 };
 const server = http.createServer((req, res) => {
   const hit = FILES[req.url.split('?')[0]];
@@ -35,7 +37,7 @@ wss.on('connection', ws => {
   const spawn = () => { const a = Math.random() * 7, d = Math.random() * b.r * 0.6;
                         return { x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d }; };
   const ship = newShip(spawn().x, spawn().y, hull, []);
-  players.set(id, { ws, mapId: home, co, ship });
+  players.set(id, { ws, mapId: home, co, ship, contacts: new Map() });
   ws.send(JSON.stringify({ t: 'welcome', id, map: home, co, hull, fit: [] }));
   console.log(`+ player ${id} [${COMPANIES[co].tag}] ${HULLS[hull].name} at ${MAPS[home].name} (${players.size} online)`);
 
@@ -92,6 +94,7 @@ setInterval(() => {
       const home = p.co + '1', hb = MAPS[home].base;
       const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
       p.mapId = home;
+      p.contacts.clear();                         // a new sector is a fresh plot
       refit(p.ship, p.ship.hull, p.ship.fit);
       Object.assign(p.ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
                               vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
@@ -104,22 +107,29 @@ setInterval(() => {
     if (!dest) continue;
     const a = arrivalFor(p.mapId, MAPS[dest]);
     p.mapId = dest;
+    p.contacts.clear();
     Object.assign(p.ship, { x: a.x, y: a.y, vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, jumpCd: JUMP_CD, charge: 0, chargeTo: null });
     if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: p.mapId }));
   }
 
-  // one snapshot per populated map — you only see who shares your map
-  const byMap = new Map();
+  // Snapshots are per player, not per map. Radar means two ships sitting in the
+  // same sector legitimately see different things, and an enemy you have not
+  // detected must never reach the wire at all.
+  const row = new Map(), byMap = new Map();
   for (const [id, p] of players) {
-    if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
-    byMap.get(p.mapId).push([id, Math.round(p.ship.x), Math.round(p.ship.y),
-      +p.ship.heading.toFixed(2), +p.ship.charge.toFixed(2), p.co, p.ship.hull,
+    row.set(id, [id, Math.round(p.ship.x), Math.round(p.ship.y), +p.ship.heading.toFixed(2),
+      +p.ship.charge.toFixed(2), p.co, p.ship.hull,
       Math.round(100 * p.ship.hp / p.ship.stats.hull),
       Math.round(100 * p.ship.shield / Math.max(1, p.ship.stats.shield))]);
+    if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
+    byMap.get(p.mapId).push({ id, co: p.co, ship: p.ship });
   }
-  for (const [mapId, ships] of byMap) {
-    const snapshot = JSON.stringify({ t: 's', ships });
-    for (const p of players.values()) if (p.mapId === mapId && p.ws.readyState === 1) p.ws.send(snapshot);
+  for (const V of players.values()) {
+    if (V.ws.readyState !== 1) continue;
+    const seen = stepContacts(V, byMap.get(V.mapId) ?? [], dt);
+    const ships = [];
+    for (const [tid, vis] of seen) ships.push([...row.get(tid), vis]);
+    V.ws.send(JSON.stringify({ t: 's', ships }));
   }
 }, 1000 / TICK_HZ);
 

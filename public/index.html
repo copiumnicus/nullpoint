@@ -11,6 +11,7 @@ import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase } from '/shared/sim.js';
 import { ATTRS, HULLS, MODULES, resolve, radiusOf, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
+import { ALLY, FRESH, STALE } from '/shared/radar.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -49,11 +50,11 @@ ws.onmessage = e => {
   if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
   if (m.t !== 's') return;
   const seen = new Set();
-  for (const [id, x, y, h, ch, co, hull, hp, sh] of m.ships) {
+  for (const [id, x, y, h, ch, co, hull, hp, sh, vis] of m.ships) {
     seen.add(id);
     const s = ships.get(id) ?? { rx: x, ry: y };
     s.x = x; s.y = y; s.heading = h; s.charge = ch; s.co = co;
-    s.hull = hull; s.hp = hp; s.sh = sh;
+    s.hull = hull; s.hp = hp; s.sh = sh; s.vis = vis;
     ships.set(id, s);
   }
   for (const id of ships.keys()) if (!seen.has(id)) ships.delete(id);
@@ -382,6 +383,7 @@ requestAnimationFrame(function frame(now) {
 
 function drawFrame(now) {
   const map = MAPS[mapId], me = ships.get(myId);
+  const st = resolve(myHull, myFit);          // your resolved stats, wanted by minimap and hud alike
 
   for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
   if (me) {
@@ -482,15 +484,20 @@ function drawFrame(now) {
   }
 
   for (const [id, s] of ships) {
-    const R = radiusOf(s.hull);
+    const R = radiusOf(s.hull), lost = s.vis === STALE;
     g.save();
     g.translate(s.rx, s.ry); g.rotate(s.heading);
+    g.globalAlpha = lost ? 0.35 : 1;               // last known track, no live sensor
     g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
     g.fillRect(-R, -R, R * 2, R * 2);
     if (id === myId) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(-R, -R, R * 2, R * 2); }
+    if (lost) { g.strokeStyle = '#e05a5a'; g.lineWidth = 1; g.setLineDash([3, 3]);
+                g.strokeRect(-R - 4, -R - 4, R * 2 + 8, R * 2 + 8); g.setLineDash([]); }
     g.fillStyle = '#05070b'; g.fillRect(R - 6, -2, 6, 4);
+    g.globalAlpha = 1;
     g.restore();
 
+    if (lost) continue;                            // no vitals read on a fading track
     const bw = Math.max(30, R * 2.8);              // bars stay upright, never rotate
     g.fillStyle = 'rgba(4,7,12,0.75)';
     g.fillRect(s.rx - bw / 2, s.ry - R - 17, bw, 8);
@@ -543,10 +550,29 @@ function drawFrame(now) {
     g.beginPath(); g.moveTo(mx - 6, my); g.lineTo(mx + 6, my);
     g.moveTo(mx, my - 6); g.lineTo(mx, my + 6); g.stroke();
   }
+  if (me) {                                        // your own scan envelope
+    g.strokeStyle = 'rgba(127,212,255,0.20)'; g.lineWidth = 1;
+    g.beginPath(); g.arc(MM_X + me.rx * sx, MM_Y + me.ry * sy, st.radar * sx, 0, 7); g.stroke();
+  }
   for (const [id, s] of ships) {
-    g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
-    g.fillRect(MM_X + s.rx * sx - (id === myId ? 2.5 : 1.5), MM_Y + s.ry * sy - (id === myId ? 2.5 : 1.5),
-               id === myId ? 5 : 3, id === myId ? 5 : 3);
+    const mx = MM_X + s.rx * sx, my = MM_Y + s.ry * sy;
+    if (s.vis === ALLY) {                          // allies transmit; no scanning needed
+      g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
+      const w = id === myId ? 5 : 3;
+      g.fillRect(mx - w / 2, my - w / 2, w, w);
+      continue;
+    }
+    const hot = s.vis === FRESH;
+    if (hot) {                                     // ping, offset per contact so they don't beat together
+      const ph = ((now / 1150) + id * 0.37) % 1;
+      g.globalAlpha = (1 - ph) * 0.75;
+      g.strokeStyle = '#ff5c6b'; g.lineWidth = 1;
+      g.beginPath(); g.arc(mx, my, 2 + ph * 8, 0, 7); g.stroke();
+      g.globalAlpha = 1;
+    }
+    g.globalAlpha = hot ? 1 : 0.4;
+    g.fillStyle = '#ff5c6b'; g.fillRect(mx - 1.5, my - 1.5, 3, 3);
+    g.globalAlpha = 1;
   }
   g.strokeStyle = '#ff3b47'; g.lineWidth = 1;
   g.strokeRect(MM_X + cam.x * sx, MM_Y + cam.y * sy, VIEW_W * sx, VIEW_H * sy);
@@ -569,7 +595,6 @@ function drawFrame(now) {
   g.fillStyle = map.owner ? COMPANIES[map.owner].color : '#e05a5a';
   g.fillText(terr, 20 + g.measureText(map.name).width, 24);
   g.fillStyle = '#5b6b85';
-  const st = resolve(myHull, myFit);
   g.fillText(`${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls} · ${status} · ` +
              `${ships.size} in sector · #${myId ?? '?'}`, 16, 42);
   if (me) {
@@ -584,10 +609,17 @@ function drawFrame(now) {
     g.fillStyle = '#5b6b85';
     g.fillText(`SH ${sh}/${st.shield | 0}   HU ${hp}/${st.hull | 0}` +
                (myFit.length ? `   fit ${myFit.length}/${st.slots}` : ''), 16 + w + 10, 68);
+    let hostiles = 0, tracks = 0;
+    for (const c of ships.values()) if (c.vis === FRESH) hostiles++; else if (c.vis === STALE) tracks++;
     if (docked()) {
       g.fillStyle = COMPANIES[myCo].color;
       g.fillText('◆ DOCKED — repairing', 16 + w + 10, 52);
+    } else if (hostiles || tracks) {
+      g.fillStyle = '#ff5c6b';
+      g.fillText(`▲ ${hostiles} contact${hostiles === 1 ? '' : 's'}` + (tracks ? ` · ${tracks} fading` : ''), 16 + w + 10, 52);
     }
+    g.fillStyle = '#5b6b85';
+    g.fillText(`RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s`, 16 + w + 10, 84);
   }
   g.fillText('click / hold to fly · JUMP at a portal · M star system · H hangar' +
              (docked() ? '' : ' (dock first)') + ' · K take test damage', 16, VIEW_H - 16);
