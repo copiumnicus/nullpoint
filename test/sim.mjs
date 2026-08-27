@@ -109,7 +109,7 @@ check(`flew ${path.join(' → ')}`, cur === 'x0' && hops === path.length - 1,
 console.log('\nchart layout');
 const xs = ids.map(i => MAPS[i].sx), ys = ids.map(i => MAPS[i].sy);
 const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-let overlaps = 0, offscreen = 0, diagonal = 0, stranded = 0, worstGap = 0;
+let overlaps = 0, offscreen = 0, diagonal = 0, stranded = 0, buried = 0, worstGap = 0;
 for (const [VW, VH] of [[1920,1080],[1600,900],[1440,900],[1280,800]]) {
   const S = Math.max(46, Math.min((VW - 130) / (x1 - x0 + 1.0), (VH - 168) / (y1 - y0 + 0.95)));
   const NW = Math.max(50, Math.min(112, S * 0.95)), NH = NW * (MAP_H / MAP_W);
@@ -130,13 +130,7 @@ for (const [VW, VH] of [[1920,1080],[1600,900],[1440,900],[1280,800]]) {
     const r = rectOf(id);
     const px = r.x + (p.x / MAP_W) * r.w, py = r.y + (p.y / MAP_H) * r.h;
     const vx = tc.x - (r.x + r.w / 2), vy = tc.y - (r.y + r.h / 2);
-    const cand = [];
-    if (vx > 0) cand.push(['e', r.x + r.w - px]);
-    if (vx < 0) cand.push(['w', px - r.x]);
-    if (vy > 0) cand.push(['s', r.y + r.h - py]);
-    if (vy < 0) cand.push(['n', py - r.y]);
-    const dir = cand.length ? cand.sort((a, b) => a[1] - b[1])[0][0]
-                            : Math.abs(vx) >= Math.abs(vy) ? (vx > 0 ? 'e' : 'w') : (vy > 0 ? 's' : 'n');
+    const dir = Math.abs(vx) >= Math.abs(vy) ? (vx > 0 ? 'e' : 'w') : (vy > 0 ? 's' : 'n');
     const edge = dir === 'e' ? { x: r.x + r.w, y: py } : dir === 'w' ? { x: r.x, y: py }
                : dir === 's' ? { x: px, y: r.y + r.h } : { x: px, y: r.y };
     return { anchor: { x: px, y: py }, edge, dir };
@@ -158,8 +152,16 @@ for (const [VW, VH] of [[1920,1080],[1600,900],[1440,900],[1280,800]]) {
     else                                     { pts.push([ax, by]); }
     pts.push([bx, by], [b.edge.x, b.edge.y], [b.anchor.x, b.anchor.y]);
 
-    for (let i = 1; i < pts.length; i++)
+    for (let i = 1; i < pts.length; i++) {
       if (Math.abs(pts[i][0] - pts[i-1][0]) > 0.01 && Math.abs(pts[i][1] - pts[i-1][1]) > 0.01) diagonal++;
+      if (i === 1 || i === pts.length - 1) continue;         // the stubs live inside their own node
+      const [sx0, ex0] = [Math.min(pts[i][0], pts[i-1][0]), Math.max(pts[i][0], pts[i-1][0])];
+      const [sy0, ey0] = [Math.min(pts[i][1], pts[i-1][1]), Math.max(pts[i][1], pts[i-1][1])];
+      for (const o of ids) {                                  // nodes paint over links: any
+        const q = rectOf(o);                                  // overlap is a visible break
+        if (sx0 < q.x + q.w - 3 && ex0 > q.x + 3 && sy0 < q.y + q.h - 3 && ey0 > q.y + 3) buried++;
+      }
+    }
 
     // the connector must terminate exactly on the marker the node pass draws
     for (const [end, mid, m] of [[pts[0], p, id], [pts[pts.length - 1], back, p.to]]) {
@@ -175,6 +177,7 @@ check('no chart nodes overlap at any window size', overlaps === 0);
 check('every node stays on screen', offscreen === 0);
 check('every link segment is axis-aligned', diagonal === 0);
 check('every connector ends on its portal marker', stranded === 0, `worst gap ${worstGap.toFixed(3)}px`);
+check('no routed segment is buried under a node', buried === 0);
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${ids.length} maps, ${links.size} links`}\n`);
 process.exit(fails.length ? 1 : 0);

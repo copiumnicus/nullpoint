@@ -155,21 +155,17 @@ function drawSystem(me) {
   const rectOf = id => ({ x: ox + MAPS[id].sx * S - NW / 2, y: oy + MAPS[id].sy * S - NH / 2, w: NW, h: NH });
   const centerOf = id => ({ x: ox + MAPS[id].sx * S, y: oy + MAPS[id].sy * S });
 
-  // A connector starts on the portal marker itself, runs straight out to whichever
-  // edge both faces the destination and is nearest that portal, then steps across.
-  // Snapping the endpoint to an edge instead would strand centre and corner portals
-  // half a node away from the line that is supposed to leave them.
+  // A connector starts on the portal marker itself and leaves by the edge on the
+  // DOMINANT axis of travel, keeping the portal's other coordinate — so the stub
+  // from marker to edge is a single straight segment and the route still heads the
+  // right way. Picking the *nearest* facing edge instead makes a mostly-vertical hop
+  // exit sideways, and the route then wraps back across its own node, where the
+  // node's fill paints over it and the line appears to break.
   const portOf = (id, p, tc) => {
     const r = rectOf(id);
     const px = r.x + (p.x / MAP_W) * r.w, py = r.y + (p.y / MAP_H) * r.h;   // where the dot is drawn
     const vx = tc.x - (r.x + r.w / 2), vy = tc.y - (r.y + r.h / 2);
-    const cand = [];
-    if (vx > 0) cand.push(['e', r.x + r.w - px]);
-    if (vx < 0) cand.push(['w', px - r.x]);
-    if (vy > 0) cand.push(['s', r.y + r.h - py]);
-    if (vy < 0) cand.push(['n', py - r.y]);
-    const dir = cand.length ? cand.sort((a, b) => a[1] - b[1])[0][0]
-                            : Math.abs(vx) >= Math.abs(vy) ? (vx > 0 ? 'e' : 'w') : (vy > 0 ? 's' : 'n');
+    const dir = Math.abs(vx) >= Math.abs(vy) ? (vx > 0 ? 'e' : 'w') : (vy > 0 ? 's' : 'n');
     const edge = dir === 'e' ? { x: r.x + r.w, y: py } : dir === 'w' ? { x: r.x, y: py }
                : dir === 's' ? { x: px, y: r.y + r.h } : { x: px, y: r.y };
     return { anchor: { x: px, y: py }, edge, dir };
