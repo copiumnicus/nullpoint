@@ -43,7 +43,9 @@ const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 let sysOpen = false;
 
-let myId = null, myCo = 'm', mapId = 'm1', status = 'connecting…';
+let myId = null, myCo = 'm', myName = '', mapId = 'm1', status = 'connecting…';
+const TOKEN = 'aphelion.token';
+const readToken = () => { try { return localStorage.getItem(TOKEN) ?? ''; } catch { return ''; } };
 let myHull = 'vanguard', myFit = [];
 let bayOpen = false, draftHull = 'vanguard', draftFit = [];
 const defOf = s => s.co === 'x' ? ALIENS[s.hull] : HULLS[s.hull];
@@ -63,13 +65,21 @@ const say = (text, colour) => notice = { text, colour, at: performance.now() };
 const cam = { x: 0, y: 0 };
 
 // --- net ---------------------------------------------------------------------
-const ws = new WebSocket(`ws://${location.host}`);
+// The token is the whole identity. It rides in the connect URL so the server can
+// resolve the account before the first frame, with no handshake round trip.
+const ws = new WebSocket(`ws://${location.host}/?t=${encodeURIComponent(readToken())}`);
 const send = o => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
 ws.onopen  = () => status = 'online';
 ws.onclose = () => status = 'disconnected';
 ws.onmessage = e => {
   const m = JSON.parse(e.data);
-  if (m.t === 'welcome') { myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit; return; }
+  if (m.t === 'welcome') {
+    myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
+    myName = m.name ?? '';
+    if (m.token) { try { localStorage.setItem(TOKEN, m.token); } catch {} }
+    return;
+  }
+  if (m.t === 'bumped') { status = 'signed in from another tab'; return; }
   if (m.t === 'fit') {                            // the server confirming a refit landed
     myHull = m.hull; myFit = m.fit; draftHull = m.hull; draftFit = [...m.fit];
     bayOpen = false;
@@ -997,8 +1007,8 @@ function drawFrame(now) {
   g.fillStyle = map.owner ? COMPANIES[map.owner].color : '#e05a5a';
   g.fillText(terr, 20 + g.measureText(map.name).width, 24);
   g.fillStyle = '#5b6b85';
-  g.fillText(`${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls} · ${status} · ` +
-             `${ships.size} in sector · #${myId ?? '?'}`, 16, 42);
+  g.fillText(`${myName || '…'} · ${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls} · ` +
+             `${status} · ${ships.size} in sector`, 16, 42);
   if (me) {
     const hp = Math.round(st.hull * (me.hp ?? 100) / 100), sh = Math.round(st.shield * (me.sh ?? 100) / 100);
     const w = 190;

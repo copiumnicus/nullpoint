@@ -7,6 +7,9 @@ import { newAlien, respawnAlien, stepAlienAI, forgetPlayer, ALIENS, ALIENS_PER_M
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
+import { newAccount, sanitiseAccount, capture } from './shared/account.js';
+import * as store from './store.js';
+import crypto from 'node:crypto';
 import { rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
@@ -45,8 +48,25 @@ const server = http.createServer((req, res) => {
   res.end(fs.readFileSync(hit[0]));
 });
 
-const players = new Map();   // id -> { ws, mapId, ship }
+const players = new Map();   // id -> live session
 let nextId = 1;
+
+// Accounts outlive sockets. The token in a player's browser is the whole identity;
+// lose it and you are a new pilot, which is the right trade for a game that has no
+// passwords in it yet.
+const db = store.load();
+for (const [tok, a] of Object.entries(db.accounts))
+  db.accounts[tok] = sanitiseAccount({ ...a, token: tok }, a.seq ?? 0, Date.now());
+console.log(`accounts loaded: ${Object.keys(db.accounts).length}`);
+
+const persistAll = () => {
+  const now = Date.now();
+  for (const p of players.values()) capture(p.acct, p, now);
+  store.save(db);
+};
+setInterval(persistAll, 5000);
+for (const sig of ['SIGINT', 'SIGTERM'])
+  process.on(sig, () => { persistAll(); console.log('accounts saved'); process.exit(0); });
 
 // Hostiles live on the home maps for now, seeded per map so a restart replays.
 const aliens = new Map();
@@ -90,20 +110,38 @@ const killAlien = (mapId, a, byId = null) => {
 };
 
 const wss = new WebSocketServer({ server });
-wss.on('connection', ws => {
+wss.on('connection', (ws, req) => {
   const id = nextId++;
-  const co = HOMES[(id - 1) % HOMES.length][0];      // round-robin the three companies
-  const home = co + '1';
-  const hullKeys = Object.keys(HULLS);
-  const hull = hullKeys[(id - 1) % hullKeys.length];  // so connected clients differ
-  const b = MAPS[home].base;
-  const spawn = () => { const a = Math.random() * 7, d = Math.random() * b.r * 0.6;
-                        return { x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d }; };
-  const ship = newShip(spawn().x, spawn().y, hull, []);
-  players.set(id, { ws, mapId: home, co, ship, contacts: new Map(), targetId: null,
-                    hold: {}, vault: {}, credits: 0, scoop: null, want: null, dead: false });
-  ws.send(JSON.stringify({ t: 'welcome', id, map: home, co, hull, fit: [] }));
-  console.log(`+ player ${id} [${COMPANIES[co].tag}] ${HULLS[hull].name} at ${MAPS[home].name} (${players.size} online)`);
+  const now = Date.now();
+
+  let token = '';
+  try { token = new URL(req.url, 'http://x').searchParams.get('t') || ''; } catch {}
+  let acct = db.accounts[token];
+  const returning = !!acct;
+  if (!acct) {                                       // first visit, or a lost token
+    token = crypto.randomBytes(16).toString('hex');
+    acct = newAccount(token, db.seq++, now);
+    db.accounts[token] = acct;
+    store.save(db);
+  }
+
+  // One session per account. A second tab takes over rather than running a second
+  // copy of the same pilot with diverging state.
+  for (const [pid, p] of players) if (p.token === token) {
+    try { p.ws.send(JSON.stringify({ t: 'bumped' })); p.ws.close(4001, 'signed in elsewhere'); } catch {}
+    capture(p.acct, p, now);
+    players.delete(pid);
+  }
+
+  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit);
+  players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
+                    contacts: new Map(), targetId: null,
+                    hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
+                    scoop: null, want: null, dead: false });
+  ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
+                           map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit }));
+  console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
+              `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
   // Clients send INTENT only — never position. The server owns the truth.
   ws.on('message', buf => {
@@ -177,8 +215,11 @@ wss.on('connection', ws => {
   });
 
   ws.on('close', () => {
+    const p = players.get(id);
+    if (p) { capture(p.acct, p, Date.now()); store.save(db); }   // last word on where you were
     for (const list of aliens.values()) forgetPlayer(list, id);
-    players.delete(id); console.log(`- player ${id} (${players.size} online)`);
+    players.delete(id);
+    console.log(`- ${acct.name} (${players.size} online)`);
   });
 });
 
