@@ -176,6 +176,23 @@ for (const id of Object.keys(MAPS)) {
   if (!refit.length) errs.push('APPLY REFIT sent no refit message after clicking every row');
   else console.log(`hangar: clicked all ${L.hulls.length} hulls + ${L.mods.length} modules, ` +
                    `APPLY still works -> ${refit[0].hull} [${refit[0].fit}]`);
+
+  // the server confirming should close the panel and leave a notice on screen
+  feed({ t: 'fit', hull: refit[0].hull, fit: refit[0].fit });
+  frame(t += 16); frames++;
+  sent.length = 0;
+  evt('pointerdown', { clientX: L.apply.x + L.apply.w / 2, clientY: L.apply.y + L.apply.h / 2 });
+  if (sent.some(m => m.t === 'refit')) errs.push('hangar stayed open after the refit was confirmed');
+  else console.log('  confirmed refit closed the hangar');
+
+  // reopening with nothing changed must not fire another refit
+  evt('keydown', { key: 'h' });
+  frame(t += 16); frames++;
+  sent.length = 0;
+  evt('pointerdown', { clientX: L.apply.x + L.apply.w / 2, clientY: L.apply.y + L.apply.h / 2 });
+  frame(t += 16); frames++;
+  if (sent.some(m => m.t === 'refit')) errs.push('APPLY re-sent a refit with nothing changed');
+  else console.log('  an unchanged draft reports "already fitted" instead of re-sending');
   evt('keydown', { key: 'h' });
 }
 

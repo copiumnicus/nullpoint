@@ -46,8 +46,9 @@ const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
 let bolts = [], blasts = [], pods = [], numbers = [];   // rebuilt every snapshot
-let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null;
-let invOpen = false, award = null;
+let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
+let invOpen = false, notice = null;
+const say = (text, colour) => notice = { text, colour, at: performance.now() };
 const cam = { x: 0, y: 0 };
 
 // --- net ---------------------------------------------------------------------
@@ -58,8 +59,19 @@ ws.onclose = () => status = 'disconnected';
 ws.onmessage = e => {
   const m = JSON.parse(e.data);
   if (m.t === 'welcome') { myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit; return; }
-  if (m.t === 'fit')     { myHull = m.hull; myFit = m.fit; draftHull = m.hull; draftFit = [...m.fit]; return; }
-  if (m.t === 'award')   { award = { ...m, at: performance.now() }; credits = m.total; return; }
+  if (m.t === 'fit') {                            // the server confirming a refit landed
+    myHull = m.hull; myFit = m.fit; draftHull = m.hull; draftFit = [...m.fit];
+    bayOpen = false;
+    say(`Refit complete — ${HULLS[m.hull].name}` +
+        (m.fit.length ? ` · ${m.fit.map(k => MODULES[k]?.name ?? k).join(', ')}` : ' · no modules fitted'),
+        COMPANIES[myCo].color);
+    return;
+  }
+  if (m.t === 'award') {
+    credits = m.total;
+    say(`${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short} for a ${m.what}`, '#ffd479');
+    return;
+  }
   if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
   if (m.t !== 's') return;
   bolts = (m.bolts ?? []).map(unpackBolt);
@@ -68,7 +80,7 @@ ws.onmessage = e => {
   numbers = (m.hits ?? []).map(unpackHit);
   hold = m.hold ?? {}; cargoCap = m.cap ?? cargoCap;
   vault = m.vault ?? vault; credits = m.credits ?? credits;
-  atDock = !!m.docked; scoop = m.scoop ?? null;
+  atDock = !!m.docked; scoop = m.scoop ?? null; want = m.want ?? null;
   const seen = new Set();
   for (const raw of m.ships) {
     const n = unpackShip(raw);
@@ -161,7 +173,9 @@ c.addEventListener('pointerdown', e => {
   const pick = hostileAt(w.x, w.y);
   if (pick !== null) { lastClick = { t: performance.now(), x: v.x, y: v.y }; return send({ t: 'target', id: pick }); }
   const can = podAt(w.x, w.y);
-  if (can) { lastClick = { t: performance.now(), x: v.x, y: v.y }; return send({ t: 'scoop', id: can.id }); }
+  if (can) { lastClick = { t: performance.now(), x: v.x, y: v.y };
+             marker = { x: can.x, y: can.y };        // show the course you just ordered
+             return send({ t: 'scoop', id: can.id }); }
 
   // Double-click on empty space breaks off. Single click still just sets a course,
   // and the second click repeats that harmlessly.
@@ -354,10 +368,15 @@ function bayClick(v) {
     else if (draftFit.length < slotsOf(draftHull)) draftFit.push(k);
     return;
   }
-  if (inside(G.apply) && docked()) send({ t: 'refit', hull: draftHull, fit: draftFit });
+  if (!inside(G.apply)) return;
+  if (!docked()) return say(`Dock at ${COMPANIES[myCo].tag}-1 to refit`, '#e0a53f');
+  if (sameAsFitted()) return say('Nothing to change', '#8ab4e6');
+  send({ t: 'refit', hull: draftHull, fit: draftFit });
 }
 
 const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+const sameAsFitted = () => draftHull === myHull &&
+  [...draftFit].sort().join() === [...myFit].sort().join();
 
 function drawBay() {
   const G = bayGeom(), P = G.panel;
@@ -433,12 +452,14 @@ function drawBay() {
     sy += 22;
   }
 
-  const A = G.apply;
-  g.globalAlpha = home ? 1 : 0.4;
-  g.fillStyle = 'rgba(125,224,138,0.16)'; g.fillRect(A.x, A.y, A.w, A.h);
-  g.strokeStyle = '#7de08a'; g.lineWidth = 1.4; g.strokeRect(A.x + .5, A.y + .5, A.w - 1, A.h - 1);
-  g.fillStyle = '#7de08a'; g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
-  g.fillText('APPLY REFIT', A.x + A.w / 2, A.y + 22);
+  const A = G.apply, idle = sameAsFitted(), live = home && !idle;
+  const tint = idle ? '#8ab4e6' : '#7de08a';
+  g.globalAlpha = live ? 1 : 0.4;
+  g.fillStyle = live ? 'rgba(125,224,138,0.16)' : 'rgba(255,255,255,0.04)';
+  g.fillRect(A.x, A.y, A.w, A.h);
+  g.strokeStyle = tint; g.lineWidth = 1.4; g.strokeRect(A.x + .5, A.y + .5, A.w - 1, A.h - 1);
+  g.fillStyle = tint; g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
+  g.fillText(idle ? 'ALREADY FITTED' : 'APPLY REFIT', A.x + A.w / 2, A.y + 22);
   g.globalAlpha = 1;
   g.textAlign = 'left'; g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
   g.fillText('click a hull or module to change the draft · H or Esc to close', P.x + 20, P.y + P.h - 28);
@@ -655,16 +676,29 @@ function drawFrame(now) {
     g.restore();
     if (hover && podAt(hover.x + cam.x, hover.y + cam.y)?.id === pod.id) {
       const reachable = me && Math.hypot(pod.x - me.rx, pod.y - me.ry) <= SCOOP_R;
-      g.strokeStyle = reachable ? col : '#6b7280'; g.lineWidth = 1.4; g.setLineDash([3, 4]);
+      g.strokeStyle = col; g.lineWidth = 1.4; g.setLineDash([3, 4]);
       g.beginPath(); g.arc(pod.x, pod.y, 21, 0, 7); g.stroke(); g.setLineDash([]);
-      g.fillStyle = reachable ? col : '#6b7280'; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
-      g.fillText(reachable ? `${MATERIALS[pod.mat]?.name ?? pod.mat} — click to haul in` : 'too far', pod.x, pod.y + 32);
+      g.fillStyle = col; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
+      g.fillText(`${MATERIALS[pod.mat]?.name ?? pod.mat} — click to ${reachable ? 'haul in' : 'fly over and collect'}`,
+                 pod.x, pod.y + 32);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
     {
       g.fillStyle = col; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
       g.fillText((MATERIALS[pod.mat]?.sym ?? '?') + (pod.n > 1 ? ' ×' + pod.n : ''), pod.x, pod.y - 18);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
+  }
+
+  if (want && me) {                                // on the way to fetch something
+    const pod = pods.find(p => p.id === want);
+    if (pod) {
+      const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+      g.strokeStyle = col; g.globalAlpha = 0.45; g.lineWidth = 1.5; g.setLineDash([9, 8]);
+      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+      g.setLineDash([]); g.globalAlpha = 1;
+      g.strokeStyle = col; g.lineWidth = 1.6;
+      g.beginPath(); g.arc(pod.x, pod.y, 24, 0, 7); g.stroke();
     }
   }
 
@@ -975,18 +1009,17 @@ function drawFrame(now) {
     g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
-  if (award) {
-    const age = (now - award.at) / 1000;
-    if (age > 4.5) award = null;
+  if (notice) {
+    const age = (now - notice.at) / 1000;
+    if (age > 4.5) notice = null;
     else {
-      const fade = age < 0.25 ? age / 0.25 : Math.min(1, (4.5 - age) / 1.2);
-      g.globalAlpha = fade;
-      const line = `${COMPANIES[myCo].tag} awards you ${award.amount} ${CURRENCY.short} for a ${award.what}`;
+      g.globalAlpha = age < 0.25 ? age / 0.25 : Math.min(1, (4.5 - age) / 1.2);
       g.font = '15px ui-monospace, monospace'; g.textAlign = 'center';
-      const w2 = g.measureText(line).width + 40;
-      g.fillStyle = 'rgba(6,10,16,0.85)'; g.fillRect(VIEW_W / 2 - w2 / 2, 22, w2, 38);
-      g.strokeStyle = '#ffd479'; g.lineWidth = 1; g.strokeRect(VIEW_W / 2 - w2 / 2 + .5, 22.5, w2 - 1, 37);
-      g.fillStyle = '#ffd479'; g.fillText(line, VIEW_W / 2, 47);
+      const w2 = g.measureText(notice.text).width + 40;
+      g.fillStyle = 'rgba(6,10,16,0.88)'; g.fillRect(VIEW_W / 2 - w2 / 2, 22, w2, 38);
+      g.strokeStyle = notice.colour; g.lineWidth = 1;
+      g.strokeRect(VIEW_W / 2 - w2 / 2 + .5, 22.5, w2 - 1, 37);
+      g.fillStyle = notice.colour; g.fillText(notice.text, VIEW_W / 2, 47);
       g.textAlign = 'left'; g.globalAlpha = 1; g.font = '12px ui-monospace, monospace';
     }
   }

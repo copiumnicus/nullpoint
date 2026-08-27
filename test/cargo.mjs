@@ -1,6 +1,6 @@
 import { MATERIALS, DROPS, rollDrop, stow, unload, holdVol, holdValue, volOf,
          POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY } from '../shared/cargo.js';
-import { beginScoop, stepScoop, load } from '../shared/cargo.js';
+import { beginScoop, stepScoop, approachPod, load } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 import { newShip } from '../shared/sim.js';
 import { HULLS, ATTRS, resolve } from '../shared/ships.js';
@@ -102,6 +102,21 @@ console.log('\ntractor beam');
   for (let i = 0; i < 10; i++) stepScoop(sc3, p3, s3, h3, dt);
   s3.hp = 0;
   check('dying cancels it', stepScoop(sc3, p3, s3, h3, dt).cancelled && holdVol(h3) === 0);
+
+  // clicking distant cargo is an order to go and get it
+  const far = { id: 2, x: 4000, y: 0, mat: 'platinum', n: 2 };
+  const a1 = approachPod(ship(), {}, far);
+  check('cargo out of reach becomes a course, not a refusal',
+    a1.fly && a1.fly.x === far.x && a1.fly.y === far.y, `${far.x}px away`);
+  const closer = { ...far, x: SCOOP_R * 0.5 };
+  const a2 = approachPod(ship(), {}, closer);
+  check('once inside, the same order starts the beam', !!a2.scoop && !a2.fly);
+  check('it closes past the boundary rather than hovering on it',
+    !!approachPod({ ...ship(), x: SCOOP_R * 0.9 }, {}, { ...far, x: 0 }).fly,
+    'still flying at 0.9 of reach, so the beam is not started at the very edge');
+  check('a pod that vanished ends the order', approachPod(ship(), {}, null).done === true);
+  check('a full hold ends it too, rather than flying there forever',
+    approachPod(ship(), { iron: 20 }, closer).why === 'full');
 
   const s4 = ship(), h4 = { iron: 19, platinum: 1 }, p4 = near(), sc4 = beginScoop(s4, h4, p4);  // 58/60
   let g4; do { g4 = stepScoop(sc4, p4, s4, h4, dt); } while (g4.running);

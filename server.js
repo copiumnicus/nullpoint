@@ -7,7 +7,7 @@ import { newAlien, respawnAlien, stepAlienAI, ALIENS, ALIENS_PER_MAP } from './s
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
-import { rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop,
+import { rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
@@ -89,7 +89,7 @@ wss.on('connection', ws => {
                         return { x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d }; };
   const ship = newShip(spawn().x, spawn().y, hull, []);
   players.set(id, { ws, mapId: home, co, ship, contacts: new Map(), targetId: null,
-                    hold: {}, vault: {}, credits: 0, scoop: null });
+                    hold: {}, vault: {}, credits: 0, scoop: null, want: null });
   ws.send(JSON.stringify({ t: 'welcome', id, map: home, co, hull, fit: [] }));
   console.log(`+ player ${id} [${COMPANIES[co].tag}] ${HULLS[hull].name} at ${MAPS[home].name} (${players.size} online)`);
 
@@ -107,11 +107,9 @@ wss.on('connection', ws => {
       return ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit }));
     }
 
-    if (m.t === 'scoop') {                        // cargo is hauled in deliberately, never by driving over it
-      const pod = (pods.get(P.mapId) ?? []).find(c => c.id === +m.id);
-      const started = beginScoop(ship, P.hold, pod);
-      if (process.env.DEBUG_SCOOP) console.log(`scoop id=${m.id} pod=${!!pod} ->`, started);
-      P.scoop = typeof started === 'string' ? null : started;
+    if (m.t === 'scoop') {                        // an order: go get that, however far it is
+      P.want = (pods.get(P.mapId) ?? []).some(c => c.id === +m.id) ? +m.id : null;
+      if (process.env.DEBUG_SCOOP) console.log(`scoop order id=${m.id} accepted=${P.want !== null}`);
       return;
     }
     if (m.t === 'stash') {                        // ship -> company hangar, at the dock only
@@ -136,6 +134,7 @@ wss.on('connection', ws => {
     if (m.t === 'dev-damage') return void applyDamage(ship, 250);
 
     if (m.t !== 'intent') return;
+    P.want = null;                                // steering yourself overrides a fetch order
     if (m.mode === 'dir') {                       // hold-to-steer
       const dx = +m.dx || 0, dy = +m.dy || 0, d = Math.hypot(dx, dy);
       const k = d > 1 ? 1 / d : 1;                // never trust a >1 throttle
@@ -178,7 +177,7 @@ setInterval(() => {
       const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
       p.mapId = home;
       p.contacts.clear();                         // a new sector is a fresh plot
-      p.targetId = null;
+      p.targetId = null; p.want = null; p.scoop = null;
       refit(p.ship, p.ship.hull, p.ship.fit);
       Object.assign(p.ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
                               vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
@@ -193,6 +192,7 @@ setInterval(() => {
     p.mapId = dest;
     p.contacts.clear();
     p.targetId = null;             // jumping out breaks the engagement
+    p.want = null; p.scoop = null;
     Object.assign(p.ship, { x: a.x, y: a.y, vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, jumpCd: JUMP_CD, charge: 0, chargeTo: null });
     if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: p.mapId }));
   }
@@ -232,6 +232,15 @@ setInterval(() => {
   // --- cargo ----------------------------------------------------------------
   for (const [, list] of pods)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
+
+  for (const [, p] of players) {                  // outstanding fetch orders
+    if (p.want === null || p.scoop) continue;
+    const pod = (pods.get(p.mapId) ?? []).find(c => c.id === p.want);
+    const step2 = approachPod(p.ship, p.hold, pod);
+    if (step2.fly) { p.ship.tx = step2.fly.x; p.ship.ty = step2.fly.y; p.ship.dx = p.ship.dy = null; }
+    else if (step2.scoop) { p.scoop = step2.scoop; p.want = null; p.ship.tx = p.ship.ty = null; }
+    else p.want = null;
+  }
 
   for (const [, p] of players) {                  // tractor beams
     if (!p.scoop) continue;
@@ -305,7 +314,8 @@ setInterval(() => {
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault,
-      scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / SCOOP_TIME).toFixed(2) } : undefined }));
+      scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / SCOOP_TIME).toFixed(2) } : undefined,
+      want: V.want ?? undefined }));
   }
 }, 1000 / TICK_HZ);
 

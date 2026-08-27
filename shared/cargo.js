@@ -75,6 +75,17 @@ export function beginScoop(ship, hold, pod) {
   return { id: pod.id, t: SCOOP_TIME };
 }
 
+// Clicking cargo is an ORDER, not a request. If it is out of reach the ship flies
+// to it and hauls it in on arrival — refusing with "too far" and doing nothing was
+// the wrong answer to a click that plainly meant "go get that".
+export function approachPod(ship, hold, pod) {
+  if (!pod) return { done: true, why: 'gone' };
+  if (Math.hypot(pod.x - ship.x, pod.y - ship.y) > SCOOP_R * 0.8)
+    return { fly: { x: pod.x, y: pod.y } };            // come well inside, not to the edge
+  const started = beginScoop(ship, hold, pod);
+  return typeof started === 'string' ? { done: true, why: started } : { scoop: started };
+}
+
 // Advances a beam. Drifting out of reach or dying cancels it and the cargo stays put.
 export function stepScoop(scoop, pod, ship, hold, dt) {
   if (!scoop) return { running: false, took: 0 };
