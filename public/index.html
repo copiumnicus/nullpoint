@@ -9,6 +9,7 @@
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { SHIP_R, SLOW_RADIUS, JUMP_TIME, nearPortal } from '/shared/sim.js';
+import { chartLayout } from '/shared/chart.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -141,74 +142,25 @@ function drawStars() {
 }
 
 // --- star system chart -------------------------------------------------------
-// Nodes sit at the free-form sx/sy positions from maps.js — three company branches
-// at 120° around the contested hub. Links still route orthogonally: each one leaves
-// its port on the edge facing the destination, then steps across in right angles.
+// All geometry lives in shared/chart.js so the tests verify the same router that
+// draws here. This function is purely paint.
 function drawSystem(me) {
-  const ids = Object.keys(MAPS);
-  const xs = ids.map(i => MAPS[i].sx), ys = ids.map(i => MAPS[i].sy);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  // node box is ~0.95 units wide, so fold that into the span before solving for scale
-  const S = Math.max(46, Math.min((VIEW_W - 130) / (x1 - x0 + 1.0), (VIEW_H - 168) / (y1 - y0 + 0.95)));
-  const NW = Math.max(50, Math.min(112, S * 0.95)), NH = NW * (MAP_H / MAP_W);
-  const ox = VIEW_W / 2 - ((x0 + x1) / 2) * S, oy = VIEW_H / 2 + 8 - ((y0 + y1) / 2) * S;
-  const rectOf = id => ({ x: ox + MAPS[id].sx * S - NW / 2, y: oy + MAPS[id].sy * S - NH / 2, w: NW, h: NH });
-  const centerOf = id => ({ x: ox + MAPS[id].sx * S, y: oy + MAPS[id].sy * S });
-
-  // A connector starts on the portal marker itself and leaves by the edge on the
-  // DOMINANT axis of travel, keeping the portal's other coordinate — so the stub
-  // from marker to edge is a single straight segment and the route still heads the
-  // right way. Picking the *nearest* facing edge instead makes a mostly-vertical hop
-  // exit sideways, and the route then wraps back across its own node, where the
-  // node's fill paints over it and the line appears to break.
-  const portOf = (id, p, tc) => {
-    const r = rectOf(id);
-    const px = r.x + (p.x / MAP_W) * r.w, py = r.y + (p.y / MAP_H) * r.h;   // where the dot is drawn
-    const vx = tc.x - (r.x + r.w / 2), vy = tc.y - (r.y + r.h / 2);
-    const dir = Math.abs(vx) >= Math.abs(vy) ? (vx > 0 ? 'e' : 'w') : (vy > 0 ? 's' : 'n');
-    const edge = dir === 'e' ? { x: r.x + r.w, y: py } : dir === 'w' ? { x: r.x, y: py }
-               : dir === 's' ? { x: px, y: r.y + r.h } : { x: px, y: r.y };
-    return { anchor: { x: px, y: py }, edge, dir };
-  };
-  const linkOwner = (a, b) => MAPS[a].owner && MAPS[a].owner === MAPS[b].owner ? MAPS[a].owner : null;
+  const { rects, links, stubs, NW, NH } = chartLayout(VIEW_W, VIEW_H);
+  const small = NW < 104;
 
   g.fillStyle = 'rgba(3,5,9,0.92)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
 
-  const OUT = Math.max(16, S * 0.20), horiz = d => d === 'e' || d === 'w';
-  const drawn = new Set();
-  for (const id of ids) for (const p of MAPS[id].portals) {
-    const key = [id, p.to].sort().join('|');
-    if (drawn.has(key)) continue;
-    drawn.add(key);
-    const back = MAPS[p.to].portals.find(q => q.to === id);
-    if (!back) continue;
-    const a = portOf(id, p, centerOf(p.to)), b = portOf(p.to, back, centerOf(id));
-    const ax = a.edge.x + (a.dir === 'e' ? OUT : a.dir === 'w' ? -OUT : 0);
-    const ay = a.edge.y + (a.dir === 's' ? OUT : a.dir === 'n' ? -OUT : 0);
-    const bx = b.edge.x + (b.dir === 'e' ? OUT : b.dir === 'w' ? -OUT : 0);
-    const by = b.edge.y + (b.dir === 's' ? OUT : b.dir === 'n' ? -OUT : 0);
-
-    const pts = [[a.edge.x, a.edge.y], [ax, ay]];
-    if (horiz(a.dir) && horiz(b.dir))        { const mx = (ax + bx) / 2; pts.push([mx, ay], [mx, by]); }
-    else if (!horiz(a.dir) && !horiz(b.dir)) { const my = (ay + by) / 2; pts.push([ax, my], [bx, my]); }
-    else if (horiz(a.dir))                   { pts.push([bx, ay]); }
-    else                                     { pts.push([ax, by]); }
-    pts.push([bx, by], [b.edge.x, b.edge.y]);
-
-    // internal supply lines wear the owner's colour; anything touching contested
-    // space is drawn as a front line
-    const own = linkOwner(id, p.to);
-    g.strokeStyle = own ? COMPANIES[own].color + '66' : 'rgba(224,90,90,0.50)';
-    g.lineWidth = own ? 1.8 : 2.4;
+  for (const L of links) {                                  // long routing, under the nodes
+    g.strokeStyle = L.own ? COMPANIES[L.own].color + '66' : 'rgba(224,90,90,0.50)';
+    g.lineWidth = L.own ? 1.8 : 2.4;
     g.lineJoin = 'round';
-    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
-    for (const [x, y] of pts.slice(1)) g.lineTo(x, y);
+    g.beginPath(); g.moveTo(L.pts[0][0], L.pts[0][1]);
+    for (const [x, y] of L.pts.slice(1)) g.lineTo(x, y);
     g.stroke();
   }
 
-  const small = NW < 104;
-  for (const id of ids) {
-    const m = MAPS[id], r = rectOf(id), here = id === mapId;
+  for (const [id, r] of rects) {
+    const m = MAPS[id], here = id === mapId;
     const kx = r.w / MAP_W, ky = r.h / MAP_H;
 
     g.save();
@@ -227,20 +179,21 @@ function drawSystem(me) {
     g.globalAlpha = 1;
     g.restore();
 
-    for (const p of m.portals) {                           // stub: portal marker -> its exit edge
-      const q = portOf(id, p, centerOf(p.to)), own = linkOwner(id, p.to);
+    for (const st of stubs) {                               // last stretch, over its own preview
+      if (st.map !== id) continue;
       g.globalAlpha = 0.6; g.lineWidth = 1.2;
-      g.strokeStyle = own ? COMPANIES[own].color : '#e08a8a';
-      g.beginPath(); g.moveTo(q.anchor.x, q.anchor.y); g.lineTo(q.edge.x, q.edge.y); g.stroke();
+      g.strokeStyle = st.own ? COMPANIES[st.own].color : '#e08a8a';
+      g.beginPath(); g.moveTo(st.from.x, st.from.y); g.lineTo(st.to_.x, st.to_.y); g.stroke();
       g.globalAlpha = 1;
-      g.fillStyle = MAPS[p.to].tint;
-      g.fillRect(q.anchor.x - 2.5, q.anchor.y - 2.5, 5, 5);
+      g.fillStyle = MAPS[st.to].tint;
+      g.fillRect(st.from.x - 2.5, st.from.y - 2.5, 5, 5);
     }
-    if (m.home) {                                          // company base marker
+
+    if (m.home) {
       g.fillStyle = COMPANIES[m.owner].color;
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
       g.beginPath();
-      g.moveTo(r.x + r.w / 2, r.y + r.h / 2 - 7); g.lineTo(r.x + r.w / 2 + 7, r.y + r.h / 2);
-      g.lineTo(r.x + r.w / 2, r.y + r.h / 2 + 7); g.lineTo(r.x + r.w / 2 - 7, r.y + r.h / 2);
+      g.moveTo(cx, cy - 7); g.lineTo(cx + 7, cy); g.lineTo(cx, cy + 7); g.lineTo(cx - 7, cy);
       g.closePath(); g.fill();
       g.strokeStyle = '#05070b'; g.lineWidth = 1; g.stroke();
     }

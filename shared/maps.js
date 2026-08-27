@@ -19,6 +19,7 @@ const shade = (hex, k) => '#' + [1, 3, 5].map(i =>
 const NW = { x: 1500, y: 1300 }, NE = { x: 10500, y: 1300 };
 const SW = { x: 1500, y: 6700 }, SE = { x: 10500, y: 6700 };
 const W  = { x: 1000, y: 4000 }, E  = { x: 11000, y: 4000 };
+const N  = { x: 6000, y: 1100 };
 const S  = { x: 6000, y: 6900 }, C  = { x: 6000,  y: 4000 };
 
 export const COMPANIES = {
@@ -94,10 +95,18 @@ Object.entries(COMPANIES).forEach(([co, f]) => {
       { ...W,  to: myGates[0] }, { ...E, to: myGates[1] }],                    { ...own, frontier: true });
 });
 
-for (const [i, g] of GATES.entries())                                   // stage 1: all four corners
+// Four destinations on a ring, at angles chosen so no two anchors share an x or a y.
+// Corners and edge-centres both put two anchors on one coordinate, and two links
+// leaving the same edge at the same offset sit on top of each other no matter how
+// the router nudges them — the one overlap a lane search cannot undo.
+const ring = (n, ...angles) => angles.map((a, i) => {
+  const r = a * Math.PI / 180;
+  return { x: 6000 + 4200 * Math.cos(r), y: 4000 + 2600 * Math.sin(r), to: n[i] };
+});
+for (const [i, g] of GATES.entries())
   mk(g.id, place(g.ang, RAD.gate), `G-${i + 1}`, i,
-     [{ ...NW, to: g.cos[0] + '4' }, { ...NE, to: g.cos[1] + '4' },
-      { ...SW, to: g.deeps[0] },     { ...SE, to: g.deeps[1] }],       { contested: true, gate: true });
+     ring([g.cos[0] + '4', g.cos[1] + '4', g.deeps[0], g.deeps[1]], 20, 110, 200, 290),
+     { contested: true, gate: true });
 
 for (const [i, d] of DEEPS.entries())                                   // stage 2: edges plus dead centre
   mk(d.id, place(d.ang, RAD.deep), `D-${i + 1}`, i + 1,
@@ -108,5 +117,31 @@ mk('x0', { sx: 0, sy: 0 }, 'X', 2,                                      // stage
      const a = d.ang * Math.PI / 180;
      return { x: 6000 + 4200 * Math.cos(a), y: 4000 + 2600 * Math.sin(a), to: d.id };
    }), { contested: true, core: true });
+
+// Portal anchors are declared by role (corners, edge-centres, dead centre) and then
+// MATCHED to destinations by geometry: the slot sitting east of map centre takes the
+// destination that lies east on the chart. Assigning corners by list order only
+// happens to be right for un-rotated branches — g2's NW slot pointed at a map to its
+// east, so its two stubs crossed the node on top of each other.
+const perms = a => a.length <= 1 ? [a]
+  : a.flatMap((v, i) => perms([...a.slice(0, i), ...a.slice(i + 1)]).map(rest => [v, ...rest]));
+const angGap = (a, b) => { const d = Math.abs(a - b) % (2 * Math.PI); return d > Math.PI ? 2 * Math.PI - d : d; };
+
+for (const m of Object.values(MAPS)) {
+  const slots = m.portals.map(p => ({ x: p.x, y: p.y }));
+  const dests = m.portals.map(p => p.to);
+  // a node preview keeps the map's aspect, so map-space and chart-space angles compare directly
+  const slotAng = slots.map(s => Math.hypot(s.x - MAP_W / 2, s.y - MAP_H / 2) < 1
+    ? null : Math.atan2(s.y - MAP_H / 2, s.x - MAP_W / 2));          // dead centre: any destination fits
+  const destAng = dests.map(t => Math.atan2(MAPS[t].sy - m.sy, MAPS[t].sx - m.sx));
+
+  let best = null, bestCost = Infinity;
+  for (const perm of perms(dests.map((_, i) => i))) {
+    let cost = 0;
+    perm.forEach((d, i) => { if (slotAng[i] !== null) cost += angGap(slotAng[i], destAng[d]); });
+    if (cost < bestCost) { bestCost = cost; best = perm; }
+  }
+  m.portals = best.map((d, i) => ({ ...slots[i], to: dests[d] }));
+}
 
 export const HOMES = Object.keys(COMPANIES).map(co => co + '1');

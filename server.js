@@ -10,6 +10,7 @@ const FILES = {
   '/':                ['public/index.html', 'text/html'],
   '/shared/sim.js':   ['shared/sim.js',     'text/javascript'],
   '/shared/maps.js':  ['shared/maps.js',    'text/javascript'],
+  '/shared/chart.js': ['shared/chart.js',   'text/javascript'],
 };
 const server = http.createServer((req, res) => {
   const hit = FILES[req.url.split('?')[0]];
