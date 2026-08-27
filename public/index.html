@@ -13,7 +13,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
-import { unpackShip, unpackBolt } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackBlast } from '/shared/net.js';
 import { ALIENS } from '/shared/aliens.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
@@ -43,7 +43,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [];                   // shots in flight, rebuilt every snapshot
+let bolts = [], blasts = [];      // shots in flight and kill flashes, rebuilt every snapshot
 const cam = { x: 0, y: 0 };
 
 // --- net ---------------------------------------------------------------------
@@ -58,6 +58,7 @@ ws.onmessage = e => {
   if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
   if (m.t !== 's') return;
   bolts = (m.bolts ?? []).map(unpackBolt);
+  blasts = (m.blasts ?? []).map(unpackBlast);
   const seen = new Set();
   for (const raw of m.ships) {
     const n = unpackShip(raw);
@@ -597,7 +598,7 @@ function drawFrame(now) {
     // once they're down the server stops sending it and bare hull takes the damage.
     const f = (s.flash ?? 0) / 100;
     if (f > 0) {
-      const rr = R * (1.5 + (1 - f) * 0.6);
+      const rr = R * (2.7 + (1 - f) * 0.9);        // the envelope stands well off the hull
       g.globalAlpha = f * 0.20; g.fillStyle = '#7fd4ff';
       g.beginPath(); g.arc(s.rx, s.ry, rr, 0, 7); g.fill();
       g.globalAlpha = Math.min(1, f * 1.1); g.strokeStyle = '#bfe9ff'; g.lineWidth = 1.5 + f * 2.5;
@@ -612,6 +613,18 @@ function drawFrame(now) {
     g.fillStyle = (s.hp ?? 100) > 33 ? '#7de08a' : '#e05a5a';
     g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 12.5, (bw - 2) * (s.hp ?? 0) / 100, 2.5);
   }
+  for (const b of blasts) {                        // kill flash, over everything in world space
+    const rr = b.r * (1.3 + b.p * 6.5);
+    g.strokeStyle = b.foe ? '#ff9a6a' : '#9ad7ff';
+    g.globalAlpha = (1 - b.p) * 0.85;
+    g.lineWidth = 2 + (1 - b.p) * 6;
+    g.beginPath(); g.arc(b.x, b.y, rr, 0, 7); g.stroke();
+    g.globalAlpha = (1 - b.p) * (1 - b.p) * 0.55;
+    g.fillStyle = '#fff';
+    g.beginPath(); g.arc(b.x, b.y, rr * 0.5, 0, 7); g.fill();
+    g.globalAlpha = 1;
+  }
+
   g.restore();
 
   // --- jump button (screen space) ---

@@ -6,7 +6,7 @@ import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { newAlien, respawnAlien, stepAlienAI, ALIENS_PER_MAP } from './shared/aliens.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
-import { packShip, packBolt } from './shared/net.js';
+import { packShip, packBolt, packBlast } from './shared/net.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = 3000, TICK_HZ = 30;
@@ -38,8 +38,20 @@ let alienId = 1_000_000;
 for (const h of HOMES) aliens.set(h, Array.from({ length: ALIENS_PER_MAP },
   (_, i) => newAlien('drifter', alienId++, MAPS[h], h.charCodeAt(0) * 977 + i * 7919)));
 
-const bolts = new Map();     // mapId -> bolts in flight
-for (const id of Object.keys(MAPS)) bolts.set(id, []);
+const bolts  = new Map();    // mapId -> bolts in flight
+const blasts = new Map();    // mapId -> kill flashes still playing
+for (const id of Object.keys(MAPS)) { bolts.set(id, []); blasts.set(id, []); }
+
+const BLAST_TIME = 0.8;
+const boom = (mapId, e, foe, who) =>
+  blasts.get(mapId).push({ x: e.x, y: e.y, r: e.r, foe, who, t: BLAST_TIME, ttl: BLAST_TIME });
+
+// One place that kills an alien, so the flash can never be forgotten at a call site.
+const killAlien = (mapId, a) => {
+  if (a.dead > 0) return;
+  boom(mapId, a, true, a.id);
+  a.dead = a.def.respawn; a.target = null; a.provoked.clear();
+};
 
 const wss = new WebSocketServer({ server });
 wss.on('connection', ws => {
@@ -114,6 +126,7 @@ setInterval(() => {
     stepVitals(p.ship, dt, p.docked);
 
     if (p.ship.hp <= 0) {                         // destroyed: back to your home, repaired
+      boom(p.mapId, p.ship, false, id);
       const home = p.co + '1', hb = MAPS[home].base;
       const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
       p.mapId = home;
@@ -150,7 +163,7 @@ setInterval(() => {
       faceTarget(a, victim?.ship);
       const shot = fire(a, victim?.ship ?? null, dt);
       if (shot) bolts.get(mapId).push(shot);
-      if (a.hp <= 0) { a.dead = a.def.respawn; a.target = null; a.provoked.clear(); }
+      if (a.hp <= 0) killAlien(mapId, a);
     }
   }
 
@@ -170,9 +183,10 @@ setInterval(() => {
 
   for (const [mapId, list] of bolts) {
     stepBolts(list, dt);
-    for (const a of aliens.get(mapId) ?? [])
-      if (a.dead <= 0 && a.hp <= 0) { a.dead = a.def.respawn; a.target = null; a.provoked.clear(); }
+    for (const a of aliens.get(mapId) ?? []) if (a.hp <= 0) killAlien(mapId, a);
   }
+  for (const [, list] of blasts)
+    for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
 
   // Snapshots are per player, not per map. Radar means two ships sitting in the
   // same sector legitimately see different things, and an enemy you have not
@@ -200,8 +214,9 @@ setInterval(() => {
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
-  for (const V of players.values()) {
+  for (const [vid, V] of players) {
     if (V.ws.readyState !== 1) continue;
+    V.id = vid;
     const seen = stepContacts(V, byMap.get(V.mapId) ?? [], dt);
     const ships = [];
     for (const [tid, vis] of seen) ships.push(packShip({ ...row.get(tid), vis }));
@@ -209,7 +224,11 @@ setInterval(() => {
     const shown = (bolts.get(V.mapId) ?? []).filter(b =>
       Math.hypot(b.sx - V.ship.x, b.sy - V.ship.y) <= reach ||
       Math.hypot(b.ax - V.ship.x, b.ay - V.ship.y) <= reach);
-    V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt) }));
+    // You see a kill you could have seen — and always your own, even though you
+    // are already back at your home base by the time it plays.
+    const flashes = (blasts.get(V.mapId) ?? []).filter(b =>
+      b.who === V.id || Math.hypot(b.x - V.ship.x, b.y - V.ship.y) <= reach);
+    V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), blasts: flashes.map(packBlast) }));
   }
 }, 1000 / TICK_HZ);
 

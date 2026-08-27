@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { MODULES } from '../shared/ships.js';
-import { packShip, packBolt } from '../shared/net.js';
+import { packShip, packBolt, packBlast } from '../shared/net.js';
 import { ALIENS } from '../shared/aliens.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
@@ -96,6 +96,9 @@ for (const id of Object.keys(MAPS)) {
     packBolt({ sx: 6000, sy: 4000, ax: 6400, ay: 4300, t: 0.10, ttl: 0.21, foe: false }),
     packBolt({ sx: 6400, sy: 4300, ax: 6000, ay: 4000, t: 0.02, ttl: 0.21, foe: true }),
     packBolt({ sx: 5200, sy: 3400, ax: 2200, ay: 6600, t: 0.20, ttl: 0.21, foe: false }),
+  ], blasts: [
+    packBlast({ x: 6400, y: 4300, r: 15, t: 0.75, ttl: 0.8, foe: true }),    // just popped
+    packBlast({ x: 5600, y: 3800, r: 13, t: 0.10, ttl: 0.8, foe: false }),   // nearly done
   ] });
   frame(t += 16); frames++;                                    // world view
   listeners.keydown.forEach(fn => fn({ key: 'm' }));           // star system chart

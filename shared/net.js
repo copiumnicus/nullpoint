@@ -15,5 +15,12 @@ export const packBolt   = o   => [Math.round(o.sx), Math.round(o.sy), Math.round
                                   +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0];
 export const unpackBolt = arr => { const o = {}; for (let i = 0; i < BOLT_FIELDS.length; i++) o[BOLT_FIELDS[i]] = arr[i]; return o; };
 
+// A kill flash: where it happened, how big the thing was, how far along the
+// animation is, and whether it was a hostile that died.
+export const BLAST_FIELDS = ['x', 'y', 'r', 'p', 'foe'];
+export const packBlast   = o   => [Math.round(o.x), Math.round(o.y), Math.round(o.r),
+                                   +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0];
+export const unpackBlast = arr => { const o = {}; for (let i = 0; i < BLAST_FIELDS.length; i++) o[BLAST_FIELDS[i]] = arr[i]; return o; };
+
 export const packShip   = o   => SHIP_FIELDS.map(f => o[f]);
 export const unpackShip = arr => { const o = {}; for (let i = 0; i < SHIP_FIELDS.length; i++) o[SHIP_FIELDS[i]] = arr[i]; return o; };

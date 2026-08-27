@@ -174,6 +174,19 @@ check('the bubble decays on its own', Math.abs(lit - SHIELD_FLASH) < 0.05, `${li
 const rf = refit(newShip(0, 0, 'vanguard', []), 'kestrel', []);
 check('refitting clears a lit bubble', rf.shieldHit === 0);
 
+console.log('\nwire: bolts and blasts');
+{
+  const { BOLT_FIELDS, packBolt, unpackBolt, BLAST_FIELDS, packBlast, unpackBlast } = await import('../shared/net.js');
+  const b = unpackBolt(packBolt({ sx: 10.4, sy: 20.6, ax: 30, ay: 40, t: 0.05, ttl: 0.2, foe: true }));
+  check('a bolt round-trips with its progress', b.sx === 10 && b.sy === 21 && b.p === 0.75 && b.foe === 1,
+    `${BOLT_FIELDS.length} fields, p=${b.p}`);
+  const k = unpackBlast(packBlast({ x: 5, y: 6, r: 15, t: 0.2, ttl: 0.8, foe: false }));
+  check('a blast round-trips with its progress', k.x === 5 && k.r === 15 && k.p === 0.75 && k.foe === 0,
+    `${BLAST_FIELDS.length} fields`);
+  check('progress always runs 0 to 1', unpackBolt(packBolt({ sx:0,sy:0,ax:0,ay:0,t:0.2,ttl:0.2,foe:0 })).p === 0
+    && unpackBolt(packBolt({ sx:0,sy:0,ax:0,ay:0,t:0,ttl:0.2,foe:0 })).p === 1);
+}
+
 console.log('\ncharted space');
 check('the charted zone is exactly what the minimap draws',
   driftDepth(0, 0) === 0 && driftDepth(MAP_W, MAP_H) === 0
