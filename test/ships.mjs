@@ -1,5 +1,5 @@
 import { ATTRS, HULLS, MODULES, DEFAULT_HULL, resolve, sanitiseFit, slotsOf } from '../shared/ships.js';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps,
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
          DOCK_HULL_RATE, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 
@@ -134,6 +134,39 @@ check('docked repair matches the declared rate',
 const nodelay = wreck();
 stepVitals(nodelay, dt, true);
 check('docking ignores the shield delay', nodelay.shield > 0, 'no waiting at your own dock');
+
+console.log('\nwire format');
+{
+  const { SHIP_FIELDS, packShip, unpackShip } = await import('../shared/net.js');
+  const o = { id: 7, x: 1, y: 2, heading: .3, charge: .4, co: 'h', hull: 'kestrel', hp: 55, sh: 66, flash: 77, vis: 1 };
+  const round = unpackShip(packShip(o));
+  check('a packed ship survives the round trip', SHIP_FIELDS.every(f => round[f] === o[f]),
+    `${SHIP_FIELDS.length} fields`);
+  check('the array is exactly as long as the field list', packShip(o).length === SHIP_FIELDS.length);
+  check('flash and vis do not transpose',
+    packShip(o).indexOf(77) === SHIP_FIELDS.indexOf('flash')
+    && unpackShip(packShip(o)).vis === 1, 'the bug this module exists to prevent');
+}
+
+console.log('\nshield impact');
+const fl = newShip(0, 0, 'vanguard', []);
+applyDamage(fl, 200);
+check('a hit the shields catch lights the bubble', fl.shieldHit === SHIELD_FLASH);
+fl.shieldHit = 0;
+applyDamage(fl, 400);                                   // 700 shield left, still absorbs
+check('a partial absorb still lights it', fl.shieldHit === SHIELD_FLASH, 'shields did take damage');
+fl.shield = 0; fl.shieldHit = 0;
+applyDamage(fl, 300);
+check('with shields down there is nothing to flare', fl.shieldHit === 0 && fl.hp < fl.stats.hull,
+  'the hull still takes it');
+applyDamage(fl, 0);
+check('a zero-damage hit lights nothing', fl.shieldHit === 0);
+fl.shield = 100; fl.shieldHit = 0; applyDamage(fl, 50);
+let lit = 0;
+while (fl.shieldHit > 0) { stepVitals(fl, dt, false); lit += dt; }
+check('the bubble decays on its own', Math.abs(lit - SHIELD_FLASH) < 0.05, `${lit.toFixed(2)}s`);
+const rf = refit(newShip(0, 0, 'vanguard', []), 'kestrel', []);
+check('refitting clears a lit bubble', rf.shieldHit === 0);
 
 console.log('\ncharted space');
 check('the charted zone is exactly what the minimap draws',

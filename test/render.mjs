@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { MODULES } from '../shared/ships.js';
+import { packShip } from '../shared/net.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -78,10 +79,12 @@ feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard', fit: [] });
 let t = 0, frames = 0;
 for (const id of Object.keys(MAPS)) {
   feed({ t: 'map', map: id });
-  feed({ t: 's', ships: [[1, 6000, 4000, 0.5, 0, 'm', 'vanguard', 100, 100, 2],   // self
-                         [2, 5200, 3400, 1.9, 0, 'm', 'bulwark',  80,  60, 2],   // ally
-                         [3, 3000, 2000, 1.2, 1.4, 'h', 'kestrel', 30, 0, 1],    // live contact
-                         [4, 9000, 6000, 2, 0, 'k', 'bulwark', 5, 55, 0]] });    // fading track
+  feed({ t: 's', ships: [
+    packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0,   co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 100, vis: 2 }),
+    packShip({ id: 2, x: 5200, y: 3400, heading: 1.9, charge: 0,  co: 'm', hull: 'bulwark',  hp:  80, sh:  60, flash:  40, vis: 2 }),
+    packShip({ id: 3, x: 3000, y: 2000, heading: 1.2, charge: 1.4, co: 'h', hull: 'kestrel', hp:  30, sh:   0, flash:   0, vis: 1 }),
+    packShip({ id: 4, x: 9000, y: 6000, heading: 2, charge: 0,    co: 'k', hull: 'bulwark',  hp:   5, sh:  55, flash:  70, vis: 0 }),
+  ] });
   frame(t += 16); frames++;                                    // world view
   listeners.keydown.forEach(fn => fn({ key: 'm' }));           // star system chart
   frame(t += 16); frames++;
@@ -96,8 +99,10 @@ for (const id of Object.keys(MAPS)) {
 
   // outside charted space: shear vignette, flashing warning, clamped minimap plot
   for (const [x, y] of [[-40, 4000], [-1700, -1700], [13700, 9700]]) {
-    feed({ t: 's', ships: [[1, x, y, 0.5, 0, 'm', 'vanguard', 40, 0, 2],
-                           [3, 3000, 2000, 1.2, 0, 'h', 'kestrel', 30, 0, 1]] });
+    feed({ t: 's', ships: [
+      packShip({ id: 1, x, y, heading: .5, charge: 0, co: 'm', hull: 'vanguard', hp: 40, sh: 0, flash: 0, vis: 2 }),
+      packShip({ id: 3, x: 3000, y: 2000, heading: 1.2, charge: 0, co: 'h', hull: 'kestrel', hp: 30, sh: 0, flash: 55, vis: 1 }),
+    ] });
     frame(t += 16); frames++;
   }
 }

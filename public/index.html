@@ -13,6 +13,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, MODULES, resolve, radiusOf, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
+import { unpackShip } from '/shared/net.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -51,12 +52,12 @@ ws.onmessage = e => {
   if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
   if (m.t !== 's') return;
   const seen = new Set();
-  for (const [id, x, y, h, ch, co, hull, hp, sh, vis] of m.ships) {
-    seen.add(id);
-    const s = ships.get(id) ?? { rx: x, ry: y };
-    s.x = x; s.y = y; s.heading = h; s.charge = ch; s.co = co;
-    s.hull = hull; s.hp = hp; s.sh = sh; s.vis = vis;
-    ships.set(id, s);
+  for (const raw of m.ships) {
+    const n = unpackShip(raw);
+    seen.add(n.id);
+    const s = ships.get(n.id) ?? { rx: n.x, ry: n.y };
+    Object.assign(s, n);
+    ships.set(n.id, s);
   }
   for (const id of ships.keys()) if (!seen.has(id)) ships.delete(id);
 };
@@ -501,6 +502,19 @@ function drawFrame(now) {
     g.restore();
 
     if (lost) continue;                            // no vitals read on a fading track
+
+    // PLACEHOLDER shield impact. Lit only while the shields are catching the hit;
+    // once they're down the server stops sending it and bare hull takes the damage.
+    const f = (s.flash ?? 0) / 100;
+    if (f > 0) {
+      const rr = R * (1.5 + (1 - f) * 0.6);
+      g.globalAlpha = f * 0.20; g.fillStyle = '#7fd4ff';
+      g.beginPath(); g.arc(s.rx, s.ry, rr, 0, 7); g.fill();
+      g.globalAlpha = Math.min(1, f * 1.1); g.strokeStyle = '#bfe9ff'; g.lineWidth = 1.5 + f * 2.5;
+      g.beginPath(); g.arc(s.rx, s.ry, rr, 0, 7); g.stroke();
+      g.globalAlpha = 1;
+    }
+
     const bw = Math.max(30, R * 2.8);              // bars stay upright, never rotate
     g.fillStyle = 'rgba(4,7,12,0.75)';
     g.fillRect(s.rx - bw / 2, s.ry - R - 17, bw, 8);

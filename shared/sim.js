@@ -26,6 +26,7 @@ export function driftDps(depth) {
 export const SLOW_RADIUS = 90;    // px  ease off inside this range
 export const ARRIVE       = 5;    // px  close enough, stop
 export const JUMP_TIME    = 3.0;  // s   portal spool-up once you commit
+export const SHIELD_FLASH = 0.45; // s   how long an impact bubble stays lit
 
 // Speed, thrust, hull and shield all come from the fit — never from a constant
 // here — so a module can change any of them.
@@ -34,7 +35,7 @@ export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit =
   return {
     x, y, vx: 0, vy: 0, heading: 0,
     hull, fit, stats, r: radiusOf(hull),
-    hp: stats.hull, shield: stats.shield, sinceHit: 1e9,
+    hp: stats.hull, shield: stats.shield, sinceHit: 1e9, shieldHit: 0,
     jumpCd: 0, charge: 0, chargeTo: null,
     tx: null, ty: null,      // click-to-move destination
     dx: null, dy: null,      // hold-to-steer thrust vector (magnitude 0..1)
@@ -50,6 +51,7 @@ export function refit(s, hull, fit) {
   s.hp = s.stats.hull;
   s.shield = s.stats.shield;
   s.sinceHit = 1e9;
+  s.shieldHit = 0;
   return s;
 }
 
@@ -105,6 +107,7 @@ export const DOCK_HULL_RATE   = 0.12; // × max hull per second, so ~8s from scr
 
 export function stepVitals(s, dt, docked = false) {
   s.sinceHit += dt;
+  if (s.shieldHit > 0) s.shieldHit = Math.max(0, s.shieldHit - dt);
   if (docked) {
     s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * DOCK_SHIELD_MULT * dt);
     s.hp     = Math.min(s.stats.hull,   s.hp     + s.stats.hull * DOCK_HULL_RATE * dt);
@@ -121,6 +124,9 @@ export function applyDamage(s, amount) {
   s.shield -= onShield;
   const onHull = amount - onShield;
   s.hp = Math.max(0, s.hp - onHull);
+  // Only a hit the shields actually caught lights the bubble. Once they're down,
+  // damage lands on bare hull and there is nothing left to flare.
+  if (onShield > 0) s.shieldHit = SHIELD_FLASH;
   return { shield: onShield, hull: onHull, dead: s.hp <= 0 };
 }
 

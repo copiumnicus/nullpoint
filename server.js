@@ -1,9 +1,10 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, WORLD } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, WORLD, SHIELD_FLASH } from './shared/sim.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
+import { packShip } from './shared/net.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = 3000, TICK_HZ = 30;
@@ -15,6 +16,7 @@ const FILES = {
   '/shared/chart.js': ['shared/chart.js',   'text/javascript'],
   '/shared/ships.js': ['shared/ships.js',   'text/javascript'],
   '/shared/radar.js': ['shared/radar.js',   'text/javascript'],
+  '/shared/net.js':   ['shared/net.js',     'text/javascript'],
 };
 const server = http.createServer((req, res) => {
   const hit = FILES[req.url.split('?')[0]];
@@ -100,7 +102,7 @@ setInterval(() => {
       refit(p.ship, p.ship.hull, p.ship.fit);
       Object.assign(p.ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
                               vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
-                              charge: 0, chargeTo: null, jumpCd: JUMP_CD });
+                              charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0 });
       if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: home, died: true }));
       continue;
     }
@@ -119,10 +121,12 @@ setInterval(() => {
   // detected must never reach the wire at all.
   const row = new Map(), byMap = new Map();
   for (const [id, p] of players) {
-    row.set(id, [id, Math.round(p.ship.x), Math.round(p.ship.y), +p.ship.heading.toFixed(2),
-      +p.ship.charge.toFixed(2), p.co, p.ship.hull,
-      Math.round(100 * p.ship.hp / p.ship.stats.hull),
-      Math.round(100 * p.ship.shield / Math.max(1, p.ship.stats.shield))]);
+    row.set(id, { id, x: Math.round(p.ship.x), y: Math.round(p.ship.y),
+      heading: +p.ship.heading.toFixed(2), charge: +p.ship.charge.toFixed(2),
+      co: p.co, hull: p.ship.hull,
+      hp: Math.round(100 * p.ship.hp / p.ship.stats.hull),
+      sh: Math.round(100 * p.ship.shield / Math.max(1, p.ship.stats.shield)),
+      flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH) });
     if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
     byMap.get(p.mapId).push({ id, co: p.co, ship: p.ship });
   }
@@ -130,7 +134,7 @@ setInterval(() => {
     if (V.ws.readyState !== 1) continue;
     const seen = stepContacts(V, byMap.get(V.mapId) ?? [], dt);
     const ships = [];
-    for (const [tid, vis] of seen) ships.push([...row.get(tid), vis]);
+    for (const [tid, vis] of seen) ships.push(packShip({ ...row.get(tid), vis }));
     V.ws.send(JSON.stringify({ t: 's', ships }));
   }
 }, 1000 / TICK_HZ);
