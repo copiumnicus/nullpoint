@@ -1,0 +1,142 @@
+import { MATERIALS, DROPS, rollDrop, stow, unload, holdVol, holdValue, volOf,
+         POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY } from '../shared/cargo.js';
+import { beginScoop, stepScoop } from '../shared/cargo.js';
+import { ALIENS } from '../shared/aliens.js';
+import { newShip } from '../shared/sim.js';
+import { HULLS, ATTRS, resolve } from '../shared/ships.js';
+import { rng } from '../shared/aliens.js';
+
+const fails = [];
+const check = (name, ok, detail = '') => {
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  — ${detail}` : ''}`);
+  if (!ok) fails.push(name);
+};
+
+console.log('\nmaterials');
+const tiers = Object.values(MATERIALS).map(m => m.tier);
+check('tiers are 1..n with no gaps or repeats',
+  JSON.stringify([...tiers].sort()) === JSON.stringify(tiers.map((_, i) => i + 1)));
+const byTier = Object.values(MATERIALS).sort((a, b) => a.tier - b.tier);
+check('value climbs with rarity', byTier.every((m, i) => i === 0 || m.value > byTier[i - 1].value),
+  byTier.map(m => m.value).join(' < '));
+check('rarer metals are denser, so a full hold is a choice not a wall',
+  volOf('nullstone') < volOf('ferrocite'), `${volOf('ferrocite')} vs ${volOf('nullstone')} per unit`);
+check('every material carries a colour', Object.values(MATERIALS).every(m => /^#[0-9a-f]{6}$/i.test(m.colour)));
+
+console.log('\ndrop tables');
+for (const [kind, table] of Object.entries(DROPS)) {
+  const sum = table.reduce((s, r) => s + r.p, 0);
+  check(`${kind} weights sum to 1`, Math.abs(sum - 1) < 1e-9, sum.toFixed(4));
+  check(`${kind} lists only real materials`, table.every(r => MATERIALS[r.mat]));
+  const t = table.map(r => MATERIALS[r.mat].tier);
+  check(`${kind} gets rarer as the tier climbs`,
+    table.every((r, i) => i === 0 || r.p < table[i - 1].p) && t.every((v, i) => i === 0 || v > t[i - 1]));
+}
+{
+  const rand = rng(9), tally = {};
+  for (let i = 0; i < 40000; i++) { const d = rollDrop('drifter', rand); tally[d.mat] = (tally[d.mat] ?? 0) + 1; }
+  const rows = DROPS.drifter.map(r => [r.mat, r.p, (tally[r.mat] ?? 0) / 40000]);
+  rows.forEach(([m, want, got]) => console.log(`     ${m.padEnd(10)} wanted ${(want * 100).toFixed(0)}%  got ${(got * 100).toFixed(1)}%`));
+  check('40k rolls match the table', rows.every(([, want, got]) => Math.abs(got - want) < 0.012));
+  check('a roll always yields something valid', rows.every(([, , got]) => got > 0));
+  check('drops are reproducible from a seed',
+    JSON.stringify(rollDrop('drifter', rng(4))) === JSON.stringify(rollDrop('drifter', rng(4))));
+  check('an unknown kind drops nothing rather than throwing', rollDrop('nosuch', rng(1)) === null);
+}
+
+console.log('\nholds');
+const caps = Object.keys(HULLS).map(h => [h, resolve(h, []).cargo]);
+caps.forEach(([h, c]) => console.log(`     ${h.padEnd(9)} ${String(c).padStart(4)}` +
+  `   with a Hold Expander ${Math.round(resolve(h, ['expander']).cargo)}`));
+check('a bigger hull carries more', caps[0][1] < caps[1][1] && caps[1][1] < caps[2][1]);
+check('cargo is a normal attribute, so a module can change it',
+  resolve('kestrel', ['expander']).cargo > resolve('kestrel', []).cargo && !!ATTRS.cargo);
+check('and the expander costs speed',
+  resolve('kestrel', ['expander']).speed < resolve('kestrel', []).speed);
+
+const h = {};
+check('stow reports what it actually took', stow(h, 'ferrocite', 4, 30) === 4 && holdVol(h) === 8);
+check('stow refuses to overfill', stow(h, 'ferrocite', 100, 30) === 11 && holdVol(h) === 30, 'cap 30');
+check('a full hold takes nothing more', stow(h, 'vantium', 5, 30) === 0);
+check('but a denser metal fits where bulk would not', (() => {
+  const g = {}; stow(g, 'ferrocite', 14, 29);              // 28 of 29 used, 1 spare
+  return stow(g, 'nullstone', 1, 29) === 1 && stow(g, 'ferrocite', 1, 29) === 0;
+})(), 'one unit of room: takes the rare, refuses the bulk');
+check('unknown materials are refused, not stored', stow({}, 'unobtanium', 5, 100) === 0);
+check('value sums correctly',
+  holdValue({ ferrocite: 2, nullstone: 1 }) === MATERIALS.ferrocite.value * 2 + MATERIALS.nullstone.value);
+
+console.log('\ntractor beam');
+{
+  const dt = 1 / 30;
+  const near = () => ({ id: 1, x: 100, y: 0, mat: 'vantium', n: 3 });
+  const ship = () => newShip(0, 0, 'vanguard', []);
+
+  check('nothing to grab', beginScoop(ship(), {}, null) === 'gone');
+  check('out of reach', beginScoop(ship(), {}, { ...near(), x: SCOOP_R + 50 }) === 'far');
+  check('no room in the hold', beginScoop(ship(), { ferrocite: 30 }, near()) === 'full', 'cap 60, 60 used');
+  const started = beginScoop(ship(), {}, near());
+  check('in reach with room starts a beam', started.id === 1 && started.t === SCOOP_TIME);
+
+  const s1 = ship(), h1 = {}, p1 = near(), sc1 = beginScoop(s1, h1, p1);
+  let t = 0, r;
+  do { r = stepScoop(sc1, p1, s1, h1, dt); t += dt; } while (r.running);
+  check('it takes the stated time', Math.abs(t - SCOOP_TIME) < 0.05, `${t.toFixed(2)}s`);
+  check('and the whole pod comes aboard', h1.vantium === 3 && p1.n === 0 && r.emptied);
+
+  const s2 = ship(), h2 = {}, p2 = near(), sc2 = beginScoop(s2, h2, p2);
+  for (let i = 0; i < 10; i++) stepScoop(sc2, p2, s2, h2, dt);
+  s2.x = SCOOP_R + 400;                            // drift out mid-haul
+  const r2 = stepScoop(sc2, p2, s2, h2, dt);
+  check('drifting out of reach cancels it', r2.cancelled && !r2.running && holdVol(h2) === 0,
+    'and the cargo stays put');
+  const s3 = ship(), h3 = {}, p3 = near(), sc3 = beginScoop(s3, h3, p3);
+  for (let i = 0; i < 10; i++) stepScoop(sc3, p3, s3, h3, dt);
+  s3.hp = 0;
+  check('dying cancels it', stepScoop(sc3, p3, s3, h3, dt).cancelled && holdVol(h3) === 0);
+
+  const s4 = ship(), h4 = { ferrocite: 29 }, p4 = near(), sc4 = beginScoop(s4, h4, p4);  // 58/60 used
+  let g4; do { g4 = stepScoop(sc4, p4, s4, h4, dt); } while (g4.running);
+  check('a nearly full hold takes what fits and leaves the rest',
+    g4.took === 2 && p4.n === 1 && !g4.emptied, '2 of 3 vantium, pod keeps the remainder');
+}
+
+console.log('\noffloading');
+{
+  const hold = { ferrocite: 5, cryolite: 3, nullstone: 2 }, vault = {};
+  const before = holdVol(hold);
+  const moved = unload(hold, vault, 4);            // budget is VOLUME, not items
+  check('unload reports VOLUME spent, not items moved',
+    before - holdVol(hold) === 4 && moved === 4,
+    '2 nullstone at vol 1 + 1 cryolite at vol 2 = 3 items, 4 volume');
+  check('a budget smaller than the next item spends nothing, and says so', (() => {
+    const h2 = { ferrocite: 3 }, v3 = {};          // vol 2 ore against a budget of 1
+    return unload(h2, v3, 1) === 0 && holdVol(h2) === 6;
+  })(), 'so a metered caller can carry the remainder forward');
+  check('it takes the rarest first', (vault.nullstone ?? 0) === 2,
+    'leave early and you keep the cheap half, not the good half');
+  let guard = 0;
+  while (holdVol(hold) > 0 && guard++ < 500) unload(hold, vault, 9);
+  check('the vault is bottomless', holdVol(hold) === 0 && vault.ferrocite === 5 && vault.cryolite === 3);
+  check('an emptied material is removed rather than left at zero', !('ferrocite' in hold));
+  const full = { ferrocite: 60 }, v2 = { ferrocite: 1000 };
+  unload(full, v2, 9999);
+  check('offload has no ceiling', v2.ferrocite === 1060 && holdVol(full) === 0);
+}
+check('scooping takes real time and real proximity',
+  SCOOP_TIME > 0.2 && SCOOP_R > 100 && POD_LIFE > 30,
+  `${SCOOP_TIME}s beam, ${SCOOP_R}px reach, ${POD_LIFE}s pod life`);
+check('a stack transfer moves the whole stack', (() => {
+  const h3 = { ferrocite: 7, vantium: 2 }, v4 = {};
+  unload(h3, v4, 7 * 99);                          // how the server bills a 'stash'
+  return v4.ferrocite === 7 && v4.vantium === 2 && holdVol(h3) === 0;
+})());
+check('every alien pays a bounty', Object.values(ALIENS).every(a => a.bounty > 0),
+  `Drifter ${ALIENS.drifter.bounty} ${CURRENCY.short}`);
+check('a kill is worth more than its own drop, but not by much', (() => {
+  const avg = DROPS.drifter.reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
+  return ALIENS.drifter.bounty > avg && ALIENS.drifter.bounty < avg * 6;
+})(), 'so cargo is worth hauling, and killing is worth doing');
+
+console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
+process.exit(fails.length ? 1 : 0);

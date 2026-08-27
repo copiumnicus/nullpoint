@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
-import { newAlien, respawnAlien, stepAlienAI, ALIENS_PER_MAP } from './shared/aliens.js';
+import { newAlien, respawnAlien, stepAlienAI, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
-import { packShip, packBolt, packBlast } from './shared/net.js';
+import { packShip, packBolt, packBlast, packPod } from './shared/net.js';
+import { rollDrop, stow, unload, holdVol, beginScoop, stepScoop,
+         POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = 3000, TICK_HZ = 30;
@@ -21,6 +23,7 @@ const FILES = {
   '/shared/net.js':   ['shared/net.js',     'text/javascript'],
   '/shared/aliens.js':['shared/aliens.js',  'text/javascript'],
   '/shared/combat.js':['shared/combat.js',  'text/javascript'],
+  '/shared/cargo.js': ['shared/cargo.js',   'text/javascript'],
 };
 const server = http.createServer((req, res) => {
   const hit = FILES[req.url.split('?')[0]];
@@ -42,14 +45,30 @@ const bolts  = new Map();    // mapId -> bolts in flight
 const blasts = new Map();    // mapId -> kill flashes still playing
 for (const id of Object.keys(MAPS)) { bolts.set(id, []); blasts.set(id, []); }
 
+const pods = new Map();      // mapId -> cargo adrift
+for (const id of Object.keys(MAPS)) pods.set(id, []);
+let podId = 1;
+const drop = (mapId, x, y, mat, n) => {
+  if (n > 0) pods.get(mapId).push({ id: podId++, x: x + (Math.random() - .5) * 70,
+                                    y: y + (Math.random() - .5) * 70, mat, n, t: POD_LIFE });
+};
+
 const BLAST_TIME = 0.8;
 const boom = (mapId, e, foe, who) =>
   blasts.get(mapId).push({ x: e.x, y: e.y, r: e.r, foe, who, t: BLAST_TIME, ttl: BLAST_TIME });
 
 // One place that kills an alien, so the flash can never be forgotten at a call site.
-const killAlien = (mapId, a) => {
+const killAlien = (mapId, a, byId = null) => {
   if (a.dead > 0) return;
+  const killer = byId !== null ? players.get(byId) : null;
+  if (killer) {                                   // your company pays out on confirmation
+    killer.credits += a.def.bounty;
+    if (killer.ws.readyState === 1) killer.ws.send(JSON.stringify(
+      { t: 'award', amount: a.def.bounty, what: a.def.name, total: killer.credits }));
+  }
   boom(mapId, a, true, a.id);
+  const loot = rollDrop(a.kind, a.rand);          // seeded, so drops replay with the alien
+  if (loot) drop(mapId, a.x, a.y, loot.mat, loot.n);
   a.dead = a.def.respawn; a.target = null; a.provoked.clear();
 };
 
@@ -64,7 +83,8 @@ wss.on('connection', ws => {
   const spawn = () => { const a = Math.random() * 7, d = Math.random() * b.r * 0.6;
                         return { x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d }; };
   const ship = newShip(spawn().x, spawn().y, hull, []);
-  players.set(id, { ws, mapId: home, co, ship, contacts: new Map(), targetId: null });
+  players.set(id, { ws, mapId: home, co, ship, contacts: new Map(), targetId: null,
+                    hold: {}, vault: {}, credits: 0, scoop: null });
   ws.send(JSON.stringify({ t: 'welcome', id, map: home, co, hull, fit: [] }));
   console.log(`+ player ${id} [${COMPANIES[co].tag}] ${HULLS[hull].name} at ${MAPS[home].name} (${players.size} online)`);
 
@@ -82,6 +102,19 @@ wss.on('connection', ws => {
       return ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit }));
     }
 
+    if (m.t === 'scoop') {                        // cargo is hauled in deliberately, never by driving over it
+      const pod = (pods.get(P.mapId) ?? []).find(c => c.id === +m.id);
+      const started = beginScoop(ship, P.hold, pod);
+      if (process.env.DEBUG_SCOOP) console.log(`scoop id=${m.id} pod=${!!pod} ->`, started);
+      P.scoop = typeof started === 'string' ? null : started;
+      return;
+    }
+    if (m.t === 'stash') {                        // ship -> company hangar, at the dock only
+      if (!P.docked) return;
+      const n = P.hold[m.mat] ?? 0;
+      if (n > 0) unload(P.hold, P.vault, n * 99);
+      return;
+    }
     if (m.t === 'target') {                       // aliens only for now; PvP needs its own rules
       const found = (aliens.get(P.mapId) ?? []).find(a => a.id === +m.id && a.dead <= 0 && a.hp > 0);
       P.targetId = found ? found.id : null;
@@ -125,8 +158,12 @@ setInterval(() => {
     p.docked = map.owner === p.co && inBase(map, p.ship);
     stepVitals(p.ship, dt, p.docked);
 
+
+
     if (p.ship.hp <= 0) {                         // destroyed: back to your home, repaired
       boom(p.mapId, p.ship, false, id);
+      for (const [m, n] of Object.entries(p.hold)) drop(p.mapId, p.ship.x, p.ship.y, m, n);
+      p.hold = {};                                // a full hold is a real thing to lose
       const home = p.co + '1', hb = MAPS[home].base;
       const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
       p.mapId = home;
@@ -176,13 +213,29 @@ setInterval(() => {
     faceTarget(p.ship, foe);
     const shot = fire(p.ship, foe, dt);
     if (!shot) continue;
+    shot.owner = id;
     bolts.get(p.mapId).push(shot);
     foe.provoked.add(id);                        // pulling the trigger is the provocation,
     if (!foe.target) foe.target = id;            // whether or not the shot lands
   }
 
+  // --- cargo ----------------------------------------------------------------
+  for (const [, list] of pods)
+    for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
+
+  for (const [, p] of players) {                  // tractor beams
+    if (!p.scoop) continue;
+    const list = pods.get(p.mapId) ?? [];
+    const pod = list.find(c => c.id === p.scoop.id);
+    const r = stepScoop(p.scoop, pod, p.ship, p.hold, dt);
+    if (r.running) continue;
+    if (r.emptied) list.splice(list.indexOf(pod), 1);
+    p.scoop = null;
+  }
+
   for (const [mapId, list] of bolts) {
-    stepBolts(list, dt);
+    for (const h of stepBolts(list, dt))          // the bolt remembers who fired it
+      if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.bolt.owner ?? null);
     for (const a of aliens.get(mapId) ?? []) if (a.hp <= 0) killAlien(mapId, a);
   }
   for (const [, list] of blasts)
@@ -228,7 +281,12 @@ setInterval(() => {
     // are already back at your home base by the time it plays.
     const flashes = (blasts.get(V.mapId) ?? []).filter(b =>
       b.who === V.id || Math.hypot(b.x - V.ship.x, b.y - V.ship.y) <= reach);
-    V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), blasts: flashes.map(packBlast) }));
+    const cans = (pods.get(V.mapId) ?? []).filter(p =>
+      Math.hypot(p.x - V.ship.x, p.y - V.ship.y) <= reach);
+    V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), blasts: flashes.map(packBlast),
+      pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
+      credits: V.credits, docked: !!V.docked, vault: V.vault,
+      scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / SCOOP_TIME).toFixed(2) } : undefined }));
   }
 }, 1000 / TICK_HZ);
 

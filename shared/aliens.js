@@ -24,6 +24,7 @@ export const ALIENS = {
     leash: 2800,      // beyond this it starts losing interest
     patience: 3.0,    // s outside leash before it gives up and forgets you
     respawn: 14,      // s
+    bounty: 140,      // credits your company pays for the kill
   },
 };
 

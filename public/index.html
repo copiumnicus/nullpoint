@@ -13,7 +13,8 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackBlast } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackBlast, unpackPod } from '/shared/net.js';
+import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
@@ -43,7 +44,9 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], blasts = [];      // shots in flight and kill flashes, rebuilt every snapshot
+let bolts = [], blasts = [], pods = [];   // rebuilt every snapshot
+let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null;
+let invOpen = false, award = null;
 const cam = { x: 0, y: 0 };
 
 // --- net ---------------------------------------------------------------------
@@ -55,10 +58,15 @@ ws.onmessage = e => {
   const m = JSON.parse(e.data);
   if (m.t === 'welcome') { myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit; return; }
   if (m.t === 'fit')     { myHull = m.hull; myFit = m.fit; draftHull = m.hull; draftFit = [...m.fit]; return; }
+  if (m.t === 'award')   { award = { ...m, at: performance.now() }; credits = m.total; return; }
   if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
   if (m.t !== 's') return;
   bolts = (m.bolts ?? []).map(unpackBolt);
   blasts = (m.blasts ?? []).map(unpackBlast);
+  pods = (m.pods ?? []).map(unpackPod);
+  hold = m.hold ?? {}; cargoCap = m.cap ?? cargoCap;
+  vault = m.vault ?? vault; credits = m.credits ?? credits;
+  atDock = !!m.docked; scoop = m.scoop ?? null;
   const seen = new Set();
   for (const raw of m.ships) {
     const n = unpackShip(raw);
@@ -102,6 +110,16 @@ function hostileAt(wx, wy) {
   return best;
 }
 
+// Cargo is hauled in on purpose: you click it, and the tractor takes a moment.
+function podAt(wx, wy) {
+  let best = null, bestD = Infinity;
+  for (const p of pods) {
+    const d = Math.hypot(p.x - wx, p.y - wy);
+    if (d < 34 && d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+
 function nearestHostile() {
   const me = ships.get(myId);
   if (!me) return null;
@@ -116,7 +134,8 @@ function nearestHostile() {
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
-  if (k === 'h') { bayOpen = !bayOpen; sysOpen = false; draftHull = myHull; draftFit = [...myFit]; }
+  if (k === 'h') { bayOpen = !bayOpen; sysOpen = false; invOpen = false; draftHull = myHull; draftFit = [...myFit]; }
+  if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
   if (k === 'x') send({ t: 'target', id: 0 });     // break off
   if (e.key === 'Tab') {                          // engage the closest thing on the plot
     e.preventDefault();
@@ -124,13 +143,14 @@ addEventListener('keydown', e => {
     if (n !== null) send({ t: 'target', id: n });
   }
   if (k === 'k') send({ t: 'dev-damage' });        // self-damage, for watching the shield timer
-  if (e.key === 'Escape') { sysOpen = false; bayOpen = false; }
+  if (e.key === 'Escape') { sysOpen = false; bayOpen = false; invOpen = false; }
 });
 
 c.addEventListener('pointerdown', e => {
   const v = toView(e);
   if (sysOpen) { sysOpen = false; return; }
   if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
+  if (invOpen) { invClick(v); return; }
   const sb = sysBtn();
   if (v.x > sb.x && v.x < sb.x + sb.w && v.y > sb.y && v.y < sb.y + sb.h) { sysOpen = true; return; }
   const b = btn();
@@ -138,6 +158,8 @@ c.addEventListener('pointerdown', e => {
   const w = { x: v.x + cam.x, y: v.y + cam.y };
   const pick = hostileAt(w.x, w.y);
   if (pick !== null) { lastClick = { t: performance.now(), x: v.x, y: v.y }; return send({ t: 'target', id: pick }); }
+  const can = podAt(w.x, w.y);
+  if (can) { lastClick = { t: performance.now(), x: v.x, y: v.y }; return send({ t: 'scoop', id: can.id }); }
 
   // Double-click on empty space breaks off. Single click still just sets a course,
   // and the second click repeats that harmlessly.
@@ -429,6 +451,85 @@ function drawBay() {
   g.font = '12px ui-monospace, monospace';
 }
 
+// --- inventory / company hangar -----------------------------------------------
+// Left is what the ship is carrying, right is what the company holds for you.
+// Transfer only works at the dock, because the hangar is theirs, not yours.
+function invGeom() {
+  const w = Math.min(820, VIEW_W - 60), h = Math.min(440, VIEW_H - 60);
+  const x = (VIEW_W - w) / 2, y = (VIEW_H - h) / 2;
+  const colW = (w - 60) / 2, top = y + 92;
+  const rows = (obj, cx) => Object.keys(obj).map((mat, i) =>
+    ({ mat, r: { x: cx, y: top + i * 40, w: colW, h: 34 } }));
+  return { panel: { x, y, w, h }, colW, top,
+           ship: rows(hold, x + 20), bank: rows(vault, x + 40 + colW),
+           all: { x: x + 20, y: y + h - 52, w: 190, h: 32 } };
+}
+
+function invClick(v) {
+  const G = invGeom();
+  const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
+  if (!inside(G.panel)) { invOpen = false; return; }
+  if (!atDock) return;                              // browsing is free, moving cargo is not
+  for (const { mat, r } of G.ship) if (inside(r)) return send({ t: 'stash', mat });
+  if (inside(G.all)) for (const mat of Object.keys(hold)) send({ t: 'stash', mat });
+}
+
+function stack(r, mat, n, live) {
+  const M = MATERIALS[mat];
+  g.fillStyle = live ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)';
+  g.fillRect(r.x, r.y, r.w, r.h);
+  g.strokeStyle = (M?.colour ?? '#9aa3ad') + (live ? 'aa' : '44'); g.lineWidth = 1;
+  g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+  g.save(); g.translate(r.x + 22, r.y + r.h / 2); g.rotate(Math.PI / 4);
+  g.fillStyle = M?.colour ?? '#9aa3ad'; g.fillRect(-8, -8, 16, 16);
+  g.restore();
+  g.fillStyle = '#cfe4ff'; g.font = '12px ui-monospace, monospace';
+  g.fillText(M?.name ?? mat, r.x + 42, r.y + 15);
+  g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
+  g.fillText(`T${M?.tier ?? '?'} · ${M?.value ?? 0} ${CURRENCY.short} each · ${M?.vol ?? 1} vol`, r.x + 42, r.y + 27);
+  g.fillStyle = '#fff'; g.font = '14px ui-monospace, monospace'; g.textAlign = 'right';
+  g.fillText('×' + n, r.x + r.w - 12, r.y + 22);
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+}
+
+function drawInventory() {
+  const G = invGeom(), P = G.panel, vol = holdVol(hold);
+  g.fillStyle = 'rgba(3,5,9,0.92)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.fillStyle = 'rgba(8,12,19,0.98)'; g.fillRect(P.x, P.y, P.w, P.h);
+  g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+
+  g.font = '15px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
+  g.fillText('INVENTORY', P.x + 20, P.y + 32);
+  g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffd479'; g.textAlign = 'right';
+  g.fillText(`${credits} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
+  g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
+  g.fillStyle = atDock ? '#66748c' : '#e0a53f';
+  g.fillText(atDock ? 'docked — click a stack to move it into the company hangar'
+                    : 'you can look, but transfers happen at your home base', P.x + 20, P.y + 52);
+
+  g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
+  g.fillText(`SHIP HOLD   ${vol}/${cargoCap}` + (vol ? `   ${holdValue(hold)} ${CURRENCY.short}` : ''), P.x + 20, G.top - 12);
+  g.fillText('COMPANY HANGAR   unlimited', P.x + 40 + G.colW, G.top - 12);
+
+  if (!G.ship.length) { g.fillStyle = '#3d4757'; g.fillText('empty', P.x + 20, G.top + 18); }
+  for (const { mat, r } of G.ship) stack(r, mat, hold[mat], atDock);
+  if (!G.bank.length) { g.fillStyle = '#3d4757'; g.fillText('nothing stored yet', P.x + 40 + G.colW, G.top + 18); }
+  for (const { mat, r } of G.bank) stack(r, mat, vault[mat], false);
+
+  if (G.ship.length) {
+    const A = G.all;
+    g.globalAlpha = atDock ? 1 : 0.35;
+    g.fillStyle = 'rgba(125,224,138,0.14)'; g.fillRect(A.x, A.y, A.w, A.h);
+    g.strokeStyle = '#7de08a'; g.lineWidth = 1.3; g.strokeRect(A.x + .5, A.y + .5, A.w - 1, A.h - 1);
+    g.fillStyle = '#7de08a'; g.textAlign = 'center';
+    g.fillText('STOW EVERYTHING', A.x + A.w / 2, A.y + 21);
+    g.textAlign = 'left'; g.globalAlpha = 1;
+  }
+  g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
+  g.fillText('I or Esc to close', P.x + P.w - 130, P.y + P.h - 30);
+  g.font = '12px ui-monospace, monospace';
+}
+
 // --- render -------------------------------------------------------------------
 let renderFailed = false;
 requestAnimationFrame(function frame(now) {
@@ -540,6 +641,46 @@ function drawFrame(now) {
     g.strokeStyle = '#4a90d9'; g.lineWidth = 1.5; g.globalAlpha = 0.8;
     g.beginPath(); g.arc(marker.x, marker.y, 8, 0, 7); g.stroke();
     g.globalAlpha = 1;
+  }
+
+  for (const pod of pods) {
+    const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+    const pu = 0.72 + 0.28 * Math.sin(now / 260 + pod.id);
+    g.globalAlpha = 0.22 * pu; g.fillStyle = col;
+    g.beginPath(); g.arc(pod.x, pod.y, 26, 0, 7); g.fill();
+    g.globalAlpha = 1; g.fillStyle = col;
+    g.save(); g.translate(pod.x, pod.y); g.rotate(now / 1400 + pod.id);
+    g.beginPath(); g.moveTo(0, -9); g.lineTo(8, 0); g.lineTo(0, 9); g.lineTo(-8, 0);
+    g.closePath(); g.fill();
+    g.strokeStyle = '#05070b'; g.lineWidth = 1.5; g.stroke();
+    g.restore();
+    if (hover && podAt(hover.x + cam.x, hover.y + cam.y)?.id === pod.id) {
+      const reachable = me && Math.hypot(pod.x - me.rx, pod.y - me.ry) <= SCOOP_R;
+      g.strokeStyle = reachable ? col : '#6b7280'; g.lineWidth = 1.4; g.setLineDash([3, 4]);
+      g.beginPath(); g.arc(pod.x, pod.y, 21, 0, 7); g.stroke(); g.setLineDash([]);
+      g.fillStyle = reachable ? col : '#6b7280'; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
+      g.fillText(reachable ? `${MATERIALS[pod.mat]?.name ?? pod.mat} — click to haul in` : 'too far', pod.x, pod.y + 32);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
+    if (pod.n > 1) {
+      g.fillStyle = col; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
+      g.fillText('×' + pod.n, pod.x, pod.y - 18);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
+  }
+
+  if (scoop && me) {                               // tractor beam
+    const pod = pods.find(p => p.id === scoop.id);
+    if (pod) {
+      const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+      const px = pod.x + (me.rx - pod.x) * scoop.p, py = pod.y + (me.ry - pod.y) * scoop.p;
+      g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 10;
+      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+      g.globalAlpha = 0.9; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+      g.fillStyle = col; g.globalAlpha = 1;       // the cargo itself, sliding in
+      g.beginPath(); g.arc(px, py, 7 * (1 - scoop.p * 0.6), 0, 7); g.fill();
+    }
   }
 
   for (const b of bolts) {                         // bolts first, so hulls sit on top
@@ -685,6 +826,10 @@ function drawFrame(now) {
     g.globalAlpha = 1;
   }
 
+  for (const pod of pods) {
+    g.fillStyle = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+    g.fillRect(MM_X + clamp(pod.x, 0, MAP_W) * sx - 1, MM_Y + clamp(pod.y, 0, MAP_H) * sy - 1, 2, 2);
+  }
   for (const [id, s] of ships) {
     const off = driftDepth(s.x, s.y) > 0;          // clamp strays to the frame so they stay findable
     const mx = MM_X + clamp(s.rx, 0, MAP_W) * sx, my = MM_Y + clamp(s.ry, 0, MAP_H) * sy;
@@ -767,12 +912,30 @@ function drawFrame(now) {
       g.fillStyle = '#ff5c6b';
       g.fillText(`▲ ${hostiles} contact${hostiles === 1 ? '' : 's'}` + (tracks ? ` · ${tracks} fading` : ''), 16 + w + 10, 52);
     }
+    const vol = holdVol(hold), gw = 190;
+    g.fillStyle = 'rgba(4,7,12,0.7)'; g.fillRect(16, 92, gw, 14);
+    g.fillStyle = '#1b222d'; g.fillRect(18, 94, gw - 4, 10);
+    let gx = 18;                                   // one segment per material, in its own colour
+    for (const [m, n] of Object.entries(hold)) {
+      const w2 = (gw - 4) * (n * (MATERIALS[m]?.vol ?? 1)) / Math.max(1, cargoCap);
+      g.fillStyle = MATERIALS[m]?.colour ?? '#9aa3ad';
+      g.fillRect(gx, 94, w2, 10); gx += w2;
+    }
+    g.fillStyle = vol >= cargoCap ? '#ff5c6b' : '#5b6b85';
+    g.fillText(`CARGO ${vol}/${cargoCap}` + (vol >= cargoCap ? '  HOLD FULL' : '') +
+               (vol ? `  ${holdValue(hold)} cr` : ''), 16 + gw + 10, 103);
+    g.fillStyle = '#ffd479';
+    g.fillText(`${credits} ${CURRENCY.short}`, 16, 124);
+    if (atDock && vol > 0) {
+      g.fillStyle = COMPANIES[myCo].color;
+      g.fillText('docked — press I to stow cargo', 16 + 96, 124);
+    }
     g.fillStyle = depth > 0 ? '#ff5c6b' : '#5b6b85';
     g.fillText(depth > 0 ? `SHEAR ${driftDps(depth) | 0}/s` :
                `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
-  g.fillText('click / hold to fly · click a hostile or TAB to engage · double-click space or X to break off · M · H' +
+  g.fillText('click a hostile or TAB to engage · click cargo to haul it in · I inventory · H hangar · M star system' +
              (docked() ? '' : ' (dock first)') + ' · K take test damage', 16, VIEW_H - 16);
 
   if (depth > 0 && !sysOpen && !bayOpen) {
@@ -795,7 +958,24 @@ function drawFrame(now) {
     g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
+  if (award) {
+    const age = (now - award.at) / 1000;
+    if (age > 4.5) award = null;
+    else {
+      const fade = age < 0.25 ? age / 0.25 : Math.min(1, (4.5 - age) / 1.2);
+      g.globalAlpha = fade;
+      const line = `${COMPANIES[myCo].tag} awards you ${award.amount} ${CURRENCY.short} for a ${award.what}`;
+      g.font = '15px ui-monospace, monospace'; g.textAlign = 'center';
+      const w2 = g.measureText(line).width + 40;
+      g.fillStyle = 'rgba(6,10,16,0.85)'; g.fillRect(VIEW_W / 2 - w2 / 2, 22, w2, 38);
+      g.strokeStyle = '#ffd479'; g.lineWidth = 1; g.strokeRect(VIEW_W / 2 - w2 / 2 + .5, 22.5, w2 - 1, 37);
+      g.fillStyle = '#ffd479'; g.fillText(line, VIEW_W / 2, 47);
+      g.textAlign = 'left'; g.globalAlpha = 1; g.font = '12px ui-monospace, monospace';
+    }
+  }
+
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();
+  if (invOpen) drawInventory();
 }
 </script>

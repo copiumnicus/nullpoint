@@ -22,5 +22,10 @@ export const packBlast   = o   => [Math.round(o.x), Math.round(o.y), Math.round(
                                    +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0];
 export const unpackBlast = arr => { const o = {}; for (let i = 0; i < BLAST_FIELDS.length; i++) o[BLAST_FIELDS[i]] = arr[i]; return o; };
 
+// A cargo pod adrift in space.
+export const POD_FIELDS = ['id', 'x', 'y', 'mat', 'n'];
+export const packPod   = o   => [o.id, Math.round(o.x), Math.round(o.y), o.mat, o.n];
+export const unpackPod = arr => { const o = {}; for (let i = 0; i < POD_FIELDS.length; i++) o[POD_FIELDS[i]] = arr[i]; return o; };
+
 export const packShip   = o   => SHIP_FIELDS.map(f => o[f]);
 export const unpackShip = arr => { const o = {}; for (let i = 0; i < SHIP_FIELDS.length; i++) o[SHIP_FIELDS[i]] = arr[i]; return o; };

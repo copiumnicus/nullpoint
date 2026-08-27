@@ -17,6 +17,7 @@ export const ATTRS = {
   damage:      { label: 'Damage',       unit: '',    dflt:   55, better: 'high', min: 1 },
   fireRate:    { label: 'Rate of fire', unit: '/s',  dflt:  1.4, better: 'high', min: 0.1 },
   weaponRange: { label: 'Weapon range', unit: '',    dflt:  700, better: 'high', min: 100 },
+  cargo:       { label: 'Cargo hold',   unit: '',    dflt:   60, better: 'high', min: 0 },
   slots:       { label: 'Slots',        unit: '',    dflt:    3, better: 'high', min: 0 },
 };
 
@@ -30,13 +31,16 @@ export const HULLS = {
   // signature would make it the scouting ship AND the fastest ship.
   kestrel:  { name: 'Kestrel',  cls: 'Interceptor', r: 10,
               attrs: { hull:  700, shield:  500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600,
-                       radar: 2000, signature: 1.5, damage: 38, fireRate: 2.2, weaponRange: 620 } },
+                       radar: 2000, signature: 1.5, damage: 38, fireRate: 2.2, weaponRange: 620,
+                       cargo: 30 } },
   vanguard: { name: 'Vanguard', cls: 'Fighter',     r: 13,
               attrs: { hull: 1100, shield:  900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200,
-                       radar: 2600, signature: 3.0, damage: 55, fireRate: 1.4, weaponRange: 700 } },
+                       radar: 2600, signature: 3.0, damage: 55, fireRate: 1.4, weaponRange: 700,
+                       cargo: 60 } },
   bulwark:  { name: 'Bulwark',  cls: 'Cruiser',     r: 17,
               attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel:  800,
-                       radar: 3400, signature: 5.5, damage: 95, fireRate: 0.75, weaponRange: 820 } },
+                       radar: 3400, signature: 5.5, damage: 95, fireRate: 0.75, weaponRange: 820,
+                       cargo: 120 } },
 };
 export const DEFAULT_HULL = 'vanguard';
 
@@ -54,6 +58,7 @@ export const MODULES = {
   focuser:   { name: 'Beam Focuser',       mods: [['damage', 'mul', 0.28],    ['fireRate', 'mul', -0.14]] },
   cycler:    { name: 'Rapid Cycler',       mods: [['fireRate', 'mul', 0.34],  ['damage', 'mul', -0.20]] },
   extender:  { name: 'Range Extender',     mods: [['weaponRange', 'mul', 0.24], ['damage', 'mul', -0.12]] },
+  expander:  { name: 'Hold Expander',      mods: [['cargo', 'mul', 0.65],     ['speed', 'mul', -0.12]] },
 };
 
 export const slotsOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).attrs.slots ?? ATTRS.slots.dflt;

@@ -3,7 +3,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { MODULES } from '../shared/ships.js';
-import { packShip, packBolt, packBlast } from '../shared/net.js';
+import { packShip, packBolt, packBlast, packPod } from '../shared/net.js';
+import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
@@ -99,7 +100,12 @@ for (const id of Object.keys(MAPS)) {
   ], blasts: [
     packBlast({ x: 6400, y: 4300, r: 15, t: 0.75, ttl: 0.8, foe: true }),    // just popped
     packBlast({ x: 5600, y: 3800, r: 13, t: 0.10, ttl: 0.8, foe: false }),   // nearly done
-  ] });
+  ], pods: Object.keys(MATERIALS).map((mat, i) =>
+    packPod({ id: i + 1, x: 5800 + i * 120, y: 4400, mat, n: i + 1 })),
+    hold: { ferrocite: 6, vantium: 3, nullstone: 1 }, cap: 60, credits: 4820, docked: true,
+    vault: { ferrocite: 240, cryolite: 88, solarite: 4 },
+    scoop: { id: 1, p: 0.4 } });
+  feed({ t: 'award', amount: 140, what: 'Drifter', total: 4960 });
   frame(t += 16); frames++;                                    // world view
   listeners.keydown.forEach(fn => fn({ key: 'm' }));           // star system chart
   frame(t += 16); frames++;
@@ -111,6 +117,11 @@ for (const id of Object.keys(MAPS)) {
     frame(t += 16); frames++;
   }
   listeners.keydown.forEach(fn => fn({ key: 'h' }));
+  listeners.keydown.forEach(fn => fn({ key: 'i' }));          // inventory, docked
+  frame(t += 16); frames++;
+  evt('pointerdown', { clientX: 300, clientY: 300 });          // stash a stack
+  frame(t += 16); frames++;
+  listeners.keydown.forEach(fn => fn({ key: 'i' }));
 
   // pointer and keys, over empty space and over a hostile
   for (const [px, py] of [[40, 40], [1200, 750], [innerWidth - 60, innerHeight - 40]]) {

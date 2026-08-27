@@ -33,21 +33,22 @@ export function fire(a, b, dt) {
   };
 }
 
-// Advances every bolt and settles the ones that land this tick.
-// Returns { hits, misses } for whoever wants to count.
+// Advances every bolt and settles the ones that land this tick. Returns the hits,
+// each carrying its bolt — so the caller can see who fired the killing shot.
 export function stepBolts(list, dt) {
-  let hits = 0, misses = 0;
+  const hits = [];
   for (let i = list.length - 1; i >= 0; i--) {
     const b = list[i];
     b.t -= dt;
     if (b.t > 0) continue;
     list.splice(i, 1);
     const tg = b.target;
-    if (!tg || tg.hp <= 0) { misses++; continue; }
-    if (Math.hypot(tg.x - b.ax, tg.y - b.ay) <= HIT_R + tg.r) { applyDamage(tg, b.dmg); hits++; }
-    else misses++;
+    if (!tg || tg.hp <= 0) continue;
+    if (Math.hypot(tg.x - b.ax, tg.y - b.ay) > HIT_R + tg.r) continue;
+    applyDamage(tg, b.dmg);
+    hits.push({ bolt: b, target: tg, dead: tg.hp <= 0 });
   }
-  return { hits, misses };
+  return hits;
 }
 
 // A ship under orders to shoot something looks at it, however it happens to be
