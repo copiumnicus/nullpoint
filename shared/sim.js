@@ -23,6 +23,12 @@ export function driftDps(depth) {
   return DRIFT_MIN + (DRIFT_MAX - DRIFT_MIN) * t * t;
 }
 
+// The world distance you are guaranteed to see in every direction from your ship,
+// whatever the window. The client zooms out when it has to in order to honour it,
+// so a tall monitor is not an advantage — and an alien's aggro range is set just
+// inside it, so nothing can pick a fight from off-screen.
+export const SIGHT_R = 560;
+
 export const SLOW_RADIUS = 90;    // px  ease off inside this range
 export const ARRIVE       = 5;    // px  close enough, stop
 export const JUMP_TIME    = 3.0;  // s   portal spool-up once you commit

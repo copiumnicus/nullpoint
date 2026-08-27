@@ -9,7 +9,7 @@
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
-         DRIFT_MARGIN, WORLD } from '/shared/sim.js';
+         DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout } from '/shared/hangar.js';
@@ -23,12 +23,17 @@ const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
 
 // --- viewport: fills the window, DPR-correct --------------------------------
 let VIEW_W = 0, VIEW_H = 0, MM_W = 0, MM_H = 0, MM_X = 0, MM_Y = 0;
+let zoom = 1, WVW = 0, WVH = 0;   // zoom, and the world extent it makes visible
 function resize() {
   const dpr = Math.min(2, devicePixelRatio || 1);
   VIEW_W = innerWidth; VIEW_H = innerHeight;
   c.width = Math.round(VIEW_W * dpr); c.height = Math.round(VIEW_H * dpr);
   g.setTransform(dpr, 0, 0, dpr, 0, 0);              // also resets font — re-set it
   g.font = '12px ui-monospace, SFMono-Regular, monospace';
+  // never zoom IN past 1:1, but zoom out as far as a short window needs so that
+  // SIGHT_R is always visible in every direction
+  zoom = Math.min(1, Math.min(VIEW_W, VIEW_H) / (2 * SIGHT_R));
+  WVW = VIEW_W / zoom; WVH = VIEW_H / zoom;
   MM_W = Math.min(260, VIEW_W * 0.22); MM_H = MM_W * (MAP_H / MAP_W);
   MM_X = VIEW_W - MM_W - 16; MM_Y = VIEW_H - MM_H - 16;
 }
@@ -106,6 +111,7 @@ const toView = e => {
   return { x: (e.clientX - r.left) * (VIEW_W / r.width),
            y: (e.clientY - r.top)  * (VIEW_H / r.height) };
 };
+const toWorld = v => ({ x: v.x / zoom + cam.x, y: v.y / zoom + cam.y });
 
 const docked = () => {
   const me = ships.get(myId), map = MAPS[mapId];
@@ -169,7 +175,7 @@ c.addEventListener('pointerdown', e => {
   if (v.x > sb.x && v.x < sb.x + sb.w && v.y > sb.y && v.y < sb.y + sb.h) { sysOpen = true; return; }
   const b = btn();
   if (v.x > b.x && v.x < b.x + b.w && v.y > b.y && v.y < b.y + b.h) return send({ t: 'jump' });
-  const w = { x: v.x + cam.x, y: v.y + cam.y };
+  const w = toWorld(v);
   const pick = hostileAt(w.x, w.y);
   if (pick !== null) { lastClick = { t: performance.now(), x: v.x, y: v.y }; return send({ t: 'target', id: pick }); }
   const can = podAt(w.x, w.y);
@@ -236,7 +242,7 @@ const LAYERS = [
 function drawStars() {
   g.fillStyle = '#cfe4ff';
   LAYERS.forEach((L, li) => {
-    const ox = cam.x * L.p, oy = cam.y * L.p;
+    const ox = cam.x * L.p * zoom, oy = cam.y * L.p * zoom;   // stars keep their screen size
     const cx0 = Math.floor(ox / L.cell), cx1 = Math.floor((ox + VIEW_W) / L.cell);
     const cy0 = Math.floor(oy / L.cell), cy1 = Math.floor((oy + VIEW_H) / L.cell);
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
@@ -565,8 +571,8 @@ function drawFrame(now) {
 
   for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
   if (me) {
-    cam.x = clamp(me.rx - VIEW_W / 2, WORLD.x0, Math.max(WORLD.x0, WORLD.x1 - VIEW_W));
-    cam.y = clamp(me.ry - VIEW_H / 2, WORLD.y0, Math.max(WORLD.y0, WORLD.y1 - VIEW_H));
+    cam.x = clamp(me.rx - WVW / 2, WORLD.x0, Math.max(WORLD.x0, WORLD.x1 - WVW));
+    cam.y = clamp(me.ry - WVH / 2, WORLD.y0, Math.max(WORLD.y0, WORLD.y1 - WVH));
   }
   const depth = me ? driftDepth(me.x, me.y) : 0;
   if (marker && me && Math.hypot(marker.x - me.x, marker.y - me.y) < 12) marker = null;
@@ -579,6 +585,7 @@ function drawFrame(now) {
   drawStars();
 
   g.save();
+  g.scale(zoom, zoom);
   g.translate(-cam.x, -cam.y);
 
   for (const [x, y, r, col] of map.neb) {
@@ -589,8 +596,8 @@ function drawFrame(now) {
   g.globalAlpha = 1;
 
   g.strokeStyle = 'rgba(120,160,220,0.05)'; g.lineWidth = 1; g.beginPath();
-  for (let x = Math.floor(cam.x / 500) * 500; x < cam.x + VIEW_W; x += 500) { g.moveTo(x, cam.y); g.lineTo(x, cam.y + VIEW_H); }
-  for (let y = Math.floor(cam.y / 500) * 500; y < cam.y + VIEW_H; y += 500) { g.moveTo(cam.x, y); g.lineTo(cam.x + VIEW_W, y); }
+  for (let x = Math.floor(cam.x / 500) * 500; x < cam.x + WVW; x += 500) { g.moveTo(x, cam.y); g.lineTo(x, cam.y + WVH); }
+  for (let y = Math.floor(cam.y / 500) * 500; y < cam.y + WVH; y += 500) { g.moveTo(cam.x, y); g.lineTo(cam.x + WVW, y); }
   g.stroke();
 
   // No boundary drawn in the world. Sliding off the minimap is the tell, and the
@@ -674,7 +681,7 @@ function drawFrame(now) {
     g.closePath(); g.fill();
     g.strokeStyle = '#05070b'; g.lineWidth = 1.5; g.stroke();
     g.restore();
-    if (hover && podAt(hover.x + cam.x, hover.y + cam.y)?.id === pod.id) {
+    if (hover && podAt(toWorld(hover).x, toWorld(hover).y)?.id === pod.id) {
       const reachable = me && Math.hypot(pod.x - me.rx, pod.y - me.ry) <= SCOOP_R;
       g.strokeStyle = col; g.lineWidth = 1.4; g.setLineDash([3, 4]);
       g.beginPath(); g.arc(pod.x, pod.y, 21, 0, 7); g.stroke(); g.setLineDash([]);
@@ -748,7 +755,7 @@ function drawFrame(now) {
     g.globalAlpha = 1;
     g.restore();
 
-    if (hover && s.co === 'x' && !lost && id === hostileAt(hover.x + cam.x, hover.y + cam.y) && id !== me?.tgt) {
+    if (hover && s.co === 'x' && !lost && id === hostileAt(toWorld(hover).x, toWorld(hover).y) && id !== me?.tgt) {
       g.strokeStyle = 'rgba(255,140,120,0.55)'; g.lineWidth = 1.2; g.setLineDash([3, 4]);
       g.beginPath(); g.arc(s.rx, s.ry, R + 13, 0, 7); g.stroke(); g.setLineDash([]);
     }
@@ -915,7 +922,7 @@ function drawFrame(now) {
   // The viewport can hang off charted space now, so draw only the part of it that
   // the plot actually covers — clipped to the frame, half a pixel in for the stroke.
   const vx0 = Math.max(0, cam.x), vy0 = Math.max(0, cam.y);
-  const vx1 = Math.min(MAP_W, cam.x + VIEW_W), vy1 = Math.min(MAP_H, cam.y + VIEW_H);
+  const vx1 = Math.min(MAP_W, cam.x + WVW), vy1 = Math.min(MAP_H, cam.y + WVH);
   if (vx1 > vx0 && vy1 > vy0) {
     const L = Math.max(MM_X + .5, MM_X + vx0 * sx), T = Math.max(MM_Y + .5, MM_Y + vy0 * sy);
     const R = Math.min(MM_X + MM_W - .5, MM_X + vx1 * sx), B = Math.min(MM_Y + MM_H - .5, MM_Y + vy1 * sy);

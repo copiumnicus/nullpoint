@@ -1,5 +1,5 @@
 import { ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, roamPoint, rng } from '../shared/aliens.js';
-import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R } from '../shared/sim.js';
+import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { HULLS, resolve } from '../shared/ships.js';
@@ -50,6 +50,21 @@ check('an unprovoked alien will not start on someone docked', !r.everTargeted &&
 const atGate = newShip(pg.x + 60, pg.y, 'vanguard', []);
 r = fight(foe(pg.x + 700, pg.y), atGate, 12);
 check('nor on someone sitting in a portal', !r.everTargeted && ehp(atGate) === full(atGate));
+
+console.log('\nengagement range');
+check('an alien decides to fight from inside your sight, never outside it',
+  D.aggro < SIGHT_R, `aggro ${D.aggro} vs guaranteed sight ${SIGHT_R}`);
+check('the margin is worth something at the alien\'s own speed',
+  (SIGHT_R - D.aggro) / D.attrs.speed > 0.4,
+  `${SIGHT_R - D.aggro}px = ${((SIGHT_R - D.aggro) / D.attrs.speed).toFixed(2)}s to react before it commits`);
+check('every window sees at least that far', (() => {
+  return [[2560,1440],[1920,1080],[1600,900],[1440,900],[1280,800],[1100,700],[1024,640]].every(([W, H]) => {
+    const z = Math.min(1, Math.min(W, H) / (2 * SIGHT_R));   // mirrors the client's resize()
+    return Math.min(W, H) / 2 / z >= SIGHT_R - 0.01;
+  });
+})(), 'the client zooms out rather than letting a short window see less');
+check('it gives up sooner than it used to, since it engages closer',
+  D.leash > D.aggro * 2 && D.leash < 2400, `leash ${D.leash}`);
 
 console.log('\naggression');
 const open = newShip(map.base.x + 4000, map.base.y, 'vanguard', []);

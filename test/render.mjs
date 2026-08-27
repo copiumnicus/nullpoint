@@ -44,6 +44,7 @@ const CTX = {
   rect(...a) { num('rect', ...a); }  , roundRect(...a) { num('roundRect', ...a); },
   moveTo(...a) { num('moveTo', ...a); }, lineTo(...a) { num('lineTo', ...a); },
   translate(...a) { num('translate', ...a); }, rotate(a) { num('rotate', a); },
+  scale(...a) { num('scale', ...a); if (a.some(v => v === 0)) bad.push('scale by zero'); },
   setTransform(...a) { num('setTransform', ...a); },
   beginPath() {}, closePath() {}, stroke() {}, fill() {}, save() {}, restore() {}, clip() {},
   setLineDash(d) { this._dash = d; },

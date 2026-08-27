@@ -20,8 +20,11 @@ export const ALIENS = {
     attrs: { hull: 1400, shield: 900, shieldRegen: 45, shieldDelay: 4,
              speed: 260, accel: 900, signature: 4,
              damage: 45, fireRate: 1.1, weaponRange: 520 },
-    aggro: 1500,      // picks a fight inside this
-    leash: 2800,      // beyond this it starts losing interest
+    // Deliberately just inside SIGHT_R, so it is on your screen before it decides
+    // to engage and you have room to turn away. Leash is short to match: a fight
+    // you can see coming is a fight you should be able to decline.
+    aggro: 420,       // picks a fight inside this
+    leash: 1600,      // beyond this it starts losing interest
     patience: 3.0,    // s outside leash before it gives up and forgets you
     respawn: 14,      // s
     bounty: 140,      // credits your company pays for the kill
