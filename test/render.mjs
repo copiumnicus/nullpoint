@@ -75,7 +75,7 @@ globalThis.WebSocket = class { constructor() { this.readyState = 1; socks.push(t
 
 // A recording AudioContext. setTargetAtTime is used only by the thruster and
 // oscillators only by the guns, so counting them tells us exactly what fired.
-const audio = { shots: 0, thrust: [], now: 0 };
+const audio = { osc: 0, thrust: [], now: 0 };
 const param = kind => ({
   value: 0,
   setValueAtTime() {}, exponentialRampToValueAtTime() {},
@@ -91,7 +91,10 @@ globalThis.AudioContext = class {
   createBiquadFilter() { return anode(); }
   createBufferSource() { return anode(); }
   createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
-  createOscillator() { audio.shots++; return anode(); }
+  createOscillator() { audio.osc++; return anode(); }
+  createConvolver() { return anode(); }
+  createDelay() { return { delayTime: param('delay'), connect() {} }; }
+  createWaveShaper() { return { curve: null, connect() {} }; }
 };
 
 const errs = [];
@@ -226,17 +229,18 @@ for (const id of Object.keys(MAPS)) {
   evt('keydown', { key: 'q' });                       // any key opens the audio context
   const tick = shot => { feed({ t: 's', ships: [ship(shot)] }); frame(t += 33); frames++; };
   tick(0);
-  const base = audio.shots;
+  const base = audio.osc;
   tick(100);                                          // muzzle flash rises: one shot
   tick(70);                                           // still lit: must not retrigger
   tick(30);
   tick(0);
-  const once = audio.shots - base;
+  const once = audio.osc - base;
   tick(100);                                          // fires again
-  const twice = audio.shots - base;
-  if (once !== 1) errs.push(`a single shot made ${once} sounds`);
-  else if (twice !== 2) errs.push(`the next shot made ${twice - 1} sounds`);
-  else console.log('audio: one shot, one sound; the decaying flash does not retrigger');
+  const twice = audio.osc - base;
+  // a shot is a detuned pair, so count relatively rather than assuming one node
+  if (once < 2) errs.push(`a single shot made ${once} oscillators — it should be a detuned pair`);
+  else if (twice !== once * 2) errs.push(`the second shot produced ${twice - once}, not ${once}`);
+  else console.log(`audio: one shot = ${once} detuned voices; the decaying flash does not retrigger`);
 
   audio.thrust.length = 0;                            // now the thruster
   for (let i = 0; i < 14; i++) { feed({ t: 's', ships: [ship(0, 6000 + i * 260)] }); frame(t += 33); frames++; }
@@ -249,12 +253,47 @@ for (const id of Object.keys(MAPS)) {
   else console.log(`audio: thrust ${moving.toFixed(2)} under way, ${stopped.toFixed(2)} at rest`);
 
   evt('keydown', { key: 'v' });                       // mute
-  audio.thrust.length = 0; audio.shots = 0;
+  audio.thrust.length = 0; audio.osc = 0;
   for (let i = 0; i < 8; i++) { feed({ t: 's', ships: [ship(0, 9000 + i * 300)] }); frame(t += 33); frames++; }
   feed({ t: 's', ships: [ship(100, 9000)] });
-  if (audio.thrust.some(v => v > 0) || audio.shots > 0) errs.push('muting did not silence everything');
+  if (audio.thrust.some(v => v > 0) || audio.osc > 0) errs.push('muting did not silence everything');
   else console.log('audio: V mutes both the thruster and the guns');
   evt('keydown', { key: 'v' });
+
+  // a kill should be heard once, and only when it is new.
+  // Bring the ship back alongside first — the previous block left it 3km away,
+  // where the distance falloff correctly silences everything.
+  feed({ t: 's', ships: [ship(0, 6000)] }); frame(t += 33); frames++;
+  audio.osc = 0;
+  const boom = p => { feed({ t: 's', ships: [ship(0)],
+    blasts: [packBlast({ x: 6100, y: 4100, r: 15, t: 0.8 * (1 - p), ttl: 0.8, foe: true })] });
+    frame(t += 33); frames++; };
+  boom(0.05); const first = audio.osc;              // sub oscillator = one explosion
+  const farKey = audio.osc;
+  boom(0.25); boom(0.55); boom(0.9);
+  if (first !== 1) errs.push(`a kill made ${first} explosions`);
+  else if (audio.osc !== 1) errs.push(`the same kill was heard ${audio.osc} times as it faded`);
+  else console.log('audio: a kill explodes once, not on every frame of its flash');
+
+  audio.osc = 0;                                    // and a kill across the map is not heard at all
+  feed({ t: 's', ships: [ship(0, 200)] }); frame(t += 33); frames++;
+  feed({ t: 's', ships: [ship(0, 200)],
+         blasts: [packBlast({ x: 11000, y: 7000, r: 15, t: 0.78, ttl: 0.8, foe: true })] });
+  frame(t += 33); frames++;
+  if (audio.osc) errs.push('a kill 12km away was still audible');
+  else console.log('audio: a kill across the sector is silent');
+
+  // the wreck overlay and its one control
+  feed({ t: 'dead', lost: { iron: 4, iridium: 1 }, where: 'm1' });
+  frame(t += 33); frames++;
+  sent.length = 0;
+  evt('pointerdown', { clientX: 200, clientY: 200 });          // anything else must be inert
+  if (sent.length) errs.push(`a wreck accepted ${sent.map(m => m.t)} instead of only respawn`);
+  evt('pointerdown', { clientX: innerWidth / 2, clientY: innerHeight * 0.6 + 26 });
+  if (!sent.some(m => m.t === 'respawn')) errs.push('the RESPAWN button sent nothing');
+  else console.log('wreck: only control is RESPAWN, and it fires');
+  feed({ t: 'map', map: 'm1', respawned: true });
+  frame(t += 33); frames++;
 }
 
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);

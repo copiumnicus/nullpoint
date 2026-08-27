@@ -90,7 +90,7 @@ wss.on('connection', ws => {
                         return { x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d }; };
   const ship = newShip(spawn().x, spawn().y, hull, []);
   players.set(id, { ws, mapId: home, co, ship, contacts: new Map(), targetId: null,
-                    hold: {}, vault: {}, credits: 0, scoop: null, want: null });
+                    hold: {}, vault: {}, credits: 0, scoop: null, want: null, dead: false });
   ws.send(JSON.stringify({ t: 'welcome', id, map: home, co, hull, fit: [] }));
   console.log(`+ player ${id} [${COMPANIES[co].tag}] ${HULLS[hull].name} at ${MAPS[home].name} (${players.size} online)`);
 
@@ -107,6 +107,19 @@ wss.on('connection', ws => {
       refit(ship, hull, sanitiseFit(hull, m.fit));
       return ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit }));
     }
+
+    if (m.t === 'respawn') {                      // you choose when to go back out
+      if (!P.dead) return;
+      const home = P.co + '1', hb = MAPS[home].base;
+      const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
+      P.mapId = home; P.dead = false; P.contacts.clear();
+      refit(ship, ship.hull, ship.fit);           // rebuilt and repaired at your own dock
+      Object.assign(ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
+                            vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
+                            charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0 });
+      return ws.send(JSON.stringify({ t: 'map', map: home, respawned: true }));
+    }
+    if (P.dead) return;                           // nothing else reaches a wreck
 
     if (m.t === 'scoop') {                        // an order: go get that, however far it is
       P.want = (pods.get(P.mapId) ?? []).some(c => c.id === +m.id) ? +m.id : null;
@@ -170,20 +183,17 @@ setInterval(() => {
 
 
 
-    if (p.ship.hp <= 0) {                         // destroyed: back to your home, repaired
+    if (p.dead) continue;                         // a wreck does not fly, shoot or scoop
+
+    if (p.ship.hp <= 0) {                         // destroyed: the hold goes with it
       boom(p.mapId, p.ship, false, id);
+      const lost = { ...p.hold };
       for (const [m, n] of Object.entries(p.hold)) drop(p.mapId, p.ship.x, p.ship.y, m, n);
-      p.hold = {};                                // a full hold is a real thing to lose
-      const home = p.co + '1', hb = MAPS[home].base;
-      const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
-      p.mapId = home;
-      p.contacts.clear();                         // a new sector is a fresh plot
-      p.targetId = null; p.want = null; p.scoop = null;
-      refit(p.ship, p.ship.hull, p.ship.fit);
-      Object.assign(p.ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
-                              vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
-                              charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0 });
-      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: home, died: true }));
+      p.hold = {};
+      p.dead = true;
+      p.targetId = null; p.want = null; p.scoop = null; p.contacts.clear();
+      Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, charge: 0, chargeTo: null });
+      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'dead', lost, where: p.mapId }));
       continue;
     }
 
@@ -202,7 +212,8 @@ setInterval(() => {
   for (const [mapId, list] of aliens) {
     const map = MAPS[mapId];
     const here = [];
-    for (const [id, p] of players) if (p.mapId === mapId) here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
+    for (const [id, p] of players)
+      if (p.mapId === mapId && !p.dead) here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
     for (const a of list) {
       if (a.dead > 0) { a.dead -= dt; if (a.dead <= 0) respawnAlien(a, map); continue; }
       const tgt = stepAlienAI(a, map, here, dt);
@@ -279,6 +290,7 @@ setInterval(() => {
       sh: Math.round(100 * p.ship.shield / Math.max(1, p.ship.stats.shield)),
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
       tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH) });
+    if (p.dead) continue;
     if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
     byMap.get(p.mapId).push({ id, co: p.co, ship: p.ship });
   }

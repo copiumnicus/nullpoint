@@ -13,7 +13,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout } from '/shared/hangar.js';
-import { audioReady, setThrust, laser, toggleAudio, audioOn } from '/audio.js';
+import { audioReady, setThrust, laser, explosion, toggleAudio, audioOn } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
@@ -56,6 +56,9 @@ let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = n
 let invOpen = false, notice = null;
 const prevShot = new Map();       // for spotting the frame a gun goes off
 let thrust = 0, lastFrameAt = 0, prevSelf = null;
+let dead = null;                  // { lost, at } while you are a wreck
+const heardBooms = new Set();
+const respawnBtn = () => ({ x: VIEW_W / 2 - 130, y: VIEW_H * 0.6, w: 260, h: 52 });
 const say = (text, colour) => notice = { text, colour, at: performance.now() };
 const cam = { x: 0, y: 0 };
 
@@ -80,10 +83,25 @@ ws.onmessage = e => {
     say(`${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short} for a ${m.what}`, '#ffd479');
     return;
   }
-  if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
+  if (m.t === 'dead')    { dead = { lost: m.lost ?? {}, at: performance.now() }; return; }
+  if (m.t === 'map') {
+    mapId = m.map; ships.clear(); prevShot.clear(); marker = null; prevSelf = null;
+    if (m.respawned) dead = null;
+    return;
+  }
   if (m.t !== 's') return;
   bolts = (m.bolts ?? []).map(unpackBolt);
   blasts = (m.blasts ?? []).map(unpackBlast);
+  {                                               // a blast is new the first time we see it low
+    const self0 = ships.get(myId);
+    for (const b of blasts) {
+      const key = `${b.x},${b.y},${b.r}`;
+      if (b.p > 0.4 || heardBooms.has(key)) continue;
+      heardBooms.add(key);
+      explosion(self0 ? Math.hypot(b.x - self0.x, b.y - self0.y) : 0, !!b.foe);
+    }
+    if (heardBooms.size > 80) heardBooms.clear();
+  }
   pods = (m.pods ?? []).map(unpackPod);
   numbers = (m.hits ?? []).map(unpackHit);
   hold = m.hold ?? {}; cargoCap = m.cap ?? cargoCap;
@@ -175,12 +193,18 @@ addEventListener('keydown', e => {
     if (n !== null) send({ t: 'target', id: n });
   }
   if (k === 'k') send({ t: 'dev-damage' });        // self-damage, for watching the shield timer
+  if (dead && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); send({ t: 'respawn' }); return; }
   if (e.key === 'Escape') { sysOpen = false; bayOpen = false; invOpen = false; }
 });
 
 c.addEventListener('pointerdown', e => {
   audioReady();
   const v = toView(e);
+  if (dead) {                                     // a wreck has exactly one control
+    const b = respawnBtn();
+    if (v.x > b.x && v.x < b.x + b.w && v.y > b.y && v.y < b.y + b.h) send({ t: 'respawn' });
+    return;
+  }
   if (sysOpen) { sysOpen = false; return; }
   if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
   if (invOpen) { invClick(v); return; }
@@ -1060,5 +1084,54 @@ function drawFrame(now) {
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();
+  if (dead) drawWreck(now);
+}
+
+function drawWreck(now) {
+  const age = (now - dead.at) / 1000;
+  const fade = Math.min(1, age / 0.8);
+  const grd = g.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.15,
+                                     VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.85);
+  grd.addColorStop(0, `rgba(40,4,8,${0.55 * fade})`);
+  grd.addColorStop(1, `rgba(8,2,4,${0.94 * fade})`);
+  g.fillStyle = grd; g.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  g.globalAlpha = fade; g.textAlign = 'center';
+  g.fillStyle = '#ff3b47'; g.font = 'bold 34px ui-monospace, SFMono-Regular, monospace';
+  g.fillText('SHIP DESTROYED', VIEW_W / 2, VIEW_H * 0.34);
+
+  const lost = Object.entries(dead.lost);
+  g.font = '13px ui-monospace, monospace';
+  if (lost.length) {
+    g.fillStyle = '#8d99ab';
+    g.fillText('cargo lost with the hull — it is still out there', VIEW_W / 2, VIEW_H * 0.34 + 34);
+    let lx = VIEW_W / 2 - lost.reduce((w2, [m, n]) =>
+      w2 + g.measureText(`${MATERIALS[m]?.sym ?? m} ×${n}`).width + 26, 0) / 2;
+    for (const [m, n] of lost) {
+      const txt = `${MATERIALS[m]?.sym ?? m} ×${n}`;
+      g.fillStyle = MATERIALS[m]?.colour ?? '#9aa3ad'; g.textAlign = 'left';
+      g.fillText(txt, lx, VIEW_H * 0.34 + 58);
+      lx += g.measureText(txt).width + 26;
+    }
+    g.textAlign = 'center';
+  } else {
+    g.fillStyle = '#66748c';
+    g.fillText('an empty hold — nothing to lose', VIEW_W / 2, VIEW_H * 0.34 + 34);
+  }
+  g.fillStyle = '#ffd479'; g.font = '12px ui-monospace, monospace';
+  g.fillText(`${credits} ${CURRENCY.short} intact — the company keeps your account, not your ship`,
+             VIEW_W / 2, VIEW_H * 0.34 + 86);
+
+  const b = respawnBtn();
+  const pulse = 0.75 + 0.25 * Math.sin(now / 380);
+  g.globalAlpha = fade * pulse;
+  g.fillStyle = 'rgba(125,224,138,0.16)'; g.fillRect(b.x, b.y, b.w, b.h);
+  g.strokeStyle = '#7de08a'; g.lineWidth = 1.6; g.strokeRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1);
+  g.fillStyle = '#7de08a'; g.font = '16px ui-monospace, monospace';
+  g.fillText('RESPAWN', b.x + b.w / 2, b.y + 33);
+  g.globalAlpha = fade;
+  g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
+  g.fillText(`click, or press Enter — you rebuild at ${COMPANIES[myCo].tag}-1`, VIEW_W / 2, b.y + b.h + 22);
+  g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
 </script>
