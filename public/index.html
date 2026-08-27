@@ -13,6 +13,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout } from '/shared/hangar.js';
+import { audioReady, setThrust, laser, toggleAudio, audioOn } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
@@ -53,6 +54,8 @@ const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
 let bolts = [], blasts = [], pods = [], numbers = [];   // rebuilt every snapshot
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
 let invOpen = false, notice = null;
+const prevShot = new Map();       // for spotting the frame a gun goes off
+let thrust = 0, lastFrameAt = 0, prevSelf = null;
 const say = (text, colour) => notice = { text, colour, at: performance.now() };
 const cam = { x: 0, y: 0 };
 
@@ -94,7 +97,14 @@ ws.onmessage = e => {
     Object.assign(s, n);
     ships.set(n.id, s);
   }
-  for (const id of ships.keys()) if (!seen.has(id)) ships.delete(id);
+  const self = ships.get(myId);
+  for (const [id, sh] of ships) {
+    const was = prevShot.get(id) ?? 0;
+    if (sh.shot > 60 && was <= 60 && sh.vis !== STALE)
+      laser(id === myId, self ? Math.hypot(sh.x - self.x, sh.y - self.y) : 1e9);
+    prevShot.set(id, sh.shot);
+  }
+  for (const id of ships.keys()) if (!seen.has(id)) { ships.delete(id); prevShot.delete(id); }
 };
 
 // --- input -------------------------------------------------------------------
@@ -152,7 +162,9 @@ function nearestHostile() {
   return best;
 }
 addEventListener('keydown', e => {
+  audioReady();                                   // browsers want a gesture first
   const k = e.key.toLowerCase();
+  if (k === 'v') say(toggleAudio() ? 'Sound on' : 'Sound off', '#8ab4e6');
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
   if (k === 'h') { bayOpen = !bayOpen; sysOpen = false; invOpen = false; draftHull = myHull; draftFit = [...myFit]; }
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
@@ -167,6 +179,7 @@ addEventListener('keydown', e => {
 });
 
 c.addEventListener('pointerdown', e => {
+  audioReady();
   const v = toView(e);
   if (sysOpen) { sysOpen = false; return; }
   if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
@@ -568,6 +581,19 @@ requestAnimationFrame(function frame(now) {
 function drawFrame(now) {
   const map = MAPS[mapId], me = ships.get(myId);
   const st = resolve(myHull, myFit);          // your resolved stats, wanted by minimap and hud alike
+
+  // Thruster tracks how fast you are actually going, measured off the smoothed
+  // render position — the server never sends velocity and does not need to.
+  const frameDt = Math.min(0.1, (now - lastFrameAt) / 1000) || 0.016;
+  lastFrameAt = now;
+  if (me) {
+    if (prevSelf) {
+      const v = Math.hypot(me.rx - prevSelf.x, me.ry - prevSelf.y) / frameDt;
+      thrust += (Math.min(1, v / Math.max(1, st.speed)) - thrust) * 0.16;
+    }
+    prevSelf = { x: me.rx, y: me.ry };
+  } else thrust *= 0.9;
+  setThrust(thrust);
 
   for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
   if (me) {
@@ -993,7 +1019,7 @@ function drawFrame(now) {
                `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
-  g.fillText('click a hostile or TAB to engage · click cargo to haul it in · I inventory · H hangar · M star system' +
+  g.fillText(`click a hostile or TAB to engage · click cargo to haul it in · I inventory · H hangar · M star system · V sound ${audioOn() ? 'on' : 'off'}` +
              (docked() ? '' : ' (dock first)') + ' · K take test damage', 16, VIEW_H - 16);
 
   if (depth > 0 && !sysOpen && !bayOpen) {

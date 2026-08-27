@@ -25,6 +25,7 @@ const FILES = {
   '/shared/aliens.js':['shared/aliens.js',  'text/javascript'],
   '/shared/combat.js':['shared/combat.js',  'text/javascript'],
   '/shared/cargo.js': ['shared/cargo.js',   'text/javascript'],
+  '/audio.js':        ['public/audio.js',   'text/javascript'],
 };
 const server = http.createServer((req, res) => {
   const hit = FILES[req.url.split('?')[0]];

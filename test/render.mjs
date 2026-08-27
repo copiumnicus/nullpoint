@@ -11,7 +11,8 @@ import { ALIENS } from '../shared/aliens.js';
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
   .match(/<script type="module">([\s\S]*)<\/script>/)[1]
-  .replaceAll("'/shared/", "'" + new URL('../shared/', import.meta.url).pathname);
+  .replaceAll("'/shared/", "'" + new URL('../shared/', import.meta.url).pathname)
+  .replaceAll("'/audio.js", "'" + new URL('../public/audio.js', import.meta.url).pathname);
 writeFileSync(new URL('./.client.mjs', import.meta.url), src);
 
 const bad = [];
@@ -72,6 +73,27 @@ const socks = [];
 const sent = [];
 globalThis.WebSocket = class { constructor() { this.readyState = 1; socks.push(this); } send(d) { sent.push(JSON.parse(d)); } close() {} };
 
+// A recording AudioContext. setTargetAtTime is used only by the thruster and
+// oscillators only by the guns, so counting them tells us exactly what fired.
+const audio = { shots: 0, thrust: [], now: 0 };
+const param = kind => ({
+  value: 0,
+  setValueAtTime() {}, exponentialRampToValueAtTime() {},
+  setTargetAtTime(v) { if (kind === 'gain') audio.thrust.push(v); },
+});
+const anode = () => ({ gain: param('gain'), frequency: param('freq'), Q: param('q'),
+                       type: '', connect() {}, start() {}, stop() {} });
+globalThis.AudioContext = class {
+  constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; }
+  get currentTime() { return audio.now; }      // a real context's clock runs; so must this one
+  resume() {}
+  createGain() { return anode(); }
+  createBiquadFilter() { return anode(); }
+  createBufferSource() { return anode(); }
+  createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
+  createOscillator() { audio.shots++; return anode(); }
+};
+
 const errs = [];
 console.error = (...a) => errs.push(a.join(' '));
 
@@ -79,7 +101,7 @@ await import('./.client.mjs');
 
 const ws = socks[0];
 const feed = o => ws.onmessage({ data: JSON.stringify(o) });
-const frame = t => { const cb = raf; raf = null; cb(t); };
+const frame = t => { audio.now = t / 1000; const cb = raf; raf = null; cb(t); };
 // Input handlers are code too. Not driving them is how two helper functions went
 // missing entirely while every frame still rendered: hover starts null, so the
 // render path short-circuited before ever calling them.
@@ -143,7 +165,7 @@ for (const id of Object.keys(MAPS)) {
     frame(t += 16); frames++;
   }
   evt('pointerleave');
-  for (const k of ['Tab', 'x', 'k', 'Escape']) evt('keydown', { key: k });
+  for (const k of ['Tab', 'x', 'k', 'v', 'v', 'Escape']) evt('keydown', { key: k });
   frame(t += 16); frames++;
 
   // outside charted space: shear vignette, flashing warning, clamped minimap plot
@@ -195,6 +217,44 @@ for (const id of Object.keys(MAPS)) {
   if (sent.some(m => m.t === 'refit')) errs.push('APPLY re-sent a refit with nothing changed');
   else console.log('  an unchanged draft reports "already fitted" instead of re-sending');
   evt('keydown', { key: 'h' });
+}
+
+// --- audio: does a gun going off actually make one sound, and only one? ---
+{
+  const ship = (shot, x = 6000) => packShip({ id: 1, x, y: 4000, heading: 0, charge: 0, co: 'm',
+    hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot, vis: 2 });
+  evt('keydown', { key: 'q' });                       // any key opens the audio context
+  const tick = shot => { feed({ t: 's', ships: [ship(shot)] }); frame(t += 33); frames++; };
+  tick(0);
+  const base = audio.shots;
+  tick(100);                                          // muzzle flash rises: one shot
+  tick(70);                                           // still lit: must not retrigger
+  tick(30);
+  tick(0);
+  const once = audio.shots - base;
+  tick(100);                                          // fires again
+  const twice = audio.shots - base;
+  if (once !== 1) errs.push(`a single shot made ${once} sounds`);
+  else if (twice !== 2) errs.push(`the next shot made ${twice - 1} sounds`);
+  else console.log('audio: one shot, one sound; the decaying flash does not retrigger');
+
+  audio.thrust.length = 0;                            // now the thruster
+  for (let i = 0; i < 14; i++) { feed({ t: 's', ships: [ship(0, 6000 + i * 260)] }); frame(t += 33); frames++; }
+  const moving = Math.max(...audio.thrust);
+  audio.thrust.length = 0;
+  for (let i = 0; i < 20; i++) { feed({ t: 's', ships: [ship(0, 9000)] }); frame(t += 33); frames++; }
+  const stopped = Math.min(...audio.thrust);
+  if (!(moving > 0.05)) errs.push(`thruster stayed silent while moving (peak ${moving})`);
+  else if (!(stopped < moving / 4)) errs.push(`thruster did not fall off when stopped (${stopped} vs ${moving})`);
+  else console.log(`audio: thrust ${moving.toFixed(2)} under way, ${stopped.toFixed(2)} at rest`);
+
+  evt('keydown', { key: 'v' });                       // mute
+  audio.thrust.length = 0; audio.shots = 0;
+  for (let i = 0; i < 8; i++) { feed({ t: 's', ships: [ship(0, 9000 + i * 300)] }); frame(t += 33); frames++; }
+  feed({ t: 's', ships: [ship(100, 9000)] });
+  if (audio.thrust.some(v => v > 0) || audio.shots > 0) errs.push('muting did not silence everything');
+  else console.log('audio: V mutes both the thruster and the guns');
+  evt('keydown', { key: 'v' });
 }
 
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
