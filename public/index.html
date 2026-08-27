@@ -416,20 +416,8 @@ function drawFrame(now) {
   for (let y = Math.floor(cam.y / 500) * 500; y < cam.y + VIEW_H; y += 500) { g.moveTo(cam.x, y); g.lineTo(cam.x + VIEW_W, y); }
   g.stroke();
 
-  const near = depth > 0 ? 1 : Math.max(0, 1 - Math.min(
-    Math.min(me?.x ?? 9e9, MAP_W - (me?.x ?? -9e9)), Math.min(me?.y ?? 9e9, MAP_H - (me?.y ?? -9e9))) / 1400);
-  g.strokeStyle = map.tint + '55'; g.lineWidth = 4; g.strokeRect(0, 0, MAP_W, MAP_H);
-  g.strokeStyle = `rgba(255,92,107,${0.25 + near * 0.6})`; g.lineWidth = 3;
-  g.setLineDash([44, 26]); g.lineDashOffset = -now / 90;
-  g.strokeRect(0, 0, MAP_W, MAP_H);
-  g.setLineDash([]); g.lineDashOffset = 0;
-  g.fillStyle = `rgba(255,92,107,${0.18 + near * 0.35})`;      // hazard chevrons, outward side
-  for (let x = 0; x < MAP_W; x += 420) {
-    g.fillRect(x + 40, -16, 150, 5); g.fillRect(x + 40, MAP_H + 11, 150, 5);
-  }
-  for (let y = 0; y < MAP_H; y += 420) {
-    g.fillRect(-16, y + 40, 5, 150); g.fillRect(MAP_W + 11, y + 40, 5, 150);
-  }
+  // No boundary drawn in the world. Sliding off the minimap is the tell, and the
+  // shear vignette takes over from there.
 
   if (map.base) {
     const b = map.base, col = COMPANIES[map.owner].color, mine = map.owner === myCo;
@@ -570,9 +558,7 @@ function drawFrame(now) {
 
   if (me) {                                        // the sweep itself, expanding out to radar range
     const cx = MM_X + clamp(me.rx, 0, MAP_W) * sx, cy = MM_Y + clamp(me.ry, 0, MAP_H) * sy;
-    const reach = st.radar * sx;
-    g.strokeStyle = 'rgba(127,212,255,0.13)'; g.lineWidth = 1;
-    g.beginPath(); g.arc(cx, cy, reach, 0, 7); g.stroke();
+    const reach = st.radar * sx;                 // the sweep itself, no ring left behind
     for (const off of [0, 0.5]) {
       const ph = ((now / 2400) + off) % 1;
       g.globalAlpha = (1 - ph) * (1 - ph) * 0.5;
