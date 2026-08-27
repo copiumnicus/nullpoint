@@ -109,12 +109,14 @@ check(`flew ${path.join(' → ')}`, cur === 'x0' && hops === path.length - 1,
 console.log('\nchart layout');
 const xs = ids.map(i => MAPS[i].sx), ys = ids.map(i => MAPS[i].sy);
 const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-let overlaps = 0, offscreen = 0, diagonal = 0;
+let overlaps = 0, offscreen = 0, diagonal = 0, stranded = 0, worstGap = 0;
 for (const [VW, VH] of [[1920,1080],[1600,900],[1440,900],[1280,800]]) {
   const S = Math.max(46, Math.min((VW - 130) / (x1 - x0 + 1.0), (VH - 168) / (y1 - y0 + 0.95)));
   const NW = Math.max(50, Math.min(112, S * 0.95)), NH = NW * (MAP_H / MAP_W);
   const ox = VW / 2 - ((x0 + x1) / 2) * S, oy = VH / 2 + 8 - ((y0 + y1) / 2) * S;
   const rectOf = id => ({ x: ox + MAPS[id].sx * S - NW / 2, y: oy + MAPS[id].sy * S - NH / 2, w: NW, h: NH });
+  const centerOf = id => ({ x: ox + MAPS[id].sx * S, y: oy + MAPS[id].sy * S });
+
   const rs = ids.map(id => { const r = rectOf(id); return { ...r, h: r.h + 30 }; });   // + label band
   for (let i = 0; i < rs.length; i++) {
     const a = rs[i];
@@ -122,31 +124,57 @@ for (const [VW, VH] of [[1920,1080],[1600,900],[1440,900],[1280,800]]) {
     for (let j = i + 1; j < rs.length; j++) { const b = rs[j];
       if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) overlaps++; }
   }
-  const centerOf = id => ({ x: ox + MAPS[id].sx * S, y: oy + MAPS[id].sy * S });
-  const port = (id, p, tc) => { const r = rectOf(id), vx = tc.x - (r.x + r.w / 2), vy = tc.y - (r.y + r.h / 2);
-    return Math.abs(vx) >= Math.abs(vy)
-      ? { x: vx > 0 ? r.x + r.w : r.x, y: r.y + (p.y / MAP_H) * r.h, dir: vx > 0 ? 'e' : 'w' }
-      : { x: r.x + (p.x / MAP_W) * r.w, y: vy > 0 ? r.y + r.h : r.y, dir: vy > 0 ? 's' : 'n' }; };
+
+  // mirrors public/index.html portOf()
+  const portOf = (id, p, tc) => {
+    const r = rectOf(id);
+    const px = r.x + (p.x / MAP_W) * r.w, py = r.y + (p.y / MAP_H) * r.h;
+    const vx = tc.x - (r.x + r.w / 2), vy = tc.y - (r.y + r.h / 2);
+    const cand = [];
+    if (vx > 0) cand.push(['e', r.x + r.w - px]);
+    if (vx < 0) cand.push(['w', px - r.x]);
+    if (vy > 0) cand.push(['s', r.y + r.h - py]);
+    if (vy < 0) cand.push(['n', py - r.y]);
+    const dir = cand.length ? cand.sort((a, b) => a[1] - b[1])[0][0]
+                            : Math.abs(vx) >= Math.abs(vy) ? (vx > 0 ? 'e' : 'w') : (vy > 0 ? 's' : 'n');
+    const edge = dir === 'e' ? { x: r.x + r.w, y: py } : dir === 'w' ? { x: r.x, y: py }
+               : dir === 's' ? { x: px, y: r.y + r.h } : { x: px, y: r.y };
+    return { anchor: { x: px, y: py }, edge, dir };
+  };
+
   const OUT = Math.max(16, S * 0.20), horiz = d => d === 'e' || d === 'w', seen = new Set();
   for (const id of ids) for (const p of MAPS[id].portals) {
     const k = [id, p.to].sort().join('|'); if (seen.has(k)) continue; seen.add(k);
     const back = MAPS[p.to].portals.find(q => q.to === id);
-    const a = port(id, p, centerOf(p.to)), b = port(p.to, back, centerOf(id));
-    const ax = a.x + (a.dir === 'e' ? OUT : a.dir === 'w' ? -OUT : 0), ay = a.y + (a.dir === 's' ? OUT : a.dir === 'n' ? -OUT : 0);
-    const bx = b.x + (b.dir === 'e' ? OUT : b.dir === 'w' ? -OUT : 0), by = b.y + (b.dir === 's' ? OUT : b.dir === 'n' ? -OUT : 0);
-    const pts = [[a.x, a.y], [ax, ay]];
+    const a = portOf(id, p, centerOf(p.to)), b = portOf(p.to, back, centerOf(id));
+    const ax = a.edge.x + (a.dir === 'e' ? OUT : a.dir === 'w' ? -OUT : 0);
+    const ay = a.edge.y + (a.dir === 's' ? OUT : a.dir === 'n' ? -OUT : 0);
+    const bx = b.edge.x + (b.dir === 'e' ? OUT : b.dir === 'w' ? -OUT : 0);
+    const by = b.edge.y + (b.dir === 's' ? OUT : b.dir === 'n' ? -OUT : 0);
+    const pts = [[a.anchor.x, a.anchor.y], [a.edge.x, a.edge.y], [ax, ay]];
     if (horiz(a.dir) && horiz(b.dir))        { const mx = (ax + bx) / 2; pts.push([mx, ay], [mx, by]); }
     else if (!horiz(a.dir) && !horiz(b.dir)) { const my = (ay + by) / 2; pts.push([ax, my], [bx, my]); }
     else if (horiz(a.dir))                   { pts.push([bx, ay]); }
     else                                     { pts.push([ax, by]); }
-    pts.push([bx, by], [b.x, b.y]);
+    pts.push([bx, by], [b.edge.x, b.edge.y], [b.anchor.x, b.anchor.y]);
+
     for (let i = 1; i < pts.length; i++)
       if (Math.abs(pts[i][0] - pts[i-1][0]) > 0.01 && Math.abs(pts[i][1] - pts[i-1][1]) > 0.01) diagonal++;
+
+    // the connector must terminate exactly on the marker the node pass draws
+    for (const [end, mid, m] of [[pts[0], p, id], [pts[pts.length - 1], back, p.to]]) {
+      const r = rectOf(m);
+      const dot = { x: r.x + (mid.x / MAP_W) * r.w, y: r.y + (mid.y / MAP_H) * r.h };
+      const gap = Math.hypot(end[0] - dot.x, end[1] - dot.y);
+      worstGap = Math.max(worstGap, gap);
+      if (gap > 0.01) stranded++;
+    }
   }
 }
 check('no chart nodes overlap at any window size', overlaps === 0);
 check('every node stays on screen', offscreen === 0);
 check('every link segment is axis-aligned', diagonal === 0);
+check('every connector ends on its portal marker', stranded === 0, `worst gap ${worstGap.toFixed(3)}px`);
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${ids.length} maps, ${links.size} links`}\n`);
 process.exit(fails.length ? 1 : 0);

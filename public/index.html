@@ -155,15 +155,26 @@ function drawSystem(me) {
   const rectOf = id => ({ x: ox + MAPS[id].sx * S - NW / 2, y: oy + MAPS[id].sy * S - NH / 2, w: NW, h: NH });
   const centerOf = id => ({ x: ox + MAPS[id].sx * S, y: oy + MAPS[id].sy * S });
 
-  // The port sits where the portal actually is on that map, but on the edge facing
-  // the destination — so the chart shows both the topology and the geography.
-  const portToward = (id, p, tc) => {
-    const r = rectOf(id), cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-    const vx = tc.x - cx, vy = tc.y - cy;
-    return Math.abs(vx) >= Math.abs(vy)
-      ? { x: vx > 0 ? r.x + r.w : r.x, y: r.y + (p.y / MAP_H) * r.h, dir: vx > 0 ? 'e' : 'w' }
-      : { x: r.x + (p.x / MAP_W) * r.w, y: vy > 0 ? r.y + r.h : r.y, dir: vy > 0 ? 's' : 'n' };
+  // A connector starts on the portal marker itself, runs straight out to whichever
+  // edge both faces the destination and is nearest that portal, then steps across.
+  // Snapping the endpoint to an edge instead would strand centre and corner portals
+  // half a node away from the line that is supposed to leave them.
+  const portOf = (id, p, tc) => {
+    const r = rectOf(id);
+    const px = r.x + (p.x / MAP_W) * r.w, py = r.y + (p.y / MAP_H) * r.h;   // where the dot is drawn
+    const vx = tc.x - (r.x + r.w / 2), vy = tc.y - (r.y + r.h / 2);
+    const cand = [];
+    if (vx > 0) cand.push(['e', r.x + r.w - px]);
+    if (vx < 0) cand.push(['w', px - r.x]);
+    if (vy > 0) cand.push(['s', r.y + r.h - py]);
+    if (vy < 0) cand.push(['n', py - r.y]);
+    const dir = cand.length ? cand.sort((a, b) => a[1] - b[1])[0][0]
+                            : Math.abs(vx) >= Math.abs(vy) ? (vx > 0 ? 'e' : 'w') : (vy > 0 ? 's' : 'n');
+    const edge = dir === 'e' ? { x: r.x + r.w, y: py } : dir === 'w' ? { x: r.x, y: py }
+               : dir === 's' ? { x: px, y: r.y + r.h } : { x: px, y: r.y };
+    return { anchor: { x: px, y: py }, edge, dir };
   };
+  const linkOwner = (a, b) => MAPS[a].owner && MAPS[a].owner === MAPS[b].owner ? MAPS[a].owner : null;
 
   g.fillStyle = 'rgba(3,5,9,0.92)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
 
@@ -175,29 +186,28 @@ function drawSystem(me) {
     drawn.add(key);
     const back = MAPS[p.to].portals.find(q => q.to === id);
     if (!back) continue;
-    const a = portToward(id, p, centerOf(p.to)), b = portToward(p.to, back, centerOf(id));
-    const ax = a.x + (a.dir === 'e' ? OUT : a.dir === 'w' ? -OUT : 0);
-    const ay = a.y + (a.dir === 's' ? OUT : a.dir === 'n' ? -OUT : 0);
-    const bx = b.x + (b.dir === 'e' ? OUT : b.dir === 'w' ? -OUT : 0);
-    const by = b.y + (b.dir === 's' ? OUT : b.dir === 'n' ? -OUT : 0);
+    const a = portOf(id, p, centerOf(p.to)), b = portOf(p.to, back, centerOf(id));
+    const ax = a.edge.x + (a.dir === 'e' ? OUT : a.dir === 'w' ? -OUT : 0);
+    const ay = a.edge.y + (a.dir === 's' ? OUT : a.dir === 'n' ? -OUT : 0);
+    const bx = b.edge.x + (b.dir === 'e' ? OUT : b.dir === 'w' ? -OUT : 0);
+    const by = b.edge.y + (b.dir === 's' ? OUT : b.dir === 'n' ? -OUT : 0);
 
-    const pts = [[a.x, a.y], [ax, ay]];
+    const pts = [[a.edge.x, a.edge.y], [ax, ay]];
     if (horiz(a.dir) && horiz(b.dir))        { const mx = (ax + bx) / 2; pts.push([mx, ay], [mx, by]); }
     else if (!horiz(a.dir) && !horiz(b.dir)) { const my = (ay + by) / 2; pts.push([ax, my], [bx, my]); }
     else if (horiz(a.dir))                   { pts.push([bx, ay]); }
     else                                     { pts.push([ax, by]); }
-    pts.push([bx, by], [b.x, b.y]);
+    pts.push([bx, by], [b.edge.x, b.edge.y]);
 
     // internal supply lines wear the owner's colour; anything touching contested
     // space is drawn as a front line
-    const own = MAPS[id].owner && MAPS[id].owner === MAPS[p.to].owner ? MAPS[id].owner : null;
+    const own = linkOwner(id, p.to);
     g.strokeStyle = own ? COMPANIES[own].color + '66' : 'rgba(224,90,90,0.50)';
     g.lineWidth = own ? 1.8 : 2.4;
     g.lineJoin = 'round';
     g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
     for (const [x, y] of pts.slice(1)) g.lineTo(x, y);
     g.stroke();
-    for (const q of [a, b]) { g.fillStyle = own ? COMPANIES[own].color : '#e08a8a'; g.beginPath(); g.arc(q.x, q.y, 2.5, 0, 7); g.fill(); }
   }
 
   const small = NW < 104;
@@ -221,9 +231,14 @@ function drawSystem(me) {
     g.globalAlpha = 1;
     g.restore();
 
-    for (const p of m.portals) {
+    for (const p of m.portals) {                           // stub: portal marker -> its exit edge
+      const q = portOf(id, p, centerOf(p.to)), own = linkOwner(id, p.to);
+      g.globalAlpha = 0.6; g.lineWidth = 1.2;
+      g.strokeStyle = own ? COMPANIES[own].color : '#e08a8a';
+      g.beginPath(); g.moveTo(q.anchor.x, q.anchor.y); g.lineTo(q.edge.x, q.edge.y); g.stroke();
+      g.globalAlpha = 1;
       g.fillStyle = MAPS[p.to].tint;
-      g.fillRect(r.x + p.x * kx - 2, r.y + p.y * ky - 2, 4, 4);
+      g.fillRect(q.anchor.x - 2.5, q.anchor.y - 2.5, 5, 5);
     }
     if (m.home) {                                          // company base marker
       g.fillStyle = COMPANIES[m.owner].color;
