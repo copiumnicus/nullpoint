@@ -27,5 +27,13 @@ export const POD_FIELDS = ['id', 'x', 'y', 'mat', 'n'];
 export const packPod   = o   => [o.id, Math.round(o.x), Math.round(o.y), o.mat, o.n];
 export const unpackPod = arr => { const o = {}; for (let i = 0; i < POD_FIELDS.length; i++) o[POD_FIELDS[i]] = arr[i]; return o; };
 
+// A damage number, floating up from where it landed. `sh` marks a hit the shields
+// swallowed whole; `mine` is filled in per viewer, since the same hit reads
+// differently depending on which end of it you were on.
+export const HIT_FIELDS = ['x', 'y', 'n', 'sh', 'mine', 'p'];
+export const packHit   = (o, mine) => [Math.round(o.x), Math.round(o.y), Math.round(o.n),
+                                       o.sh ? 1 : 0, mine ? 1 : 0, +(1 - o.t / o.ttl).toFixed(2)];
+export const unpackHit = arr => { const o = {}; for (let i = 0; i < HIT_FIELDS.length; i++) o[HIT_FIELDS[i]] = arr[i]; return o; };
+
 export const packShip   = o   => SHIP_FIELDS.map(f => o[f]);
 export const unpackShip = arr => { const o = {}; for (let i = 0; i < SHIP_FIELDS.length; i++) o[SHIP_FIELDS[i]] = arr[i]; return o; };

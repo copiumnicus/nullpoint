@@ -6,8 +6,8 @@ import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { newAlien, respawnAlien, stepAlienAI, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
-import { packShip, packBolt, packBlast, packPod } from './shared/net.js';
-import { rollDrop, stow, unload, holdVol, beginScoop, stepScoop,
+import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
+import { rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop,
          POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
@@ -52,6 +52,10 @@ const drop = (mapId, x, y, mat, n) => {
   if (n > 0) pods.get(mapId).push({ id: podId++, x: x + (Math.random() - .5) * 70,
                                     y: y + (Math.random() - .5) * 70, mat, n, t: POD_LIFE });
 };
+
+const hits = new Map();      // mapId -> damage numbers still climbing
+for (const id of Object.keys(MAPS)) hits.set(id, []);
+const HIT_TIME = 0.95;
 
 const BLAST_TIME = 0.8;
 const boom = (mapId, e, foe, who) =>
@@ -113,6 +117,11 @@ wss.on('connection', ws => {
       if (!P.docked) return;
       const n = P.hold[m.mat] ?? 0;
       if (n > 0) unload(P.hold, P.vault, n * 99);
+      return;
+    }
+    if (m.t === 'load') {                         // hangar -> ship, as much as the hold will take
+      if (!P.docked) return;
+      load(P.vault, P.hold, m.mat, P.vault[m.mat] ?? 0, ship.stats.cargo);
       return;
     }
     if (m.t === 'target') {                       // aliens only for now; PvP needs its own rules
@@ -234,11 +243,17 @@ setInterval(() => {
   }
 
   for (const [mapId, list] of bolts) {
-    for (const h of stepBolts(list, dt))          // the bolt remembers who fired it
+    for (const h of stepBolts(list, dt)) {        // the bolt remembers who fired it
+      hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
+                             n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
+                             by: h.bolt.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.bolt.owner ?? null);
+    }
     for (const a of aliens.get(mapId) ?? []) if (a.hp <= 0) killAlien(mapId, a);
   }
   for (const [, list] of blasts)
+    for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
+  for (const [, list] of hits)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
 
   // Snapshots are per player, not per map. Radar means two ships sitting in the
@@ -281,9 +296,12 @@ setInterval(() => {
     // are already back at your home base by the time it plays.
     const flashes = (blasts.get(V.mapId) ?? []).filter(b =>
       b.who === V.id || Math.hypot(b.x - V.ship.x, b.y - V.ship.y) <= reach);
+    const numbers = (hits.get(V.mapId) ?? []).filter(h =>
+      h.by === vid || Math.hypot(h.x - V.ship.x, h.y - V.ship.y) <= reach);
     const cans = (pods.get(V.mapId) ?? []).filter(p =>
       Math.hypot(p.x - V.ship.x, p.y - V.ship.y) <= reach);
     V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), blasts: flashes.map(packBlast),
+      hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault,
       scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / SCOOP_TIME).toFixed(2) } : undefined }));

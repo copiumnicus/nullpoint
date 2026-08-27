@@ -1,6 +1,6 @@
 import { MATERIALS, DROPS, rollDrop, stow, unload, holdVol, holdValue, volOf,
          POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY } from '../shared/cargo.js';
-import { beginScoop, stepScoop } from '../shared/cargo.js';
+import { beginScoop, stepScoop, load } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 import { newShip } from '../shared/sim.js';
 import { HULLS, ATTRS, resolve } from '../shared/ships.js';
@@ -134,6 +134,20 @@ console.log('\noffloading');
 check('scooping takes real time and real proximity',
   SCOOP_TIME > 0.2 && SCOOP_R > 100 && POD_LIFE > 30,
   `${SCOOP_TIME}s beam, ${SCOOP_R}px reach, ${POD_LIFE}s pod life`);
+check('cargo moves back out of the hangar too', (() => {
+  const bank = { iridium: 40 }, hold2 = {};
+  const took = load(bank, hold2, 'iridium', 40, 30);     // kestrel-sized hold
+  return took === 30 && hold2.iridium === 30 && bank.iridium === 10;
+})(), 'takes what fits, leaves the rest in the hangar');
+check('loading a stack the ship cannot fit at all changes nothing', (() => {
+  const bank = { iron: 5 }, hold2 = { iron: 10 };        // 30 of 30 used
+  return load(bank, hold2, 'iron', 5, 30) === 0 && bank.iron === 5;
+})());
+check('an emptied hangar stack disappears', (() => {
+  const bank = { platinum: 3 }, hold2 = {};
+  load(bank, hold2, 'platinum', 3, 60);
+  return !('platinum' in bank) && hold2.platinum === 3;
+})());
 check('a stack transfer moves the whole stack', (() => {
   const h3 = { iron: 7, platinum: 2 }, v4 = {};
   unload(h3, v4, 7 * 99);                          // how the server bills a 'stash'

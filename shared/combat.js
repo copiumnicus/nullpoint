@@ -45,8 +45,8 @@ export function stepBolts(list, dt) {
     const tg = b.target;
     if (!tg || tg.hp <= 0) continue;
     if (Math.hypot(tg.x - b.ax, tg.y - b.ay) > HIT_R + tg.r) continue;
-    applyDamage(tg, b.dmg);
-    hits.push({ bolt: b, target: tg, dead: tg.hp <= 0 });
+    const split = applyDamage(tg, b.dmg);        // how much the shields caught vs the hull
+    hits.push({ bolt: b, target: tg, dead: tg.hp <= 0, split });
   }
   return hits;
 }

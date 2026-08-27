@@ -13,7 +13,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackBlast, unpackPod } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 
@@ -44,7 +44,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], blasts = [], pods = [];   // rebuilt every snapshot
+let bolts = [], blasts = [], pods = [], numbers = [];   // rebuilt every snapshot
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null;
 let invOpen = false, award = null;
 const cam = { x: 0, y: 0 };
@@ -64,6 +64,7 @@ ws.onmessage = e => {
   bolts = (m.bolts ?? []).map(unpackBolt);
   blasts = (m.blasts ?? []).map(unpackBlast);
   pods = (m.pods ?? []).map(unpackPod);
+  numbers = (m.hits ?? []).map(unpackHit);
   hold = m.hold ?? {}; cargoCap = m.cap ?? cargoCap;
   vault = m.vault ?? vault; credits = m.credits ?? credits;
   atDock = !!m.docked; scoop = m.scoop ?? null;
@@ -471,6 +472,7 @@ function invClick(v) {
   if (!inside(G.panel)) { invOpen = false; return; }
   if (!atDock) return;                              // browsing is free, moving cargo is not
   for (const { mat, r } of G.ship) if (inside(r)) return send({ t: 'stash', mat });
+  for (const { mat, r } of G.bank) if (inside(r)) return send({ t: 'load', mat });
   if (inside(G.all)) for (const mat of Object.keys(hold)) send({ t: 'stash', mat });
 }
 
@@ -507,17 +509,18 @@ function drawInventory() {
   g.fillText(`${credits} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = atDock ? '#66748c' : '#e0a53f';
-  g.fillText(atDock ? 'docked — click a stack to move it into the company hangar'
+  g.fillText(atDock ? 'docked — click a stack to move it the other way'
                     : 'you can look, but transfers happen at your home base', P.x + 20, P.y + 52);
 
   g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
-  g.fillText(`SHIP HOLD   ${vol}/${cargoCap}` + (vol ? `   ${holdValue(hold)} ${CURRENCY.short}` : ''), P.x + 20, G.top - 12);
-  g.fillText('COMPANY HANGAR   unlimited', P.x + 40 + G.colW, G.top - 12);
+  g.fillText(`SHIP HOLD   ${vol}/${cargoCap}` + (vol ? `   ${holdValue(hold)} ${CURRENCY.short}` : '') +
+             (atDock ? '   → click to stow' : ''), P.x + 20, G.top - 12);
+  g.fillText('COMPANY HANGAR   unlimited' + (atDock ? '   → click to load' : ''), P.x + 40 + G.colW, G.top - 12);
 
   if (!G.ship.length) { g.fillStyle = '#3d4757'; g.fillText('empty', P.x + 20, G.top + 18); }
   for (const { mat, r } of G.ship) stack(r, mat, hold[mat], atDock);
   if (!G.bank.length) { g.fillStyle = '#3d4757'; g.fillText('nothing stored yet', P.x + 40 + G.colW, G.top + 18); }
-  for (const { mat, r } of G.bank) stack(r, mat, vault[mat], false);
+  for (const { mat, r } of G.bank) stack(r, mat, vault[mat], atDock);
 
   if (G.ship.length) {
     const A = G.all;
@@ -757,6 +760,19 @@ function drawFrame(now) {
     g.fillStyle = (s.hp ?? 100) > 33 ? '#7de08a' : '#e05a5a';
     g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 12.5, (bw - 2) * (s.hp ?? 0) / 100, 2.5);
   }
+  for (const h of numbers) {                       // what you just did, and what was done to you
+    const fade = h.p < 0.55 ? 1 : Math.max(0, (1 - h.p) / 0.45);
+    g.globalAlpha = fade;
+    g.font = (h.mine ? 'bold 17px' : '13px') + ' ui-monospace, SFMono-Regular, monospace';
+    g.textAlign = 'center';
+    g.lineWidth = 3; g.strokeStyle = 'rgba(4,7,12,0.85)';
+    const txt = (h.mine ? '' : '-') + h.n;
+    g.strokeText(txt, h.x, h.y - h.p * 36);
+    g.fillStyle = h.mine ? (h.sh ? '#8fe7ff' : '#ffffff') : '#ff6b6b';
+    g.fillText(txt, h.x, h.y - h.p * 36);
+    g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+
   for (const b of blasts) {                        // kill flash, over everything in world space
     const rr = b.r * (1.3 + b.p * 6.5);
     g.strokeStyle = b.foe ? '#ff9a6a' : '#9ad7ff';

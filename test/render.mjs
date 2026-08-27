@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { MODULES } from '../shared/ships.js';
-import { packShip, packBolt, packBlast, packPod } from '../shared/net.js';
+import { packShip, packBolt, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 
@@ -37,6 +37,7 @@ const CTX = {
   fillRect(...a)   { num('fillRect', ...a); },
   strokeRect(...a) { num('strokeRect', ...a); },
   fillText(t, x, y){ guard('fillText', t); num('fillText', x, y); },
+  strokeText(t, x, y){ guard('strokeText', t); num('strokeText', x, y); },
   measureText(t)   { guard('measureText', t); return { width: String(t).length * 6 }; },
   arc(...a)        { num('arc', ...a); if (a[2] < 0) bad.push('arc negative radius'); },
   rect(...a) { num('rect', ...a); }  , roundRect(...a) { num('roundRect', ...a); },
@@ -97,6 +98,10 @@ for (const id of Object.keys(MAPS)) {
     packBolt({ sx: 6000, sy: 4000, ax: 6400, ay: 4300, t: 0.10, ttl: 0.21, foe: false }),
     packBolt({ sx: 6400, sy: 4300, ax: 6000, ay: 4000, t: 0.02, ttl: 0.21, foe: true }),
     packBolt({ sx: 5200, sy: 3400, ax: 2200, ay: 6600, t: 0.20, ttl: 0.21, foe: false }),
+  ], hits: [
+    packHit({ x: 6400, y: 4280, n: 95, sh: true,  t: 0.90, ttl: 0.95 }, true),   // mine, on its shields
+    packHit({ x: 6400, y: 4280, n: 47, sh: false, t: 0.30, ttl: 0.95 }, true),   // mine, into the hull
+    packHit({ x: 6000, y: 3980, n: 45, sh: false, t: 0.60, ttl: 0.95 }, false),  // taken
   ], blasts: [
     packBlast({ x: 6400, y: 4300, r: 15, t: 0.75, ttl: 0.8, foe: true }),    // just popped
     packBlast({ x: 5600, y: 3800, r: 13, t: 0.10, ttl: 0.8, foe: false }),   // nearly done

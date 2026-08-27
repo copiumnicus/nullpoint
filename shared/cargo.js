@@ -87,6 +87,16 @@ export function stepScoop(scoop, pod, ship, hold, dt) {
   return { running: false, took, emptied: pod.n <= 0 };
 }
 
+// The other direction: hangar back onto the ship, as much of the stack as fits.
+export function load(vault, hold, mat, n, cap) {
+  const took = stow(hold, mat, Math.min(vault[mat] ?? 0, n), cap);
+  if (took > 0) {
+    vault[mat] -= took;
+    if (vault[mat] <= 0) delete vault[mat];
+  }
+  return took;
+}
+
 // Moves up to `vol` worth of cargo from hold into vault, rarest first so a player
 // who undocks early keeps the least valuable half.
 //
