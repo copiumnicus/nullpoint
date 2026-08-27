@@ -2,6 +2,7 @@
 // with the chart open and closed. Any undefined field or bad colour throws.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
+import { MODULES } from '../shared/ships.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -69,15 +70,24 @@ const ws = socks[0];
 const feed = o => ws.onmessage({ data: JSON.stringify(o) });
 const frame = t => { const cb = raf; raf = null; cb(t); };
 
-feed({ t: 'welcome', id: 1, co: 'm', map: 'm1' });
+feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard', fit: [] });
 let t = 0, frames = 0;
 for (const id of Object.keys(MAPS)) {
   feed({ t: 'map', map: id });
-  feed({ t: 's', ships: [[1, 6000, 4000, 0.5, 0, 'm'], [2, 3000, 2000, 1.2, 1.4, 'h'], [3, 9000, 6000, 2, 0, 'k']] });
+  feed({ t: 's', ships: [[1, 6000, 4000, 0.5, 0, 'm', 'vanguard', 100, 100],
+                         [2, 3000, 2000, 1.2, 1.4, 'h', 'kestrel', 30, 0],
+                         [3, 9000, 6000, 2, 0, 'k', 'bulwark', 5, 55]] });
   frame(t += 16); frames++;                                    // world view
-  listeners.keydown.forEach(fn => fn({ key: 'm' }));           // open chart
+  listeners.keydown.forEach(fn => fn({ key: 'm' }));           // star system chart
   frame(t += 16); frames++;
-  listeners.keydown.forEach(fn => fn({ key: 'm' }));           // close again
+  listeners.keydown.forEach(fn => fn({ key: 'm' }));
+  listeners.keydown.forEach(fn => fn({ key: 'h' }));           // hangar
+  frame(t += 16); frames++;
+  for (const h of ['kestrel', 'bulwark']) {                    // every hull, every module
+    feed({ t: 'fit', hull: h, fit: Object.keys(MODULES).slice(0, 3) });
+    frame(t += 16); frames++;
+  }
+  listeners.keydown.forEach(fn => fn({ key: 'h' }));
 }
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));

@@ -1,7 +1,8 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, step, stepJump, beginJump, arrivalFor } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, applyDamage, stepJump, beginJump, arrivalFor } from './shared/sim.js';
+import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = 3000, TICK_HZ = 30;
@@ -11,6 +12,7 @@ const FILES = {
   '/shared/sim.js':   ['shared/sim.js',     'text/javascript'],
   '/shared/maps.js':  ['shared/maps.js',    'text/javascript'],
   '/shared/chart.js': ['shared/chart.js',   'text/javascript'],
+  '/shared/ships.js': ['shared/ships.js',   'text/javascript'],
 };
 const server = http.createServer((req, res) => {
   const hit = FILES[req.url.split('?')[0]];
@@ -27,16 +29,32 @@ wss.on('connection', ws => {
   const id = nextId++;
   const co = HOMES[(id - 1) % HOMES.length][0];      // round-robin the three companies
   const home = co + '1';
+  const hullKeys = Object.keys(HULLS);
+  const hull = hullKeys[(id - 1) % hullKeys.length];  // so connected clients differ
   const ship = newShip(MAP_W / 2 + (Math.random() - 0.5) * 1600,
-                       MAP_H / 2 + (Math.random() - 0.5) * 1200);
+                       MAP_H / 2 + (Math.random() - 0.5) * 1200, hull, []);
   players.set(id, { ws, mapId: home, co, ship });
-  ws.send(JSON.stringify({ t: 'welcome', id, map: home, co }));
-  console.log(`+ player ${id} [${COMPANIES[co].tag}] at ${MAPS[home].name} (${players.size} online)`);
+  ws.send(JSON.stringify({ t: 'welcome', id, map: home, co, hull, fit: [] }));
+  console.log(`+ player ${id} [${COMPANIES[co].tag}] ${HULLS[hull].name} at ${MAPS[home].name} (${players.size} online)`);
 
   // Clients send INTENT only — never position. The server owns the truth.
   ws.on('message', buf => {
     let m; try { m = JSON.parse(buf); } catch { return; }
-    if (m.t === 'jump') return beginJump(ship, MAPS[players.get(id).mapId]);
+    const P = players.get(id);
+    if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
+
+    if (m.t === 'refit') {                        // only at your own company's home
+      const map = MAPS[P.mapId];
+      if (!map.home || map.owner !== P.co) return;
+      const hull = HULLS[m.hull] ? m.hull : ship.hull;
+      refit(ship, hull, sanitiseFit(hull, m.fit));
+      return ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit }));
+    }
+
+    // temporary: lets you watch the shield timer without weapons existing yet.
+    // self only - it can never be pointed at another player.
+    if (m.t === 'dev-damage') return void applyDamage(ship, 250);
+
     if (m.t !== 'intent') return;
     if (m.mode === 'dir') {                       // hold-to-steer
       const dx = +m.dx || 0, dy = +m.dy || 0, d = Math.hypot(dx, dy);
@@ -62,8 +80,22 @@ setInterval(() => {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
 
-  for (const p of players.values()) {
+  for (const [id, p] of players) {
     step(p.ship, dt);
+    stepVitals(p.ship, dt);
+
+    if (p.ship.hp <= 0) {                         // destroyed: back to your home, repaired
+      const home = p.co + '1';
+      p.mapId = home;
+      refit(p.ship, p.ship.hull, p.ship.fit);
+      Object.assign(p.ship, { x: MAP_W / 2 + (Math.random() - 0.5) * 1600,
+                              y: MAP_H / 2 + (Math.random() - 0.5) * 1200,
+                              vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
+                              charge: 0, chargeTo: null, jumpCd: JUMP_CD });
+      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: home, died: true }));
+      continue;
+    }
+
     const dest = stepJump(p.ship, MAPS[p.mapId], dt);
     if (!dest) continue;
     const a = arrivalFor(p.mapId, MAPS[dest]);
@@ -76,7 +108,10 @@ setInterval(() => {
   const byMap = new Map();
   for (const [id, p] of players) {
     if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
-    byMap.get(p.mapId).push([id, Math.round(p.ship.x), Math.round(p.ship.y), +p.ship.heading.toFixed(2), +p.ship.charge.toFixed(2), p.co]);
+    byMap.get(p.mapId).push([id, Math.round(p.ship.x), Math.round(p.ship.y),
+      +p.ship.heading.toFixed(2), +p.ship.charge.toFixed(2), p.co, p.ship.hull,
+      Math.round(100 * p.ship.hp / p.ship.stats.hull),
+      Math.round(100 * p.ship.shield / Math.max(1, p.ship.stats.shield))]);
   }
   for (const [mapId, ships] of byMap) {
     const snapshot = JSON.stringify({ t: 's', ships });

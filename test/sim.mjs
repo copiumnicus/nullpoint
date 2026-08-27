@@ -1,4 +1,4 @@
-import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME, MAX_SPEED } from '../shared/sim.js';
+import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME } from '../shared/sim.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { chartLayout } from '../shared/chart.js';
 
@@ -63,7 +63,7 @@ check('contested maps have no owner', ids.filter(i => MAPS[i].contested).every(i
 console.log('\nmovement');
 const held = newShip(600, 4000); held.dx = 1; held.dy = 0;
 for (let i = 0; i < 30 * 20; i++) step(held, dt);
-check('a held direction keeps thrusting', held.x - 600 > MAX_SPEED * 20 * 0.9, `${(held.x - 600) | 0}px in 20s`);
+check('a held direction keeps thrusting', held.x - 600 > held.stats.speed * 20 * 0.9, `${(held.x - 600) | 0}px in 20s`);
 const dest = newShip(600, 4000); dest.tx = 4000; dest.ty = 4000;
 for (let i = 0; i < 30 * 40; i++) step(dest, dt);
 check('a destination is reached and held', Math.abs(dest.x - 4000) < 12 && Math.hypot(dest.vx, dest.vy) < 5,

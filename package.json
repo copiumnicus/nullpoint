@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server.js",
-    "test": "node test/sim.mjs && node test/render.mjs"
+    "test": "node test/ships.mjs && node test/sim.mjs && node test/render.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

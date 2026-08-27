@@ -8,7 +8,8 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { SHIP_R, SLOW_RADIUS, JUMP_TIME, nearPortal } from '/shared/sim.js';
+import { SLOW_RADIUS, JUMP_TIME, nearPortal } from '/shared/sim.js';
+import { ATTRS, HULLS, MODULES, resolve, radiusOf, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
@@ -31,6 +32,8 @@ const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 let sysOpen = false;
 
 let myId = null, myCo = 'm', mapId = 'm1', status = 'connecting…';
+let myHull = 'vanguard', myFit = [];
+let bayOpen = false, draftHull = 'vanguard', draftFit = [];
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
 const cam = { x: 0, y: 0 };
 
@@ -41,14 +44,16 @@ ws.onopen  = () => status = 'online';
 ws.onclose = () => status = 'disconnected';
 ws.onmessage = e => {
   const m = JSON.parse(e.data);
-  if (m.t === 'welcome') { myId = m.id; myCo = m.co; mapId = m.map; return; }
+  if (m.t === 'welcome') { myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit; return; }
+  if (m.t === 'fit')     { myHull = m.hull; myFit = m.fit; draftHull = m.hull; draftFit = [...m.fit]; return; }
   if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
   if (m.t !== 's') return;
   const seen = new Set();
-  for (const [id, x, y, h, ch, co] of m.ships) {
+  for (const [id, x, y, h, ch, co, hull, hp, sh] of m.ships) {
     seen.add(id);
     const s = ships.get(id) ?? { rx: x, ry: y };
     s.x = x; s.y = y; s.heading = h; s.charge = ch; s.co = co;
+    s.hull = hull; s.hp = hp; s.sh = sh;
     ships.set(id, s);
   }
   for (const id of ships.keys()) if (!seen.has(id)) ships.delete(id);
@@ -67,14 +72,19 @@ const toView = e => {
            y: (e.clientY - r.top)  * (VIEW_H / r.height) };
 };
 
+const atHome = () => MAPS[mapId].home && MAPS[mapId].owner === myCo;
 addEventListener('keydown', e => {
-  if (e.key === 'm' || e.key === 'M') sysOpen = !sysOpen;
-  if (e.key === 'Escape') sysOpen = false;
+  const k = e.key.toLowerCase();
+  if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
+  if (k === 'h') { bayOpen = !bayOpen; sysOpen = false; draftHull = myHull; draftFit = [...myFit]; }
+  if (k === 'k') send({ t: 'dev-damage' });        // temporary, until weapons exist
+  if (e.key === 'Escape') { sysOpen = false; bayOpen = false; }
 });
 
 c.addEventListener('pointerdown', e => {
   const v = toView(e);
-  if (sysOpen) { sysOpen = false; return; }           // click anywhere dismisses the chart
+  if (sysOpen) { sysOpen = false; return; }
+  if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
   const sb = sysBtn();
   if (v.x > sb.x && v.x < sb.x + sb.w && v.y > sb.y && v.y < sb.y + sb.h) { sysOpen = true; return; }
   const b = btn();
@@ -237,6 +247,125 @@ function drawSystem(me) {
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
 
+// --- hangar -------------------------------------------------------------------
+// Geometry lives in one place so drawing and hit-testing can never disagree
+// about where a row is.
+function bayGeom() {
+  const w = Math.min(900, VIEW_W - 60), h = Math.min(470, VIEW_H - 60);
+  const x = (VIEW_W - w) / 2, y = (VIEW_H - h) / 2;
+  const colW = (w - 60) / 3, top = y + 74;
+  const hulls = Object.keys(HULLS).map((k, i) => ({ k, r: { x: x + 20, y: top + i * 58, w: colW, h: 50 } }));
+  const mods  = Object.keys(MODULES).map((k, i) => ({ k, r: { x: x + 30 + colW, y: top + i * 44, w: colW, h: 38 } }));
+  return { panel: { x, y, w, h }, colW, top, hulls, mods,
+           apply: { x: x + w - 190, y: y + h - 54, w: 170, h: 34 } };
+}
+
+function bayClick(v) {
+  const G = bayGeom();
+  const inside = (r) => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
+  if (!inside(G.panel)) { bayOpen = false; return; }
+  for (const { k, r } of G.hulls) if (inside(r)) {
+    draftHull = k;
+    draftFit = draftFit.slice(0, slotsOf(k));         // a smaller hull can drop modules
+    return;
+  }
+  for (const { k, r } of G.mods) if (inside(r)) {
+    const i = draftFit.indexOf(k);
+    if (i >= 0) draftFit.splice(i, 1);
+    else if (draftFit.length < slotsOf(draftHull)) draftFit.push(k);
+    return;
+  }
+  if (inside(G.apply) && atHome()) send({ t: 'refit', hull: draftHull, fit: draftFit });
+}
+
+const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+
+function drawBay() {
+  const G = bayGeom(), P = G.panel;
+  const base = resolve(draftHull, []), fitted = resolve(draftHull, draftFit);
+  const home = atHome();
+
+  g.fillStyle = 'rgba(3,5,9,0.92)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.fillStyle = 'rgba(8,12,19,0.98)'; g.fillRect(P.x, P.y, P.w, P.h);
+  g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+
+  g.textAlign = 'left'; g.font = '15px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
+  g.fillText('HANGAR', P.x + 20, P.y + 32);
+  g.font = '11px ui-monospace, monospace';
+  g.fillStyle = home ? '#66748c' : '#e0a53f';
+  g.fillText(home ? 'refit at will — you are docked at your home base'
+                  : `refit only at ${COMPANIES[myCo].tag}-1, your home base`, P.x + 100, P.y + 32);
+
+  g.font = '11px ui-monospace, monospace';
+  g.fillStyle = '#5b6b85'; g.fillText('HULL', P.x + 20, G.top - 12);
+  g.fillText(`MODULES  ${draftFit.length}/${slotsOf(draftHull)}`, P.x + 30 + G.colW, G.top - 12);
+  g.fillText('RESOLVED', P.x + 40 + G.colW * 2, G.top - 12);
+
+  for (const { k, r } of G.hulls) {
+    const H = HULLS[k], on = k === draftHull;
+    g.fillStyle = on ? 'rgba(90,150,220,0.16)' : 'rgba(255,255,255,0.03)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = on ? '#7fd4ff' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    g.fillStyle = COMPANIES[myCo].color;
+    g.fillRect(r.x + 14 - H.r / 2, r.y + r.h / 2 - H.r / 2, H.r, H.r);
+    g.fillStyle = on ? '#fff' : '#93a3b5'; g.font = '12px ui-monospace, monospace';
+    g.fillText(H.name, r.x + 34, r.y + 21);
+    g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
+    const a = H.attrs;
+    g.fillText(`${H.cls}   ${a.hull} hull  ${a.shield} sh  ${a.speed} spd`, r.x + 34, r.y + 36);
+  }
+
+  for (const { k, r } of G.mods) {
+    const M = MODULES[k], on = draftFit.includes(k);
+    const full = !on && draftFit.length >= slotsOf(draftHull);
+    g.globalAlpha = full ? 0.4 : 1;
+    g.fillStyle = on ? 'rgba(125,224,138,0.14)' : 'rgba(255,255,255,0.03)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = on ? '#7de08a' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    g.fillStyle = on ? '#fff' : '#93a3b5'; g.font = '11px ui-monospace, monospace';
+    g.fillText(M.name, r.x + 10, r.y + 16);
+    g.font = '10px ui-monospace, monospace';
+    let tx = r.x + 10;
+    for (const [attr, op, v] of M.mods) {
+      const good = (ATTRS[attr].better === 'high') === (v > 0);
+      g.fillStyle = good ? '#7de08a' : '#e07a7a';
+      const txt = `${v > 0 ? '+' : ''}${op === 'mul' ? Math.round(v * 100) + '%' : fmt(v)} ${attr}`;
+      g.fillText(txt, tx, r.y + 30);
+      tx += g.measureText(txt).width + 12;
+    }
+    g.globalAlpha = 1;
+  }
+
+  const sx = P.x + 40 + G.colW * 2;
+  let sy = G.top + 6;
+  g.font = '11px ui-monospace, monospace';
+  for (const [k, A] of Object.entries(ATTRS)) {
+    const b = base[k], f = fitted[k], d = f - b;
+    g.fillStyle = '#66748c'; g.fillText(A.label, sx, sy);
+    g.fillStyle = '#cfe4ff'; g.textAlign = 'right';
+    g.fillText(`${fmt(f)}${A.unit}`, sx + 150, sy);
+    if (Math.abs(d) > 0.01) {
+      g.fillStyle = (A.better === 'high') === (d > 0) ? '#7de08a' : '#e07a7a';
+      g.fillText(`${d > 0 ? '+' : ''}${fmt(d)}`, sx + 214, sy);
+    }
+    g.textAlign = 'left';
+    sy += 22;
+  }
+
+  const A = G.apply;
+  g.globalAlpha = home ? 1 : 0.4;
+  g.fillStyle = 'rgba(125,224,138,0.16)'; g.fillRect(A.x, A.y, A.w, A.h);
+  g.strokeStyle = '#7de08a'; g.lineWidth = 1.4; g.strokeRect(A.x + .5, A.y + .5, A.w - 1, A.h - 1);
+  g.fillStyle = '#7de08a'; g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
+  g.fillText('APPLY REFIT', A.x + A.w / 2, A.y + 22);
+  g.globalAlpha = 1;
+  g.textAlign = 'left'; g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
+  g.fillText('click a hull or module to change the draft · H or Esc to close', P.x + 20, P.y + P.h - 30);
+  g.font = '12px ui-monospace, monospace';
+}
+
 // --- render -------------------------------------------------------------------
 let renderFailed = false;
 requestAnimationFrame(function frame(now) {
@@ -310,13 +439,21 @@ function drawFrame(now) {
   }
 
   for (const [id, s] of ships) {
+    const R = radiusOf(s.hull);
     g.save();
     g.translate(s.rx, s.ry); g.rotate(s.heading);
     g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
-    g.fillRect(-SHIP_R, -SHIP_R, SHIP_R * 2, SHIP_R * 2);
-    if (id === myId) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(-SHIP_R, -SHIP_R, SHIP_R * 2, SHIP_R * 2); }
-    g.fillStyle = '#05070b'; g.fillRect(SHIP_R - 6, -2, 6, 4);
+    g.fillRect(-R, -R, R * 2, R * 2);
+    if (id === myId) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(-R, -R, R * 2, R * 2); }
+    g.fillStyle = '#05070b'; g.fillRect(R - 6, -2, 6, 4);
     g.restore();
+
+    const bw = Math.max(30, R * 2.8);              // bars stay upright, never rotate
+    g.fillStyle = 'rgba(4,7,12,0.75)';
+    g.fillRect(s.rx - bw / 2, s.ry - R - 17, bw, 8);
+    g.fillStyle = '#5fd0ff'; g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 16, (bw - 2) * (s.sh ?? 0) / 100, 2.5);
+    g.fillStyle = (s.hp ?? 100) > 33 ? '#7de08a' : '#e05a5a';
+    g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 12.5, (bw - 2) * (s.hp ?? 0) / 100, 2.5);
   }
   g.restore();
 
@@ -383,10 +520,26 @@ function drawFrame(now) {
   g.fillStyle = map.owner ? COMPANIES[map.owner].color : '#e05a5a';
   g.fillText(terr, 20 + g.measureText(map.name).width, 24);
   g.fillStyle = '#5b6b85';
-  g.fillText(`${COMPANIES[myCo].tag} · ${status} · ${ships.size} in sector · #${myId ?? '?'}` +
-             (me ? ` · ${me.x},${me.y}` : ''), 16, 42);
-  g.fillText('click to set a destination · hold + point to steer · click the minimap to set a course · JUMP at a portal', 16, VIEW_H - 16);
+  const st = resolve(myHull, myFit);
+  g.fillText(`${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls} · ${status} · ` +
+             `${ships.size} in sector · #${myId ?? '?'}`, 16, 42);
+  if (me) {
+    const hp = Math.round(st.hull * (me.hp ?? 100) / 100), sh = Math.round(st.shield * (me.sh ?? 100) / 100);
+    const w = 190;
+    g.fillStyle = 'rgba(4,7,12,0.7)'; g.fillRect(16, 52, w, 22);
+    g.fillStyle = '#1d3b52'; g.fillRect(18, 54, w - 4, 8);
+    g.fillStyle = '#5fd0ff'; g.fillRect(18, 54, (w - 4) * sh / Math.max(1, st.shield), 8);
+    g.fillStyle = '#26402c'; g.fillRect(18, 64, w - 4, 8);
+    g.fillStyle = hp > st.hull / 3 ? '#7de08a' : '#e05a5a';
+    g.fillRect(18, 64, (w - 4) * hp / st.hull, 8);
+    g.fillStyle = '#5b6b85';
+    g.fillText(`SH ${sh}/${st.shield | 0}   HU ${hp}/${st.hull | 0}` +
+               (myFit.length ? `   fit ${myFit.length}/${st.slots}` : ''), 16 + w + 10, 68);
+  }
+  g.fillText('click / hold to fly · JUMP at a portal · M star system · H hangar' +
+             (atHome() ? '' : ' (home only)') + ' · K take test damage', 16, VIEW_H - 16);
 
   if (sysOpen) drawSystem(me);
+  if (bayOpen) drawBay();
 }
 </script>
