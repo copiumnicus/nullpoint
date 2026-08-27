@@ -8,7 +8,8 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase } from '/shared/sim.js';
+import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
+         DRIFT_MARGIN, WORLD } from '/shared/sim.js';
 import { ATTRS, HULLS, MODULES, resolve, radiusOf, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
@@ -95,7 +96,7 @@ c.addEventListener('pointerdown', e => {
   if (v.x > b.x && v.x < b.x + b.w && v.y > b.y && v.y < b.y + b.h) return send({ t: 'jump' });
   if (v.x > MM_X && v.y > MM_Y) {                     // minimap click = destination order
     marker = { x: clamp((v.x - MM_X) / MM_W * MAP_W, 0, MAP_W),
-               y: clamp((v.y - MM_Y) / MM_H * MAP_H, 0, MAP_H) };
+               y: clamp((v.y - MM_Y) / MM_H * MAP_H, 0, MAP_H) };   // the minimap IS charted space
     return send({ t: 'intent', mode: 'pt', x: marker.x, y: marker.y });
   }
   held = true; steering = false; downAt = performance.now(); cur = down = v;
@@ -387,9 +388,10 @@ function drawFrame(now) {
 
   for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
   if (me) {
-    cam.x = clamp(me.rx - VIEW_W / 2, 0, Math.max(0, MAP_W - VIEW_W));
-    cam.y = clamp(me.ry - VIEW_H / 2, 0, Math.max(0, MAP_H - VIEW_H));
+    cam.x = clamp(me.rx - VIEW_W / 2, WORLD.x0, Math.max(WORLD.x0, WORLD.x1 - VIEW_W));
+    cam.y = clamp(me.ry - VIEW_H / 2, WORLD.y0, Math.max(WORLD.y0, WORLD.y1 - VIEW_H));
   }
+  const depth = me ? driftDepth(me.x, me.y) : 0;
   if (marker && me && Math.hypot(marker.x - me.x, marker.y - me.y) < 12) marker = null;
   const atPortal = me ? nearPortal(map, { x: me.x, y: me.y, jumpCd: 0 }) : null;
   const charge = me?.charge ?? 0;
@@ -414,7 +416,20 @@ function drawFrame(now) {
   for (let y = Math.floor(cam.y / 500) * 500; y < cam.y + VIEW_H; y += 500) { g.moveTo(cam.x, y); g.lineTo(cam.x + VIEW_W, y); }
   g.stroke();
 
+  const near = depth > 0 ? 1 : Math.max(0, 1 - Math.min(
+    Math.min(me?.x ?? 9e9, MAP_W - (me?.x ?? -9e9)), Math.min(me?.y ?? 9e9, MAP_H - (me?.y ?? -9e9))) / 1400);
   g.strokeStyle = map.tint + '55'; g.lineWidth = 4; g.strokeRect(0, 0, MAP_W, MAP_H);
+  g.strokeStyle = `rgba(255,92,107,${0.25 + near * 0.6})`; g.lineWidth = 3;
+  g.setLineDash([44, 26]); g.lineDashOffset = -now / 90;
+  g.strokeRect(0, 0, MAP_W, MAP_H);
+  g.setLineDash([]); g.lineDashOffset = 0;
+  g.fillStyle = `rgba(255,92,107,${0.18 + near * 0.35})`;      // hazard chevrons, outward side
+  for (let x = 0; x < MAP_W; x += 420) {
+    g.fillRect(x + 40, -16, 150, 5); g.fillRect(x + 40, MAP_H + 11, 150, 5);
+  }
+  for (let y = 0; y < MAP_H; y += 420) {
+    g.fillRect(-16, y + 40, 5, 150); g.fillRect(MAP_W + 11, y + 40, 5, 150);
+  }
 
   if (map.base) {
     const b = map.base, col = COMPANIES[map.owner].color, mine = map.owner === myCo;
@@ -541,7 +556,7 @@ function drawFrame(now) {
     g.fillRect(MM_X + p.x * sx - 2.5, MM_Y + p.y * sy - 2.5, 5, 5);
   }
   if (marker && me) {                                 // course line, drawn under the dots
-    const mx = MM_X + marker.x * sx, my = MM_Y + marker.y * sy;
+    const mx = MM_X + clamp(marker.x, 0, MAP_W) * sx, my = MM_Y + clamp(marker.y, 0, MAP_H) * sy;
     g.strokeStyle = 'rgba(74,144,217,0.75)'; g.lineWidth = 1; g.setLineDash([3, 3]);
     g.beginPath(); g.moveTo(MM_X + me.rx * sx, MM_Y + me.ry * sy); g.lineTo(mx, my); g.stroke();
     g.setLineDash([]);
@@ -550,20 +565,34 @@ function drawFrame(now) {
     g.beginPath(); g.moveTo(mx - 6, my); g.lineTo(mx + 6, my);
     g.moveTo(mx, my - 6); g.lineTo(mx, my + 6); g.stroke();
   }
-  if (me) {                                        // your own scan envelope
-    g.strokeStyle = 'rgba(127,212,255,0.20)'; g.lineWidth = 1;
-    g.beginPath(); g.arc(MM_X + me.rx * sx, MM_Y + me.ry * sy, st.radar * sx, 0, 7); g.stroke();
+  g.save();                                        // nothing on the plot may spill past the frame
+  g.beginPath(); g.rect(MM_X, MM_Y, MM_W, MM_H); g.clip();
+
+  if (me) {                                        // the sweep itself, expanding out to radar range
+    const cx = MM_X + clamp(me.rx, 0, MAP_W) * sx, cy = MM_Y + clamp(me.ry, 0, MAP_H) * sy;
+    const reach = st.radar * sx;
+    g.strokeStyle = 'rgba(127,212,255,0.13)'; g.lineWidth = 1;
+    g.beginPath(); g.arc(cx, cy, reach, 0, 7); g.stroke();
+    for (const off of [0, 0.5]) {
+      const ph = ((now / 2400) + off) % 1;
+      g.globalAlpha = (1 - ph) * (1 - ph) * 0.5;
+      g.strokeStyle = '#7fd4ff'; g.lineWidth = 1.4;
+      g.beginPath(); g.arc(cx, cy, ph * reach, 0, 7); g.stroke();
+    }
+    g.globalAlpha = 1;
   }
+
   for (const [id, s] of ships) {
-    const mx = MM_X + s.rx * sx, my = MM_Y + s.ry * sy;
-    if (s.vis === ALLY) {                          // allies transmit; no scanning needed
-      g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
+    const off = driftDepth(s.x, s.y) > 0;          // clamp strays to the frame so they stay findable
+    const mx = MM_X + clamp(s.rx, 0, MAP_W) * sx, my = MM_Y + clamp(s.ry, 0, MAP_H) * sy;
+    if (s.vis === ALLY) {
+      g.fillStyle = off ? '#ff5c6b' : (COMPANIES[s.co]?.color ?? '#8899aa');
       const w = id === myId ? 5 : 3;
       g.fillRect(mx - w / 2, my - w / 2, w, w);
       continue;
     }
     const hot = s.vis === FRESH;
-    if (hot) {                                     // ping, offset per contact so they don't beat together
+    if (hot) {                                     // contact ping, phase-offset per contact
       const ph = ((now / 1150) + id * 0.37) % 1;
       g.globalAlpha = (1 - ph) * 0.75;
       g.strokeStyle = '#ff5c6b'; g.lineWidth = 1;
@@ -574,6 +603,7 @@ function drawFrame(now) {
     g.fillStyle = '#ff5c6b'; g.fillRect(mx - 1.5, my - 1.5, 3, 3);
     g.globalAlpha = 1;
   }
+  g.restore();
   g.strokeStyle = '#ff3b47'; g.lineWidth = 1;
   g.strokeRect(MM_X + cam.x * sx, MM_Y + cam.y * sy, VIEW_W * sx, VIEW_H * sy);
 
@@ -618,11 +648,32 @@ function drawFrame(now) {
       g.fillStyle = '#ff5c6b';
       g.fillText(`▲ ${hostiles} contact${hostiles === 1 ? '' : 's'}` + (tracks ? ` · ${tracks} fading` : ''), 16 + w + 10, 52);
     }
-    g.fillStyle = '#5b6b85';
-    g.fillText(`RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s`, 16 + w + 10, 84);
+    g.fillStyle = depth > 0 ? '#ff5c6b' : '#5b6b85';
+    g.fillText(depth > 0 ? `SHEAR ${driftDps(depth) | 0}/s` :
+               `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s`, 16 + w + 10, 84);
   }
   g.fillText('click / hold to fly · JUMP at a portal · M star system · H hangar' +
              (docked() ? '' : ' (dock first)') + ' · K take test damage', 16, VIEW_H - 16);
+
+  if (depth > 0 && !sysOpen && !bayOpen) {
+    const t = Math.min(1, depth / DRIFT_MARGIN);
+    const vig = g.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.28,
+                                       VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.78);
+    vig.addColorStop(0, 'transparent');
+    vig.addColorStop(1, `rgba(150,12,24,${0.20 + t * 0.5})`);
+    g.fillStyle = vig; g.fillRect(0, 0, VIEW_W, VIEW_H);
+
+    const pulse = 0.5 + 0.5 * Math.abs(Math.sin(now / (150 - t * 80)));
+    g.textAlign = 'center'; g.globalAlpha = pulse;
+    g.fillStyle = '#ff2f42'; g.font = 'bold 30px ui-monospace, SFMono-Regular, monospace';
+    g.fillText('⚠  BEACON LATTICE LOST  ⚠', VIEW_W / 2, VIEW_H * 0.22);
+    g.globalAlpha = 0.6 + pulse * 0.4;
+    g.font = '15px ui-monospace, monospace'; g.fillStyle = '#ff8a95';
+    g.fillText(`UNCOMPENSATED HULL SHEAR — ${driftDps(depth) | 0}/s`, VIEW_W / 2, VIEW_H * 0.22 + 28);
+    g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffc4ca';
+    g.fillText(`${depth | 0}m OUTSIDE CHARTED SPACE — COME ABOUT`, VIEW_W / 2, VIEW_H * 0.22 + 52);
+    g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
 
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();

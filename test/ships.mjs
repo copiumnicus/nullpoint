@@ -1,5 +1,6 @@
 import { ATTRS, HULLS, MODULES, DEFAULT_HULL, resolve, sanitiseFit, slotsOf } from '../shared/ships.js';
-import { newShip, refit, step, stepVitals, applyDamage, inBase, DOCK_HULL_RATE } from '../shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps,
+         DOCK_HULL_RATE, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 
 const fails = [];
@@ -133,6 +134,46 @@ check('docked repair matches the declared rate',
 const nodelay = wreck();
 stepVitals(nodelay, dt, true);
 check('docking ignores the shield delay', nodelay.shield > 0, 'no waiting at your own dock');
+
+console.log('\ncharted space');
+check('the charted zone is exactly what the minimap draws',
+  driftDepth(0, 0) === 0 && driftDepth(MAP_W, MAP_H) === 0
+  && driftDepth(-1, 4000) === 1 && driftDepth(MAP_W + 250, 4000) === 250);
+check('depth takes the worst axis, not the sum',
+  driftDepth(-300, -900) === 900, 'a corner is not doubly lethal');
+check('shear starts the moment you cross and ramps to the limit',
+  driftDps(0) === 0 && driftDps(1) >= DRIFT_MIN && driftDps(DRIFT_MARGIN) === DRIFT_MAX
+  && driftDps(DRIFT_MARGIN / 2) < DRIFT_MAX / 2, 'and ramps faster than linear');
+check('the hard wall sits one margin past the charted edge',
+  WORLD.x0 === -DRIFT_MARGIN && WORLD.x1 === MAP_W + DRIFT_MARGIN);
+
+const flown = (hull, fit = []) => {
+  const s = newShip(300, 4000, hull, fit);
+  s.dx = -1; s.dy = 0;                                    // full burn, straight out
+  let t = 0;
+  while (s.hp > 0 && t < 120) { step(s, dt); stepDrift(s, dt); t += dt; }
+  return { t, depth: driftDepth(s.x, s.y) };
+};
+const gap = r => DRIFT_MARGIN - r.depth;                  // px still between the wreck and the border
+const runs = [['kestrel', []], ['vanguard', []], ['bulwark', []],
+              ['bulwark', ['plating', 'plating', 'plating']],   // the tankiest thing buildable
+              ['kestrel', ['thruster', 'ballast']]]             // and the fastest
+  .map(([h, f]) => [`${h}${f.length ? '+' + f.length : ''}`, flown(h, f)]);
+runs.forEach(([h, r]) => console.log(`     ${h.padEnd(11)} dead at depth ${r.depth | 0}/${DRIFT_MARGIN}` +
+  ` after ${r.t.toFixed(1)}s — stopped ${gap(r) | 0}px short of the border`));
+check('flying out is always fatal, on every hull and fit', runs.every(([, r]) => r.t < 120));
+check('nobody ever reaches the border', runs.every(([, r]) => gap(r) > 120),
+  `closest was ${Math.min(...runs.map(([, r]) => gap(r))) | 0}px short`);
+check('tougher hulls get further before they go',
+  runs[0][1].depth < runs[1][1].depth && runs[1][1].depth < runs[2][1].depth);
+check('you get real warning at the line, not an instant kill',
+  (newShip(0, 0, 'vanguard').stats.hull + newShip(0, 0, 'vanguard').stats.shield) / DRIFT_MIN > 30,
+  `${((2000) / DRIFT_MIN).toFixed(0)}s of grace right at the edge`);
+
+const stray = newShip(-200, 4000, 'vanguard', []);
+stray.shield = 0;
+for (let i = 0; i < 30 * 20; i++) { stepDrift(stray, dt); stepVitals(stray, dt, false); }
+check('shields cannot regenerate while shear is landing', stray.shield === 0, '20s outside');
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(HULLS).length} hulls, ${Object.keys(MODULES).length} modules`}\n`);
 process.exit(fails.length ? 1 : 0);

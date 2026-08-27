@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, applyDamage, stepJump, beginJump, arrivalFor, inBase } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, WORLD } from './shared/sim.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
@@ -68,8 +68,9 @@ wss.on('connection', ws => {
       ship.tx = ship.ty = null;
     } else if (m.mode === 'pt') {                 // click-to-move
       ship.dx = ship.dy = null;
-      ship.tx = Math.max(0, Math.min(MAP_W, +m.x || 0));
-      ship.ty = Math.max(0, Math.min(MAP_H, +m.y || 0));
+      ship.tx = Math.max(WORLD.x0, Math.min(WORLD.x1, +m.x || 0));   // you may order a course
+      ship.ty = Math.max(WORLD.y0, Math.min(WORLD.y1, +m.y || 0));   // out past the lattice
+
     } else {                                      // stop
       ship.dx = ship.dy = ship.tx = ship.ty = null;
     }
@@ -86,6 +87,7 @@ setInterval(() => {
 
   for (const [id, p] of players) {
     step(p.ship, dt);
+    stepDrift(p.ship, dt);
     const map = MAPS[p.mapId];
     p.docked = map.owner === p.co && inBase(map, p.ship);
     stepVitals(p.ship, dt, p.docked);

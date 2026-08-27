@@ -18,6 +18,10 @@ const guard = (what, v) => {
 };
 const num = (what, ...vs) => { for (const v of vs) if (typeof v === 'number' && !isFinite(v)) bad.push(`${what} got ${v}`); };
 
+// Every CSS colour form the app actually uses. Numeric components only, so
+// anything that stringified an undefined or a NaN still fails.
+const COLOUR = /^(#[0-9a-f]{6}([0-9a-f]{2})?|transparent|rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(,\s*[\d.]+\s*)?\))$/i;
+
 const CTX = {
   _fill: '#000', _stroke: '#000', _font: '', _alpha: 1, _dash: [], _align: 'left', _lw: 1, _join: 'miter',
   set fillStyle(v)   { guard('fillStyle', v); this._fill = v; },   get fillStyle()   { return this._fill; },
@@ -41,8 +45,7 @@ const CTX = {
   createRadialGradient(...a) {
     num('createRadialGradient', ...a);
     if (a[2] < 0 || a[5] < 0) bad.push('gradient negative radius');
-    // #rrggbb and #rrggbbaa are both valid CSS Color 4, which canvas accepts
-    return { addColorStop(o, c) { if (c !== 'transparent' && !/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c)) bad.push(`addColorStop bad colour ${c}`); } };
+    return { addColorStop(o, c) { if (!COLOUR.test(String(c))) bad.push(`addColorStop bad colour ${c}`); } };
   },
 };
 
@@ -90,6 +93,13 @@ for (const id of Object.keys(MAPS)) {
     frame(t += 16); frames++;
   }
   listeners.keydown.forEach(fn => fn({ key: 'h' }));
+
+  // outside charted space: shear vignette, flashing warning, clamped minimap plot
+  for (const [x, y] of [[-40, 4000], [-1700, -1700], [13700, 9700]]) {
+    feed({ t: 's', ships: [[1, x, y, 0.5, 0, 'm', 'vanguard', 40, 0, 2],
+                           [3, 3000, 2000, 1.2, 0, 'h', 'kestrel', 30, 0, 1]] });
+    frame(t += 16); frames++;
+  }
 }
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));

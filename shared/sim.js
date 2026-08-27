@@ -4,6 +4,25 @@
 import { MAP_W, MAP_H, PORTAL_R } from './maps.js';
 import { resolve, radiusOf, DEFAULT_HULL } from './ships.js';
 
+// The charted zone is 0..MAP_W / 0..MAP_H — exactly what the minimap draws. Space
+// keeps going past it, but only the lattice of navigation beacons inside that
+// rectangle gives a ship the positional reference its compensators need. Outside,
+// nothing nulls the gravitational shear between the sector's mass concentrations
+// and the hull wears it directly, harder the further out you push.
+export const DRIFT_MARGIN = 1800;   // px  how far past the edge you can physically get
+export const DRIFT_MIN    = 45;     // hull/s the instant you cross the line
+export const DRIFT_MAX    = 2000;   // hull/s out at the hard limit — steep enough that no
+                                    // hull, on any fit, survives to actually touch the border
+export const WORLD = { x0: -DRIFT_MARGIN, y0: -DRIFT_MARGIN,
+                       x1: MAP_W + DRIFT_MARGIN, y1: MAP_H + DRIFT_MARGIN };
+
+export const driftDepth = (x, y) => Math.max(0, -x, x - MAP_W, -y, y - MAP_H);
+export function driftDps(depth) {
+  if (depth <= 0) return 0;
+  const t = Math.min(1, depth / DRIFT_MARGIN);
+  return DRIFT_MIN + (DRIFT_MAX - DRIFT_MIN) * t * t;
+}
+
 export const SLOW_RADIUS = 90;    // px  ease off inside this range
 export const ARRIVE       = 5;    // px  close enough, stop
 export const JUMP_TIME    = 3.0;  // s   portal spool-up once you commit
@@ -63,10 +82,10 @@ export function step(s, dt) {
   s.x += s.vx * dt;
   s.y += s.vy * dt;
 
-  if (s.x < s.r)         { s.x = s.r;         s.vx = 0; }
-  if (s.x > MAP_W - s.r) { s.x = MAP_W - s.r; s.vx = 0; }
-  if (s.y < s.r)         { s.y = s.r;         s.vy = 0; }
-  if (s.y > MAP_H - s.r) { s.y = MAP_H - s.r; s.vy = 0; }
+  if (s.x < WORLD.x0 + s.r) { s.x = WORLD.x0 + s.r; s.vx = 0; }
+  if (s.x > WORLD.x1 - s.r) { s.x = WORLD.x1 - s.r; s.vx = 0; }
+  if (s.y < WORLD.y0 + s.r) { s.y = WORLD.y0 + s.r; s.vy = 0; }
+  if (s.y > WORLD.y1 - s.r) { s.y = WORLD.y1 - s.r; s.vy = 0; }
 
   if (Math.hypot(s.vx, s.vy) > 1) s.heading = Math.atan2(s.vy, s.vx);
 }
@@ -103,6 +122,13 @@ export function applyDamage(s, amount) {
   const onHull = amount - onShield;
   s.hp = Math.max(0, s.hp - onHull);
   return { shield: onShield, hull: onHull, dead: s.hp <= 0 };
+}
+
+// Shear is ordinary damage: it eats shields first and, because applyDamage resets
+// the timer every tick, they never start coming back while you are still out there.
+export function stepDrift(s, dt) {
+  const dps = driftDps(driftDepth(s.x, s.y));
+  return dps > 0 ? applyDamage(s, dps * dt) : null;
 }
 
 export function nearPortal(map, s) {
