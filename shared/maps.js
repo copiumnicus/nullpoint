@@ -85,7 +85,8 @@ Object.entries(COMPANIES).forEach(([co, f]) => {
   const a = f.ang, own = { owner: co };
   const myGates = GATES.filter(g => g.cos.includes(co)).map(g => g.id);
   mk(co + '1', place(a, RAD.home),              `${f.tag}-1`, 0,
-     [{ ...SW, to: co + '2' }, { ...SE, to: co + '3' }],                       { ...own, home: true });
+     [{ ...SW, to: co + '2' }, { ...SE, to: co + '3' }],
+     { ...own, home: true, base: { x: 6000, y: 4000, r: 900 } });   // the docking zone itself
   mk(co + '2', place(a, RAD.mid, -MID_OFF),     `${f.tag}-2`, 1,
      [{ ...NE, to: co + '1' }, { ...S,  to: co + '4' }],                       own);
   mk(co + '3', place(a, RAD.mid,  MID_OFF),     `${f.tag}-3`, 2,

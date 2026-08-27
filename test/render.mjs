@@ -41,7 +41,8 @@ const CTX = {
   createRadialGradient(...a) {
     num('createRadialGradient', ...a);
     if (a[2] < 0 || a[5] < 0) bad.push('gradient negative radius');
-    return { addColorStop(o, c) { if (c !== 'transparent' && !/^#[0-9a-f]{6}$/i.test(c)) bad.push(`addColorStop bad colour ${c}`); } };
+    // #rrggbb and #rrggbbaa are both valid CSS Color 4, which canvas accepts
+    return { addColorStop(o, c) { if (c !== 'transparent' && !/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c)) bad.push(`addColorStop bad colour ${c}`); } };
   },
 };
 

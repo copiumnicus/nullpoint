@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, applyDamage, stepJump, beginJump, arrivalFor } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, applyDamage, stepJump, beginJump, arrivalFor, inBase } from './shared/sim.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
@@ -31,8 +31,10 @@ wss.on('connection', ws => {
   const home = co + '1';
   const hullKeys = Object.keys(HULLS);
   const hull = hullKeys[(id - 1) % hullKeys.length];  // so connected clients differ
-  const ship = newShip(MAP_W / 2 + (Math.random() - 0.5) * 1600,
-                       MAP_H / 2 + (Math.random() - 0.5) * 1200, hull, []);
+  const b = MAPS[home].base;
+  const spawn = () => { const a = Math.random() * 7, d = Math.random() * b.r * 0.6;
+                        return { x: b.x + Math.cos(a) * d, y: b.y + Math.sin(a) * d }; };
+  const ship = newShip(spawn().x, spawn().y, hull, []);
   players.set(id, { ws, mapId: home, co, ship });
   ws.send(JSON.stringify({ t: 'welcome', id, map: home, co, hull, fit: [] }));
   console.log(`+ player ${id} [${COMPANIES[co].tag}] ${HULLS[hull].name} at ${MAPS[home].name} (${players.size} online)`);
@@ -43,9 +45,9 @@ wss.on('connection', ws => {
     const P = players.get(id);
     if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
 
-    if (m.t === 'refit') {                        // only at your own company's home
+    if (m.t === 'refit') {                        // only inside your own base ring
       const map = MAPS[P.mapId];
-      if (!map.home || map.owner !== P.co) return;
+      if (map.owner !== P.co || !inBase(map, ship)) return;
       const hull = HULLS[m.hull] ? m.hull : ship.hull;
       refit(ship, hull, sanitiseFit(hull, m.fit));
       return ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit }));
@@ -82,14 +84,16 @@ setInterval(() => {
 
   for (const [id, p] of players) {
     step(p.ship, dt);
-    stepVitals(p.ship, dt);
+    const map = MAPS[p.mapId];
+    p.docked = map.owner === p.co && inBase(map, p.ship);
+    stepVitals(p.ship, dt, p.docked);
 
     if (p.ship.hp <= 0) {                         // destroyed: back to your home, repaired
-      const home = p.co + '1';
+      const home = p.co + '1', hb = MAPS[home].base;
+      const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
       p.mapId = home;
       refit(p.ship, p.ship.hull, p.ship.fit);
-      Object.assign(p.ship, { x: MAP_W / 2 + (Math.random() - 0.5) * 1600,
-                              y: MAP_H / 2 + (Math.random() - 0.5) * 1200,
+      Object.assign(p.ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
                               vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
                               charge: 0, chargeTo: null, jumpCd: JUMP_CD });
       if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: home, died: true }));

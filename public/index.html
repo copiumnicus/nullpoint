@@ -8,7 +8,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { SLOW_RADIUS, JUMP_TIME, nearPortal } from '/shared/sim.js';
+import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase } from '/shared/sim.js';
 import { ATTRS, HULLS, MODULES, resolve, radiusOf, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 
@@ -72,7 +72,10 @@ const toView = e => {
            y: (e.clientY - r.top)  * (VIEW_H / r.height) };
 };
 
-const atHome = () => MAPS[mapId].home && MAPS[mapId].owner === myCo;
+const docked = () => {
+  const me = ships.get(myId), map = MAPS[mapId];
+  return !!me && map.owner === myCo && inBase(map, { x: me.x, y: me.y });
+};
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
@@ -201,7 +204,9 @@ function drawSystem(me) {
 
     if (m.home) {
       g.fillStyle = COMPANIES[m.owner].color;
-      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      const cx = r.x + m.base.x * kx, cy = r.y + m.base.y * ky;
+      g.strokeStyle = COMPANIES[m.owner].color + '99'; g.lineWidth = 1;
+      g.beginPath(); g.arc(cx, cy, m.base.r * kx, 0, 7); g.stroke();
       g.beginPath();
       g.moveTo(cx, cy - 7); g.lineTo(cx + 7, cy); g.lineTo(cx, cy + 7); g.lineTo(cx - 7, cy);
       g.closePath(); g.fill();
@@ -275,7 +280,7 @@ function bayClick(v) {
     else if (draftFit.length < slotsOf(draftHull)) draftFit.push(k);
     return;
   }
-  if (inside(G.apply) && atHome()) send({ t: 'refit', hull: draftHull, fit: draftFit });
+  if (inside(G.apply) && docked()) send({ t: 'refit', hull: draftHull, fit: draftFit });
 }
 
 const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
@@ -283,7 +288,7 @@ const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
 function drawBay() {
   const G = bayGeom(), P = G.panel;
   const base = resolve(draftHull, []), fitted = resolve(draftHull, draftFit);
-  const home = atHome();
+  const home = docked();
 
   g.fillStyle = 'rgba(3,5,9,0.92)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
   g.fillStyle = 'rgba(8,12,19,0.98)'; g.fillRect(P.x, P.y, P.w, P.h);
@@ -293,8 +298,8 @@ function drawBay() {
   g.fillText('HANGAR', P.x + 20, P.y + 32);
   g.font = '11px ui-monospace, monospace';
   g.fillStyle = home ? '#66748c' : '#e0a53f';
-  g.fillText(home ? 'refit at will — you are docked at your home base'
-                  : `refit only at ${COMPANIES[myCo].tag}-1, your home base`, P.x + 100, P.y + 32);
+  g.fillText(home ? 'DOCKED — refit at will'
+                  : `fly into the ${COMPANIES[myCo].tag}-1 base ring to refit`, P.x + 100, P.y + 32);
 
   g.font = '11px ui-monospace, monospace';
   g.fillStyle = '#5b6b85'; g.fillText('HULL', P.x + 20, G.top - 12);
@@ -409,6 +414,44 @@ function drawFrame(now) {
 
   g.strokeStyle = map.tint + '55'; g.lineWidth = 4; g.strokeRect(0, 0, MAP_W, MAP_H);
 
+  if (map.base) {
+    const b = map.base, col = COMPANIES[map.owner].color, mine = map.owner === myCo;
+    const grd = g.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+    grd.addColorStop(0, col + '2e'); grd.addColorStop(0.65, col + '12'); grd.addColorStop(1, 'transparent');
+    g.fillStyle = grd; g.fillRect(b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
+
+    g.strokeStyle = col + (mine ? 'aa' : '55'); g.lineWidth = 2;
+    g.setLineDash([26, 18]); g.lineDashOffset = -now / 60;          // slow drift
+    g.beginPath(); g.arc(b.x, b.y, b.r, 0, 7); g.stroke();
+    g.setLineDash([]); g.lineDashOffset = 0;
+    g.strokeStyle = col + '44'; g.lineWidth = 1;
+    g.beginPath(); g.arc(b.x, b.y, b.r * 0.62, 0, 7); g.stroke();
+
+    for (let i = 0; i < 4; i++) {                                    // approach ticks
+      const a = i * Math.PI / 2 + Math.PI / 4;
+      g.beginPath();
+      g.moveTo(b.x + Math.cos(a) * (b.r - 26), b.y + Math.sin(a) * (b.r - 26));
+      g.lineTo(b.x + Math.cos(a) * (b.r + 26), b.y + Math.sin(a) * (b.r + 26));
+      g.stroke();
+    }
+
+    g.save();                                                        // station
+    g.translate(b.x, b.y); g.rotate(now / 9000);
+    g.strokeStyle = col; g.lineWidth = 3; g.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3, px = Math.cos(a) * 62, py = Math.sin(a) * 62;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.closePath(); g.stroke();
+    g.fillStyle = col + '55'; g.fill();
+    g.fillStyle = col; g.fillRect(-13, -13, 26, 26);
+    g.restore();
+
+    g.fillStyle = col; g.textAlign = 'center'; g.font = '14px ui-monospace, monospace';
+    g.fillText(`${COMPANIES[map.owner].tag} BASE`, b.x, b.y - b.r - 18);
+    g.font = '12px ui-monospace, monospace'; g.textAlign = 'left';
+  }
+
   const idle = 0.6 + 0.4 * Math.sin(now / 420);
   for (const p of map.portals) {
     const tint = MAPS[p.to].tint;
@@ -480,6 +523,12 @@ function drawFrame(now) {
   const sx = MM_W / MAP_W, sy = MM_H / MAP_H;
   g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(MM_X, MM_Y, MM_W, MM_H);
   g.strokeStyle = map.tint + '99'; g.lineWidth = 1; g.strokeRect(MM_X + .5, MM_Y + .5, MM_W - 1, MM_H - 1);
+  if (map.base) {
+    const b = map.base, col = COMPANIES[map.owner].color;
+    g.strokeStyle = col + 'cc'; g.lineWidth = 1;
+    g.beginPath(); g.arc(MM_X + b.x * sx, MM_Y + b.y * sy, b.r * sx, 0, 7); g.stroke();
+    g.fillStyle = col; g.fillRect(MM_X + b.x * sx - 2, MM_Y + b.y * sy - 2, 4, 4);
+  }
   for (const p of map.portals) {
     g.fillStyle = MAPS[p.to].tint;
     g.fillRect(MM_X + p.x * sx - 2.5, MM_Y + p.y * sy - 2.5, 5, 5);
@@ -535,9 +584,13 @@ function drawFrame(now) {
     g.fillStyle = '#5b6b85';
     g.fillText(`SH ${sh}/${st.shield | 0}   HU ${hp}/${st.hull | 0}` +
                (myFit.length ? `   fit ${myFit.length}/${st.slots}` : ''), 16 + w + 10, 68);
+    if (docked()) {
+      g.fillStyle = COMPANIES[myCo].color;
+      g.fillText('◆ DOCKED — repairing', 16 + w + 10, 52);
+    }
   }
   g.fillText('click / hold to fly · JUMP at a portal · M star system · H hangar' +
-             (atHome() ? '' : ' (home only)') + ' · K take test damage', 16, VIEW_H - 16);
+             (docked() ? '' : ' (dock first)') + ' · K take test damage', 16, VIEW_H - 16);
 
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();

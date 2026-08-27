@@ -1,5 +1,6 @@
 import { ATTRS, HULLS, MODULES, DEFAULT_HULL, resolve, sanitiseFit, slotsOf } from '../shared/ships.js';
-import { newShip, refit, step, stepVitals, applyDamage } from '../shared/sim.js';
+import { newShip, refit, step, stepVitals, applyDamage, inBase, DOCK_HULL_RATE } from '../shared/sim.js';
+import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -102,6 +103,36 @@ const swapped = refit(newShip(0, 0, 'kestrel', []), 'bulwark', ['plating']);
 check('refit rebuilds stats, size and vitals',
   swapped.stats.hull === resolve('bulwark', ['plating']).hull && swapped.r === HULLS.bulwark.r
   && swapped.hp === swapped.stats.hull && swapped.shield === swapped.stats.shield);
+
+console.log('\nbase zone');
+const homes = Object.entries(MAPS).filter(([, m]) => m.base).map(([k]) => k);
+check('every home map has a base, and only home maps do',
+  homes.length === 3 && homes.every(h => MAPS[h].home)
+  && Object.values(MAPS).every(m => !m.base || m.home), homes.join(', '));
+check('the zone sits inside the map and clear of portals', homes.every(h => {
+  const b = MAPS[h].base;
+  return b.x - b.r > 0 && b.y - b.r > 0 && b.x + b.r < MAP_W && b.y + b.r < MAP_H
+      && MAPS[h].portals.every(p => Math.hypot(p.x - b.x, p.y - b.y) > b.r + PORTAL_R);
+}));
+check('inBase is a real boundary',
+  inBase(MAPS.m1, { x: 6000, y: 4000 }) && !inBase(MAPS.m1, { x: 6000 + MAPS.m1.base.r + 5, y: 4000 })
+  && !inBase(MAPS.g1, { x: 6000, y: 4000 }), 'and non-home maps have none');
+
+const wreck = () => { const w = newShip(0, 0, 'vanguard', []); applyDamage(w, w.stats.hull * 0.8 + w.stats.shield); return w; };
+const adrift = wreck();
+for (let i = 0; i < 30 * 30; i++) stepVitals(adrift, dt, false);
+check('adrift, the hull stays broken', adrift.hp === Math.round(adrift.stats.hull * 0.2 * 1e6) / 1e6 || Math.abs(adrift.hp - adrift.stats.hull * 0.2) < 1,
+  `${adrift.hp.toFixed(0)}/${adrift.stats.hull} after 30s`);
+check('adrift, shields still come back', adrift.shield === adrift.stats.shield);
+const berthed = wreck();
+let secs = 0;
+while (berthed.hp < berthed.stats.hull && secs < 60) { stepVitals(berthed, dt, true); secs += dt; }
+check('docked, the hull repairs', berthed.hp === berthed.stats.hull, `full in ${secs.toFixed(1)}s`);
+check('docked repair matches the declared rate',
+  Math.abs(secs - 0.8 / DOCK_HULL_RATE) < 0.5, `${(DOCK_HULL_RATE * 100).toFixed(0)}%/s`);
+const nodelay = wreck();
+stepVitals(nodelay, dt, true);
+check('docking ignores the shield delay', nodelay.shield > 0, 'no waiting at your own dock');
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(HULLS).length} hulls, ${Object.keys(MODULES).length} modules`}\n`);
 process.exit(fails.length ? 1 : 0);

@@ -71,10 +71,26 @@ export function step(s, dt) {
   if (Math.hypot(s.vx, s.vy) > 1) s.heading = Math.atan2(s.vy, s.vx);
 }
 
+// Is this ship inside the map's docking zone? Ownership is the caller's problem —
+// an enemy can sit in your base ring, they just get nothing from it.
+export function inBase(map, s) {
+  return !!map.base && Math.hypot(map.base.x - s.x, map.base.y - s.y) < map.base.r;
+}
+
 // Shields come back only after shieldDelay seconds without being hit, so taking
-// any damage at all resets the clock. Hull never regenerates in the field.
-export function stepVitals(s, dt) {
+// any damage at all resets the clock. Hull never regenerates in the field — the
+// only place it comes back is inside your own base ring, which is also the only
+// place regen ignores the delay.
+export const DOCK_SHIELD_MULT = 3;    // × shieldRegen while docked
+export const DOCK_HULL_RATE   = 0.12; // × max hull per second, so ~8s from scrap
+
+export function stepVitals(s, dt, docked = false) {
   s.sinceHit += dt;
+  if (docked) {
+    s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * DOCK_SHIELD_MULT * dt);
+    s.hp     = Math.min(s.stats.hull,   s.hp     + s.stats.hull * DOCK_HULL_RATE * dt);
+    return;
+  }
   if (s.sinceHit < s.stats.shieldDelay || s.shield >= s.stats.shield) return;
   s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * dt);
 }
