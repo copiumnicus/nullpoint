@@ -1,25 +1,35 @@
 // Ore, drops and holds.
 //
-// Rarity is expressed twice on purpose: rarer metals appear less often AND take
-// less room, so a full hold is a decision rather than a wall. You dump nothing —
-// you simply stop being able to pick up the cheap bulk once the good stuff is in.
+// Real metals, and the ones actually worth chasing off-world: an M-type asteroid
+// is iron and nickel by mass, with the platinum-group metals as the prize. The
+// iridium anomaly at the K-Pg boundary is asteroid-delivered, which is the whole
+// argument for going.
+//
+// A hold measures VOLUME and a unit is a billet of fixed mass, so denser metals
+// take less room — iridium is nearly three times the density of iron, so the same
+// mass of it occupies a third of the space. That is why a full hold is a decision
+// rather than a wall: you stop being able to lift cheap bulk once the good stuff
+// is aboard. `density` is the real figure in g/cm³ and a test keeps `vol` ranked
+// consistently with it.
 
 export const MATERIALS = {
-  ferrocite: { name: 'Ferrocite', tier: 1, vol: 2, value:   4, colour: '#9aa3ad' },
-  cryolite:  { name: 'Cryolite',  tier: 2, vol: 2, value:  12, colour: '#7fd4ff' },
-  vantium:   { name: 'Vantium',   tier: 3, vol: 1, value:  40, colour: '#b06adf' },
-  solarite:  { name: 'Solarite',  tier: 4, vol: 1, value: 130, colour: '#ffb43f' },
-  nullstone: { name: 'Nullstone', tier: 5, vol: 1, value: 500, colour: '#ff5c8a' },
+  iron:     { name: 'Iron',      sym: 'Fe', tier: 1, density:  7.87, vol: 3, value:   3, colour: '#8d7f6e' },
+  nickel:   { name: 'Nickel',    sym: 'Ni', tier: 2, density:  8.91, vol: 3, value:   9, colour: '#a8b4a0' },
+  cobalt:   { name: 'Cobalt',    sym: 'Co', tier: 3, density:  8.90, vol: 3, value:  22, colour: '#4a7fd4' },
+  rhodium:  { name: 'Rhodium',   sym: 'Rh', tier: 4, density: 12.41, vol: 2, value:  90, colour: '#ffd9e8' },
+  platinum: { name: 'Platinum',  sym: 'Pt', tier: 5, density: 21.45, vol: 1, value: 260, colour: '#cfd8e3' },
+  iridium:  { name: 'Iridium',   sym: 'Ir', tier: 6, density: 22.56, vol: 1, value: 600, colour: '#7fd4c8' },
 };
 
 // Weights must sum to 1. A test enforces that, and that rarer never beats commoner.
 export const DROPS = {
   drifter: [
-    { mat: 'ferrocite', p: 0.55, min: 1, max: 3 },
-    { mat: 'cryolite',  p: 0.28, min: 1, max: 2 },
-    { mat: 'vantium',   p: 0.12, min: 1, max: 1 },
-    { mat: 'solarite',  p: 0.04, min: 1, max: 1 },
-    { mat: 'nullstone', p: 0.01, min: 1, max: 1 },
+    { mat: 'iron',     p: 0.44, min: 1, max: 4 },
+    { mat: 'nickel',   p: 0.26, min: 1, max: 3 },
+    { mat: 'cobalt',   p: 0.16, min: 1, max: 2 },
+    { mat: 'rhodium',  p: 0.09, min: 1, max: 2 },
+    { mat: 'platinum', p: 0.04, min: 1, max: 1 },
+    { mat: 'iridium',  p: 0.01, min: 1, max: 1 },
   ],
 };
 

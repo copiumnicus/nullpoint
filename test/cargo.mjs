@@ -19,8 +19,16 @@ check('tiers are 1..n with no gaps or repeats',
 const byTier = Object.values(MATERIALS).sort((a, b) => a.tier - b.tier);
 check('value climbs with rarity', byTier.every((m, i) => i === 0 || m.value > byTier[i - 1].value),
   byTier.map(m => m.value).join(' < '));
-check('rarer metals are denser, so a full hold is a choice not a wall',
-  volOf('nullstone') < volOf('ferrocite'), `${volOf('ferrocite')} vs ${volOf('nullstone')} per unit`);
+check('value per unit of hold climbs with rarity — the real reason to haul it',
+  byTier.every((m, i) => i === 0 || m.value / m.vol > byTier[i - 1].value / byTier[i - 1].vol),
+  byTier.map(m => (m.value / m.vol).toFixed(0)).join(' < ') + ' cr per volume');
+check('volume tracks real density: denser metal, less room for the same mass',
+  (() => {                                        // rank by density, check vol ranks inversely
+    const byDen = Object.values(MATERIALS).slice().sort((a, b) => a.density - b.density);
+    return byDen.every((m, i) => i === 0 || m.vol <= byDen[i - 1].vol);
+  })(), `Fe ${MATERIALS.iron.density} -> ${volOf('iron')} vol, Ir ${MATERIALS.iridium.density} -> ${volOf('iridium')} vol`);
+check('every metal is a real element with a symbol',
+  Object.values(MATERIALS).every(m => /^[A-Z][a-z]?$/.test(m.sym) && m.density > 0));
 check('every material carries a colour', Object.values(MATERIALS).every(m => /^#[0-9a-f]{6}$/i.test(m.colour)));
 
 console.log('\ndrop tables');
@@ -55,26 +63,26 @@ check('and the expander costs speed',
   resolve('kestrel', ['expander']).speed < resolve('kestrel', []).speed);
 
 const h = {};
-check('stow reports what it actually took', stow(h, 'ferrocite', 4, 30) === 4 && holdVol(h) === 8);
-check('stow refuses to overfill', stow(h, 'ferrocite', 100, 30) === 11 && holdVol(h) === 30, 'cap 30');
-check('a full hold takes nothing more', stow(h, 'vantium', 5, 30) === 0);
+check('stow reports what it actually took', stow(h, 'iron', 4, 30) === 4 && holdVol(h) === 12, 'iron is 3 per unit');
+check('stow refuses to overfill', stow(h, 'iron', 100, 30) === 6 && holdVol(h) === 30, 'cap 30, 10 iron');
+check('a full hold takes nothing more', stow(h, 'platinum', 5, 30) === 0);
 check('but a denser metal fits where bulk would not', (() => {
-  const g = {}; stow(g, 'ferrocite', 14, 29);              // 28 of 29 used, 1 spare
-  return stow(g, 'nullstone', 1, 29) === 1 && stow(g, 'ferrocite', 1, 29) === 0;
-})(), 'one unit of room: takes the rare, refuses the bulk');
+  const g = {}; stow(g, 'iron', 14, 29);              // 27 of 29 used, 2 spare
+  return stow(g, 'iridium', 1, 29) === 1 && stow(g, 'iron', 1, 29) === 0;
+})(), 'iridium at 1 fits the gap, iron at 3 does not');
 check('unknown materials are refused, not stored', stow({}, 'unobtanium', 5, 100) === 0);
 check('value sums correctly',
-  holdValue({ ferrocite: 2, nullstone: 1 }) === MATERIALS.ferrocite.value * 2 + MATERIALS.nullstone.value);
+  holdValue({ iron: 2, iridium: 1 }) === MATERIALS.iron.value * 2 + MATERIALS.iridium.value);
 
 console.log('\ntractor beam');
 {
   const dt = 1 / 30;
-  const near = () => ({ id: 1, x: 100, y: 0, mat: 'vantium', n: 3 });
+  const near = () => ({ id: 1, x: 100, y: 0, mat: 'platinum', n: 3 });   // vol 1 each
   const ship = () => newShip(0, 0, 'vanguard', []);
 
   check('nothing to grab', beginScoop(ship(), {}, null) === 'gone');
   check('out of reach', beginScoop(ship(), {}, { ...near(), x: SCOOP_R + 50 }) === 'far');
-  check('no room in the hold', beginScoop(ship(), { ferrocite: 30 }, near()) === 'full', 'cap 60, 60 used');
+  check('no room in the hold', beginScoop(ship(), { iron: 20 }, near()) === 'full', 'cap 60, 60 used');
   const started = beginScoop(ship(), {}, near());
   check('in reach with room starts a beam', started.id === 1 && started.t === SCOOP_TIME);
 
@@ -82,7 +90,7 @@ console.log('\ntractor beam');
   let t = 0, r;
   do { r = stepScoop(sc1, p1, s1, h1, dt); t += dt; } while (r.running);
   check('it takes the stated time', Math.abs(t - SCOOP_TIME) < 0.05, `${t.toFixed(2)}s`);
-  check('and the whole pod comes aboard', h1.vantium === 3 && p1.n === 0 && r.emptied);
+  check('and the whole pod comes aboard', h1.platinum === 3 && p1.n === 0 && r.emptied);
 
   const s2 = ship(), h2 = {}, p2 = near(), sc2 = beginScoop(s2, h2, p2);
   for (let i = 0; i < 10; i++) stepScoop(sc2, p2, s2, h2, dt);
@@ -95,41 +103,41 @@ console.log('\ntractor beam');
   s3.hp = 0;
   check('dying cancels it', stepScoop(sc3, p3, s3, h3, dt).cancelled && holdVol(h3) === 0);
 
-  const s4 = ship(), h4 = { ferrocite: 29 }, p4 = near(), sc4 = beginScoop(s4, h4, p4);  // 58/60 used
+  const s4 = ship(), h4 = { iron: 19, platinum: 1 }, p4 = near(), sc4 = beginScoop(s4, h4, p4);  // 58/60
   let g4; do { g4 = stepScoop(sc4, p4, s4, h4, dt); } while (g4.running);
   check('a nearly full hold takes what fits and leaves the rest',
-    g4.took === 2 && p4.n === 1 && !g4.emptied, '2 of 3 vantium, pod keeps the remainder');
+    g4.took === 2 && p4.n === 1 && !g4.emptied, '2 of 3 platinum, pod keeps the remainder');
 }
 
 console.log('\noffloading');
 {
-  const hold = { ferrocite: 5, cryolite: 3, nullstone: 2 }, vault = {};
+  const hold = { iron: 5, rhodium: 1, iridium: 2 }, vault = {};
   const before = holdVol(hold);
   const moved = unload(hold, vault, 4);            // budget is VOLUME, not items
   check('unload reports VOLUME spent, not items moved',
     before - holdVol(hold) === 4 && moved === 4,
-    '2 nullstone at vol 1 + 1 cryolite at vol 2 = 3 items, 4 volume');
+    '2 iridium at vol 1 + 1 rhodium at vol 2 = 3 items, 4 volume');
   check('a budget smaller than the next item spends nothing, and says so', (() => {
-    const h2 = { ferrocite: 3 }, v3 = {};          // vol 2 ore against a budget of 1
-    return unload(h2, v3, 1) === 0 && holdVol(h2) === 6;
+    const h2 = { iron: 3 }, v3 = {};               // iron is 3 per unit, budget is 1
+    return unload(h2, v3, 1) === 0 && holdVol(h2) === 9;
   })(), 'so a metered caller can carry the remainder forward');
-  check('it takes the rarest first', (vault.nullstone ?? 0) === 2,
+  check('it takes the rarest first', (vault.iridium ?? 0) === 2,
     'leave early and you keep the cheap half, not the good half');
   let guard = 0;
   while (holdVol(hold) > 0 && guard++ < 500) unload(hold, vault, 9);
-  check('the vault is bottomless', holdVol(hold) === 0 && vault.ferrocite === 5 && vault.cryolite === 3);
-  check('an emptied material is removed rather than left at zero', !('ferrocite' in hold));
-  const full = { ferrocite: 60 }, v2 = { ferrocite: 1000 };
+  check('the vault is bottomless', holdVol(hold) === 0 && vault.iron === 5 && vault.rhodium === 1);
+  check('an emptied material is removed rather than left at zero', !('iron' in hold));
+  const full = { iron: 60 }, v2 = { iron: 1000 };
   unload(full, v2, 9999);
-  check('offload has no ceiling', v2.ferrocite === 1060 && holdVol(full) === 0);
+  check('offload has no ceiling', v2.iron === 1060 && holdVol(full) === 0);
 }
 check('scooping takes real time and real proximity',
   SCOOP_TIME > 0.2 && SCOOP_R > 100 && POD_LIFE > 30,
   `${SCOOP_TIME}s beam, ${SCOOP_R}px reach, ${POD_LIFE}s pod life`);
 check('a stack transfer moves the whole stack', (() => {
-  const h3 = { ferrocite: 7, vantium: 2 }, v4 = {};
+  const h3 = { iron: 7, platinum: 2 }, v4 = {};
   unload(h3, v4, 7 * 99);                          // how the server bills a 'stash'
-  return v4.ferrocite === 7 && v4.vantium === 2 && holdVol(h3) === 0;
+  return v4.iron === 7 && v4.platinum === 2 && holdVol(h3) === 0;
 })());
 check('every alien pays a bounty', Object.values(ALIENS).every(a => a.bounty > 0),
   `Drifter ${ALIENS.drifter.bounty} ${CURRENCY.short}`);

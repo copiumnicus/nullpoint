@@ -480,13 +480,16 @@ function stack(r, mat, n, live) {
   g.fillRect(r.x, r.y, r.w, r.h);
   g.strokeStyle = (M?.colour ?? '#9aa3ad') + (live ? 'aa' : '44'); g.lineWidth = 1;
   g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
-  g.save(); g.translate(r.x + 22, r.y + r.h / 2); g.rotate(Math.PI / 4);
-  g.fillStyle = M?.colour ?? '#9aa3ad'; g.fillRect(-8, -8, 16, 16);
-  g.restore();
+  g.fillStyle = M?.colour ?? '#9aa3ad';
+  g.fillRect(r.x + 10, r.y + 6, 22, 22);
+  g.fillStyle = '#0a0e14'; g.font = 'bold 12px ui-monospace, monospace'; g.textAlign = 'center';
+  g.fillText(M?.sym ?? '?', r.x + 21, r.y + 21);
+  g.textAlign = 'left';
   g.fillStyle = '#cfe4ff'; g.font = '12px ui-monospace, monospace';
   g.fillText(M?.name ?? mat, r.x + 42, r.y + 15);
   g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
-  g.fillText(`T${M?.tier ?? '?'} · ${M?.value ?? 0} ${CURRENCY.short} each · ${M?.vol ?? 1} vol`, r.x + 42, r.y + 27);
+  g.fillText(`T${M?.tier ?? '?'} · ${M?.value ?? 0} ${CURRENCY.short} · ${M?.vol ?? 1} vol · ${M?.density ?? '?'} g/cm³`,
+             r.x + 42, r.y + 27);
   g.fillStyle = '#fff'; g.font = '14px ui-monospace, monospace'; g.textAlign = 'right';
   g.fillText('×' + n, r.x + r.w - 12, r.y + 22);
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
@@ -662,9 +665,9 @@ function drawFrame(now) {
       g.fillText(reachable ? `${MATERIALS[pod.mat]?.name ?? pod.mat} — click to haul in` : 'too far', pod.x, pod.y + 32);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
-    if (pod.n > 1) {
+    {
       g.fillStyle = col; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
-      g.fillText('×' + pod.n, pod.x, pod.y - 18);
+      g.fillText((MATERIALS[pod.mat]?.sym ?? '?') + (pod.n > 1 ? ' ×' + pod.n : ''), pod.x, pod.y - 18);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
   }

@@ -102,8 +102,8 @@ for (const id of Object.keys(MAPS)) {
     packBlast({ x: 5600, y: 3800, r: 13, t: 0.10, ttl: 0.8, foe: false }),   // nearly done
   ], pods: Object.keys(MATERIALS).map((mat, i) =>
     packPod({ id: i + 1, x: 5800 + i * 120, y: 4400, mat, n: i + 1 })),
-    hold: { ferrocite: 6, vantium: 3, nullstone: 1 }, cap: 60, credits: 4820, docked: true,
-    vault: { ferrocite: 240, cryolite: 88, solarite: 4 },
+    hold: { iron: 6, platinum: 3, iridium: 1 }, cap: 60, credits: 4820, docked: true,
+    vault: { iron: 240, nickel: 88, rhodium: 4 },
     scoop: { id: 1, p: 0.4 } });
   feed({ t: 'award', amount: 140, what: 'Drifter', total: 4960 });
   frame(t += 16); frames++;                                    // world view
