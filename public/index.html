@@ -88,6 +88,30 @@ const docked = () => {
   const me = ships.get(myId), map = MAPS[mapId];
   return !!me && map.owner === myCo && inBase(map, { x: me.x, y: me.y });
 };
+
+// Nearest hostile to a world point, within a forgiving radius. Demanding a direct
+// hit on a 15px hull that is also moving made engaging anything a chore.
+function hostileAt(wx, wy) {
+  let best = null, bestD = Infinity;
+  for (const [id, sh] of ships) {
+    if (sh.co !== 'x' || sh.vis === STALE) continue;
+    const d = Math.hypot(sh.rx - wx, sh.ry - wy);
+    if (d < rOf(sh) + PICK_SLACK && d < bestD) { bestD = d; best = id; }
+  }
+  return best;
+}
+
+function nearestHostile() {
+  const me = ships.get(myId);
+  if (!me) return null;
+  let best = null, bestD = Infinity;
+  for (const [id, sh] of ships) {
+    if (sh.co !== 'x' || sh.vis === STALE) continue;
+    const d = Math.hypot(sh.rx - me.rx, sh.ry - me.ry);
+    if (d < bestD) { bestD = d; best = id; }
+  }
+  return best;
+}
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }

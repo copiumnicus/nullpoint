@@ -75,6 +75,11 @@ await import('./.client.mjs');
 const ws = socks[0];
 const feed = o => ws.onmessage({ data: JSON.stringify(o) });
 const frame = t => { const cb = raf; raf = null; cb(t); };
+// Input handlers are code too. Not driving them is how two helper functions went
+// missing entirely while every frame still rendered: hover starts null, so the
+// render path short-circuited before ever calling them.
+const evt = (type, props = {}) => (listeners[type] ?? []).forEach(fn =>
+  fn({ preventDefault() {}, pointerId: 1, clientX: 0, clientY: 0, key: 'Unidentified', ...props }));
 
 feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard', fit: [] });
 let t = 0, frames = 0;
@@ -103,6 +108,21 @@ for (const id of Object.keys(MAPS)) {
     frame(t += 16); frames++;
   }
   listeners.keydown.forEach(fn => fn({ key: 'h' }));
+
+  // pointer and keys, over empty space and over a hostile
+  for (const [px, py] of [[40, 40], [1200, 750], [innerWidth - 60, innerHeight - 40]]) {
+    evt('pointermove', { clientX: px, clientY: py });
+    frame(t += 16); frames++;                                 // hover preview path
+    evt('pointerdown', { clientX: px, clientY: py });
+    evt('pointermove', { clientX: px + 30, clientY: py + 10 });
+    evt('pointerup',   { clientX: px + 30, clientY: py + 10 });
+    evt('pointerdown', { clientX: px, clientY: py });          // second click: double-click path
+    evt('pointerup',   { clientX: px, clientY: py });
+    frame(t += 16); frames++;
+  }
+  evt('pointerleave');
+  for (const k of ['Tab', 'x', 'k', 'Escape']) evt('keydown', { key: k });
+  frame(t += 16); frames++;
 
   // outside charted space: shear vignette, flashing warning, clamped minimap plot
   for (const [x, y] of [[-40, 4000], [-1700, -1700], [13700, 9700]]) {
