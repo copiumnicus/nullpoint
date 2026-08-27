@@ -9,7 +9,7 @@
 // Every entry point is a no-op until a real AudioContext exists, so the render
 // harness and any browser that blocks audio run the same path harmlessly.
 
-let ctx = null, master = null, verb = null, drive = null, zap = null;
+let ctx = null, master = null, verb = null, drive = null;
 let thrGain = null, thrFilter = null;
 let on = true;
 const firing = [];                 // when each live gun voice ends, oldest first
@@ -46,7 +46,8 @@ function playClip(buffer, cfg, peak, t, verbSend) {
   src.start(t);
 }
 
-export const LASER_GAIN = 0.15;    // half what it was: they were shouting
+export const LASER_GAIN = 0.15;   // half what it was: they were shouting
+export const LASER_VERB = 0;      // dry. Any tail at this fire rate turns into mush
 
 const saturation = () => {         // soft clip: grit without a fizz
   const n = 1024, c = new Float32Array(n);
@@ -86,16 +87,6 @@ export function audioReady() {
   verb = ctx.createGain(); verb.gain.value = 1;
   verb.connect(conv); conv.connect(vlp); vlp.connect(master);
 
-  // A short feedback delay. The repeating tail is most of what makes a swept tone
-  // read as a laser rather than as a falling bleep.
-  const dl = ctx.createDelay(0.5);
-  dl.delayTime.value = 0.085;
-  const fb = ctx.createGain(); fb.gain.value = 0.3;
-  const dlp = ctx.createBiquadFilter();
-  dlp.type = 'lowpass'; dlp.frequency.value = 1800;
-  zap = ctx.createGain(); zap.gain.value = 1;
-  zap.connect(dl); dl.connect(dlp); dlp.connect(fb); fb.connect(dl); dlp.connect(master);
-
   // Thruster: brown noise, so it rumbles instead of hissing.
   const blen = Math.floor(sr * 2);
   const buf = ctx.createBuffer(1, blen, sr);
@@ -130,9 +121,13 @@ const send = (node, amount, t, dur) => {           // into the reverb bus
 };
 
 // A shot is a swept tone: a triangle falling fast, an octave-down sine under it
-// for weight, through a resonant lowpass that tracks the sweep, into a short
-// feedback delay. That fall is what reads as a laser; the resonance and the
-// repeating tail are what stop it reading as a bleep.
+// for weight, through a resonant lowpass that tracks the sweep. The fall is what
+// reads as a laser, and the resonance is what stops it reading as a bleep.
+//
+// Completely dry — no delay, no reverb send. A tail on a single shot sounds like
+// a film effect; on a gun cycling twice a second it just smears into the next
+// one, and three of those at once is mud. Explosions keep the reverb because
+// they happen rarely and want the space.
 //
 // Pitched well below a typical film-effect laser on purpose, so it sits under a
 // dark ambient score instead of cutting across it. Yours starts higher than
@@ -150,7 +145,7 @@ export function laser(mine, dist) {
   const peak = LASER_GAIN * near * near * (mine ? 1 : 0.82);
 
   const sample = mine ? clip.laser : (clip.enemy ?? clip.laser);
-  if (sample) return playClip(sample, mine ? SFX.laser : SFX.enemy, peak, t, 0.18);
+  if (sample) return playClip(sample, mine ? SFX.laser : SFX.enemy, peak, t, LASER_VERB);
 
   const f0 = mine ? 920 : 620, f1 = mine ? 76 : 50;
   const dur = mine ? 0.26 : 0.32;
@@ -179,8 +174,7 @@ export function laser(mine, dist) {
   body.connect(lp);
   sub.connect(subG); subG.connect(lp);
   lp.connect(amp); amp.connect(master);
-  amp.connect(zap);                                // the tail
-  send(amp, 0.22, t);
+  if (LASER_VERB > 0) send(amp, LASER_VERB, t);
 
   body.start(t); body.stop(t + dur + 0.04);
   sub.start(t);  sub.stop(t + dur + 0.04);
