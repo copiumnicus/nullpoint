@@ -141,6 +141,32 @@ check('the dock will not repair you while you are being shot',
   underFire.hp < underFire.stats.hull * 0.25 && underFire.shield === 0,
   'so running home is not a free escape');
 
+console.log('\nhangar layout');
+{
+  const { bayLayout } = await import('../shared/hangar.js');
+  let outside = 0, clash = 0, overlap = 0, offscreen = 0, tightest = 1e9;
+  for (const [W, H] of [[1920,1080],[1600,900],[1440,900],[1280,800],[1100,700],[1024,640]]) {
+    const L = bayLayout(W, H), P = L.panel, A = L.apply;
+    const rows = [...L.hulls, ...L.mods].map(o => o.r);
+    if (P.x < 0 || P.y < 0 || P.x + P.w > W || P.y + P.h > H) offscreen++;
+    for (const r of rows) {
+      // every row must be reachable: inside the panel, or a click there is read as
+      // "clicked outside" and the panel closes instead of selecting anything
+      if (r.x < P.x || r.y < P.y || r.x + r.w > P.x + P.w || r.y + r.h > P.y + P.h) outside++;
+      if (r.x < A.x + A.w && A.x < r.x + r.w && r.y < A.y + A.h && A.y < r.y + r.h) clash++;
+      tightest = Math.min(tightest, (P.y + P.h) - (r.y + r.h));
+    }
+    for (const col of [L.hulls, L.mods])
+      for (let i = 1; i < col.length; i++)
+        if (col[i].r.y < col[i-1].r.y + col[i-1].r.h) overlap++;
+  }
+  check('every hull and module row stays inside the panel', outside === 0,
+    `${Object.keys(MODULES).length} modules, ${tightest | 0}px of slack at the tightest`);
+  check('no row sits under the APPLY button', clash === 0);
+  check('rows never overlap each other', overlap === 0);
+  check('the panel fits on screen at every size', offscreen === 0);
+}
+
 console.log('\nwire format');
 {
   const { SHIP_FIELDS, packShip, unpackShip } = await import('../shared/net.js');

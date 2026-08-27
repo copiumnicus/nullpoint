@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { MODULES } from '../shared/ships.js';
+import { bayLayout } from '../shared/hangar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -67,7 +68,8 @@ globalThis.setInterval = () => 0;
 let raf = null;
 globalThis.requestAnimationFrame = cb => { raf = cb; };
 const socks = [];
-globalThis.WebSocket = class { constructor() { this.readyState = 1; socks.push(this); } send() {} close() {} };
+const sent = [];
+globalThis.WebSocket = class { constructor() { this.readyState = 1; socks.push(this); } send(d) { sent.push(JSON.parse(d)); } close() {} };
 
 const errs = [];
 console.error = (...a) => errs.push(a.join(' '));
@@ -152,6 +154,31 @@ for (const id of Object.keys(MAPS)) {
     frame(t += 16); frames++;
   }
 }
+// The hangar's APPLY button: does clicking it actually ask the server for a refit?
+{
+  feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                                    hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 2 })] });
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                                    hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 2 })] });
+  sent.length = 0;
+  const L = bayLayout(innerWidth, innerHeight);
+  evt('keydown', { key: 'h' });                                  // open the hangar
+  frame(t += 16); frames++;
+  for (const { r } of L.hulls) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+  for (const { r } of L.mods)  evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+  frame(t += 16); frames++;
+  // If any of those clicks had landed outside the panel it would have closed, and
+  // this last one would go nowhere.
+  evt('pointerdown', { clientX: L.apply.x + L.apply.w / 2, clientY: L.apply.y + L.apply.h / 2 });
+  frame(t += 16); frames++;
+  const refit = sent.filter(m => m.t === 'refit');
+  if (!refit.length) errs.push('APPLY REFIT sent no refit message after clicking every row');
+  else console.log(`hangar: clicked all ${L.hulls.length} hulls + ${L.mods.length} modules, ` +
+                   `APPLY still works -> ${refit[0].hull} [${refit[0].fit}]`);
+  evt('keydown', { key: 'h' });
+}
+
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));
 if (bad.length)  console.log('bad draw args:\n  ' + [...new Set(bad)].slice(0, 12).join('\n  '));

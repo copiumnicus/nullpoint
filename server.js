@@ -18,6 +18,7 @@ const FILES = {
   '/shared/sim.js':   ['shared/sim.js',     'text/javascript'],
   '/shared/maps.js':  ['shared/maps.js',    'text/javascript'],
   '/shared/chart.js': ['shared/chart.js',   'text/javascript'],
+  '/shared/hangar.js':['shared/hangar.js',  'text/javascript'],
   '/shared/ships.js': ['shared/ships.js',   'text/javascript'],
   '/shared/radar.js': ['shared/radar.js',   'text/javascript'],
   '/shared/net.js':   ['shared/net.js',     'text/javascript'],

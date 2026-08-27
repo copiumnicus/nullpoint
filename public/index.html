@@ -12,6 +12,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD } from '/shared/sim.js';
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
+import { bayLayout } from '/shared/hangar.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
@@ -336,15 +337,7 @@ function drawSystem(me) {
 // --- hangar -------------------------------------------------------------------
 // Geometry lives in one place so drawing and hit-testing can never disagree
 // about where a row is.
-function bayGeom() {
-  const w = Math.min(900, VIEW_W - 60), h = Math.min(470, VIEW_H - 60);
-  const x = (VIEW_W - w) / 2, y = (VIEW_H - h) / 2;
-  const colW = (w - 60) / 3, top = y + 74;
-  const hulls = Object.keys(HULLS).map((k, i) => ({ k, r: { x: x + 20, y: top + i * 58, w: colW, h: 50 } }));
-  const mods  = Object.keys(MODULES).map((k, i) => ({ k, r: { x: x + 30 + colW, y: top + i * 44, w: colW, h: 38 } }));
-  return { panel: { x, y, w, h }, colW, top, hulls, mods,
-           apply: { x: x + w - 190, y: y + h - 54, w: 170, h: 34 } };
-}
+const bayGeom = () => bayLayout(VIEW_W, VIEW_H);
 
 function bayClick(v) {
   const G = bayGeom();
@@ -385,7 +378,7 @@ function drawBay() {
   g.font = '11px ui-monospace, monospace';
   g.fillStyle = '#5b6b85'; g.fillText('HULL', P.x + 20, G.top - 12);
   g.fillText(`MODULES  ${draftFit.length}/${slotsOf(draftHull)}`, P.x + 30 + G.colW, G.top - 12);
-  g.fillText('RESOLVED', P.x + 40 + G.colW * 2, G.top - 12);
+  g.fillText('RESOLVED', G.stats.x, G.top - 12);
 
   for (const { k, r } of G.hulls) {
     const H = HULLS[k], on = k === draftHull;
@@ -394,12 +387,12 @@ function drawBay() {
     g.strokeStyle = on ? '#7fd4ff' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
     g.fillStyle = COMPANIES[myCo].color;
-    g.fillRect(r.x + 14 - H.r / 2, r.y + r.h / 2 - H.r / 2, H.r, H.r);
+    g.fillRect(r.x + 16 - H.r / 2, r.y + r.h / 2 - H.r / 2, H.r, H.r);
     g.fillStyle = on ? '#fff' : '#93a3b5'; g.font = '12px ui-monospace, monospace';
-    g.fillText(H.name, r.x + 34, r.y + 21);
+    g.fillText(H.name, r.x + 36, r.y + 20);
     g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
     const a = H.attrs;
-    g.fillText(`${H.cls}   ${a.hull} hull  ${a.shield} sh  ${a.speed} spd`, r.x + 34, r.y + 36);
+    g.fillText(`${H.cls}   ${a.hull} hull  ${a.shield} sh  ${a.speed} spd  ${a.cargo} hold`, r.x + 36, r.y + 34);
   }
 
   for (const { k, r } of G.mods) {
@@ -411,20 +404,20 @@ function drawBay() {
     g.strokeStyle = on ? '#7de08a' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
     g.fillStyle = on ? '#fff' : '#93a3b5'; g.font = '11px ui-monospace, monospace';
-    g.fillText(M.name, r.x + 10, r.y + 16);
-    g.font = '10px ui-monospace, monospace';
+    g.fillText(M.name, r.x + 10, r.y + 14);
+    g.font = '9px ui-monospace, monospace';
     let tx = r.x + 10;
     for (const [attr, op, v] of M.mods) {
       const good = (ATTRS[attr].better === 'high') === (v > 0);
       g.fillStyle = good ? '#7de08a' : '#e07a7a';
       const txt = `${v > 0 ? '+' : ''}${op === 'mul' ? Math.round(v * 100) + '%' : fmt(v)} ${attr}`;
-      g.fillText(txt, tx, r.y + 30);
-      tx += g.measureText(txt).width + 12;
+      g.fillText(txt, tx, r.y + 26);
+      tx += g.measureText(txt).width + 10;
     }
     g.globalAlpha = 1;
   }
 
-  const sx = P.x + 40 + G.colW * 2;
+  const sx = G.stats.x;
   let sy = G.top + 6;
   g.font = '11px ui-monospace, monospace';
   for (const [k, A] of Object.entries(ATTRS)) {
@@ -448,7 +441,7 @@ function drawBay() {
   g.fillText('APPLY REFIT', A.x + A.w / 2, A.y + 22);
   g.globalAlpha = 1;
   g.textAlign = 'left'; g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
-  g.fillText('click a hull or module to change the draft · H or Esc to close', P.x + 20, P.y + P.h - 30);
+  g.fillText('click a hull or module to change the draft · H or Esc to close', P.x + 20, P.y + P.h - 28);
   g.font = '12px ui-monospace, monospace';
 }
 
