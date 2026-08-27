@@ -14,9 +14,11 @@ export const ALIENS = {
     // Tuned so a starter hull cannot simply park and trade: a bare Vanguard needs
     // ~30s of unbroken fire and eats ~1500 of its 2000 effective hp doing it. Its
     // weapon reaches 520 against your 620-820, so speed and range are a real
-    // answer — kiting works, standing still does not.
+    // answer — kiting works, standing still does not. Speed sits just above the
+    // heaviest hull so a Cruiser cannot simply walk away, and no higher: a faster
+    // one was miserable to click on.
     attrs: { hull: 1400, shield: 900, shieldRegen: 45, shieldDelay: 4,
-             speed: 300, accel: 900, signature: 4,
+             speed: 260, accel: 900, signature: 4,
              damage: 45, fireRate: 1.1, weaponRange: 520 },
     aggro: 1500,      // picks a fight inside this
     leash: 2800,      // beyond this it starts losing interest

@@ -87,6 +87,10 @@ check('and it forgets the grudge', !chaser.provoked.has(1), 'so sanctuary works 
 const plodder = newShip(10000, 1500, 'bulwark', []);
 const chaser2 = foe(10600, 1500); chaser2.provoked.add(1); chaser2.target = 1;
 fight(chaser2, plodder, 20, { drive: p => { p.dx = -1; p.dy = 0; } });
+const speeds = Object.keys(HULLS).map(h => resolve(h, []).speed).sort((a, b) => a - b);
+check('alien speed sits just above the heaviest hull, and no higher',
+  D.attrs.speed > speeds[0] && D.attrs.speed < speeds[1],
+  `${speeds[0]} < ${D.attrs.speed} < ${speeds[1]} — heavies cannot walk away, and it stays clickable`);
 check('a slower hull cannot simply run', chaser2.target === 1,
   `bulwark ${resolve('bulwark', []).speed} cannot break ${D.leash}px`);
 
