@@ -1,0 +1,428 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Aphelion</title>
+<style>
+  html,body{margin:0;height:100%;background:#05070b;overflow:hidden}
+  canvas{display:block;width:100vw;height:100vh;cursor:crosshair;touch-action:none}
+</style>
+<canvas id="c"></canvas>
+<script type="module">
+import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
+import { SHIP_R, SLOW_RADIUS, JUMP_TIME, nearPortal } from '/shared/sim.js';
+
+const c = document.getElementById('c'), g = c.getContext('2d');
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+
+// --- viewport: fills the window, DPR-correct --------------------------------
+let VIEW_W = 0, VIEW_H = 0, MM_W = 0, MM_H = 0, MM_X = 0, MM_Y = 0;
+function resize() {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  VIEW_W = innerWidth; VIEW_H = innerHeight;
+  c.width = Math.round(VIEW_W * dpr); c.height = Math.round(VIEW_H * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);              // also resets font — re-set it
+  g.font = '12px ui-monospace, SFMono-Regular, monospace';
+  MM_W = Math.min(260, VIEW_W * 0.22); MM_H = MM_W * (MAP_H / MAP_W);
+  MM_X = VIEW_W - MM_W - 16; MM_Y = VIEW_H - MM_H - 16;
+}
+addEventListener('resize', resize); resize();
+const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
+const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
+let sysOpen = false;
+
+let myId = null, myCo = 'm', mapId = 'm1', status = 'connecting…';
+const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
+const cam = { x: 0, y: 0 };
+
+// --- net ---------------------------------------------------------------------
+const ws = new WebSocket(`ws://${location.host}`);
+const send = o => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
+ws.onopen  = () => status = 'online';
+ws.onclose = () => status = 'disconnected';
+ws.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.t === 'welcome') { myId = m.id; myCo = m.co; mapId = m.map; return; }
+  if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
+  if (m.t !== 's') return;
+  const seen = new Set();
+  for (const [id, x, y, h, ch, co] of m.ships) {
+    seen.add(id);
+    const s = ships.get(id) ?? { rx: x, ry: y };
+    s.x = x; s.y = y; s.heading = h; s.charge = ch; s.co = co;
+    ships.set(id, s);
+  }
+  for (const id of ships.keys()) if (!seen.has(id)) ships.delete(id);
+};
+
+// --- input -------------------------------------------------------------------
+// A tap is a destination. A hold is a throttle+heading, resent every tick because
+// the ship (and the camera under the cursor) keeps moving while you hold still.
+const HOLD_MS = 150, DRAG_PX = 10;
+let held = false, steering = false, downAt = 0, cur = { x: 0, y: 0 }, down = { x: 0, y: 0 };
+let marker = null;                                    // your last move order, for display
+
+const toView = e => {
+  const r = c.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (VIEW_W / r.width),
+           y: (e.clientY - r.top)  * (VIEW_H / r.height) };
+};
+
+addEventListener('keydown', e => {
+  if (e.key === 'm' || e.key === 'M') sysOpen = !sysOpen;
+  if (e.key === 'Escape') sysOpen = false;
+});
+
+c.addEventListener('pointerdown', e => {
+  const v = toView(e);
+  if (sysOpen) { sysOpen = false; return; }           // click anywhere dismisses the chart
+  const sb = sysBtn();
+  if (v.x > sb.x && v.x < sb.x + sb.w && v.y > sb.y && v.y < sb.y + sb.h) { sysOpen = true; return; }
+  const b = btn();
+  if (v.x > b.x && v.x < b.x + b.w && v.y > b.y && v.y < b.y + b.h) return send({ t: 'jump' });
+  if (v.x > MM_X && v.y > MM_Y) {                     // minimap click = destination order
+    marker = { x: clamp((v.x - MM_X) / MM_W * MAP_W, 0, MAP_W),
+               y: clamp((v.y - MM_Y) / MM_H * MAP_H, 0, MAP_H) };
+    return send({ t: 'intent', mode: 'pt', x: marker.x, y: marker.y });
+  }
+  held = true; steering = false; downAt = performance.now(); cur = down = v;
+  c.setPointerCapture(e.pointerId);
+  marker = { x: v.x + cam.x, y: v.y + cam.y };
+  send({ t: 'intent', mode: 'pt', x: marker.x, y: marker.y });   // instant response on tap
+});
+c.addEventListener('pointermove', e => {
+  if (!held) return;
+  cur = toView(e);
+  if (Math.hypot(cur.x - down.x, cur.y - down.y) > DRAG_PX) steering = true;
+});
+addEventListener('pointerup', () => {
+  if (held && steering) { send({ t: 'intent', mode: 'stop' }); marker = null; }
+  held = false; steering = false;
+});
+
+setInterval(() => {                                   // flush at the server tick rate
+  if (!held) return;
+  if (!steering && performance.now() - downAt > HOLD_MS) steering = true;
+  if (!steering) return;
+  const me = ships.get(myId);
+  if (!me) return;
+  const dx = cur.x - (me.rx - cam.x), dy = cur.y - (me.ry - cam.y);
+  const d = Math.hypot(dx, dy);
+  const throttle = Math.min(1, d / SLOW_RADIUS);      // point near yourself = crawl
+  marker = null;
+  send(d < 1 ? { t: 'intent', mode: 'stop' }
+             : { t: 'intent', mode: 'dir', dx: (dx / d) * throttle, dy: (dy / d) * throttle });
+}, 1000 / 30);
+
+// --- starfield: hashed grid, infinite, zero storage ---------------------------
+const hash = (x, y, s) => {
+  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(s, 1274126177);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
+const LAYERS = [
+  { p: 0.30, cell:  70, size: 1.0, a: 0.45 },
+  { p: 0.60, cell: 110, size: 1.7, a: 0.60 },
+  { p: 1.00, cell: 190, size: 2.5, a: 0.85 },
+];
+function drawStars() {
+  g.fillStyle = '#cfe4ff';
+  LAYERS.forEach((L, li) => {
+    const ox = cam.x * L.p, oy = cam.y * L.p;
+    const cx0 = Math.floor(ox / L.cell), cx1 = Math.floor((ox + VIEW_W) / L.cell);
+    const cy0 = Math.floor(oy / L.cell), cy1 = Math.floor((oy + VIEW_H) / L.cell);
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
+      const b = hash(cx, cy, li * 97 + 3);
+      if (b < 0.35) continue;
+      g.globalAlpha = L.a * (0.35 + b * 0.65);
+      g.fillRect(cx * L.cell + hash(cx, cy, li * 97 + 1) * L.cell - ox,
+                 cy * L.cell + hash(cx, cy, li * 97 + 2) * L.cell - oy, L.size, L.size);
+    }
+  });
+  g.globalAlpha = 1;
+}
+
+// --- star system chart -------------------------------------------------------
+// Nodes sit at the free-form sx/sy positions from maps.js — three company branches
+// at 120° around the contested hub. Links still route orthogonally: each one leaves
+// its port on the edge facing the destination, then steps across in right angles.
+function drawSystem(me) {
+  const ids = Object.keys(MAPS);
+  const xs = ids.map(i => MAPS[i].sx), ys = ids.map(i => MAPS[i].sy);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  // node box is ~0.95 units wide, so fold that into the span before solving for scale
+  const S = Math.max(46, Math.min((VIEW_W - 130) / (x1 - x0 + 1.0), (VIEW_H - 168) / (y1 - y0 + 0.95)));
+  const NW = Math.max(50, Math.min(112, S * 0.95)), NH = NW * (MAP_H / MAP_W);
+  const ox = VIEW_W / 2 - ((x0 + x1) / 2) * S, oy = VIEW_H / 2 + 8 - ((y0 + y1) / 2) * S;
+  const rectOf = id => ({ x: ox + MAPS[id].sx * S - NW / 2, y: oy + MAPS[id].sy * S - NH / 2, w: NW, h: NH });
+  const centerOf = id => ({ x: ox + MAPS[id].sx * S, y: oy + MAPS[id].sy * S });
+
+  // The port sits where the portal actually is on that map, but on the edge facing
+  // the destination — so the chart shows both the topology and the geography.
+  const portToward = (id, p, tc) => {
+    const r = rectOf(id), cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const vx = tc.x - cx, vy = tc.y - cy;
+    return Math.abs(vx) >= Math.abs(vy)
+      ? { x: vx > 0 ? r.x + r.w : r.x, y: r.y + (p.y / MAP_H) * r.h, dir: vx > 0 ? 'e' : 'w' }
+      : { x: r.x + (p.x / MAP_W) * r.w, y: vy > 0 ? r.y + r.h : r.y, dir: vy > 0 ? 's' : 'n' };
+  };
+
+  g.fillStyle = 'rgba(3,5,9,0.92)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  const OUT = Math.max(16, S * 0.20), horiz = d => d === 'e' || d === 'w';
+  const drawn = new Set();
+  for (const id of ids) for (const p of MAPS[id].portals) {
+    const key = [id, p.to].sort().join('|');
+    if (drawn.has(key)) continue;
+    drawn.add(key);
+    const back = MAPS[p.to].portals.find(q => q.to === id);
+    if (!back) continue;
+    const a = portToward(id, p, centerOf(p.to)), b = portToward(p.to, back, centerOf(id));
+    const ax = a.x + (a.dir === 'e' ? OUT : a.dir === 'w' ? -OUT : 0);
+    const ay = a.y + (a.dir === 's' ? OUT : a.dir === 'n' ? -OUT : 0);
+    const bx = b.x + (b.dir === 'e' ? OUT : b.dir === 'w' ? -OUT : 0);
+    const by = b.y + (b.dir === 's' ? OUT : b.dir === 'n' ? -OUT : 0);
+
+    const pts = [[a.x, a.y], [ax, ay]];
+    if (horiz(a.dir) && horiz(b.dir))        { const mx = (ax + bx) / 2; pts.push([mx, ay], [mx, by]); }
+    else if (!horiz(a.dir) && !horiz(b.dir)) { const my = (ay + by) / 2; pts.push([ax, my], [bx, my]); }
+    else if (horiz(a.dir))                   { pts.push([bx, ay]); }
+    else                                     { pts.push([ax, by]); }
+    pts.push([bx, by], [b.x, b.y]);
+
+    // internal supply lines wear the owner's colour; anything touching contested
+    // space is drawn as a front line
+    const own = MAPS[id].owner && MAPS[id].owner === MAPS[p.to].owner ? MAPS[id].owner : null;
+    g.strokeStyle = own ? COMPANIES[own].color + '66' : 'rgba(224,90,90,0.50)';
+    g.lineWidth = own ? 1.8 : 2.4;
+    g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+    for (const [x, y] of pts.slice(1)) g.lineTo(x, y);
+    g.stroke();
+    for (const q of [a, b]) { g.fillStyle = own ? COMPANIES[own].color : '#e08a8a'; g.beginPath(); g.arc(q.x, q.y, 2.5, 0, 7); g.fill(); }
+  }
+
+  const small = NW < 104;
+  for (const id of ids) {
+    const m = MAPS[id], r = rectOf(id), here = id === mapId;
+    const kx = r.w / MAP_W, ky = r.h / MAP_H;
+
+    g.save();
+    g.beginPath(); g.rect(r.x, r.y, r.w, r.h); g.clip();
+    g.fillStyle = '#070b11'; g.fillRect(r.x, r.y, r.w, r.h);
+    g.globalAlpha = 0.17; g.fillStyle = m.tint; g.fillRect(r.x, r.y, r.w, r.h);
+    for (const [x, y, rad, col] of m.neb) {
+      const cx = r.x + x * kx, cy = r.y + y * ky, rr = rad * kx;
+      const grd = g.createRadialGradient(cx, cy, 0, cx, cy, rr);
+      grd.addColorStop(0, col); grd.addColorStop(1, 'transparent');
+      g.globalAlpha = 0.8; g.fillStyle = grd; g.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
+    }
+    g.globalAlpha = 0.45; g.fillStyle = '#cfe4ff';
+    const sd = id.charCodeAt(0) * 31 + id.charCodeAt(1);
+    for (let i = 0; i < 22; i++) g.fillRect(r.x + hash(i, 7, sd) * r.w, r.y + hash(i, 11, sd) * r.h, 1, 1);
+    g.globalAlpha = 1;
+    g.restore();
+
+    for (const p of m.portals) {
+      g.fillStyle = MAPS[p.to].tint;
+      g.fillRect(r.x + p.x * kx - 2, r.y + p.y * ky - 2, 4, 4);
+    }
+    if (m.home) {                                          // company base marker
+      g.fillStyle = COMPANIES[m.owner].color;
+      g.beginPath();
+      g.moveTo(r.x + r.w / 2, r.y + r.h / 2 - 7); g.lineTo(r.x + r.w / 2 + 7, r.y + r.h / 2);
+      g.lineTo(r.x + r.w / 2, r.y + r.h / 2 + 7); g.lineTo(r.x + r.w / 2 - 7, r.y + r.h / 2);
+      g.closePath(); g.fill();
+      g.strokeStyle = '#05070b'; g.lineWidth = 1; g.stroke();
+    }
+    if (here && me) {
+      g.fillStyle = '#fff';
+      g.beginPath(); g.arc(r.x + me.rx * kx, r.y + me.ry * ky, 3, 0, 7); g.fill();
+    }
+
+    // fill is the region's own theme; the OUTLINE is who holds it
+    if (m.owner) { g.strokeStyle = COMPANIES[m.owner].color; g.lineWidth = 2; }
+    else         { g.strokeStyle = '#8a94a8'; g.lineWidth = 1.4; g.setLineDash([4, 3]); }
+    g.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+    g.setLineDash([]);
+    if (here) { g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.strokeRect(r.x - 3.5, r.y - 3.5, r.w + 7, r.h + 7); }
+
+    g.textAlign = 'center';
+    g.font = (small ? '10px' : '11px') + ' ui-monospace, monospace';
+    g.fillStyle = here ? '#fff' : m.tint;
+    g.fillText(m.name.split(' · ')[0] + (here ? '  ◂ you' : ''), r.x + r.w / 2, r.y + r.h + 14);
+    g.fillStyle = '#66748c'; g.font = (small ? '9px' : '10px') + ' ui-monospace, monospace';
+    g.fillText(m.theme.toUpperCase(), r.x + r.w / 2, r.y + r.h + 26);
+  }
+
+  g.textAlign = 'center'; g.fillStyle = '#8ab4e6'; g.font = '15px ui-monospace, monospace';
+  g.fillText('KNOWN SPACE · STAR SYSTEM', VIEW_W / 2, 30);
+  let lx = VIEW_W / 2 - 306;
+  g.font = '11px ui-monospace, monospace'; g.textAlign = 'left';
+  for (const [co, f] of Object.entries(COMPANIES)) {
+    g.strokeStyle = f.color; g.lineWidth = 2; g.strokeRect(lx + .5, 43.5, 11, 11);
+    g.fillStyle = co === myCo ? '#fff' : '#7f8ea8';
+    g.fillText(`${f.tag} — ${f.name}${co === myCo ? '  ◂ you' : ''}`, lx + 18, 53);
+    lx += 208;
+  }
+  g.strokeStyle = '#8a94a8'; g.lineWidth = 1.4; g.setLineDash([4, 3]);
+  g.strokeRect(VIEW_W / 2 - 306.5, 62.5, 11, 11); g.setLineDash([]);
+  g.fillStyle = '#7f8ea8';
+  g.fillText('CONTESTED — no holder.   Fill colour is the region itself; the outline is who holds it.',
+             VIEW_W / 2 - 288, 72);
+  g.textAlign = 'center'; g.fillStyle = '#5b6b85'; g.font = '12px ui-monospace, monospace';
+  g.fillText('click anywhere or press M to close', VIEW_W / 2, VIEW_H - 18);
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+}
+
+// --- render -------------------------------------------------------------------
+let renderFailed = false;
+requestAnimationFrame(function frame(now) {
+  try { drawFrame(now); } catch (err) {
+    if (!renderFailed) { renderFailed = true; console.error('render error (loop kept alive):', err); }
+  }
+  requestAnimationFrame(frame);
+});
+
+function drawFrame(now) {
+  const map = MAPS[mapId], me = ships.get(myId);
+
+  for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
+  if (me) {
+    cam.x = clamp(me.rx - VIEW_W / 2, 0, Math.max(0, MAP_W - VIEW_W));
+    cam.y = clamp(me.ry - VIEW_H / 2, 0, Math.max(0, MAP_H - VIEW_H));
+  }
+  if (marker && me && Math.hypot(marker.x - me.x, marker.y - me.y) < 12) marker = null;
+  const atPortal = me ? nearPortal(map, { x: me.x, y: me.y, jumpCd: 0 }) : null;
+  const charge = me?.charge ?? 0;
+
+  g.fillStyle = '#05070b'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.globalAlpha = 0.055; g.fillStyle = map.tint; g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.globalAlpha = 1;
+  drawStars();
+
+  g.save();
+  g.translate(-cam.x, -cam.y);
+
+  for (const [x, y, r, col] of map.neb) {
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, col); grad.addColorStop(1, 'transparent');
+    g.globalAlpha = 0.30; g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  g.globalAlpha = 1;
+
+  g.strokeStyle = 'rgba(120,160,220,0.05)'; g.lineWidth = 1; g.beginPath();
+  for (let x = Math.floor(cam.x / 500) * 500; x < cam.x + VIEW_W; x += 500) { g.moveTo(x, cam.y); g.lineTo(x, cam.y + VIEW_H); }
+  for (let y = Math.floor(cam.y / 500) * 500; y < cam.y + VIEW_H; y += 500) { g.moveTo(cam.x, y); g.lineTo(cam.x + VIEW_W, y); }
+  g.stroke();
+
+  g.strokeStyle = map.tint + '55'; g.lineWidth = 4; g.strokeRect(0, 0, MAP_W, MAP_H);
+
+  const idle = 0.6 + 0.4 * Math.sin(now / 420);
+  for (const p of map.portals) {
+    const tint = MAPS[p.to].tint;
+    const spooling = charge > 0 && atPortal === p;
+    let r = PORTAL_R;
+    if (spooling) {
+      const el = JUMP_TIME - charge, prog = el / JUMP_TIME;
+      r = PORTAL_R * (1 + (0.16 + 0.34 * prog) * Math.sin(el * el * 1.6 * Math.PI * 2));  // winds up
+    }
+    g.globalAlpha = (spooling ? 0.34 : 0.20) * (spooling ? 1 : idle);
+    g.fillStyle = tint; g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill();
+    g.globalAlpha = 1; g.strokeStyle = tint; g.lineWidth = spooling ? 5 : 3;
+    g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.stroke();
+    if (spooling) {
+      g.lineWidth = 3; g.strokeStyle = '#fff';
+      g.beginPath(); g.arc(p.x, p.y, PORTAL_R * 1.45, -Math.PI / 2, -Math.PI / 2 + (1 - charge / JUMP_TIME) * Math.PI * 2);
+      g.stroke();
+    }
+    g.fillStyle = tint; g.textAlign = 'center';
+    g.fillText(MAPS[p.to].name.toUpperCase(), p.x, p.y - PORTAL_R * 1.45 - 14);
+  }
+  g.textAlign = 'left';
+
+  if (marker) {
+    g.strokeStyle = '#4a90d9'; g.lineWidth = 1.5; g.globalAlpha = 0.8;
+    g.beginPath(); g.arc(marker.x, marker.y, 8, 0, 7); g.stroke();
+    g.globalAlpha = 1;
+  }
+
+  for (const [id, s] of ships) {
+    g.save();
+    g.translate(s.rx, s.ry); g.rotate(s.heading);
+    g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
+    g.fillRect(-SHIP_R, -SHIP_R, SHIP_R * 2, SHIP_R * 2);
+    if (id === myId) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(-SHIP_R, -SHIP_R, SHIP_R * 2, SHIP_R * 2); }
+    g.fillStyle = '#05070b'; g.fillRect(SHIP_R - 6, -2, 6, 4);
+    g.restore();
+  }
+  g.restore();
+
+  // --- jump button (screen space) ---
+  if (atPortal || charge > 0) {
+    const p = atPortal ?? map.portals[0], tint = MAPS[p.to].tint, b = btn();
+    const prog = charge > 0 ? 1 - charge / JUMP_TIME : 0;
+    g.fillStyle = 'rgba(6,10,16,0.9)';
+    g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 6); g.fill();
+    if (charge > 0) {
+      g.save(); g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 6); g.clip();
+      g.globalAlpha = 0.35; g.fillStyle = tint; g.fillRect(b.x, b.y, b.w * prog, b.h);
+      g.restore(); g.globalAlpha = 1;
+    }
+    g.strokeStyle = tint; g.lineWidth = 1.5;
+    g.beginPath(); g.roundRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1, 6); g.stroke();
+    g.fillStyle = tint; g.textAlign = 'center'; g.font = '13px ui-monospace, monospace';
+    g.fillText(charge > 0 ? `SPOOLING  ${charge.toFixed(1)}s  ·  CLICK TO ABORT`
+                          : `JUMP  →  ${MAPS[p.to].name.toUpperCase()}`, b.x + b.w / 2, b.y + 29);
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+
+  // --- minimap ---
+  const sx = MM_W / MAP_W, sy = MM_H / MAP_H;
+  g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(MM_X, MM_Y, MM_W, MM_H);
+  g.strokeStyle = map.tint + '99'; g.lineWidth = 1; g.strokeRect(MM_X + .5, MM_Y + .5, MM_W - 1, MM_H - 1);
+  for (const p of map.portals) {
+    g.fillStyle = MAPS[p.to].tint;
+    g.fillRect(MM_X + p.x * sx - 2.5, MM_Y + p.y * sy - 2.5, 5, 5);
+  }
+  if (marker && me) {                                 // course line, drawn under the dots
+    const mx = MM_X + marker.x * sx, my = MM_Y + marker.y * sy;
+    g.strokeStyle = 'rgba(74,144,217,0.75)'; g.lineWidth = 1; g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(MM_X + me.rx * sx, MM_Y + me.ry * sy); g.lineTo(mx, my); g.stroke();
+    g.setLineDash([]);
+    g.strokeStyle = '#4a90d9';
+    g.beginPath(); g.arc(mx, my, 3.5, 0, 7); g.stroke();
+    g.beginPath(); g.moveTo(mx - 6, my); g.lineTo(mx + 6, my);
+    g.moveTo(mx, my - 6); g.lineTo(mx, my + 6); g.stroke();
+  }
+  for (const [id, s] of ships) {
+    g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
+    g.fillRect(MM_X + s.rx * sx - (id === myId ? 2.5 : 1.5), MM_Y + s.ry * sy - (id === myId ? 2.5 : 1.5),
+               id === myId ? 5 : 3, id === myId ? 5 : 3);
+  }
+  g.strokeStyle = '#ff3b47'; g.lineWidth = 1;
+  g.strokeRect(MM_X + cam.x * sx, MM_Y + cam.y * sy, VIEW_W * sx, VIEW_H * sy);
+
+  // --- star system button ---
+  const sb = sysBtn();
+  g.fillStyle = 'rgba(6,10,16,0.86)'; g.beginPath(); g.roundRect(sb.x, sb.y, sb.w, sb.h, 5); g.fill();
+  g.strokeStyle = '#3d5a7f'; g.lineWidth = 1;
+  g.beginPath(); g.roundRect(sb.x + .5, sb.y + .5, sb.w - 1, sb.h - 1, 5); g.stroke();
+  g.strokeStyle = '#8ab4e6'; g.beginPath();                       // little link glyph
+  g.moveTo(sb.x + 12, sb.y + 15); g.lineTo(sb.x + 24, sb.y + 15);
+  g.moveTo(sb.x + 24, sb.y + 10); g.lineTo(sb.x + 24, sb.y + 20); g.stroke();
+  g.fillStyle = '#8ab4e6';
+  for (const [dx, dy] of [[9, 15], [27, 10], [27, 20]]) { g.beginPath(); g.arc(sb.x + dx, sb.y + dy, 2.5, 0, 7); g.fill(); }
+  g.fillStyle = '#8ab4e6'; g.fillText('STAR SYSTEM', sb.x + 38, sb.y + 19);
+
+  // --- hud ---
+  g.fillStyle = map.tint; g.fillText(map.name, 16, 24);
+  const terr = map.owner ? `${COMPANIES[map.owner].tag} TERRITORY` : 'CONTESTED';
+  g.fillStyle = map.owner ? COMPANIES[map.owner].color : '#e05a5a';
+  g.fillText(terr, 20 + g.measureText(map.name).width, 24);
+  g.fillStyle = '#5b6b85';
+  g.fillText(`${COMPANIES[myCo].tag} · ${status} · ${ships.size} in sector · #${myId ?? '?'}` +
+             (me ? ` · ${me.x},${me.y}` : ''), 16, 42);
+  g.fillText('click to set a destination · hold + point to steer · click the minimap to set a course · JUMP at a portal', 16, VIEW_H - 16);
+
+  if (sysOpen) drawSystem(me);
+}
+</script>
