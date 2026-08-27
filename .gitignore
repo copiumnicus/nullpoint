@@ -14,3 +14,7 @@ npm-debug.log*
 
 # macOS
 .DS_Store
+
+# your own sound files; the README stays, the audio does not
+public/sfx/*
+!public/sfx/README.md

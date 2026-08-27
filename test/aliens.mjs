@@ -1,4 +1,4 @@
-import { ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, roamPoint, rng } from '../shared/aliens.js';
+import { ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, forgetPlayer, roamPoint, rng } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
@@ -108,6 +108,30 @@ check('alien speed sits just above the heaviest hull, and no higher',
   `${speeds[0]} < ${D.attrs.speed} < ${speeds[1]} — heavies cannot walk away, and it stays clickable`);
 check('a slower hull cannot simply run', chaser2.target === 1,
   `bulwark ${resolve('bulwark', []).speed} cannot break ${D.leash}px`);
+
+console.log('\ndying settles it');
+{
+  const victim = newShip(map.base.x + 4000, map.base.y, 'vanguard', []);
+  const killer = foe(victim.x + 500, victim.y);
+  killer.provoked.add(1); killer.target = 1;
+  fight(killer, victim, 4);
+  check('it holds the grudge while you are alive', killer.provoked.has(1) && killer.target === 1);
+
+  forgetPlayer([killer], 1);
+  check('death clears the lock and the grudge', killer.target === null && !killer.provoked.has(1));
+
+  // and now sanctuary works again, which is the point
+  const reborn = newShip(map.base.x + 300, map.base.y, 'vanguard', []);
+  killer.x = map.base.x + 900; killer.y = map.base.y;
+  const r2 = fight(killer, reborn, 12);
+  check('so it will not follow you into your own base afterwards',
+    !r2.everTargeted && ehp(reborn) === full(reborn), '12s docked, untouched');
+  check('it forgets nobody else', (() => {
+    const a2 = foe(0, 0); a2.provoked.add(7); a2.provoked.add(9); a2.target = 7;
+    forgetPlayer([a2], 9);
+    return a2.provoked.has(7) && !a2.provoked.has(9) && a2.target === 7;
+  })());
+}
 
 console.log('\nthe fight itself');
 for (const h of ['kestrel', 'vanguard', 'bulwark']) {

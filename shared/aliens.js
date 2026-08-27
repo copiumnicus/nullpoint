@@ -69,6 +69,16 @@ export function newAlien(kind, id, map, seed) {
   });
 }
 
+// Dying settles every grudge. Without this an alien that killed you is still
+// provoked when you come back, and provocation overrides sanctuary — so it would
+// follow you into your own base ring the moment you respawned.
+export function forgetPlayer(list, id) {
+  for (const a of list) {
+    a.provoked.delete(id);
+    if (a.target === id) { a.target = null; a.lost = 0; }
+  }
+}
+
 export function respawnAlien(a, map) {
   const at = roamPoint(map, a.rand);
   a.x = at.x; a.y = at.y; a.vx = a.vy = 0;

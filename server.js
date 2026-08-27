@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
-import { newAlien, respawnAlien, stepAlienAI, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
+import { newAlien, respawnAlien, stepAlienAI, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
 import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
@@ -27,8 +27,19 @@ const FILES = {
   '/shared/cargo.js': ['shared/cargo.js',   'text/javascript'],
   '/audio.js':        ['public/audio.js',   'text/javascript'],
 };
+const SFX_TYPE = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4' };
 const server = http.createServer((req, res) => {
-  const hit = FILES[req.url.split('?')[0]];
+  const url = req.url.split('?')[0];
+  if (url.startsWith('/sfx/')) {                  // drop-in sound files, if there are any
+    const name = url.slice(5);
+    const ext = name.split('.').pop();
+    const file = `public/sfx/${name}`;
+    if (!/^[\w-]+\.[a-z0-9]+$/.test(name) || !SFX_TYPE[ext] || !fs.existsSync(file))
+      return res.writeHead(404).end();
+    res.writeHead(200, { 'content-type': SFX_TYPE[ext] });
+    return res.end(fs.readFileSync(file));
+  }
+  const hit = FILES[url];
   if (!hit) return res.writeHead(404).end();
   res.writeHead(200, { 'content-type': hit[1] });
   res.end(fs.readFileSync(hit[0]));
@@ -165,7 +176,10 @@ wss.on('connection', ws => {
     }
   });
 
-  ws.on('close', () => { players.delete(id); console.log(`- player ${id} (${players.size} online)`); });
+  ws.on('close', () => {
+    for (const list of aliens.values()) forgetPlayer(list, id);
+    players.delete(id); console.log(`- player ${id} (${players.size} online)`);
+  });
 });
 
 let last = performance.now();
@@ -192,6 +206,7 @@ setInterval(() => {
       p.hold = {};
       p.dead = true;
       p.targetId = null; p.want = null; p.scoop = null; p.contacts.clear();
+      for (const list of aliens.values()) forgetPlayer(list, id);   // death settles every grudge
       Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, charge: 0, chargeTo: null });
       if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'dead', lost, where: p.mapId }));
       continue;

@@ -14,6 +14,40 @@ let thrGain = null, thrFilter = null;
 let on = true;
 const firing = [];                 // when each live gun voice ends, oldest first
 
+// Drop files into public/sfx and they replace the synthesis. rate below 1 plays
+// slower and so deeper, which is what a stock laser effect usually needs to sit
+// under a dark score. Missing files simply fall through to the synth.
+export const SFX = {
+  laser: { url: '/sfx/laser.mp3',       rate: 0.75, gain: 1.0 },
+  enemy: { url: '/sfx/laser-enemy.mp3', rate: 0.60, gain: 0.9 },
+  boom:  { url: '/sfx/explosion.mp3',   rate: 0.85, gain: 1.0 },
+};
+const clip = {};
+export const usingSamples = () => Object.keys(clip);
+
+function loadSfx() {
+  if (typeof fetch !== 'function' || typeof ctx.decodeAudioData !== 'function') return;
+  for (const [k, s] of Object.entries(SFX))
+    fetch(s.url)
+      .then(r => (r.ok ? r.arrayBuffer() : null))
+      .then(ab => ab && ctx.decodeAudioData(ab))
+      .then(b => { if (b) clip[k] = b; })
+      .catch(() => {});                            // no file, no problem
+}
+
+function playClip(buffer, cfg, peak, t, verbSend) {
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.playbackRate.value = cfg.rate * (0.97 + Math.random() * 0.06);   // never twice the same
+  const g = ctx.createGain();
+  g.gain.value = peak * cfg.gain;
+  src.connect(g); g.connect(master);
+  send(g, verbSend, t);
+  src.start(t);
+}
+
+export const LASER_GAIN = 0.15;    // half what it was: they were shouting
+
 const saturation = () => {         // soft clip: grit without a fizz
   const n = 1024, c = new Float32Array(n);
   for (let i = 0; i < n; i++) { const x = i / (n / 2) - 1; c[i] = Math.tanh(x * 2.6); }
@@ -75,6 +109,8 @@ export function audioReady() {
   thrGain = ctx.createGain(); thrGain.gain.value = 0;
   src.connect(thrFilter); thrFilter.connect(thrGain); thrGain.connect(master);
   src.start();
+
+  loadSfx();
 }
 
 // v is 0..1 of top speed. The filter opens with the gain, so hard burn is
@@ -110,7 +146,12 @@ export function laser(mine, dist) {
   if (firing.length >= 6) return;                  // a brawl should not become a buzz
   firing.push(t + 0.3);
 
-  const peak = 0.3 * near * near * (mine ? 1 : 0.82);
+  // Guns fire constantly, so they sit well under the explosions and the score.
+  const peak = LASER_GAIN * near * near * (mine ? 1 : 0.82);
+
+  const sample = mine ? clip.laser : (clip.enemy ?? clip.laser);
+  if (sample) return playClip(sample, mine ? SFX.laser : SFX.enemy, peak, t, 0.18);
+
   const f0 = mine ? 920 : 620, f1 = mine ? 76 : 50;
   const dur = mine ? 0.26 : 0.32;
 
@@ -153,6 +194,8 @@ export function explosion(dist, foe) {
   if (near < 0.04) return;
   const t = ctx.currentTime;
   const peak = 0.6 * near * near;
+
+  if (clip.boom) return playClip(clip.boom, SFX.boom, peak, t, 0.5);
 
   const n = Math.floor(ctx.sampleRate * 1.8);
   const nb = ctx.createBuffer(1, n, ctx.sampleRate);

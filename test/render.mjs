@@ -81,7 +81,7 @@ const param = kind => ({
   setValueAtTime() {}, exponentialRampToValueAtTime() {},
   setTargetAtTime(v) { if (kind === 'gain') audio.thrust.push(v); },
 });
-const anode = () => ({ gain: param('gain'), frequency: param('freq'), Q: param('q'),
+const anode = () => ({ gain: param('gain'), frequency: param('freq'), Q: param('q'), playbackRate: param('rate'),
                        type: '', connect() {}, start() {}, stop() {} });
 globalThis.AudioContext = class {
   constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; }
