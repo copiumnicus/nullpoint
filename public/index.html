@@ -10,10 +10,11 @@
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD } from '/shared/sim.js';
-import { ATTRS, HULLS, MODULES, resolve, radiusOf, slotsOf } from '/shared/ships.js';
+import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
-import { unpackShip } from '/shared/net.js';
+import { unpackShip, unpackBolt } from '/shared/net.js';
+import { ALIENS } from '/shared/aliens.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -37,7 +38,12 @@ let sysOpen = false;
 let myId = null, myCo = 'm', mapId = 'm1', status = 'connecting…';
 let myHull = 'vanguard', myFit = [];
 let bayOpen = false, draftHull = 'vanguard', draftFit = [];
+const defOf = s => s.co === 'x' ? ALIENS[s.hull] : HULLS[s.hull];
+const rOf   = s => defOf(s)?.r ?? 12;
+const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
+                                : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
+let bolts = [];                   // shots in flight, rebuilt every snapshot
 const cam = { x: 0, y: 0 };
 
 // --- net ---------------------------------------------------------------------
@@ -51,6 +57,7 @@ ws.onmessage = e => {
   if (m.t === 'fit')     { myHull = m.hull; myFit = m.fit; draftHull = m.hull; draftFit = [...m.fit]; return; }
   if (m.t === 'map')     { mapId = m.map; ships.clear(); marker = null; return; }
   if (m.t !== 's') return;
+  bolts = (m.bolts ?? []).map(unpackBolt);
   const seen = new Set();
   for (const raw of m.ships) {
     const n = unpackShip(raw);
@@ -83,7 +90,8 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
   if (k === 'h') { bayOpen = !bayOpen; sysOpen = false; draftHull = myHull; draftFit = [...myFit]; }
-  if (k === 'k') send({ t: 'dev-damage' });        // temporary, until weapons exist
+  if (k === 'x') send({ t: 'target', id: 0 });     // break off
+  if (k === 'k') send({ t: 'dev-damage' });        // self-damage, for watching the shield timer
   if (e.key === 'Escape') { sysOpen = false; bayOpen = false; }
 });
 
@@ -95,6 +103,11 @@ c.addEventListener('pointerdown', e => {
   if (v.x > sb.x && v.x < sb.x + sb.w && v.y > sb.y && v.y < sb.y + sb.h) { sysOpen = true; return; }
   const b = btn();
   if (v.x > b.x && v.x < b.x + b.w && v.y > b.y && v.y < b.y + b.h) return send({ t: 'jump' });
+  const w = { x: v.x + cam.x, y: v.y + cam.y };       // clicking a hostile engages it
+  for (const [id, sh] of ships) {
+    if (sh.co !== 'x' || sh.vis === STALE) continue;
+    if (Math.hypot(sh.rx - w.x, sh.ry - w.y) < rOf(sh) + 12) return send({ t: 'target', id });
+  }
   if (v.x > MM_X && v.y > MM_Y) {                     // minimap click = destination order
     marker = { x: clamp((v.x - MM_X) / MM_W * MAP_W, 0, MAP_W),
                y: clamp((v.y - MM_Y) / MM_H * MAP_H, 0, MAP_H) };   // the minimap IS charted space
@@ -487,19 +500,51 @@ function drawFrame(now) {
     g.globalAlpha = 1;
   }
 
+  for (const b of bolts) {                         // bolts first, so hulls sit on top
+    const p1 = Math.min(1, b.p), p0 = Math.max(0, b.p - 0.22);
+    const x0 = b.sx + (b.ax - b.sx) * p0, y0 = b.sy + (b.ay - b.sy) * p0;
+    const x1 = b.sx + (b.ax - b.sx) * p1, y1 = b.sy + (b.ay - b.sy) * p1;
+    g.strokeStyle = b.foe ? '#ff7a5c' : '#8fe7ff';
+    g.globalAlpha = 0.25; g.lineWidth = 5;
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    g.globalAlpha = 1; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  }
+
   for (const [id, s] of ships) {
-    const R = radiusOf(s.hull), lost = s.vis === STALE;
+    const R = rOf(s), lost = s.vis === STALE, foe = s.co === 'x';
     g.save();
     g.translate(s.rx, s.ry); g.rotate(s.heading);
     g.globalAlpha = lost ? 0.35 : 1;               // last known track, no live sensor
-    g.fillStyle = COMPANIES[s.co]?.color ?? '#8899aa';
-    g.fillRect(-R, -R, R * 2, R * 2);
-    if (id === myId) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(-R, -R, R * 2, R * 2); }
+    g.fillStyle = colOf(s);
+    if (foe) {                                     // hostiles read as a different kind of thing
+      g.beginPath();
+      g.moveTo(R * 1.35, 0); g.lineTo(0, R); g.lineTo(-R * 0.8, 0); g.lineTo(0, -R);
+      g.closePath(); g.fill();
+      g.strokeStyle = '#1b0d28'; g.lineWidth = 1.5; g.stroke();
+    } else {
+      g.fillRect(-R, -R, R * 2, R * 2);
+      if (id === myId) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(-R, -R, R * 2, R * 2); }
+      g.fillStyle = '#05070b'; g.fillRect(R - 6, -2, 6, 4);
+    }
     if (lost) { g.strokeStyle = '#e05a5a'; g.lineWidth = 1; g.setLineDash([3, 3]);
                 g.strokeRect(-R - 4, -R - 4, R * 2 + 8, R * 2 + 8); g.setLineDash([]); }
-    g.fillStyle = '#05070b'; g.fillRect(R - 6, -2, 6, 4);
     g.globalAlpha = 1;
     g.restore();
+
+    if (me && id === me.tgt) {                     // engagement reticle
+      const rr = R + 9 + Math.sin(now / 200) * 2;
+      g.strokeStyle = '#ff5c6b'; g.lineWidth = 1.6;
+      for (let q = 0; q < 4; q++) {
+        const a0 = q * Math.PI / 2 + Math.PI / 4;
+        g.beginPath(); g.arc(s.rx, s.ry, rr, a0 - 0.42, a0 + 0.42); g.stroke();
+      }
+      const inRange = Math.hypot(s.rx - me.rx, s.ry - me.ry) <= st.weaponRange;
+      g.fillStyle = inRange ? '#ff5c6b' : '#7a5a60';
+      g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
+      g.fillText(`${ALIENS[s.hull]?.name ?? '?'}  ${s.hp}%` + (inRange ? '' : '  OUT OF RANGE'), s.rx, s.ry - rr - 8);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
 
     if (lost) continue;                            // no vitals read on a fading track
 
@@ -585,6 +630,15 @@ function drawFrame(now) {
   for (const [id, s] of ships) {
     const off = driftDepth(s.x, s.y) > 0;          // clamp strays to the frame so they stay findable
     const mx = MM_X + clamp(s.rx, 0, MAP_W) * sx, my = MM_Y + clamp(s.ry, 0, MAP_H) * sy;
+    if (s.co === 'x') {                            // hostiles: a pulsing diamond, never a ping ring
+      const ph = ((now / 900) + id * 0.31) % 1;
+      g.globalAlpha = s.vis === FRESH ? 0.5 + 0.5 * (1 - ph) : 0.35;
+      g.fillStyle = ALIENS[s.hull]?.colour ?? '#b06adf';
+      g.beginPath(); g.moveTo(mx, my - 3); g.lineTo(mx + 3, my); g.lineTo(mx, my + 3); g.lineTo(mx - 3, my);
+      g.closePath(); g.fill();
+      g.globalAlpha = 1;
+      continue;
+    }
     if (s.vis === ALLY) {
       g.fillStyle = off ? '#ff5c6b' : (COMPANIES[s.co]?.color ?? '#8899aa');
       const w = id === myId ? 5 : 3;
@@ -657,9 +711,10 @@ function drawFrame(now) {
     }
     g.fillStyle = depth > 0 ? '#ff5c6b' : '#5b6b85';
     g.fillText(depth > 0 ? `SHEAR ${driftDps(depth) | 0}/s` :
-               `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s`, 16 + w + 10, 84);
+               `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
+               `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
-  g.fillText('click / hold to fly · JUMP at a portal · M star system · H hangar' +
+  g.fillText('click / hold to fly · click a hostile to engage, X to break off · M star system · H hangar' +
              (docked() ? '' : ' (dock first)') + ' · K take test damage', 16, VIEW_H - 16);
 
   if (depth > 0 && !sysOpen && !bayOpen) {

@@ -1,6 +1,6 @@
 import { ATTRS, HULLS, MODULES, DEFAULT_HULL, resolve, sanitiseFit, slotsOf } from '../shared/ships.js';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
-         DOCK_HULL_RATE, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
+         DOCK_HULL_RATE, DOCK_INTERRUPT, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 
 const fails = [];
@@ -130,10 +130,16 @@ let secs = 0;
 while (berthed.hp < berthed.stats.hull && secs < 60) { stepVitals(berthed, dt, true); secs += dt; }
 check('docked, the hull repairs', berthed.hp === berthed.stats.hull, `full in ${secs.toFixed(1)}s`);
 check('docked repair matches the declared rate',
-  Math.abs(secs - 0.8 / DOCK_HULL_RATE) < 0.5, `${(DOCK_HULL_RATE * 100).toFixed(0)}%/s`);
+  Math.abs(secs - (DOCK_INTERRUPT + 0.8 / DOCK_HULL_RATE)) < 0.5,
+  `${(DOCK_HULL_RATE * 100).toFixed(0)}%/s after a ${DOCK_INTERRUPT}s pause`);
 const nodelay = wreck();
-stepVitals(nodelay, dt, true);
+for (let i = 0; i < Math.round(30 * DOCK_INTERRUPT) + 2; i++) stepVitals(nodelay, dt, true);
 check('docking ignores the shield delay', nodelay.shield > 0, 'no waiting at your own dock');
+const underFire = wreck();
+for (let i = 0; i < 30 * 10; i++) { applyDamage(underFire, 1); stepVitals(underFire, dt, true); }
+check('the dock will not repair you while you are being shot',
+  underFire.hp < underFire.stats.hull * 0.25 && underFire.shield === 0,
+  'so running home is not a free escape');
 
 console.log('\nwire format');
 {

@@ -3,7 +3,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { MODULES } from '../shared/ships.js';
-import { packShip } from '../shared/net.js';
+import { packShip, packBolt } from '../shared/net.js';
+import { ALIENS } from '../shared/aliens.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -80,10 +81,16 @@ let t = 0, frames = 0;
 for (const id of Object.keys(MAPS)) {
   feed({ t: 'map', map: id });
   feed({ t: 's', ships: [
-    packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0,   co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 100, vis: 2 }),
+    packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0,   co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 100, tgt: 1e6, shot: 100, vis: 2 }),
     packShip({ id: 2, x: 5200, y: 3400, heading: 1.9, charge: 0,  co: 'm', hull: 'bulwark',  hp:  80, sh:  60, flash:  40, vis: 2 }),
     packShip({ id: 3, x: 3000, y: 2000, heading: 1.2, charge: 1.4, co: 'h', hull: 'kestrel', hp:  30, sh:   0, flash:   0, vis: 1 }),
     packShip({ id: 4, x: 9000, y: 6000, heading: 2, charge: 0,    co: 'k', hull: 'bulwark',  hp:   5, sh:  55, flash:  70, vis: 0 }),
+    packShip({ id: 1e6, x: 6400, y: 4300, heading: .2, charge: 0,  co: 'x', hull: 'drifter',  hp:  70, sh:  30, flash:  20, tgt: 1, shot: 90, vis: 1 }),
+    packShip({ id: 1e6 + 1, x: 2200, y: 6600, heading: 3, charge: 0, co: 'x', hull: 'drifter', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 0 }),
+  ], bolts: [
+    packBolt({ sx: 6000, sy: 4000, ax: 6400, ay: 4300, t: 0.10, ttl: 0.21, foe: false }),
+    packBolt({ sx: 6400, sy: 4300, ax: 6000, ay: 4000, t: 0.02, ttl: 0.21, foe: true }),
+    packBolt({ sx: 5200, sy: 3400, ax: 2200, ay: 6600, t: 0.20, ttl: 0.21, foe: false }),
   ] });
   frame(t += 16); frames++;                                    // world view
   listeners.keydown.forEach(fn => fn({ key: 'm' }));           // star system chart

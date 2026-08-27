@@ -30,16 +30,23 @@ export const SHIELD_FLASH = 0.45; // s   how long an impact bubble stays lit
 
 // Speed, thrust, hull and shield all come from the fit — never from a constant
 // here — so a module can change any of them.
-export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = []) {
-  const stats = resolve(hull, fit);
+// Anything that moves and can be shot. Players and aliens share it, so they share
+// step(), stepVitals(), applyDamage() and stepDrift() with no special cases.
+export function newBody(x, y, stats, r) {
   return {
-    x, y, vx: 0, vy: 0, heading: 0,
-    hull, fit, stats, r: radiusOf(hull),
+    x, y, vx: 0, vy: 0, heading: 0, stats, r,
     hp: stats.hull, shield: stats.shield, sinceHit: 1e9, shieldHit: 0,
+    cool: 0, shotFlash: 0,
     jumpCd: 0, charge: 0, chargeTo: null,
     tx: null, ty: null,      // click-to-move destination
     dx: null, dy: null,      // hold-to-steer thrust vector (magnitude 0..1)
   };
+}
+
+export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = []) {
+  const s = newBody(x, y, resolve(hull, fit), radiusOf(hull));
+  s.hull = hull; s.fit = fit;
+  return s;
 }
 
 // Re-fit in place. Vitals are restored, so this must only be allowed somewhere
@@ -52,6 +59,7 @@ export function refit(s, hull, fit) {
   s.shield = s.stats.shield;
   s.sinceHit = 1e9;
   s.shieldHit = 0;
+  s.cool = 0; s.shotFlash = 0;
   return s;
 }
 
@@ -98,17 +106,35 @@ export function inBase(map, s) {
   return !!map.base && Math.hypot(map.base.x - s.x, map.base.y - s.y) < map.base.r;
 }
 
+// Base rings and portal mouths are both sanctuary. An alien will not start a fight
+// with anyone standing in one — but provocation overrides it, and that check lives
+// in the alien's own logic, not here.
+export const HAVEN_R = PORTAL_R * 2.4;
+export function inHaven(map, s) {
+  return inBase(map, s) || map.portals.some(p => Math.hypot(p.x - s.x, p.y - s.y) < HAVEN_R);
+}
+
+export const SHOT_FLASH = 0.16;   // s the muzzle stays lit
+
 // Shields come back only after shieldDelay seconds without being hit, so taking
 // any damage at all resets the clock. Hull never regenerates in the field — the
 // only place it comes back is inside your own base ring, which is also the only
 // place regen ignores the delay.
 export const DOCK_SHIELD_MULT = 3;    // × shieldRegen while docked
 export const DOCK_HULL_RATE   = 0.12; // × max hull per second, so ~8s from scrap
+// Long enough to cover a full weapon cycle plus a miss. At 1s a single missed
+// shot opened a repair window, and the dock heals ~250/s against an alien's ~50,
+// so hiding still worked. Being shot at means being in combat, not being hit
+// in the last frame.
+export const DOCK_INTERRUPT   = 4.0;  // s of quiet before the dock will work on you
 
 export function stepVitals(s, dt, docked = false) {
   s.sinceHit += dt;
   if (s.shieldHit > 0) s.shieldHit = Math.max(0, s.shieldHit - dt);
-  if (docked) {
+  // Repair only runs while nothing is shooting you. Otherwise a provoked alien
+  // could follow you into the ring and the dock would simply out-heal it, which
+  // would make running home a free escape and the chase pointless.
+  if (docked && s.sinceHit >= DOCK_INTERRUPT) {
     s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * DOCK_SHIELD_MULT * dt);
     s.hp     = Math.min(s.stats.hull,   s.hp     + s.stats.hull * DOCK_HULL_RATE * dt);
     return;

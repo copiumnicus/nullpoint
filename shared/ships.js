@@ -14,6 +14,9 @@ export const ATTRS = {
   accel:       { label: 'Thrust',       unit: '',    dflt: 1200, better: 'high', min: 100 },
   radar:       { label: 'Radar range',  unit: '',    dflt: 2600, better: 'high', min: 300 },
   signature:   { label: 'Signature',    unit: 's',   dflt:    3, better: 'low',  min: 0.4 },
+  damage:      { label: 'Damage',       unit: '',    dflt:   55, better: 'high', min: 1 },
+  fireRate:    { label: 'Rate of fire', unit: '/s',  dflt:  1.4, better: 'high', min: 0.1 },
+  weaponRange: { label: 'Weapon range', unit: '',    dflt:  700, better: 'high', min: 100 },
   slots:       { label: 'Slots',        unit: '',    dflt:    3, better: 'high', min: 0 },
 };
 
@@ -27,13 +30,13 @@ export const HULLS = {
   // signature would make it the scouting ship AND the fastest ship.
   kestrel:  { name: 'Kestrel',  cls: 'Interceptor', r: 10,
               attrs: { hull:  700, shield:  500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600,
-                       radar: 2000, signature: 1.5 } },
+                       radar: 2000, signature: 1.5, damage: 38, fireRate: 2.2, weaponRange: 620 } },
   vanguard: { name: 'Vanguard', cls: 'Fighter',     r: 13,
               attrs: { hull: 1100, shield:  900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200,
-                       radar: 2600, signature: 3.0 } },
+                       radar: 2600, signature: 3.0, damage: 55, fireRate: 1.4, weaponRange: 700 } },
   bulwark:  { name: 'Bulwark',  cls: 'Cruiser',     r: 17,
               attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel:  800,
-                       radar: 3400, signature: 5.5 } },
+                       radar: 3400, signature: 5.5, damage: 95, fireRate: 0.75, weaponRange: 820 } },
 };
 export const DEFAULT_HULL = 'vanguard';
 
@@ -48,6 +51,9 @@ export const MODULES = {
   ballast:   { name: 'Inertial Ballast',   mods: [['accel', 'mul', 0.40],     ['speed', 'mul', -0.10]] },
   array:     { name: 'Sensor Array',       mods: [['radar', 'mul', 0.45],     ['signature', 'add', 1.5]] },
   damper:    { name: 'Signal Damper',      mods: [['signature', 'mul', -0.5], ['radar', 'mul', -0.25]] },
+  focuser:   { name: 'Beam Focuser',       mods: [['damage', 'mul', 0.28],    ['fireRate', 'mul', -0.14]] },
+  cycler:    { name: 'Rapid Cycler',       mods: [['fireRate', 'mul', 0.34],  ['damage', 'mul', -0.20]] },
+  extender:  { name: 'Range Extender',     mods: [['weaponRange', 'mul', 0.24], ['damage', 'mul', -0.12]] },
 };
 
 export const slotsOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).attrs.slots ?? ATTRS.slots.dflt;
