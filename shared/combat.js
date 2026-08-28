@@ -31,7 +31,7 @@ export function fire(a, b, dt) {
   const side = a.muzzle ? 1 : -1;
   a.muzzle = a.muzzle ? 0 : 1;
   const ch = Math.cos(a.heading), sh = Math.sin(a.heading);
-  const fwd = a.isAlien ? 0 : a.r * 1.15, lat = a.isAlien ? 0 : a.r * 0.78 * side;
+  const fwd = a.isAlien ? 0 : a.r * 1.55, lat = a.isAlien ? 0 : a.r * 0.95 * side;
 
   const travel = d / BOLT_SPEED;
   return {
