@@ -17,7 +17,7 @@ import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
 import { SYSTEMS, BOOST } from '/shared/power.js';
 import { chartLayout } from '/shared/chart.js';
-import { bayLayout, STORE_PAGES } from '/shared/hangar.js';
+import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { audioReady, setThrust, laser, rocket, explosion, toggleAudio, audioOn } from '/audio.js';
@@ -278,7 +278,8 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'v') say(toggleAudio() ? 'Sound on' : 'Sound off', '#8ab4e6');
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
-  if (k === 'h') { bayOpen = !bayOpen; sysOpen = false; invOpen = false; }
+  if (k === 'h') { if (picking) { picking = null; return; }        // back out of the chooser first
+                   bayOpen = !bayOpen; sysOpen = false; invOpen = false; }
   if (k === '1' || k === '2' || k === '3') send({ t: 'power', sys: SYSTEMS[+k - 1] });
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
   if (k === 'x') send({ t: 'target', id: 0 });     // break off
@@ -308,7 +309,8 @@ addEventListener('keydown', e => {
     say('Nothing in reach', '#66748c');
     return;
   }
-  if (e.key === 'Escape') { sysOpen = false; bayOpen = false; invOpen = false; }
+  if (e.key === 'Escape') { if (picking) { picking = null; return; }
+                           sysOpen = false; bayOpen = false; invOpen = false; }
 });
 
 c.addEventListener('pointerdown', e => {
@@ -513,6 +515,17 @@ function drawSystem(me) {
 // about where a row is. Two tabs: HANGAR arranges what you own, STORE spends
 // money, paged by category so one column never holds everything at once.
 let bayTab = 'hangar', bayPage = 'ships';
+// Which empty slot is asking to be filled. Null unless a chooser is open.
+let picking = null;
+
+const lockerFor = slot => fitsIn(slot, { gear: myGear, fit: myFit, drones: myDrones });
+const pickGeom = () => {
+  if (!picking) return null;
+  const G = bayGeom();
+  const row = G.racks.find(r => !r.header && r.slot === picking.slot && r.index === picking.index);
+  const items = lockerFor(picking.slot);
+  return row && items.length ? { G, row, ...pickerLayout(G, row, items) } : null;
+};
 
 const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
   tab: bayTab, page: bayPage, hull: myHull, drones: myDrones.length,
@@ -521,19 +534,28 @@ const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
 const shipCtx = () => ({ hull: myHull, fit: myFit, drones: myDrones, formation: myForm,
                          gear: myGear, hulls: myHulls, formations: myForms, credits });
 
-// Anything in the locker that would go in this slot, and is not a technology we
-// are already flying — the same rule the server applies, so a click never bounces.
-const spare = slot => Object.keys(EQUIPMENT).find(k => EQUIPMENT[k].slot === slot && (myGear[k] ?? 0) > 0
-  && !(slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k))
-  && !(EQUIPMENT[k].kind === 'rocket' && launcherRoom(myFit) <= 0));
-
 function bayClick(v) {
   const G = bayGeom();
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
+
+  // The chooser is drawn over the rows, so it must be hit-tested before them.
+  // Anything outside it simply puts it away.
+  const P0 = pickGeom();
+  if (P0) {
+    for (const { k, r } of P0.rows) if (inside(r)) {
+      const to = picking;
+      picking = null;
+      return to.slot === 'drone' ? send({ t: 'dronefit', index: to.index, item: k })
+                                 : send({ t: 'install', item: k });
+    }
+    picking = null;
+    if (inside(P0.box)) return;
+  }
+
   if (!inside(G.panel)) { bayOpen = false; return; }
   if (!docked()) return say('Fly into your base ring to use the station', '#e0a53f');
 
-  for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; return; }
+  for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; picking = null; return; }
   for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; return; }
 
   if (bayTab === 'hangar') {
@@ -547,18 +569,18 @@ function bayClick(v) {
         if (row.key === myForm) return;
         return send({ t: 'formation', key: row.key });
       }
-      if (row.slot === 'drone') {
-        if (myDrones[row.index]) return send({ t: 'dronestrip', index: row.index });
-        const any = Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
-          && EQUIPMENT[k].kind !== 'rocket'                     // a drone is a gun platform
-          && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)));
-        return any ? send({ t: 'dronefit', index: row.index, item: any })
-                   : say('Nothing in the locker to mount — buy one in the store', '#8ab4e6');
-      }
-      if ((myFit[row.slot] ?? [])[row.index]) return send({ t: 'uninstall', slot: row.slot, index: row.index });
-      const owned = spare(row.slot);
-      return owned ? send({ t: 'install', item: owned })
-                   : say(`Nothing in the locker for a ${row.slot} slot — buy one in the store`, '#8ab4e6');
+      if (row.slot === 'drone' && myDrones[row.index]) return send({ t: 'dronestrip', index: row.index });
+      if (row.slot !== 'drone' && (myFit[row.slot] ?? [])[row.index])
+        return send({ t: 'uninstall', slot: row.slot, index: row.index });
+      // Empty: ask, do not guess. Guessing meant a pilot holding MK-Vs got MK-Is.
+      const stock = lockerFor(row.slot);
+      if (!stock.length) return say(row.slot === 'drone' ? 'Nothing in the locker to mount — buy one in the store'
+                                                        : `Nothing in the locker for a ${row.slot} slot — buy one in the store`,
+                                    '#8ab4e6');
+      if (stock.length === 1) return row.slot === 'drone' ? send({ t: 'dronefit', index: row.index, item: stock[0] })
+                                                          : send({ t: 'install', item: stock[0] });
+      picking = { slot: row.slot, index: row.index };
+      return;
     }
     return;
   }
@@ -586,6 +608,20 @@ function bayClick(v) {
 }
 
 const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+
+// The one number that tells you which of two lockers items you want, without
+// opening a tooltip: what it is for, not everything it does.
+const headline = k => {
+  const e = EQUIPMENT[k];
+  const pick = a => e.mods.find(([n]) => n === a);
+  const m = pick(e.kind === 'rocket' ? 'rockets' : e.slot === 'weapon' ? 'damage'
+              : e.slot === 'generator' ? 'shield' : null) ?? e.mods[0];
+  if (!m) return '';
+  const [attr, op, v] = m;
+  return op === 'mul' ? `${ATTRS[attr].label} ${v > 0 ? '+' : ''}${Math.round(v * 100)}%`
+       : attr === 'rockets' ? `${v} rocket${v === 1 ? '' : 's'}`
+       : `${v > 0 ? '+' : ''}${fmt(v)} ${ATTRS[attr].label.toLowerCase()}`;
+};
 
 // A framed box of real numbers, placed beside the cursor and nudged back on
 // screen at the edges. This is the only place the effect of a module is stated
@@ -752,16 +788,12 @@ function drawBay() {
       }
       const held = row.slot === 'drone' ? myDrones[row.index] : (myFit[row.slot] ?? [])[row.index];
       const item = EQUIPMENT[held];
-      // An empty slot previews whatever clicking it would actually fit, so you
-      // can see the numbers before you commit rather than after.
-      const would = item ? null
-                  : row.slot === 'drone'
-                    ? Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
-                        && EQUIPMENT[k].kind !== 'rocket'
-                        && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)))
-                    : spare(row.slot);
-      if (over(r) && (held || would)) tip = tipFor('item', held ?? would, shipCtx());
-      if (tip && would) tip = { ...tip, note: 'in your locker — click to fit it' };
+      const stock = item ? [] : lockerFor(row.slot);
+      if (over(r) && held) tip = tipFor('item', held, shipCtx());
+      else if (over(r) && stock.length === 1) {
+        tip = tipFor('item', stock[0], shipCtx());
+        tip = tip && { ...tip, note: 'the only thing in your locker that fits — click to bolt it on' };
+      }
       g.fillStyle = item ? 'rgba(125,224,138,0.12)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
       g.fillRect(r.x, r.y, r.w, r.h);
       g.strokeStyle = item ? '#7de08a' : '#2c3d55'; g.lineWidth = 1;
@@ -772,17 +804,40 @@ function drawBay() {
                                   g.fillRect(r.x + 8, r.y + r.h / 2 - 3, 6, 6); tx = r.x + 22; }
       g.fillStyle = item ? '#cfe4ff' : '#3d4757';
       g.fillText(item ? item.name : row.slot === 'drone' ? 'empty bay' : 'empty', tx, r.y + r.h / 2 + 4);
-      if (!item && would) { g.fillStyle = '#4d6a45'; g.textAlign = 'right';
-                            g.fillText('fit ' + EQUIPMENT[would].name, r.x + r.w - 10, r.y + r.h / 2 + 4);
-                            g.textAlign = 'left'; }
+      if (!item && stock.length) { g.fillStyle = '#4d6a45'; g.textAlign = 'right';
+                                   g.fillText(stock.length === 1 ? 'fit ' + EQUIPMENT[stock[0]].name
+                                                                 : `choose  (${stock.length})`,
+                                              r.x + r.w - 10, r.y + r.h / 2 + 4);
+                                   g.textAlign = 'left'; }
       if (item) { g.fillStyle = '#66748c'; g.textAlign = 'right';
                   g.fillText('remove', r.x + r.w - 10, r.y + r.h / 2 + 4); g.textAlign = 'left'; }
     }
 
     g.fillStyle = '#5b6b85';
-    g.fillText('click a slot to fit what is in your locker · a filled slot to strip it · H or Esc to close',
+    g.fillText('click an empty slot to choose what goes in it · a filled slot to strip it · H or Esc to close',
                P.x + 20, P.y + P.h - 18);
     g.font = '12px ui-monospace, monospace';
+
+    const pick = pickGeom();
+    if (pick) {
+      const B = pick.box;
+      g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(B.x, B.y, B.w, B.h);
+      g.strokeStyle = '#5a86b8'; g.lineWidth = 1.4; g.strokeRect(B.x + .5, B.y + .5, B.w - 1, B.h - 1);
+      for (const { k, r } of pick.rows) {
+        const e = EQUIPMENT[k], hot = over(r);
+        if (hot) tip = tipFor('item', k, shipCtx());
+        g.fillStyle = hot ? 'rgba(122,180,240,0.16)' : 'rgba(255,255,255,0.03)';
+        g.fillRect(r.x, r.y, r.w, r.h);
+        g.fillStyle = hot ? '#eaf3ff' : '#cfe4ff'; g.font = '12px ui-monospace, monospace';
+        g.fillText(e.name, r.x + 10, r.y + r.h / 2 + 4);
+        g.textAlign = 'right';
+        g.fillStyle = '#7de08a'; g.font = '11px ui-monospace, monospace';
+        g.fillText(`x${myGear[k] ?? 0}`, r.x + r.w - 10, r.y + r.h / 2 + 4);
+        g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
+        g.fillText(headline(k), r.x + r.w - 46, r.y + r.h / 2 + 4);
+        g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
+      }
+    }
     drawTip(tip, at ?? { x: 0, y: 0 });
     return;
   }

@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
-import { bayLayout, STORE_PAGES } from '../shared/hangar.js';
+import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -246,6 +246,9 @@ for (const id of Object.keys(MAPS)) {
   else console.log(`identity: a pilot stored under ${OLD_TOKEN_KEYS[0]} carried over to ${TOKEN_KEY}`);
 }
 
+const click = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+
 // The hangar's APPLY button: does clicking it actually ask the server for a refit?
 {
   feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
@@ -262,8 +265,6 @@ for (const id of Object.keys(MAPS)) {
   sent.length = 0;
   const state = { hull: 'vanguard', drones: 2, hulls: ['hauler', 'vanguard'],
                   formations: ['line', 'wedge'], gear: { emitter1: 2, damper: 1 } };
-  const click = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
-  const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
   evt('keydown', { key: 'h' });                                  // open the station
   frame(t += 16); frames++;
 
@@ -295,6 +296,51 @@ for (const id of Object.keys(MAPS)) {
     if (!kinds.has(want)) errs.push(`clicking every station row never produced a "${want}"`);
   if (kinds.size) console.log(`station: ${rows} hangar rows + ${storeRows} store rows across ` +
     `${STORE_PAGES.length} pages, all hovered and clicked; sent ${[...kinds].join(', ')}`);
+
+  // The chooser. A locker holding MK-Is and MK-Vs must not decide for you — it
+  // used to fit whichever sorted first, which was always the MK-I.
+  {
+    feed({ t: 'fit', hull: 'vanguard',
+           fit: { weapon: [], generator: [], tech: [] },
+           drones: [null, null], gear: { emitter1: 3, emitter3: 1, emitter5: 2, pod3: 1 },
+           formation: 'line', formations: ['line'],
+           hulls: ['hauler', 'vanguard'], credits: 90000 });
+    const L = bayLayout(innerWidth, innerHeight, { hull: 'vanguard', drones: 2, tab: 'hangar',
+                                                   hulls: ['hauler', 'vanguard'], formations: ['line'] });
+    click(L.tabs.find(x => x.key === 'hangar').r);      // the store block left it on STORE
+    frame(t += 16); frames++;
+    const slot = L.racks.find(r => !r.header && r.slot === 'weapon' && r.index === 0);
+    sent.length = 0;
+    click(slot.r); frame(t += 16); frames++;
+    if (sent.length) errs.push(`clicking an empty slot fitted ${JSON.stringify(sent[0])} instead of asking`);
+
+    const order = fitsIn('weapon', { gear: { emitter1: 3, emitter3: 1, emitter5: 2, pod3: 1 },
+                                     fit: { weapon: [], generator: [], tech: [] }, drones: [] });
+    if (order[0] !== 'emitter5') errs.push(`the chooser offered ${order[0]} first, not the best thing owned`);
+    const pick = pickerLayout(L, slot, order);
+    const box = pick.box, P = L.panel;
+    if (box.x < P.x || box.y < P.y || box.x + box.w > P.x + P.w || box.y + box.h > P.y + P.h)
+      errs.push('the chooser opened outside the panel');
+
+    // hover every row so each one draws its tooltip, then take the MK-V
+    for (const r of pick.rows) { hoverAt(r.r); frame(t += 16); frames++; }
+    click(pick.rows.find(r => r.k === 'emitter5').r);
+    frame(t += 16); frames++;
+    const put = sent.find(m => m.t === 'install');
+    if (!put) errs.push('choosing from the chooser never asked the server to install anything');
+    else if (put.item !== 'emitter5') errs.push(`chose MK-V, sent ${put.item}`);
+    else console.log(`hangar: an empty slot offers all ${pick.rows.length} that fit, best first, and fits the one picked`);
+
+    // Escape backs out of the chooser without closing the station under it. The
+    // only way to ask from here is to click something that answers when it is open.
+    click(slot.r); frame(t += 16); frames++;
+    evt('keydown', { key: 'Escape' });
+    frame(t += 16); frames++;
+    sent.length = 0;
+    click(L.hulls.find(h => h.k === 'hauler').r);
+    frame(t += 16); frames++;
+    if (!sent.some(m => m.t === 'hull')) errs.push('Escape closed the whole station instead of just the chooser');
+  }
 
   // A rocket volley is heard once, on the frame the rails light, and never again
   // while the flash decays — the same rule the guns follow.

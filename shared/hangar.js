@@ -10,7 +10,8 @@
 // technology, drones and formations at once.
 
 import { HULLS, slotsOf } from './ships.js';
-import { EQUIPMENT, SLOTS, MAX_DRONES } from './gear.js';
+import { EQUIPMENT, SLOTS, MAX_DRONES, emptyFit } from './gear.js';
+import { launcherRoom } from './rockets.js';
 import { FORMATION_KEYS } from './formation.js';
 
 export const TABS = [{ key: 'hangar', name: 'HANGAR' }, { key: 'store', name: 'STORE' }];
@@ -39,6 +40,37 @@ export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}
     default:       return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === page)
                      .map(k => ({ kind: 'item', k, owned: false }));
   }
+}
+
+// What the locker can put in one slot, best first. "Best" is the tier you paid
+// most for, because filling an empty slot with whatever happened to sort first
+// meant a pilot holding MK-Vs kept getting MK-Is bolted on.
+export function fitsIn(target, { gear = {}, fit = emptyFit(), drones = [] } = {}) {
+  const held = k => (gear[k] ?? 0) > 0;
+  const takenTech = new Set([...(fit.tech ?? []), ...drones.filter(Boolean)]
+    .filter(k => EQUIPMENT[k]?.slot === 'tech'));
+  return Object.keys(EQUIPMENT)
+    .filter(k => held(k))
+    .filter(k => (target === 'drone'
+      // A drone takes anything the ship itself could carry, minus rockets.
+      ? EQUIPMENT[k].kind !== 'rocket'
+      : EQUIPMENT[k].slot === target))
+    .filter(k => !(EQUIPMENT[k].slot === 'tech' && takenTech.has(k)))
+    .filter(k => !(EQUIPMENT[k].kind === 'rocket' && launcherRoom(fit) <= 0))
+    .sort((a, b) => (EQUIPMENT[b].tier ?? 0) - (EQUIPMENT[a].tier ?? 0)
+                 || EQUIPMENT[b].price - EQUIPMENT[a].price);
+}
+
+// The chooser that drops out of an empty slot. Anchored to the row that opened
+// it, flipped upward when it would run off the bottom of the panel.
+export const PICK_ROW = 30;
+export function pickerLayout(G, row, items) {
+  const w = G.colW + 40, h = 8 + items.length * PICK_ROW;
+  const x = Math.min(row.r.x, G.panel.x + G.panel.w - w - 8);
+  const below = row.r.y + row.r.h + 4;
+  const y = below + h > G.panel.y + G.panel.h - 8 ? Math.max(G.panel.y + 8, row.r.y - h - 4) : below;
+  return { box: { x, y, w, h },
+           rows: items.map((k, i) => ({ k, r: { x: x + 6, y: y + 4 + i * PICK_ROW, w: w - 12, h: PICK_ROW - 4 } })) };
 }
 
 export function bayLayout(VIEW_W, VIEW_H, s = {}) {

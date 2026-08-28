@@ -218,6 +218,30 @@ console.log('\nstation layout');
             for (let i = 1; i < col.length; i++) if (col[i].y < col[i-1].y + col[i-1].h - 0.01) overlap++;
           }
         }
+  // A chooser that opens off the panel is a chooser you cannot click, which is
+  // exactly how the module rack broke the first time. Every slot, every size.
+  {
+    const { pickerLayout, fitsIn } = await import('../shared/hangar.js');
+    const locker = Object.fromEntries(Object.keys(EQUIPMENT).map(k => [k, 2]));
+    let off = 0, checkedPickers = 0, biggest = 0;
+    for (const [W, H] of sizes)
+      for (const st of states) {
+        const L = bayLayout(W, H, { ...st, tab: 'hangar' }), P = L.panel;
+        for (const row of L.racks.filter(r => !r.header)) {
+          const items = fitsIn(row.slot, { gear: locker, fit: emptyFit(), drones: [] });
+          if (!items.length) continue;
+          const { box, rows } = pickerLayout(L, row, items);
+          checkedPickers++;
+          biggest = Math.max(biggest, rows.length);
+          if (box.x < P.x || box.y < P.y || box.x + box.w > P.x + P.w || box.y + box.h > P.y + P.h) off++;
+          for (const r of rows)
+            if (r.r.x < P.x || r.r.y < P.y || r.r.x + r.r.w > P.x + P.w || r.r.y + r.r.h > P.y + P.h) off++;
+        }
+      }
+    check('a slot chooser always opens inside the panel', off === 0,
+          `${checkedPickers} of them, up to ${biggest} rows, flipped up near the bottom`);
+  }
+
   check('every row stays inside the panel', outside === 0,
         `${checked} layouts, ${tightest | 0}px of slack at the tightest`);
   check('rows never overlap each other, column by column', overlap === 0);
