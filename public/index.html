@@ -20,12 +20,13 @@ import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
-import { audioReady, setThrust, laser, explosion, toggleAudio, audioOn } from '/audio.js';
+import { audioReady, setThrust, laser, rocket, explosion, toggleAudio, audioOn } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
+import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -80,10 +81,12 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], blasts = [], pods = [], numbers = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], blasts = [], pods = [], numbers = [];   // rebuilt every snapshot
+let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
 let invOpen = false, notice = null;
 const prevShot = new Map();       // for spotting the frame a gun goes off
+const prevRocket = new Map();     // and the frame a rack empties
 let thrust = 0, lastFrameAt = 0, prevSelf = null;
 let dead = null;                  // { lost, at } while you are a wreck
 // Chat, with a console inside it. While it is open every keystroke belongs to the
@@ -153,6 +156,8 @@ ws.onmessage = e => {
   }
   if (m.t !== 's') return;
   bolts = (m.bolts ?? []).map(unpackBolt);
+  rockets = (m.rockets ?? []).map(unpackRocket);
+  snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
   {                                               // a blast is new the first time we see it low
     const self0 = ships.get(myId);
@@ -185,11 +190,14 @@ ws.onmessage = e => {
   const self = ships.get(myId);
   for (const [id, sh] of ships) {
     const was = prevShot.get(id) ?? 0;
-    if (sh.shot > 60 && was <= 60 && sh.vis !== STALE)
-      laser(id === myId, self ? Math.hypot(sh.x - self.x, sh.y - self.y) : 1e9);
+    const d = self ? Math.hypot(sh.x - self.x, sh.y - self.y) : 1e9;
+    if (sh.shot > 60 && was <= 60 && sh.vis !== STALE) laser(id === myId, d);
+    const wasRk = prevRocket.get(id) ?? 0;
+    if ((sh.rk ?? 0) > 60 && wasRk <= 60 && sh.vis !== STALE) rocket(id === myId, d);
     prevShot.set(id, sh.shot);
+    prevRocket.set(id, sh.rk ?? 0);
   }
-  for (const id of ships.keys()) if (!seen.has(id)) { ships.delete(id); prevShot.delete(id); }
+  for (const id of ships.keys()) if (!seen.has(id)) { ships.delete(id); prevShot.delete(id); prevRocket.delete(id); }
 };
 
 // --- input -------------------------------------------------------------------
@@ -516,7 +524,8 @@ const shipCtx = () => ({ hull: myHull, fit: myFit, drones: myDrones, formation: 
 // Anything in the locker that would go in this slot, and is not a technology we
 // are already flying — the same rule the server applies, so a click never bounces.
 const spare = slot => Object.keys(EQUIPMENT).find(k => EQUIPMENT[k].slot === slot && (myGear[k] ?? 0) > 0
-  && !(slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)));
+  && !(slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k))
+  && !(EQUIPMENT[k].kind === 'rocket' && launcherRoom(myFit) <= 0));
 
 function bayClick(v) {
   const G = bayGeom();
@@ -541,6 +550,7 @@ function bayClick(v) {
       if (row.slot === 'drone') {
         if (myDrones[row.index]) return send({ t: 'dronestrip', index: row.index });
         const any = Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
+          && EQUIPMENT[k].kind !== 'rocket'                     // a drone is a gun platform
           && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)));
         return any ? send({ t: 'dronefit', index: row.index, item: any })
                    : say('Nothing in the locker to mount — buy one in the store', '#8ab4e6');
@@ -747,6 +757,7 @@ function drawBay() {
       const would = item ? null
                   : row.slot === 'drone'
                     ? Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
+                        && EQUIPMENT[k].kind !== 'rocket'
                         && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)))
                     : spare(row.slot);
       if (over(r) && (held || would)) tip = tipFor('item', held ?? would, shipCtx());
@@ -1131,6 +1142,35 @@ function drawFrame(now) {
     if (thick > 3.2) {                            // heavy rounds run white hot down the middle
       g.strokeStyle = b.foe ? '#ffd6c8' : '#e8fbff'; g.lineWidth = thick * 0.34;
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    }
+  }
+
+  // Rockets. The server ticks at 30Hz and these move 520px/s, so they are flown
+  // forward from the last snapshot rather than drawn where they were — otherwise
+  // a rocket advances in visible 17px steps.
+  if (rockets.length) {
+    const ahead = Math.min(0.12, (now - snapAt) / 1000) * ROCKET_SPEED;
+    for (const r of rockets) {
+      const c = Math.cos(r.h), sn = Math.sin(r.h);
+      const x = r.x + c * ahead, y = r.y + sn * ahead;
+      const len = 7 + Math.min(6, Math.sqrt(Math.max(0, r.w)) * 0.35);
+      g.save(); g.translate(x, y); g.rotate(r.h);
+      // exhaust first, so the body sits on top of it
+      const flame = 12 + Math.sin(now / 40 + x) * 4;
+      const grd = g.createLinearGradient(-len, 0, -len - flame, 0);
+      grd.addColorStop(0, r.foe ? 'rgba(255,170,120,0.85)' : 'rgba(150,225,255,0.85)');
+      grd.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grd;
+      g.beginPath();
+      g.moveTo(-len, -2.2); g.lineTo(-len - flame, 0); g.lineTo(-len, 2.2);
+      g.closePath(); g.fill();
+      g.fillStyle = r.foe ? '#ff8a6b' : '#cfe9ff';
+      g.beginPath();
+      g.moveTo(len, 0); g.lineTo(-len * 0.5, -2.8); g.lineTo(-len, -1.6);
+      g.lineTo(-len, 1.6); g.lineTo(-len * 0.5, 2.8);
+      g.closePath(); g.fill();
+      g.fillStyle = '#0a0f16'; g.fillRect(-len * 0.3, -1, len * 0.5, 2);
+      g.restore();
     }
   }
 

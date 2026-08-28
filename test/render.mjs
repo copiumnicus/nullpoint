@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout, STORE_PAGES } from '../shared/hangar.js';
-import { packShip, packBolt, packBlast, packPod, packHit } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 
@@ -133,6 +133,12 @@ for (const id of Object.keys(MAPS)) {
     packShip({ id: 4, x: 9000, y: 6000, heading: 2, charge: 0,    co: 'k', hull: 'bulwark',  hp: 5, sh: 55, flash: 70, guns: 1, lvl: 0, drones: 2, form: 0, dmask: 0b10, vis: 0 }),
     packShip({ id: 1e6, x: 6400, y: 4300, heading: .2, charge: 0,  co: 'x', hull: 'drifter',  hp:  70, sh:  30, flash:  20, tgt: 1, shot: 90, vis: 1 }),
     packShip({ id: 1e6 + 1, x: 2200, y: 6600, heading: 3, charge: 0, co: 'x', hull: 'drifter', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 0 }),
+  ],
+  rockets: [
+    packRocket({ x: 6200, y: 4100, heading: 0.4,  foe: 0, w: 150 }),
+    packRocket({ x: 6350, y: 3900, heading: -2.1, foe: 0, w: 750 }),
+    packRocket({ x: 5900, y: 4300, heading: 3.1,  foe: 1, w: 150 }),
+    packRocket({ x: 6100, y: 4250, heading: 1.7,  foe: 1, w: 0 }),
   ], bolts: [
     packBolt({ sx: 6000, sy: 4000, ax: 6400, ay: 4300, t: 0.10, ttl: 0.21, foe: false }),
     packBolt({ sx: 6400, sy: 4300, ax: 6000, ay: 4000, t: 0.02, ttl: 0.21, foe: true }),
@@ -289,6 +295,21 @@ for (const id of Object.keys(MAPS)) {
     if (!kinds.has(want)) errs.push(`clicking every station row never produced a "${want}"`);
   if (kinds.size) console.log(`station: ${rows} hangar rows + ${storeRows} store rows across ` +
     `${STORE_PAGES.length} pages, all hovered and clicked; sent ${[...kinds].join(', ')}`);
+
+  // A rocket volley is heard once, on the frame the rails light, and never again
+  // while the flash decays — the same rule the guns follow.
+  {
+    // No guns firing and no kills in this scene, so every oscillator raised here
+    // is a rocket motor igniting — one per volley.
+    const ship = rk => packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                                  hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
+                                  rk, vis: 2 });
+    feed({ t: 's', ships: [ship(0)] }); frame(t += 16); frames++;
+    audio.osc = 0;
+    for (const rk of [100, 80, 60, 20, 0, 100, 90]) { feed({ t: 's', ships: [ship(rk)] }); frame(t += 16); frames++; }
+    if (audio.osc !== 2) errs.push(`a rack that emptied twice was heard ${audio.osc} times`);
+    else console.log('rockets: a volley is heard once as it leaves, not once a frame while it fades');
+  }
 
   // SPACE with the hold open empties the ship, rather than reaching for a pod
   sent.length = 0;

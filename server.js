@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
+import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
@@ -12,7 +13,7 @@ import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts } from './shared/radar.js';
-import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
 import * as store from './store.js';
@@ -104,8 +105,19 @@ for (const h of HOMES) aliens.set(h, Array.from({ length: ALIENS_PER_MAP },
   (_, i) => newAlien('drifter', alienId++, MAPS[h], h.charCodeAt(0) * 977 + i * 7919)));
 
 const bolts  = new Map();    // mapId -> bolts in flight
+const rockets = new Map();   // mapId -> rockets in flight
+
+// A rocket flies for four and a half seconds, which is long enough for its
+// target to jump out or die under it. Bolts land inside a third of a second and
+// never had this problem; rockets would happily follow someone into the next
+// sector and detonate on them there.
+const dropRocketsAt = (mapId, ship) => {
+  const list = rockets.get(mapId);
+  if (!list) return;
+  for (let i = list.length - 1; i >= 0; i--) if (list[i].target === ship) list.splice(i, 1);
+};
 const blasts = new Map();    // mapId -> kill flashes still playing
-for (const id of Object.keys(MAPS)) { bolts.set(id, []); blasts.set(id, []); }
+for (const id of Object.keys(MAPS)) { bolts.set(id, []); rockets.set(id, []); blasts.set(id, []); }
 
 const pods = new Map();      // mapId -> cargo adrift
 for (const id of Object.keys(MAPS)) pods.set(id, []);
@@ -345,9 +357,10 @@ wss.on('connection', (ws, req) => {
       const rack = ship.fit[item.slot], room = slotsOf(ship.hull)[item.slot] ?? 0;
       if (rack.length >= room) return;
       if (item.slot === 'tech' && rack.includes(m.item)) return;   // technologies are unique
+      if (item.kind === 'rocket' && launcherRoom(ship.fit) <= 0) return;   // three to a ship
       rack.push(m.item);
       if (--P.gear[m.item] <= 0) delete P.gear[m.item];
-      refit(ship, ship.hull, ship.fit, ship.drones);
+      refit(ship, ship.hull, ship.fit, ship.drones, ship.formation);
       return outfit();
     }
     if (m.t === 'uninstall') {
@@ -471,6 +484,7 @@ setInterval(() => {
       p.hold = {};
       p.dead = true;
       p.targetId = null; p.want = null; p.scoop = null; p.contacts.clear();
+      dropRocketsAt(p.mapId, p.ship);
       for (const list of aliens.values()) forgetPlayer(list, id);   // death settles every grudge
       Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, charge: 0, chargeTo: null });
       touch(p);                                   // a lost hold must survive a hard kill
@@ -481,6 +495,7 @@ setInterval(() => {
     const dest = stepJump(p.ship, MAPS[p.mapId], dt);
     if (!dest) continue;
     const a = arrivalFor(p.mapId, MAPS[dest]);
+    dropRocketsAt(p.mapId, p.ship);              // nothing follows you through a portal
     p.mapId = dest;
     p.contacts.clear();
     p.targetId = null;             // jumping out breaks the engagement
@@ -503,6 +518,7 @@ setInterval(() => {
       const victim = tgt ? here.find(c => c.id === tgt) : null;
       faceTarget(a, victim?.ship);
       for (const shot of fire(a, victim?.ship ?? null, dt)) bolts.get(mapId).push(shot);
+      for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
       if (a.hp <= 0) killAlien(mapId, a);
     }
   }
@@ -512,11 +528,13 @@ setInterval(() => {
     const foe = p.targetId
       ? (aliens.get(p.mapId) ?? []).find(a => a.id === p.targetId && a.dead <= 0 && a.hp > 0)
       : null;
-    if (!foe) { p.targetId = null; fire(p.ship, null, dt); continue; }
+    if (!foe) { p.targetId = null; fire(p.ship, null, dt); launch(p.ship, null, dt); continue; }
     faceTarget(p.ship, foe);
     const volley = fire(p.ship, foe, dt);
-    if (!volley.length) continue;
+    const salvo = launch(p.ship, foe, dt);
     for (const shot of volley) { shot.owner = id; bolts.get(p.mapId).push(shot); }
+    for (const rk of salvo)    { rk.owner = id;   rockets.get(p.mapId).push(rk); }
+    if (!volley.length && !salvo.length) continue;
     foe.provoked.add(id);                        // pulling the trigger is the provocation,
     if (!foe.target) foe.target = id;            // whether or not the shot lands
   }
@@ -544,6 +562,14 @@ setInterval(() => {
     p.scoop = null;
   }
 
+  for (const [mapId, list] of rockets) {
+    for (const h of stepRockets(list, dt)) {      // same bookkeeping, different flight
+      hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
+                             n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
+                             by: h.rocket.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
+      if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.rocket.owner ?? null);
+    }
+  }
   for (const [mapId, list] of bolts) {
     for (const h of stepBolts(list, dt)) {        // the bolt remembers who fired it
       hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
@@ -570,6 +596,7 @@ setInterval(() => {
       sh: Math.round(100 * p.ship.shield / Math.max(1, shieldMax(p.ship))),
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
       tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH),
+      rk: Math.round(100 * (p.ship.rocketFlash ?? 0) / LAUNCH_FLASH),
       guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.drones.length,
       form: Math.max(0, FORMATION_KEYS.indexOf(p.ship.formation)),
       dmask: p.ship.drones.reduce((m2, k, i) => m2 | (EQUIPMENT[k]?.slot === 'weapon' ? 1 << i : 0), 0),
@@ -587,7 +614,7 @@ setInterval(() => {
       sh: Math.round(100 * a.shield / Math.max(1, shieldMax(a))),
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
-      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0 });
+      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
@@ -601,6 +628,8 @@ setInterval(() => {
     const shown = (bolts.get(V.mapId) ?? []).filter(b =>
       Math.hypot(b.sx - V.ship.x, b.sy - V.ship.y) <= reach ||
       Math.hypot(b.ax - V.ship.x, b.ay - V.ship.y) <= reach);
+    const missiles = (rockets.get(V.mapId) ?? []).filter(r =>
+      Math.hypot(r.x - V.ship.x, r.y - V.ship.y) <= reach);
     // You see a kill you could have seen — and always your own, even though you
     // are already back at your home base by the time it plays.
     const flashes = (blasts.get(V.mapId) ?? []).filter(b =>
@@ -609,7 +638,8 @@ setInterval(() => {
       h.by === vid || Math.hypot(h.x - V.ship.x, h.y - V.ship.y) <= reach);
     const cans = (pods.get(V.mapId) ?? []).filter(p =>
       Math.hypot(p.x - V.ship.x, p.y - V.ship.y) <= reach);
-    V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), blasts: flashes.map(packBlast),
+    V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
+      blasts: flashes.map(packBlast),
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,

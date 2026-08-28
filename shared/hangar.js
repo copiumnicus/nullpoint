@@ -17,7 +17,8 @@ export const TABS = [{ key: 'hangar', name: 'HANGAR' }, { key: 'store', name: 'S
 
 export const STORE_PAGES = [
   { key: 'ships',     name: 'Ships',       hint: 'hulls and their racks' },
-  { key: 'weapon',    name: 'Weapons',     hint: 'emitters for a weapon slot' },
+  { key: 'weapon',    name: 'Lasers',      hint: 'emitters — a bolt you can dodge, thrown fast' },
+  { key: 'rocket',    name: 'Launchers',   hint: 'rockets — slower, and they follow you' },
   { key: 'generator', name: 'Generators',  hint: 'reactor and shield capacity' },
   { key: 'tech',      name: 'Technology',  hint: 'one of each, every one a trade' },
   { key: 'drones',    name: 'Drones',      hint: 'escort, one slot apiece' },
@@ -30,6 +31,11 @@ export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}
     case 'ships':  return Object.keys(HULLS).map(k => ({ kind: 'hull', k, owned: hulls.includes(k) }));
     case 'drones': return drones < MAX_DRONES ? [{ kind: 'drone', k: 'drone', owned: false }] : [];
     case 'forms':  return FORMATION_KEYS.map(k => ({ kind: 'form', k, owned: formations.includes(k) }));
+    // Both weapon pages draw from the same slot, split by what the thing does.
+    case 'weapon': return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'laser')
+                     .map(k => ({ kind: 'item', k, owned: false }));
+    case 'rocket': return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'rocket')
+                     .map(k => ({ kind: 'item', k, owned: false }));
     default:       return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === page)
                      .map(k => ({ kind: 'item', k, owned: false }));
   }

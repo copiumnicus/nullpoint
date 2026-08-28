@@ -1,0 +1,107 @@
+// Rockets.
+//
+// The other half of a weapon slot. A laser is aimed where you will be and then
+// travels in a straight line, so at range it can be dodged by simply not being
+// there. A rocket does not care: it is thrown wide, comes around, and keeps
+// coming. What you buy with a launcher is damage that lands.
+//
+// The price is cadence and delivery. A rack cycles at roughly half the rate of
+// guns and the flight takes real seconds, so rockets are the punch you commit to
+// early in a fight rather than the pressure you hold someone under.
+//
+// A launcher occupies a weapon slot, at most three to a ship, and never rides a
+// drone — a drone is a gun platform, and six of them carrying swarm racks would
+// put thirty rockets in the air off one trigger.
+
+import { applyDamage } from './sim.js';
+import { boostOf } from './power.js';
+import { EQUIPMENT, MAX_LAUNCHERS } from './gear.js';
+import { hardpoints } from './combat.js';
+
+export { MAX_LAUNCHERS };
+
+export const ROCKET_SPEED = 520;    // px/s — half a bolt, so you see them coming
+export const ROCKET_TURN  = 1.6;    // rad/s — slack enough that the arc is a real arc
+export const ROCKET_TTL   = 4.5;    // s of motor, about 2300px of flight
+export const ROCKET_R     = 24;     // proximity fuse, on top of the hull's radius
+export const ROCKET_RATE  = 0.55;   // volleys/s
+export const LAUNCH_FLASH = 0.35;   // s the rails glow after a volley, and how the client hears it
+export const SPREAD       = 1.15;   // rad thrown off the aim line by the outermost rocket
+
+export const isLauncher = key => EQUIPMENT[key]?.kind === 'rocket';
+
+// Launchers in the rack. Drones are excluded on purpose (see the header), and the
+// cap is applied here so every caller — resolve, the client, the server — agrees
+// on which three are actually live.
+export const launchersIn = fit =>
+  (fit?.weapon ?? []).filter(isLauncher).slice(0, MAX_LAUNCHERS);
+
+export const launcherRoom = fit => MAX_LAUNCHERS - launchersIn(fit).length;
+
+// Advances the rack and returns the rockets released this tick. A volley leaves
+// all at once — the fan is the whole point, and dribbling it out one at a time
+// would just look like bad lasers.
+export function launch(a, b, dt) {
+  a.rocketCool = Math.max(0, (a.rocketCool ?? 0) - dt);
+  a.rocketFlash = Math.max(0, (a.rocketFlash ?? 0) - dt);
+  const n = Math.round(a.stats?.rockets ?? 0);
+  if (!n) return [];
+  const live = b && b.hp > 0 && a.hp > 0 &&
+               Math.hypot(b.x - a.x, b.y - a.y) <= a.stats.weaponRange;
+  if (!live || a.rocketCool > 0) return [];
+  a.rocketCool = 1 / ROCKET_RATE;
+  a.rocketFlash = LAUNCH_FLASH;          // one per volley, not one per rocket
+
+  const each = (a.stats.rocketVolley * boostOf(a.power, 'weapons', a.stats)) / n;
+  const mounts = hardpoints(a);
+  const aim = Math.atan2(b.y - a.y, b.x - a.x);
+  const half = (n - 1) / 2;
+  // A lone rocket would otherwise fly dead straight, which reads as a slow bolt.
+  // Alternating the side it swings out on keeps a single-pod rack looking like a
+  // rocket and gives two of them a pleasing scissor.
+  a.rocketSide = -(a.rocketSide ?? 1);
+
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const off = half === 0 ? a.rocketSide * 0.6 : (i - half) / half;
+    const h = aim + off * SPREAD;
+    const m = mounts[i % mounts.length];
+    out.push({
+      x: m.x, y: m.y, heading: h,
+      vx: Math.cos(h) * ROCKET_SPEED, vy: Math.sin(h) * ROCKET_SPEED,
+      dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, w: Math.round(each),
+    });
+  }
+  return out;
+}
+
+// Flies every rocket one tick and settles the ones that connect. A rocket that
+// overshoots comes around for another pass; one that runs out of motor is gone.
+export function stepRockets(list, dt) {
+  const hits = [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const r = list[i];
+    r.t -= dt;
+    const tg = r.target;
+    if (r.t <= 0 || !tg || tg.hp <= 0) { list.splice(i, 1); continue; }
+
+    // Steer toward the target, but only so fast — this is what lets a nimble
+    // ship make one overshoot instead of taking it on the nose.
+    const want = Math.atan2(tg.y - r.y, tg.x - r.x);
+    let d = want - r.heading;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    r.heading += Math.max(-ROCKET_TURN * dt, Math.min(ROCKET_TURN * dt, d));
+    r.vx = Math.cos(r.heading) * ROCKET_SPEED;
+    r.vy = Math.sin(r.heading) * ROCKET_SPEED;
+    r.x += r.vx * dt;
+    r.y += r.vy * dt;
+
+    if (Math.hypot(tg.x - r.x, tg.y - r.y) <= ROCKET_R + tg.r) {
+      list.splice(i, 1);
+      const split = applyDamage(tg, r.dmg);
+      hits.push({ rocket: r, target: tg, dead: tg.hp <= 0, split });
+    }
+  }
+  return hits;
+}

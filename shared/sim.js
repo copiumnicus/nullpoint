@@ -77,7 +77,7 @@ export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.forma
   s.power = newPower(s.stats.capacitor);
   s.sinceHit = 1e9;
   s.shieldHit = 0;
-  s.cool = 0; s.shotFlash = 0;
+  s.cool = 0; s.shotFlash = 0; s.rocketCool = 0; s.rocketFlash = 0;
   return s;
 }
 

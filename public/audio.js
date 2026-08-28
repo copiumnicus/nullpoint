@@ -21,6 +21,7 @@ export const SFX = {
   laser: { url: '/sfx/laser.mp3',       rate: 0.75, gain: 1.0 },
   enemy: { url: '/sfx/laser-enemy.mp3', rate: 0.60, gain: 0.9 },
   boom:  { url: '/sfx/explosion.mp3',   rate: 0.85, gain: 1.0 },
+  pod:   { url: '/sfx/rocket.mp3',      rate: 0.90, gain: 1.0 },
 };
 const clip = {};
 export const usingSamples = () => Object.keys(clip);
@@ -178,6 +179,56 @@ export function laser(mine, dist) {
 
   body.start(t); body.stop(t + dur + 0.04);
   sub.start(t);  sub.stop(t + dur + 0.04);
+}
+
+// A rocket leaving the rail. Guns are a short bright zap; this has to be the
+// opposite or a fan of five just sounds like a stuck trigger — a noise whoosh
+// that opens up rather than decays, with a low thump under the ignition. One
+// call per volley, however many rockets are in it.
+export function rocket(mine, dist) {
+  if (!ctx || !on) return;
+  const near = 1 - Math.min(1, dist / 1800);
+  if (near < 0.05) return;
+  const t = ctx.currentTime;
+  const peak = 0.34 * near * near * (mine ? 1 : 0.85);
+
+  if (clip.pod) return playClip(clip.pod, SFX.pod, peak, t, 0.22);
+
+  const dur = 0.55;
+  const n = Math.floor(ctx.sampleRate * dur);
+  const nb = ctx.createBuffer(1, n, ctx.sampleRate);
+  const nd = nb.getChannelData(0);
+  let run = 0;
+  for (let i = 0; i < n; i++) {                    // brown noise: motor, not static
+    run = (run + 0.06 * (Math.random() * 2 - 1)) / 1.06;
+    nd[i] = run * 4;
+  }
+  const src = ctx.createBufferSource(); src.buffer = nb;
+
+  const bp = ctx.createBiquadFilter();             // the whoosh: a band opening upward
+  bp.type = 'bandpass'; bp.Q.value = 1.4;
+  bp.frequency.setValueAtTime(240, t);
+  bp.frequency.exponentialRampToValueAtTime(mine ? 2100 : 1500, t + dur * 0.8);
+
+  const amp = ctx.createGain();
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.05);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+  const thump = ctx.createOscillator();            // ignition, an octave under it all
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(mine ? 150 : 120, t);
+  thump.frequency.exponentialRampToValueAtTime(48, t + 0.22);
+  const tg = ctx.createGain();
+  tg.gain.setValueAtTime(Math.max(0.0002, peak * 0.8), t);
+  tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+
+  src.connect(bp); bp.connect(amp); amp.connect(master);
+  thump.connect(tg); tg.connect(master);
+  send(amp, 0.18, t);
+
+  src.start(t); src.stop(t + dur + 0.05);
+  thump.start(t); thump.stop(t + 0.3);
 }
 
 // A kill: a long filtered noise collapse with a sub dropping under it, thrown

@@ -31,6 +31,11 @@ export const ATTRS = {
   capacitor:   { label: 'Capacitor',    unit: 's',   dflt:   45, better: 'high', min: 1 },
   recharge:    { label: 'Recharge',     unit: '/s',  dflt:  1.8, better: 'high', min: 0.1 },
   sustain:     { label: 'Free output',  unit: '',    dflt: 0.33, better: 'high', min: 0, max: 0.9 },
+  // Rockets are counted and paid for as a volley, not per launcher: adding a
+  // rack adds both its rockets and its share of the damage, so two racks of the
+  // same model land the same rocket twice rather than one twice as hard.
+  rockets:     { label: 'Rockets',      unit: '',    dflt:    0, better: 'high', min: 0 },
+  rocketVolley:{ label: 'Rocket volley', unit: '',   dflt:    0, better: 'high', min: 0 },
 
 };
 
@@ -73,9 +78,12 @@ export const radiusOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).r;
 export const hullPrice = hullKey => HULLS[hullKey]?.price ?? Infinity;
 
 // Every emitter is a gun in its own right, wherever it is mounted.
+// Lasers only. A launcher sits in a weapon slot but is not a barrel, and counting
+// it as one would split the rack's bolt damage across guns that never fire a bolt.
+const isLaser = k => EQUIPMENT[k]?.slot === 'weapon' && EQUIPMENT[k]?.kind !== 'rocket';
 export const gunsOf = (fit, drones = []) =>
-  Math.max(1, (fit?.weapon?.length ?? 0) +
-              droneItems(drones).filter(k => EQUIPMENT[k]?.slot === 'weapon').length);
+  Math.max(1, (fit?.weapon ?? []).filter(isLaser).length +
+              droneItems(drones).filter(isLaser).length);
 export const sanitiseFit = (hullKey, fit) => cleanFit(slotsOf(hullKey), fit);
 
 // base + every flat add, then multiplied once by the SUM of the percentages.

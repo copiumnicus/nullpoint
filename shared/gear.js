@@ -17,6 +17,7 @@ export const SLOTS = ['weapon', 'generator', 'tech'];
 // Drones fly escort and carry one item each, of any kind. They are the only way
 // past a hull's own rack, and they cost more the more you already have.
 export const MAX_DRONES = 6;
+export const MAX_LAUNCHERS = 3;
 export const dronePrice = owned => 3000 + owned * 2600;
 
 export const EQUIPMENT = {
@@ -25,17 +26,31 @@ export const EQUIPMENT = {
   // a home-map husk in one trigger pull, and the things waiting further out will
   // do the same to anyone who wandered there in a starter hull. Five rungs so
   // that climb has steps rather than one cliff.
-  emitter1: { name: 'MK-I Emitter',  slot: 'weapon', tier: 1, price:    900,
+  emitter1: { name: 'MK-I Emitter',  slot: 'weapon', kind: 'laser', tier: 1, price:    900,
               blurb: 'A laser.', mods: [['damage', 'add', 18]] },
-  emitter2: { name: 'MK-II Emitter', slot: 'weapon', tier: 2, price:   2600,
+  emitter2: { name: 'MK-II Emitter', slot: 'weapon', kind: 'laser', tier: 2, price:   2600,
               blurb: 'A better laser.', mods: [['damage', 'add', 45]] },
-  emitter3: { name: 'MK-III Emitter', slot: 'weapon', tier: 3, price:  7200,
+  emitter3: { name: 'MK-III Emitter', slot: 'weapon', kind: 'laser', tier: 3, price:  7200,
               blurb: 'The last one you can afford by accident.', mods: [['damage', 'add', 110]] },
-  emitter4: { name: 'MK-IV Emitter', slot: 'weapon', tier: 4, price:  16000,
+  emitter4: { name: 'MK-IV Emitter', slot: 'weapon', kind: 'laser', tier: 4, price:  16000,
               blurb: 'Fleet issue. Nothing on the home map survives a full rack.',
               mods: [['damage', 'add', 220]] },
-  emitter5: { name: 'MK-V Emitter',  slot: 'weapon', tier: 5, price:  34000,
+  emitter5: { name: 'MK-V Emitter',  slot: 'weapon', kind: 'laser', tier: 5, price:  34000,
               blurb: 'About as much as a hardpoint will carry.', mods: [['damage', 'add', 400]] },
+
+  // Launchers — the other thing a weapon slot will take. Three to a ship, never on
+  // a drone, and the tiers differ in how many rockets leave at once rather than in
+  // how hard each one hits. Damage is declared for the whole volley so two racks
+  // of the same model land the same rocket twice.
+  pod1: { name: 'Sparrow Pod', slot: 'weapon', kind: 'rocket', tier: 1, price:  4000,
+          blurb: 'One rocket. It will find you.',
+          mods: [['rockets', 'add', 1], ['rocketVolley', 'add', 150]] },
+  pod2: { name: 'Triad Rack',  slot: 'weapon', kind: 'rocket', tier: 2, price: 12000,
+          blurb: 'Three, thrown wide and closing.',
+          mods: [['rockets', 'add', 3], ['rocketVolley', 'add', 450]] },
+  pod3: { name: 'Swarm Rack',  slot: 'weapon', kind: 'rocket', tier: 3, price: 26000,
+          blurb: 'Five. Turning away only buys you a second.',
+          mods: [['rockets', 'add', 5], ['rocketVolley', 'add', 750]] },
 
   // generators — reactor gear. Capacitor, recharge and the free trickle.
   cellA: { name: 'A-Cell Generator', slot: 'generator', tier: 1, price:  1200,
@@ -100,6 +115,12 @@ export function sanitiseFit(slots, fit) {
     // Weapons and generators stack; a technology is either fitted or it is not.
     // Without that, an interceptor with three plating slots out-tanks a cruiser.
     if (slot === 'tech') keep = [...new Set(keep)];
+    // Three launchers to a ship, however many weapon slots the hull has. They are
+    // a commitment, not a thing you tile a Cruiser with.
+    if (slot === 'weapon') {
+      let pods = 0;
+      keep = keep.filter(k => EQUIPMENT[k].kind !== 'rocket' || ++pods <= MAX_LAUNCHERS);
+    }
     out[slot] = keep.slice(0, slots?.[slot] ?? 0);
   }
   return out;
@@ -131,6 +152,7 @@ export function sanitiseDrones(list, fit, max = MAX_DRONES) {
   const techs = new Set(fit?.tech ?? []);
   for (const k of (Array.isArray(list) ? list : []).slice(0, max)) {
     if (k === null || !EQUIPMENT[k]) { out.push(null); continue; }
+    if (EQUIPMENT[k].kind === 'rocket') { out.push(null); continue; }   // no rockets on a drone
     if (EQUIPMENT[k].slot === 'tech' && techs.has(k)) { out.push(null); continue; }
     if (EQUIPMENT[k].slot === 'tech') techs.add(k);
     out.push(k);

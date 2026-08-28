@@ -9,6 +9,7 @@
 import { ATTRS, HULLS, resolve, slotsOf } from './ships.js';
 import { EQUIPMENT, SLOTS, MAX_DRONES, dronePrice, topTier } from './gear.js';
 import { FORMATIONS, BONUS_AT, bonusScale } from './formation.js';
+import { launcherRoom, MAX_LAUNCHERS } from './rockets.js';
 
 const round = v => Math.abs(v) >= 100 ? Math.round(v)
                  : Math.abs(v) >= 10  ? Math.round(v * 10) / 10
@@ -42,11 +43,14 @@ export function tipFor(kind, key, ctx) {
     if (!e) return null;
     const room = (slotsOf(hull)?.[e.slot] ?? 0) - (fit[e.slot]?.length ?? 0);
     const dupe = e.slot === 'tech' && (fit.tech ?? []).concat(drones).includes(key);
+    const capped = e.kind === 'rocket' && launcherRoom(fit) <= 0;
     return {
       title: e.name, price: e.price, blurb: e.blurb,
       sub: `${e.slot} slot`,
-      lines: diffLines(now, resolve(hull, withItem(fit, key), drones, formation)),
+      lines: capped ? [] : diffLines(now, resolve(hull, withItem(fit, key), drones, formation)),
       note: dupe ? 'already fitted — one of each technology'
+          : capped ? `${MAX_LAUNCHERS} launchers is the limit — strip one first`
+          : e.kind === 'rocket' ? `${launcherRoom(fit)} of ${MAX_LAUNCHERS} launcher slots left · never rides a drone`
           : room > 0 ? `${room} ${e.slot} slot${room === 1 ? '' : 's'} free`
           : 'rack is full — put it on a drone, or strip a slot first',
       owned: ctx.gear?.[key] ?? 0,

@@ -309,7 +309,7 @@ console.log('\nthe power curve');
     (() => { const c = specced('bulwark'); return c.hull + c.shield > volley(specced('bulwark')); })(),
     'shields climb with the guns');
 
-  const ladder = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'weapon')
+  const ladder = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'laser')
     .sort((a, b) => EQUIPMENT[a].tier - EQUIPMENT[b].tier);
   const dmgOf = k => EQUIPMENT[k].mods.find(([a]) => a === 'damage')[2];
   console.log('     emitters: ' + ladder.map(k => `${EQUIPMENT[k].name.split(' ')[0]} ${dmgOf(k)}`).join('  '));
