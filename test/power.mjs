@@ -1,8 +1,8 @@
 import { SYSTEMS, BOOST, SPOOL_UP, SPOOL_DN, newPower, routeTo, stepPower, levelOf, boostOf, chargePct }
   from '../shared/power.js';
 import { newShip, step, stepVitals, applyDamage, shieldMax } from '../shared/sim.js';
-import { resolve, HULLS } from '../shared/ships.js';
-import { fire, salvoOf, stepsOf, MAX_VOLLEY_STEPS } from '../shared/combat.js';
+import { resolve, HULLS, slotsOf } from '../shared/ships.js';
+import { boltWidth, fire, salvoOf, stepsOf, MAX_VOLLEY_STEPS } from '../shared/combat.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -90,7 +90,26 @@ console.log('\ncannons');
     shots.every(b => Math.abs(b.sy - s.y) > 1 && b.sx > s.x));
   check('and alternate between the two cannons',
     sides.join() === '-1,1,-1,1' || sides.join() === '1,-1,1,-1');
-  check('the beam is as thick as the rack', shots[0].w === 2, '2 emitters fitted');
+  // Thickness follows the punch a single bolt carries, not how many barrels
+  // threw it — a better emitter looks better, a bigger rack just fires more.
+  const beam = (hull, item) => {
+    const n = slotsOf(hull).weapon, f = { weapon: Array(n).fill(item), generator: [], tech: [] };
+    const a = newShip(0, 0, hull, f); a.heading = 0;
+    const tgt = newShip(400, 0, 'kestrel');
+    for (let i = 0; i < 600; i++) { const v = fire(a, tgt, dt); if (v.length) return boltWidth(v[0].w); }
+    return 0;
+  };
+  const tiers = ['emitter1', 'emitter2', 'emitter3'].map(e => [e, beam('hauler', e)]);
+  console.log(`     hauler: ${tiers.map(([e, w]) => `${e} ${w.toFixed(1)}px`).join('  ')}`);
+  check('a better emitter throws a visibly heavier bolt',
+    tiers[1][1] > tiers[0][1] + 0.4 && tiers[2][1] > tiers[1][1] + 0.4);
+  const wide = ['hauler', 'kestrel', 'vanguard', 'bulwark'].map(h => beam(h, 'emitter1'));
+  const tierStep = tiers[2][1] - tiers[0][1], hullSpread = Math.max(...wide) - Math.min(...wide);
+  console.log(`     full MK-I rack: ${wide.map(w => w.toFixed(1) + 'px').join('  ')}` +
+              `   (${hullSpread.toFixed(1)}px across hulls vs ${tierStep.toFixed(1)}px across tiers)`);
+  check('more barrels never thickens the bolt', wide[3] <= wide[0] + 0.01,
+    'a full Bulwark rack fires four ordinary bolts, not one fat one');
+  check('what you fitted matters more than how many', hullSpread < tierStep * 0.6);
   const a = newShip(0, 0, 'vanguard'); a.isAlien = true; a.heading = 0;
   let ab = null;
   for (let i = 0; i < 200 && !ab; i++) ab = fire(a, mark, dt)[0] ?? null;

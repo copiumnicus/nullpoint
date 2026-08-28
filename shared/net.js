@@ -9,8 +9,9 @@
 export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', 'hp', 'sh', 'flash',
                             'tgt', 'shot', 'guns', 'psys', 'plvl', 'lvl', 'drones', 'form', 'dmask', 'vis'];
 
-// A bolt in flight: where it started, where it is aimed, how far along it is, and
-// whether a hostile fired it.
+// A bolt in flight: where it started, where it is aimed, how far along it is,
+// whether a hostile fired it, and how much damage it carries — which is what the
+// client draws its thickness from.
 export const BOLT_FIELDS = ['sx', 'sy', 'ax', 'ay', 'p', 'foe', 'w'];
 export const packBolt   = o   => [Math.round(o.sx), Math.round(o.sy), Math.round(o.ax), Math.round(o.ay),
                                   +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0, o.w ?? 1];

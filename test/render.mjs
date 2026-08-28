@@ -290,6 +290,25 @@ for (const id of Object.keys(MAPS)) {
   if (kinds.size) console.log(`station: ${rows} hangar rows + ${storeRows} store rows across ` +
     `${STORE_PAGES.length} pages, all hovered and clicked; sent ${[...kinds].join(', ')}`);
 
+  // SPACE with the hold open empties the ship, rather than reaching for a pod
+  sent.length = 0;
+  evt('keydown', { key: 'h' });                                  // close the station
+  feed({ t: 's', docked: true, hold: { iron: 12, iridium: 3, platinum: 1 }, vault: {}, credits: 90000,
+         ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                            hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 2 })] });
+  evt('keydown', { key: 'i' });
+  frame(t += 16); frames++;
+  evt('keydown', { key: ' ' });
+  frame(t += 16); frames++;
+  const stashed = sent.filter(m => m.t === 'stash').map(m => m.mat).sort();
+  if (stashed.join() !== 'iridium,iron,platinum')
+    errs.push(`SPACE in the hold stowed [${stashed}], not every stack`);
+  else console.log(`cargo: SPACE with the hold open stowed all ${stashed.length} stacks`);
+  if (sent.some(m => m.t === 'scoop' || m.t === 'jump'))
+    errs.push('SPACE in the hold also fired the haul/jump action');
+  evt('keydown', { key: 'i' });                                  // back out
+  frame(t += 16); frames++;
+
   // power routing is a key, and must reach the server
   sent.length = 0;
   for (const k of ['1', '2', '3']) evt('keydown', { key: k });

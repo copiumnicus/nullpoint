@@ -17,6 +17,12 @@ import { EQUIPMENT } from './gear.js';
 export const BOLT_SPEED = 1000;   // px/s
 export const HIT_R      = 38;     // px of slack around the aim point, plus the hull's own radius
 
+// How fat a bolt is drawn, from the damage it carries. Quality thickens the
+// projectile; quantity adds more of them. A rack of four MK-Is throws four
+// ordinary bolts, four MK-IIIs four heavy ones — which is the difference you
+// actually paid for, and it reads without staring at the barrels.
+export const boltWidth = dmg => Math.max(1.5, Math.min(7, 1 + (dmg ?? 45) / 18));
+
 // Every emitter is its own gun and fires its own bolt, one after another rather
 // than merged into a single fat shot. A cycle's damage is split across them, so
 // more emitters means a longer, heavier stream and not a bigger blob.
@@ -78,7 +84,7 @@ export function fire(a, b, dt) {
     out.push({
       sx: m.x, sy: m.y,
       ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
-      dmg: each, target: b, foe: !!a.isAlien, w: Math.min(4, guns),
+      dmg: each, target: b, foe: !!a.isAlien, w: Math.round(each),
       t: travel, ttl: Math.max(0.001, travel),
     });
   }
