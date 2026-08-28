@@ -3,6 +3,7 @@
 
 import { MAP_W, MAP_H, PORTAL_R } from './maps.js';
 import { resolve, radiusOf, gunsOf, DEFAULT_HULL } from './ships.js';
+import { DEFAULT_FORMATION } from './formation.js';
 import { emptyFit } from './gear.js';
 import { newPower, stepPower, boostOf, levelOf, BOOST } from './power.js';
 
@@ -52,9 +53,9 @@ export function newBody(x, y, stats, r) {
   };
 }
 
-export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = []) {
-  const s = newBody(x, y, resolve(hull, fit, drones), radiusOf(hull));
-  s.hull = hull; s.fit = fit; s.drones = drones;
+export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION) {
+  const s = newBody(x, y, resolve(hull, fit, drones, formation), radiusOf(hull));
+  s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation;
   s.guns = gunsOf(fit, drones);                     // ship rack plus whatever the escort carries
   return s;
 }
@@ -64,9 +65,9 @@ export const shieldMax = s => s.stats.shield * (s.shieldMult ?? 1);
 
 // Re-fit in place. Vitals are restored, so this must only be allowed somewhere
 // safe — swapping to a tanky hull mid-fight would otherwise be free.
-export function refit(s, hull, fit, drones = s.drones ?? []) {
-  s.hull = hull; s.fit = fit; s.drones = drones;
-  s.stats = resolve(hull, fit, drones);
+export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.formation ?? DEFAULT_FORMATION) {
+  s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation;
+  s.stats = resolve(hull, fit, drones, formation);
   s.r = radiusOf(hull);
   s.guns = gunsOf(fit, drones);
   s.volley = 0; s.volleyCool = 0;

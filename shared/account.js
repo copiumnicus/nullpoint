@@ -6,6 +6,7 @@
 
 import { DEFAULT_HULL, sanitiseFit, slotsOf, HULLS } from './ships.js';
 import { EQUIPMENT, emptyFit, sanitiseDrones } from './gear.js';
+import { FORMATIONS, DEFAULT_FORMATION } from './formation.js';
 import { MAPS, COMPANIES } from './maps.js';
 import { MATERIALS } from './cargo.js';
 
@@ -27,6 +28,7 @@ export function newAccount(token, seq, now) {
     // one emitter in the rack, so a new pilot is armed rather than helpless
     hull: DEFAULT_HULL, fit: { ...emptyFit(), weapon: ['emitter1'] }, gear: {},
     hulls: [DEFAULT_HULL],                        // the ships you own, not just the one you fly
+    formation: DEFAULT_FORMATION, formations: [DEFAULT_FORMATION],
     credits: 0, xp: 0, drones: [], vault: {}, hold: {}, admin: false,
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
@@ -46,6 +48,8 @@ export function sanitiseAccount(a, seq, now) {
   const gear = Object.fromEntries(Object.entries(a?.gear ?? {})
     .filter(([k, n]) => EQUIPMENT[k] && Number.isFinite(n) && n > 0)
     .map(([k, n]) => [k, Math.floor(n)]));
+  const forms = [...new Set([DEFAULT_FORMATION, ...(Array.isArray(a?.formations) ? a.formations : [])]
+    .filter(f => FORMATIONS[f]))];
   const hulls = [...new Set([DEFAULT_HULL, ...(Array.isArray(a?.hulls) ? a.hulls : [])].filter(h => HULLS[h]))];
   const flying = hulls.includes(hull) ? hull : DEFAULT_HULL;
   return {
@@ -54,6 +58,7 @@ export function sanitiseAccount(a, seq, now) {
     drones: sanitiseDrones(a?.drones, sanitiseFit(flying, a?.fit)),
     xp: Number.isFinite(a?.xp) ? Math.max(0, Math.floor(a.xp)) : 0,
     admin: a?.admin === true,
+    formations: forms, formation: forms.includes(a?.formation) ? a.formation : DEFAULT_FORMATION,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,
@@ -71,6 +76,8 @@ export function capture(account, p, now) {
   account.gear = { ...p.gear };
   account.hulls = [...p.hulls];
   account.drones = [...p.ship.drones];
+  account.formation = p.ship.formation;
+  account.formations = [...p.formations];
   account.xp = p.xp;
   account.credits = p.credits;
   account.vault = { ...p.vault };

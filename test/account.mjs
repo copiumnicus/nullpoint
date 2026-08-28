@@ -33,16 +33,17 @@ const p = {
   co: acct.co, mapId: 'g1', credits: 4820,
   hold: { iron: 6, iridium: 1 }, vault: { platinum: 12 },
   gear: { emitter1: 3, plating: 1 }, hulls: ['hauler', 'bulwark'], xp: 8400,
-  xp: 8400,
+  formations: ['line', 'wedge'],
   ship: refit(newShip(0, 0, 'kestrel'), 'bulwark',
-              fit({ weapon: ['emitter1', 'emitter1'], tech: ['plating'] }), ['emitter1', null]),
+              fit({ weapon: ['emitter1', 'emitter1'], tech: ['plating'] }), ['emitter1', null], 'wedge'),
 };
 p.ship.x = 8123.4; p.ship.y = 2044.9;
 capture(acct, p, 2000);
 check('capture folds the session back into the account',
   acct.hull === 'bulwark' && acct.fit.weapon.length === 2 && acct.fit.tech.join() === 'plating'
   && acct.gear.emitter1 === 3 && acct.credits === 4820
-  && acct.mapId === 'g1' && acct.x === 8123 && acct.y === 2045);
+  && acct.mapId === 'g1' && acct.x === 8123 && acct.y === 2045
+  && acct.formation === 'wedge' && acct.formations.join() === 'line,wedge');
 check('rank and escort come back too', acct.xp === 8400 && acct.drones.length === 2,
   `level ${levelFor(acct.xp).level}`);
 check('cargo and hangar both survive',

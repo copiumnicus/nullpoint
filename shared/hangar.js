@@ -6,6 +6,7 @@
 
 import { HULLS, slotsOf } from './ships.js';
 import { EQUIPMENT, SLOTS, MAX_DRONES } from './gear.js';
+import { FORMATION_KEYS } from './formation.js';
 
 export function bayLayout(VIEW_W, VIEW_H, hullKey, droneCount = 0) {
   const w = Math.min(980, VIEW_W - 50), h = Math.min(600, VIEW_H - 50);
@@ -24,7 +25,8 @@ export function bayLayout(VIEW_W, VIEW_H, hullKey, droneCount = 0) {
   const drones = Math.min(MAX_DRONES, droneCount);
   const buyRow = drones < MAX_DRONES ? 1 : 0;
   const total = SLOTS.reduce((n, s) => n + (counts[s] ?? 0), 0) + SLOTS.length
-              + 1 + drones + buyRow;                       // + drone header, bays, buy row
+              + 1 + drones + buyRow
+              + 1 + FORMATION_KEYS.length;                 // + drone rows, + formation rows
   const rStep = Math.min(34, room / total);
   let ry = top;
   for (const slot of SLOTS) {
@@ -45,6 +47,13 @@ export function bayLayout(VIEW_W, VIEW_H, hullKey, droneCount = 0) {
     ry += rStep;
   }
   if (buyRow) { racks.push({ slot: 'drone', buy: true, r: { x: x + 30 + colW, y: ry, w: colW, h: rStep - 6 } }); ry += rStep; }
+
+  racks.push({ slot: 'form', header: true, r: { x: x + 30 + colW, y: ry, w: colW, h: rStep - 6 } });
+  ry += rStep;
+  for (const k of FORMATION_KEYS) {
+    racks.push({ slot: 'form', key: k, r: { x: x + 30 + colW, y: ry, w: colW, h: rStep - 6 } });
+    ry += rStep;
+  }
 
   const sKeys = Object.keys(EQUIPMENT);
   const sStep = Math.min(52, room / sKeys.length);

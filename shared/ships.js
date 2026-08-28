@@ -6,6 +6,14 @@
 // entry in MODULES. No other file changes.
 
 import { EQUIPMENT, emptyFit, fitList, droneItems, sanitiseFit as cleanFit } from './gear.js';
+import { FORMATIONS, DEFAULT_FORMATION, bonusScale } from './formation.js';
+
+// One cycle rate for every hull, on purpose. Emitters add FLAT damage to a bolt
+// and the rate multiplies the lot, so a hull that fired faster multiplied every
+// emitter harder — a fully specced Bulwark ended up behind the free starter, and
+// weapon slots stopped meaning anything. Hulls differ by base damage, reach and
+// how many hardpoints they carry; not by how fast the trigger works.
+export const FIRE_RATE = 1.2;
 
 export const ATTRS = {
   hull:        { label: 'Hull',         unit: '',    dflt: 1000, better: 'high', min: 1 },
@@ -17,7 +25,7 @@ export const ATTRS = {
   radar:       { label: 'Radar range',  unit: '',    dflt: 2600, better: 'high', min: 300 },
   signature:   { label: 'Signature',    unit: 's',   dflt:    3, better: 'low',  min: 0.4 },
   damage:      { label: 'Damage',       unit: '',    dflt:   55, better: 'high', min: 1 },
-  fireRate:    { label: 'Rate of fire', unit: '/s',  dflt:  1.4, better: 'high', min: 0.1 },
+  fireRate:    { label: 'Rate of fire', unit: '/s',  dflt: FIRE_RATE, better: 'high', min: 0.1 },
   weaponRange: { label: 'Weapon range', unit: '',    dflt:  700, better: 'high', min: 100 },
   cargo:       { label: 'Cargo hold',   unit: '',    dflt:   60, better: 'high', min: 0 },
   capacitor:   { label: 'Capacitor',    unit: 's',   dflt:   45, better: 'high', min: 1 },
@@ -36,7 +44,7 @@ export const HULLS = {
   hauler:   { slots: { weapon: 1, generator: 1, tech: 1 }, price: 0,
               name: 'Hauler', cls: 'Tender', r: 12,
               attrs: { hull: 650, shield: 450, shieldRegen: 30, shieldDelay: 6, speed: 300, accel: 1000,
-                       radar: 2200, signature: 3.5, damage: 30, fireRate: 1.5, weaponRange: 640,
+                       radar: 2200, signature: 3.5, damage: 30, fireRate: FIRE_RATE, weaponRange: 640,
                        cargo: 90, capacitor: 30, recharge: 1.5, sustain: 0.30 } },
 
   // Radar deliberately runs WITH size: a big hull carries a big sensor array but
@@ -44,17 +52,17 @@ export const HULLS = {
   kestrel:  { slots: { weapon: 2, generator: 2, tech: 3 }, price: 18000,
               name: 'Kestrel', cls: 'Interceptor', r: 10,
               attrs: { hull: 700, shield: 500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600,
-                       radar: 2000, signature: 1.5, damage: 38, fireRate: 2.2, weaponRange: 620,
+                       radar: 2000, signature: 1.5, damage: 38, fireRate: FIRE_RATE, weaponRange: 620,
                        cargo: 30, capacitor: 45, recharge: 2.2, sustain: 0.33 } },
   vanguard: { slots: { weapon: 3, generator: 2, tech: 2 }, price: 26000,
               name: 'Vanguard', cls: 'Fighter', r: 13,
               attrs: { hull: 1100, shield: 900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200,
-                       radar: 2600, signature: 3.0, damage: 55, fireRate: 1.4, weaponRange: 700,
+                       radar: 2600, signature: 3.0, damage: 55, fireRate: FIRE_RATE, weaponRange: 700,
                        cargo: 60, capacitor: 45, recharge: 1.8, sustain: 0.33 } },
   bulwark:  { slots: { weapon: 4, generator: 2, tech: 1 }, price: 40000,
               name: 'Bulwark', cls: 'Cruiser', r: 17,
               attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel: 800,
-                       radar: 3400, signature: 5.5, damage: 95, fireRate: 0.75, weaponRange: 820,
+                       radar: 3400, signature: 5.5, damage: 95, fireRate: FIRE_RATE, weaponRange: 820,
                        cargo: 120, capacitor: 60, recharge: 1.5, sustain: 0.36 } },
 };
 export const DEFAULT_HULL = 'hauler';
@@ -73,7 +81,7 @@ export const sanitiseFit = (hullKey, fit) => cleanFit(slotsOf(hullKey), fit);
 // base + every flat add, then multiplied once by the SUM of the percentages.
 // Summing rather than compounding keeps three copies of a module worth three
 // times one, instead of spiralling — the usual way stacking becomes pay-to-win.
-export function resolve(hullKey, fit = emptyFit(), drones = []) {
+export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION) {
   const hull = HULLS[hullKey] ?? HULLS[DEFAULT_HULL];
   const out = {}, pct = {};
   for (const [k, a] of Object.entries(ATTRS)) out[k] = hull.attrs[k] ?? a.dflt;
@@ -85,6 +93,15 @@ export function resolve(hullKey, fit = emptyFit(), drones = []) {
       else              pct[attr] = (pct[attr] ?? 0) + v;
     }
   }
+  // A formation only pays out once there is an escort to fly it, and pays in full
+  // at three drones.
+  const scale = bonusScale((drones ?? []).length);
+  if (scale > 0) for (const [attr, op, v] of FORMATIONS[formation]?.mods ?? []) {
+    if (!(attr in out)) continue;
+    if (op === 'add') out[attr] += v * scale;
+    else              pct[attr] = (pct[attr] ?? 0) + v * scale;
+  }
+
   for (const [attr, p] of Object.entries(pct)) out[attr] *= 1 + p;
   for (const k of Object.keys(out))
     out[k] = Math.min(ATTRS[k].max ?? Infinity, Math.max(ATTRS[k].min ?? 0, out[k]));

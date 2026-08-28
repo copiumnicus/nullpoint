@@ -10,6 +10,7 @@ import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
 import { levelFor } from './shared/level.js';
 import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
+import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
@@ -166,20 +167,23 @@ wss.on('connection', (ws, req) => {
     players.delete(pid);
   }
 
-  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones);
+  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation);
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
                     gear: { ...acct.gear }, hulls: [...acct.hulls], xp: acct.xp,
+                    formations: [...acct.formations],
                     scoop: null, want: null, dead: false });
   const outfit = () => (touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
-                                                drones: ship.drones,
+                                                drones: ship.drones, formation: ship.formation,
+                                                formations: players.get(id).formations,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
                            map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit,
                            gear: acct.gear, hulls: acct.hulls, credits: acct.credits,
-                           drones: acct.drones, xp: acct.xp, admin: isAdmin(acct) }));
+                           drones: acct.drones, xp: acct.xp, admin: isAdmin(acct),
+                           formation: acct.formation, formations: acct.formations }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -233,6 +237,13 @@ wss.on('connection', (ws, req) => {
           touch(P); outfit();
           return tell(`locker: ${a1} x${P.gear[a1]}`);
         }
+        case 'form': {
+          if (!FORMATIONS[a1]) return tell('formations: ' + FORMATION_KEYS.join(' '));
+          if (!P.formations.includes(a1)) P.formations.push(a1);
+          refit(ship, ship.hull, ship.fit, ship.drones, a1);
+          touch(P); outfit();
+          return tell(`flying ${FORMATIONS[a1].name}`);
+        }
         case 'ship': {
           if (!HULLS[a1]) return tell('hulls: ' + Object.keys(HULLS).join(' '));
           if (!P.hulls.includes(a1)) P.hulls.push(a1);
@@ -277,6 +288,19 @@ wss.on('connection', (ws, req) => {
       const moved = reseat(slotsOf(m.key), ship.fit, P.gear);      // whatever will not fit comes off
       P.gear = moved.gear;
       refit(ship, m.key, moved.fit, ship.drones);                  // the escort follows you across
+      return outfit();
+    }
+    if (m.t === 'buyformation') {
+      if (!atStation() || !FORMATIONS[m.key] || P.formations.includes(m.key)) return;
+      if (P.credits < formationPrice(m.key)) return;
+      P.credits -= formationPrice(m.key);
+      P.formations.push(m.key);
+      refit(ship, ship.hull, ship.fit, ship.drones, m.key);      // bought, and flown at once
+      return outfit();
+    }
+    if (m.t === 'formation') {
+      if (!atStation() || !FORMATIONS[m.key] || !P.formations.includes(m.key)) return;
+      refit(ship, ship.hull, ship.fit, ship.drones, m.key);
       return outfit();
     }
     if (m.t === 'buydrone') {
@@ -546,6 +570,8 @@ setInterval(() => {
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
       tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH),
       guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.drones.length,
+      form: Math.max(0, FORMATION_KEYS.indexOf(p.ship.formation)),
+      dmask: p.ship.drones.reduce((m2, k, i) => m2 | (EQUIPMENT[k]?.slot === 'weapon' ? 1 << i : 0), 0),
       psys: p.ship.power.to ? SYSTEMS.indexOf(p.ship.power.to) + 1 : 0,
       plvl: p.ship.power.to ? Math.round(100 * levelOf(p.ship.power, p.ship.power.to, p.ship.stats)) : 0 });
     if (p.dead) continue;
@@ -560,7 +586,7 @@ setInterval(() => {
       sh: Math.round(100 * a.shield / Math.max(1, shieldMax(a))),
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
-      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0 });
+      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

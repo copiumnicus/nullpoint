@@ -6,6 +6,8 @@
 
 import { applyDamage, SHOT_FLASH } from './sim.js';
 import { boostOf } from './power.js';
+import { droneAt } from './formation.js';
+import { EQUIPMENT } from './gear.js';
 
 // Bolt speed is a balance dial, not a cosmetic one. A shot has to be slow enough
 // that a ship can accelerate clear of where it was aimed: displacement goes with
@@ -26,6 +28,19 @@ export const salvoOf = guns => Math.ceil(Math.max(1, guns) / MAX_VOLLEY_STEPS);
 export const stepsOf = guns => Math.ceil(Math.max(1, guns) / salvoOf(guns));
 
 // Cooldown runs whether or not there is anything to shoot at. Returns a bolt, or null.
+// Every place a bolt can leave from: the two hull cannons, plus any drone that is
+// actually carrying an emitter. A drone with a generator on it is not a gun.
+export function hardpoints(a) {
+  if (a.isAlien) return [{ x: a.x, y: a.y }];
+  const c = Math.cos(a.heading), sn = Math.sin(a.heading);
+  const mount = lat => ({ x: a.x + c * a.r * 1.55 - sn * lat, y: a.y + sn * a.r * 1.55 + c * lat });
+  const out = [mount(-a.r * 0.95), mount(a.r * 0.95)];
+  (a.drones ?? []).forEach((item, i) => {
+    if (EQUIPMENT[item]?.slot === 'weapon') out.push(droneAt(a, i));
+  });
+  return out;
+}
+
 // Advances this ship's guns. Returns the bolts released this tick — none, one,
 // or a pair once the rack is big enough to double up.
 export function fire(a, b, dt) {
@@ -52,17 +67,16 @@ export function fire(a, b, dt) {
   a.shotFlash = SHOT_FLASH;
 
   const each = (a.stats.damage * boostOf(a.power, 'weapons', a.stats)) / guns;
+  const mounts = hardpoints(a);
   const out = [];
   for (let i = 0; i < salvo; i++) {
-    // One gun a side, alternating; a doubled salvo goes out both at once.
-    const side = salvo > 1 ? (i % 2 ? 1 : -1) : (a.muzzle ? 1 : -1);
-    if (salvo === 1) a.muzzle = a.muzzle ? 0 : 1;
-    const ch = Math.cos(a.heading), sh = Math.sin(a.heading);
-    const fwd = a.isAlien ? 0 : a.r * 1.55, lat = a.isAlien ? 0 : a.r * 0.95 * side;
-    const sx = a.x + ch * fwd - sh * lat, sy = a.y + sh * fwd + ch * lat;
-    const travel = Math.hypot(b.x - sx, b.y - sy) / BOLT_SPEED;
+    // Work around the mounts in turn, so a volley visibly comes from the whole
+    // formation rather than always from the same barrel.
+    const m = mounts[(a.muzzle ?? 0) % mounts.length];
+    a.muzzle = ((a.muzzle ?? 0) + 1) % mounts.length;
+    const travel = Math.hypot(b.x - m.x, b.y - m.y) / BOLT_SPEED;
     out.push({
-      sx, sy,
+      sx: m.x, sy: m.y,
       ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
       dmg: each, target: b, foe: !!a.isAlien, w: Math.min(4, guns),
       t: travel, ttl: Math.max(0.001, travel),

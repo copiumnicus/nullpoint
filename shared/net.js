@@ -7,7 +7,7 @@
 // go through pack/unpack, so drifting apart is no longer possible.
 
 export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', 'hp', 'sh', 'flash',
-                            'tgt', 'shot', 'guns', 'psys', 'plvl', 'lvl', 'drones', 'vis'];
+                            'tgt', 'shot', 'guns', 'psys', 'plvl', 'lvl', 'drones', 'form', 'dmask', 'vis'];
 
 // A bolt in flight: where it started, where it is aimed, how far along it is, and
 // whether a hostile fired it.

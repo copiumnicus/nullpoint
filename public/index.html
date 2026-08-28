@@ -14,6 +14,7 @@ import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice } from '/shared/gear.js';
 import { levelFor, progress } from '/shared/level.js';
 import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
+import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
 import { SYSTEMS, BOOST } from '/shared/power.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout } from '/shared/hangar.js';
@@ -65,6 +66,7 @@ const readToken = () => {
 let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
+let myForm = 'line', myForms = ['line'];
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -112,6 +114,7 @@ ws.onmessage = e => {
     myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? {}; myHulls = m.hulls ?? [myHull]; credits = m.credits ?? 0;
     myDrones = m.drones ?? []; myXp = m.xp ?? 0; amAdmin = !!m.admin;
+    myForm = m.formation ?? 'line'; myForms = m.formations ?? ['line'];
     myName = m.name ?? '';
     if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
     return;
@@ -127,6 +130,7 @@ ws.onmessage = e => {
     myGear = m.gear ?? myGear;
     myHulls = m.hulls ?? myHulls;
     myDrones = m.drones ?? myDrones;
+    myForm = m.formation ?? myForm; myForms = m.formations ?? myForms;
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
@@ -505,6 +509,13 @@ function bayClick(v) {
   }
   for (const row of G.racks) {
     if (row.header || !inside(row.r)) continue;
+    if (row.slot === 'form') {
+      if (row.key === myForm) return;
+      if (myForms.includes(row.key)) return send({ t: 'formation', key: row.key });
+      const cost = FORMATIONS[row.key].price;
+      return credits >= cost ? send({ t: 'buyformation', key: row.key })
+                             : say(`${FORMATIONS[row.key].name} costs ${cost} ${CURRENCY.short}`, '#e0a53f');
+    }
     if (row.slot === 'drone') {
       if (row.buy) {
         const cost = dronePrice(myDrones.length);
@@ -596,13 +607,51 @@ function drawBay() {
     g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
   }
 
+  const pct = v => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%`;
+  const SHORT = { damage: 'dmg', hull: 'hull', shield: 'shld', speed: 'spd', accel: 'acc' };
   for (const row of G.racks) {
     const r = row.r;
     if (row.header) {
       g.fillStyle = '#3d4757'; g.font = '10px ui-monospace, monospace';
-      g.fillText(row.slot === 'drone' ? `DRONES  ${myDrones.length}/${MAX_DRONES}` : row.slot.toUpperCase(),
+      g.fillText(row.slot === 'drone' ? `DRONES  ${myDrones.length}/${MAX_DRONES}`
+               : row.slot === 'form'  ? `FORMATION${myDrones.length ? '' : '  (needs drones)'}`
+                                      : row.slot.toUpperCase(),
                  r.x + 2, r.y + r.h - 4);
       g.font = '11px ui-monospace, monospace';
+      continue;
+    }
+    if (row.slot === 'form') {
+      const F = FORMATIONS[row.key], owned = myForms.includes(row.key), flying = row.key === myForm;
+      const can = owned || credits >= F.price;
+      g.globalAlpha = can ? 1 : 0.45;
+      g.fillStyle = flying ? 'rgba(125,224,138,0.12)' : 'rgba(255,255,255,0.02)';
+      g.fillRect(r.x, r.y, r.w, r.h);
+      g.strokeStyle = flying ? '#7de08a' : owned ? '#2c3d55' : '#ffd479'; g.lineWidth = 1;
+      if (!owned) g.setLineDash([4, 3]);
+      g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); g.setLineDash([]);
+      const mid = r.y + r.h / 2 + 4;
+      g.fillStyle = flying ? '#cfe4ff' : owned ? '#8ea3bd' : '#ffd479';
+      g.fillText(F.name, r.x + 10, mid);
+      g.textAlign = 'right';
+      g.fillStyle = flying ? '#7de08a' : owned ? '#66748c' : '#ffd479';
+      g.fillText(flying ? 'FLYING' : owned ? 'fly it' : `${F.price} ${CURRENCY.short}`, r.x + r.w - 10, mid);
+      g.textAlign = 'left';
+      // The bonus is scaled by how many drones are actually flying it, so quote
+      // what this escort would really deliver — not the brochure number. One line:
+      // a fully kitted Bulwark squeezes these rows down to 15px.
+      const k = bonusScale(myDrones.length);
+      const nameW = g.measureText(F.name).width, stateW = g.measureText('9000 cr').width;
+      g.font = '10px ui-monospace, monospace';
+      const mx = r.x + 20 + nameW, room = r.x + r.w - 16 - stateW - mx;
+      // Fall back through shorter spellings, then give up rather than run the
+      // summary under the price. A narrow window squeezes this column hard.
+      const forms = F.mods.length
+        ? [F.mods.map(([a, , v]) => `${SHORT[a] ?? a} ${pct(v * k)}`).join('  '),
+           F.mods.map(([a, , v]) => `${SHORT[a] ?? a}${pct(v * k)}`).join(' '), '']
+        : ['no effect', ''];
+      g.fillStyle = '#66748c';
+      g.fillText(forms.find(t => g.measureText(t).width <= room) ?? '', mx, mid);
+      g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
       continue;
     }
     if (row.slot === 'drone') {
@@ -1047,14 +1096,24 @@ function drawFrame(now) {
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
 
-    for (let d = 0; d < (s.drones ?? 0); d++) {    // escort, holding formation astern
-      const a0 = s.heading + Math.PI + (d - ((s.drones - 1) / 2)) * 0.34;
-      const dist = R * 3.1, dx = s.rx + Math.cos(a0) * dist, dy = s.ry + Math.sin(a0) * dist;
-      g.save(); g.translate(dx, dy); g.rotate(s.heading);
-      g.globalAlpha = lost ? 0.3 : 0.9;
-      g.fillStyle = colOf(s); g.fillRect(-3.5, -3.5, 7, 7);
-      g.fillStyle = '#0a0f16'; g.fillRect(1.2, -1, 2.4, 2);
-      g.globalAlpha = 1; g.restore();
+    // Escort, in whatever formation it is flying. Armed drones are drawn with a
+    // barrel, because they are genuinely where some of your bolts come from.
+    const nD = s.drones ?? 0;
+    if (nD) {
+      const layout = formSlots(FORMATION_KEYS[s.form ?? 0] ?? 'line', nD);
+      const c0 = Math.cos(s.heading), s0 = Math.sin(s.heading), dr = Math.max(5, R * 0.52);
+      layout.forEach((pt, d) => {
+        const dx = s.rx + (c0 * pt.fwd - s0 * pt.lat) * R;
+        const dy = s.ry + (s0 * pt.fwd + c0 * pt.lat) * R;
+        const armed = ((s.dmask ?? 0) >> d) & 1;
+        g.save(); g.translate(dx, dy); g.rotate(s.heading);
+        g.globalAlpha = lost ? 0.3 : 0.95;
+        g.fillStyle = '#0a0f16'; g.fillRect(-dr - 1, -dr - 1, dr * 2 + 2, dr * 2 + 2);
+        g.fillStyle = colOf(s); g.fillRect(-dr, -dr, dr * 2, dr * 2);
+        if (armed) { g.fillStyle = '#c2cede'; g.fillRect(dr * 0.4, -1.3, dr * 1.5, 2.6); }
+        g.fillStyle = '#0a0f16'; g.fillRect(-dr * 0.35, -dr * 0.35, dr * 0.7, dr * 0.7);
+        g.globalAlpha = 1; g.restore();
+      });
     }
 
     if (lost) continue;                            // no vitals read on a fading track

@@ -15,6 +15,7 @@ export const COMMANDS = {
   xp:    { admin: true,  args: '<amount>',        help: 'add experience' },
   gear:  { admin: true,  args: '<item> [count]',  help: 'put equipment in your locker' },
   ship:  { admin: true,  args: '<hull>',          help: 'grant a hull' },
+  form:  { admin: true,  args: '<formation>',     help: 'grant and fly a drone formation' },
   ore:   { admin: true,  args: '<metal> [count]', help: 'put ore in the company hangar' },
   tp:    { admin: true,  args: '<map>',           help: 'jump straight to a sector' },
   heal:  { admin: true,  args: '',                help: 'full hull, shields and capacitor' },

@@ -1,10 +1,12 @@
-import { ATTRS, HULLS, DEFAULT_HULL, resolve, sanitiseFit, slotsOf } from '../shared/ships.js';
+import { ATTRS, HULLS, DEFAULT_HULL, resolve, sanitiseFit, slotsOf, FIRE_RATE } from '../shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat } from '../shared/gear.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
          DOCK_HULL_RATE, DOCK_INTERRUPT, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
+import { FORMATIONS, FORMATION_KEYS, DEFAULT_FORMATION, slots as formSlots, droneAt } from '../shared/formation.js';
+import { hardpoints } from '../shared/combat.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -283,6 +285,94 @@ const stray = newShip(-200, 4000, 'vanguard', []);
 stray.shield = 0;
 for (let i = 0; i < 30 * 20; i++) { stepDrift(stray, dt); stepVitals(stray, dt, false); }
 check('shields cannot regenerate while shear is landing', stray.shield === 0, '20s outside');
+
+
+// ---------------------------------------------------------------- formations
+console.log('\nformations');
+const K = FORMATION_KEYS;
+check('every formation but the default costs something',
+  K.every(k => k === DEFAULT_FORMATION ? FORMATIONS[k].price === 0 : FORMATIONS[k].price > 0));
+check('no formation is a free upgrade',                    // anti-p2w: every bonus is paid for
+  K.filter(k => FORMATIONS[k].mods.length)
+   .every(k => FORMATIONS[k].mods.some(([a, , v]) => !better(a, v))),
+  'each one gives something up');
+
+const sixed = k => resolve('bulwark', fit({ weapon: ['emitter1'] }), Array(6).fill('emitter1'), k);
+for (const k of K) {
+  const base = sixed(DEFAULT_FORMATION), got = sixed(k);
+  const diff = Object.keys(ATTRS).filter(a => Math.abs(got[a] - base[a]) > 1e-6)
+    .map(a => `${a} ${got[a] > base[a] ? '+' : ''}${(100 * (got[a] / base[a] - 1)).toFixed(0)}%`);
+  console.log(`     ${FORMATIONS[k].name.padEnd(17)}${String(FORMATIONS[k].price).padStart(6)}cr  ` +
+              (diff.join('  ') || 'baseline'));
+}
+check('a formation with no drones changes nothing at all',
+  Object.keys(ATTRS).every(a =>
+    resolve('bulwark', fit(), [], 'wedge')[a] === resolve('bulwark', fit(), [], 'line')[a]),
+  'the escort is the thing that flies it');
+const half = resolve('bulwark', fit(), Array(1).fill(null), 'shell'),
+      full = resolve('bulwark', fit(), Array(3).fill(null), 'shell'),
+      over = resolve('bulwark', fit(), Array(6).fill(null), 'shell'),
+      none = resolve('bulwark', fit(), [], 'shell');
+check('the bonus scales in with the escort and caps at three',
+  half.shield > none.shield && full.shield > half.shield && over.shield === full.shield,
+  `${none.shield | 0} → ${half.shield | 0} → ${full.shield | 0} → ${over.shield | 0} shield`);
+check('an unknown formation falls back to the default, it does not throw',
+  resolve('bulwark', fit(), ['emitter1'], 'nonesuch').shield === resolve('bulwark', fit(), ['emitter1']).shield);
+
+for (const k of K) {
+  const seen = new Set();
+  for (const n of [1, 2, 3, 4, 5, 6]) {
+    const pts = formSlots(k, n);
+    check(`${k} seats exactly ${n} drone${n === 1 ? '' : 's'}`, pts.length === n);
+    pts.forEach(pt => {
+      const d = Math.hypot(pt.fwd, pt.lat);
+      if (d < 1.9 || d > 9) seen.add(`${k}@${n} sits ${d.toFixed(1)}R out`);
+      pts.forEach(q => { if (q !== pt && Math.hypot(pt.fwd - q.fwd, pt.lat - q.lat) < 1.2) seen.add(`${k}@${n} overlaps`); });
+    });
+  }
+  check(`${k} keeps its drones clear of the hull and each other`, seen.size === 0, [...seen][0] ?? '');
+}
+const spread = k => Math.max(...formSlots(k, 6).map(p2 => Math.hypot(p2.fwd, p2.lat)));
+check('no two formations look the same',
+  new Set(K.map(k => formSlots(k, 4).map(p2 => `${p2.fwd.toFixed(1)},${p2.lat.toFixed(1)}`).join('|'))).size === K.length,
+  K.map(k => `${k} ${spread(k).toFixed(1)}R`).join('  '));
+
+// --------------------------------------------------------------- hardpoints
+console.log('\nhardpoints');
+const gunship = newShip(0, 0, 'bulwark', fit({ weapon: ['emitter1', 'emitter1'] }),
+                        ['emitter1', 'cellA', 'emitter1'], 'wedge');
+gunship.heading = 0;
+const hp = hardpoints(gunship);
+check('bolts leave the rack and every armed drone, and nothing else',
+  hp.length === 4, `2 cannons + 2 of 3 drones (the generator bay is not a gun)`);
+check('a drone hardpoint sits where that drone is drawn',
+  hp.slice(2).every((h, i) => {
+    const d = droneAt(gunship, [0, 2][i]);
+    return Math.hypot(h.x - d.x, h.y - d.y) < 1e-6;
+  }));
+check('an alien fires from itself, drones or not',
+  hardpoints({ isAlien: true, x: 5, y: 7 }).length === 1);
+const empty = newShip(0, 0, 'hauler', fit({ weapon: ['emitter1'] }), [null, null], 'shell');
+check('drones with nothing mounted never shoot', hardpoints(empty).length === 2);
+
+// ------------------------------------------------------------- fire rate
+console.log('\nrate of fire');
+const dps = (hull, drones = []) => {
+  const rack = Array(slotsOf(hull).weapon).fill('emitter1');
+  const st = resolve(hull, fit({ weapon: rack }), drones);
+  return st.damage * st.fireRate;
+};
+const order = Object.keys(HULLS).map(h => ({ h, w: slotsOf(h).weapon, d: dps(h), f: dps(h, Array(6).fill('emitter1')) }))
+  .sort((a, b) => a.w - b.w);
+order.forEach(o => console.log(`     ${o.h.padEnd(9)} W${o.w}  rack ${o.d.toFixed(0).padStart(4)} dps` +
+                               `   +6 drones ${o.f.toFixed(0).padStart(4)} dps`));
+check('every hull cycles its guns at the same rate',
+  new Set(Object.keys(HULLS).map(h => resolve(h, fit()).fireRate)).size === 1,
+  `${FIRE_RATE}/s everywhere — otherwise rate multiplies every emitter and weapon slots stop mattering`);
+check('more weapon slots always means more damage',
+  order.every((o, i) => i === 0 || o.d > order[i - 1].d) &&
+  order.every((o, i) => i === 0 || o.f > order[i - 1].f),
+  'with an empty escort and a full one');
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(HULLS).length} hulls, ${Object.keys(EQUIPMENT).length} store items`}\n`);
 process.exit(fails.length ? 1 : 0);
