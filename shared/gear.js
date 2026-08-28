@@ -1,9 +1,16 @@
 // Everything you can buy and bolt to a ship.
 //
-// Three slot kinds. Weapons and generators come in exactly one model each, on
-// purpose: filling your slots is cheap and quick, so nobody buys their way to an
-// advantage. Technologies are where the actual choice lives, and every one of them
-// costs you something — the same rule the old modules followed, enforced by a test.
+// Three slot kinds, and the split between them is a rule, not a habit:
+//
+//   weapons and generators add ABSOLUTE amounts — so much damage, so much shield,
+//     so many seconds of capacitor. They fill out a hull.
+//   technologies MULTIPLY — a third more hull, half the signature, two thirds
+//     more cargo. They change the shape of a hull.
+//
+// That keeps the two kinds of choice separate: racks are how much ship you have,
+// technology is what kind of ship it is, and a multiplier is worth most to whoever
+// already has the most of the thing it scales. A test enforces the split, and
+// another enforces that every technology still costs you something.
 
 export const SLOTS = ['weapon', 'generator', 'tech'];
 
@@ -24,20 +31,20 @@ export const EQUIPMENT = {
   // generators — reactor gear. Capacitor, recharge and the free trickle.
   cellA: { name: 'A-Cell Generator', slot: 'generator', tier: 1, price:  1200,
            blurb: 'A little more reactor, a little more shield.',
-           mods: [['capacitor', 'add', 8], ['recharge', 'add', 0.4], ['shield', 'add', 120], ['speed', 'mul', -0.02]] },
+           mods: [['capacitor', 'add', 8], ['recharge', 'add', 0.4], ['shield', 'add', 120], ['speed', 'add', -8]] },
   cellB: { name: 'B-Cell Generator', slot: 'generator', tier: 2, price:  3400,
            blurb: 'Holds more, and trickles harder.',
            mods: [['capacitor', 'add', 16], ['recharge', 'add', 0.8], ['sustain', 'add', 0.02],
-                  ['shield', 'add', 200], ['speed', 'mul', -0.03]] },
+                  ['shield', 'add', 200], ['speed', 'add', -13]] },
   cellC: { name: 'C-Cell Generator', slot: 'generator', tier: 3, price:  8800,
            blurb: 'A reactor you can lean on.',
            mods: [['capacitor', 'add', 26], ['recharge', 'add', 1.3], ['sustain', 'add', 0.04],
-                  ['shield', 'add', 300], ['speed', 'mul', -0.04]] },
+                  ['shield', 'add', 300], ['speed', 'add', -18]] },
 
   // technologies — one of each, and every one costs you something
   plating:  { name: 'Composite Plating', slot: 'tech', price: 2600,
-              blurb: 'Hull at the cost of speed.',
-              mods: [['hull', 'add', 450], ['speed', 'mul', -0.09]] },
+              blurb: 'A third more hull, and slower with it.',
+              mods: [['hull', 'mul', 0.35], ['speed', 'mul', -0.09]] },
   damper:   { name: 'Signal Damper', slot: 'tech', price: 3400,
               blurb: 'Hard to track, and half blind.',
               mods: [['signature', 'mul', -0.5], ['radar', 'mul', -0.25]] },

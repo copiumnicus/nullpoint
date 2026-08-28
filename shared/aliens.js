@@ -11,13 +11,18 @@ import { newBody, inHaven } from './sim.js';
 export const ALIENS = {
   drifter: {
     name: 'Drifter', cls: 'Husk', r: 15, colour: '#b06adf',
-    // Tuned so a starter hull cannot simply park and trade: a bare Vanguard needs
-    // ~30s of unbroken fire and eats ~1500 of its 2000 effective hp doing it. Its
-    // weapon reaches 520 against your 620-820, so speed and range are a real
+    // The first thing you meet, and it is meant to end up beneath you. 650
+    // effective hp is set from the top down: a fully outfitted Fighter throws 683
+    // in one volley, so once you have actually finished a ship these die in a
+    // single trigger pull. A starter Hauler still needs ~9s of unbroken fire and
+    // gives up a third of its hull doing it, so the same husk is a real fight on
+    // day one and a speed bump by the time you leave the home map.
+    //
+    // Its weapon reaches 520 against your 620-820, so speed and range are a real
     // answer — kiting works, standing still does not. Speed sits just above the
     // heaviest hull so a Cruiser cannot simply walk away, and no higher: a faster
     // one was miserable to click on.
-    attrs: { hull: 1400, shield: 900, shieldRegen: 45, shieldDelay: 4,
+    attrs: { hull: 450, shield: 200, shieldRegen: 45, shieldDelay: 4,
              speed: 260, accel: 900, signature: 4,
              damage: 45, fireRate: 1.1, weaponRange: 520 },
     // Deliberately just inside SIGHT_R, so it is on your screen before it decides

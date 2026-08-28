@@ -33,14 +33,17 @@ check('resolve does not mutate the hull table', (() => {
   return JSON.stringify(HULLS.vanguard) === before;
 })());
 check('flat adds apply before percentages', (() => {
-  // plating: +450 hull, -8% speed. vanguard 1100 hull / 340 speed
-  const r = resolve('vanguard', fit({ tech: ['plating'] }));
-  return r.hull === 1550 && Math.abs(r.speed - 340 * 0.91) < 1e-6;
+  // cellA adds a flat 120 shield; plating then multiplies hull by 1.35.
+  // vanguard is 1100 hull / 900 shield / 340 speed.
+  const r = resolve('vanguard', fit({ generator: ['cellA'], tech: ['plating'] }));
+  return r.shield === 1020 && Math.abs(r.hull - 1100 * 1.35) < 1e-6
+      && Math.abs(r.speed - (340 - 8) * 0.91) < 1e-6;
 })());
 check('percentages sum instead of compounding', (() => {
-  const r = resolve('vanguard', fit({ generator: ['cellA', 'cellA'] }));   // -2% twice
-  return Math.abs(r.speed - 340 * 0.96) < 1e-6;               // 0.96, not 0.98²=0.9604
-})(), 'two copies are worth two, never more');
+  // expander -12% speed and plating -9%: 0.79, not 0.88 x 0.91 = 0.8008
+  const r = resolve('vanguard', fit({ tech: ['expander', 'plating'] }));
+  return Math.abs(r.speed - 340 * 0.79) < 1e-6;
+})(), 'two technologies are worth two, never less');
 check('attributes are clamped to their floor', (() => {
   EQUIPMENT.__sink = { name: 'sink', slot: 'tech', price: 1, mods: [['speed', 'mul', -5]] };
   const r = resolve('vanguard', fit({ tech: ['__sink'] }));
@@ -254,8 +257,8 @@ console.log('\ntooltips');
         tips.every(([, , t]) => t.lines.every(l => Number.isFinite(l.from) && Number.isFinite(l.to)
                                                && (l.pct === null || Number.isFinite(l.pct)))));
   check('a tooltip agrees with the ship it describes',
-        tipFor('item', 'plating', ctx).lines.some(l => l.key === 'hull' && l.to - l.from === 450),
-        'Composite Plating is +450 hull, and says so');
+        tipFor('item', 'plating', ctx).lines.some(l => l.key === 'hull' && l.pct === 35),
+        'Composite Plating is a third more hull, and says so');
   const damp = tipFor('item', 'damper', ctx);
   console.log(`     ${damp.title}: ` + damp.lines.map(l => `${l.label} ${l.from}→${l.to}${l.unit} (${l.pct}%)`).join(', '));
   check('a downside reads as a downside', damp.lines.find(l => l.key === 'radar').good === false
@@ -267,6 +270,35 @@ console.log('\ntooltips');
         (tipFor('form', 'wedge', { ...ctx, drones: [] })?.sub ?? '').includes('no effect'));
   check('an unknown key returns nothing rather than throwing',
         tipFor('item', 'nonesuch', ctx) === null && tipFor('hull', 'nonesuch', ctx) === null);
+}
+
+// ------------------------------------------------------------ what mods may do
+// Racks fill a hull out, technology changes its shape. Keeping the two kinds of
+// mod apart is what stops "buy one more emitter" and "buy a technology" from
+// being the same decision.
+console.log('\nabsolute racks, multiplying technology');
+{
+  const byOp = k => [...new Set(EQUIPMENT[k].mods.map(([, op]) => op))].sort();
+  for (const slot of ['weapon', 'generator']) {
+    const wrong = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === slot && byOp(k).join() !== 'add');
+    check(`every ${slot} adds an absolute amount`, wrong.length === 0,
+          wrong.length ? `${wrong.join(' ')} multiplies` : Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === slot).join(' '));
+  }
+  const wrongTech = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'tech' && byOp(k).join() !== 'mul');
+  check('every technology is a multiplier', wrongTech.length === 0,
+        wrongTech.length ? `${wrongTech.join(' ')} adds a flat amount` : 'nothing in the tech rack is a flat add');
+
+  // The point of the split, stated as behaviour: the same emitter is worth the
+  // same everywhere, and the same technology is worth more on a bigger hull.
+  const dmg = h => resolve(h, fit({ weapon: ['emitter3'] })).damage - resolve(h, fit()).damage;
+  const adds = Object.keys(HULLS).map(dmg);
+  check('an emitter is worth the same on every hull', new Set(adds).size === 1, `+${adds[0]} damage anywhere`);
+  const hullGain = h => resolve(h, fit({ tech: ['plating'] })).hull - resolve(h, fit()).hull;
+  const gains = Object.keys(HULLS).map(h => [h, hullGain(h)]);
+  console.log('     plating on each hull: ' + gains.map(([h, v]) => `${h} +${Math.round(v)}`).join('  '));
+  check('a technology is worth more on the hull that has more of it',
+        gains.every(([, v], i) => i === 0 || v >= gains[i - 1][1]) && gains.at(-1)[1] > gains[0][1] * 1.5,
+        'which is the reason it multiplies');
 }
 
 // ---------------------------------------------------------------- formations

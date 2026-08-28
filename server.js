@@ -281,6 +281,7 @@ wss.on('connection', (ws, req) => {
       if (P.credits < hullPrice(m.key)) return;
       P.credits -= hullPrice(m.key);
       P.hulls.push(m.key);
+      refit(ship, m.key, ship.fit, ship.drones, ship.formation);   // bought, and flown at once
       return outfit();
     }
     if (m.t === 'hull') {

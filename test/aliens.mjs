@@ -4,6 +4,7 @@ import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAV
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { HULLS, resolve } from '../shared/ships.js';
+import { BOOST } from '../shared/power.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -135,18 +136,40 @@ console.log('\ndying settles it');
 }
 
 console.log('\nthe fight itself');
+// Bare hulls, parked, trading shots. Three outcomes are possible and the log
+// has to tell them apart: you kill it, it kills you, or it breaks off at 10%
+// and strolls away from a ship that never moved to follow.
+const outcome = (a, p, res) => a.hp <= 0 ? `killed it in ${res.t.toFixed(0)}s`
+                             : p.hp <= 0 ? `DIED after ${res.t.toFixed(0)}s`
+                                         : 'let it break off and escape';
 for (const h of ['kestrel', 'vanguard', 'bulwark']) {
   const p = newShip(map.base.x + 4000, map.base.y, h);
   const a = foe(p.x + 900, p.y, 3);
   const res = fight(a, p, 200, { playerFires: true });
-  console.log(`     ${h.padEnd(9)} ${a.hp <= 0 ? 'killed it' : 'DIED'} in ${res.t.toFixed(0)}s` +
-              `  — left with ${Math.max(0, p.hp) | 0}/${p.stats.hull} hull`);
+  console.log(`     ${h.padEnd(9)} ${outcome(a, p, res).padEnd(22)}` +
+              ` — left with ${Math.max(0, ehp(p)) | 0}/${full(p)} effective`);
 }
-const vg = newShip(map.base.x + 4000, map.base.y, 'vanguard');
-const vgFoe = foe(vg.x + 900, vg.y, 3);
-const vgRes = fight(vgFoe, vg, 200, { playerFires: true });
-check('a starter hull can win, but it costs', vgFoe.hp <= 0 && vg.hp < vg.stats.hull * 0.75,
-  `${vgRes.t.toFixed(0)}s, down to ${(100 * vg.hp / vg.stats.hull) | 0}% hull`);
+// The headline: once a ship is actually finished, the first thing you ever met
+// dies in one trigger pull. This is the top of the curve the drifter is set from.
+const decked = resolve('vanguard', { weapon: ['emitter3', 'emitter3', 'emitter3'], generator: [], tech: [] },
+                       Array(6).fill('emitter3'), 'wedge');
+const volley = decked.damage * (1 + BOOST);
+const husk = D.attrs.hull + D.attrs.shield;
+check('a fully outfitted Fighter kills one in a single volley', volley >= husk,
+  `${Math.round(volley)} damage against ${husk} effective hp`);
+check('and a bare one does not', resolve('vanguard').damage * (1 + BOOST) < husk,
+  'the ship has to be finished first, not just bought');
+
+// The bottom of the same curve: on day one, in the hull you are given, it is a
+// real fight you can lose by standing still.
+const st = newShip(map.base.x + 4000, map.base.y, 'hauler', { weapon: ['emitter1'], generator: [], tech: [] });
+const stFoe = foe(st.x + 900, st.y, 3);
+const stRes = fight(stFoe, st, 200, { playerFires: true });
+console.log(`     starter hauler: ${stFoe.hp <= 0 ? 'killed it' : 'DIED'} in ${stRes.t.toFixed(0)}s` +
+            ` — left with ${Math.max(0, ehp(st)) | 0}/${full(st)} effective`);
+check('a starter hull can still win, but it costs', stFoe.hp <= 0 && ehp(st) < full(st) * 0.75,
+  `${stRes.t.toFixed(0)}s, down to ${(100 * ehp(st) / full(st)) | 0}% of hull+shield`);
+check('and it takes real time on day one', stRes.t > 5, `${stRes.t.toFixed(0)}s of unbroken fire`);
 check('every hull out-ranges the alien',
   Object.keys(HULLS).every(h => resolve(h).weaponRange > D.attrs.weaponRange),
   `alien reaches only ${D.attrs.weaponRange}`);
@@ -165,9 +188,15 @@ console.log(`     kestrel holding ${band}px: ${kFoe.hp <= 0 ? 'killed it' : 'DIE
             ` — left with ${Math.max(0, kite.hp) | 0}/${kite.stats.hull} hull`);
 const kStand = newShip(map.base.x + 4000, map.base.y, 'kestrel');
 const kStandFoe = foe(kStand.x + 900, kStand.y, 3);
-fight(kStandFoe, kStand, 200, { playerFires: true });
-check('an interceptor dies if it stands and trades', kStand.hp <= 0);
-check('but wins by holding range', kFoe.hp <= 0 && kite.hp > 0,
+const sRes = fight(kStandFoe, kStand, 200, { playerFires: true });
+console.log(`     kestrel standing still: ${outcome(kStandFoe, kStand, sRes)}` +
+            ` — left with ${Math.max(0, ehp(kStand)) | 0}/${full(kStand)} effective`);
+// It no longer kills an interceptor outright, but standing still still loses you
+// the fight — it breaks off at 10% and a parked ship has nothing to chase with.
+check('a parked interceptor never finishes one off', kStandFoe.hp > 0 && kStand.hp > 0,
+  'it flees at 10% and a ship that never moved cannot follow');
+check('and pays hull for the privilege', ehp(kStand) < ehp(kite));
+check('holding range kills it and costs nothing', kFoe.hp <= 0 && ehp(kite) === full(kite),
   'speed and reach are the answer, not hull');
 
 console.log('\nbreaking off when it is losing');
