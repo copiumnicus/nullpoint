@@ -63,8 +63,15 @@ const canvas = {
   setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight }),
 };
 globalThis.innerWidth = 1600; globalThis.innerHeight = 900; globalThis.devicePixelRatio = 2;
-globalThis.document = { getElementById: () => canvas };
 globalThis.location = { host: 'localhost:3000' };
+// seeded under the OLD key, to prove the rename migration runs
+const store = new Map([['aphelion.token', 'legacy-token']]);
+globalThis.localStorage = {
+  getItem: k => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)),
+  removeItem: k => store.delete(k),
+};
+globalThis.document = { getElementById: () => canvas, title: '' };
 globalThis.addEventListener = on;
 globalThis.setInterval = () => 0;
 let raf = null;
@@ -180,6 +187,16 @@ for (const id of Object.keys(MAPS)) {
     frame(t += 16); frames++;
   }
 }
+// A rename must not orphan an existing pilot: the old key is read once, moved to
+// the new one, and the account survives.
+{
+  const { TOKEN_KEY, OLD_TOKEN_KEYS } = await import('../shared/brand.js');
+  const seen = store.get(TOKEN_KEY);
+  if (seen !== 'legacy-token') errs.push(`a token under ${OLD_TOKEN_KEYS[0]} was not migrated (got ${seen})`);
+  else if (store.get(OLD_TOKEN_KEYS[0]) !== undefined) errs.push('the old key was left behind');
+  else console.log(`identity: a pilot stored under ${OLD_TOKEN_KEYS[0]} carried over to ${TOKEN_KEY}`);
+}
+
 // The hangar's APPLY button: does clicking it actually ask the server for a refit?
 {
   feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',

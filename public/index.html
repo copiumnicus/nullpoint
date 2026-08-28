@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Aphelion</title>
+<title>Nullpoint</title>
 <style>
   html,body{margin:0;height:100%;background:#05070b;overflow:hidden}
   canvas{display:block;width:100vw;height:100vh;cursor:crosshair;touch-action:none}
@@ -13,6 +13,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, MODULES, resolve, slotsOf } from '/shared/ships.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout } from '/shared/hangar.js';
+import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { audioReady, setThrust, laser, explosion, toggleAudio, audioOn } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
@@ -44,8 +45,19 @@ const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 let sysOpen = false;
 
 let myId = null, myCo = 'm', myName = '', mapId = 'm1', status = 'connecting…';
-const TOKEN = 'aphelion.token';
-const readToken = () => { try { return localStorage.getItem(TOKEN) ?? ''; } catch { return ''; } };
+document.title = GAME;
+// Carry a pilot across a rename rather than orphaning them under the old key.
+const readToken = () => {
+  try {
+    const cur = localStorage.getItem(TOKEN_KEY);
+    if (cur) return cur;
+    for (const k of OLD_TOKEN_KEYS) {
+      const old = localStorage.getItem(k);
+      if (old) { localStorage.setItem(TOKEN_KEY, old); localStorage.removeItem(k); return old; }
+    }
+  } catch {}
+  return '';
+};
 let myHull = 'vanguard', myFit = [];
 let bayOpen = false, draftHull = 'vanguard', draftFit = [];
 const defOf = s => s.co === 'x' ? ALIENS[s.hull] : HULLS[s.hull];
@@ -76,7 +88,7 @@ ws.onmessage = e => {
   if (m.t === 'welcome') {
     myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
     myName = m.name ?? '';
-    if (m.token) { try { localStorage.setItem(TOKEN, m.token); } catch {} }
+    if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
     return;
   }
   if (m.t === 'bumped') { status = 'signed in from another tab'; return; }

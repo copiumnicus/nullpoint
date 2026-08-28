@@ -8,6 +8,7 @@ import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
+import { GAME } from './shared/brand.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
@@ -25,6 +26,7 @@ const FILES = {
   '/shared/ships.js': ['shared/ships.js',   'text/javascript'],
   '/shared/radar.js': ['shared/radar.js',   'text/javascript'],
   '/shared/net.js':   ['shared/net.js',     'text/javascript'],
+  '/shared/brand.js': ['shared/brand.js',   'text/javascript'],
   '/shared/aliens.js':['shared/aliens.js',  'text/javascript'],
   '/shared/combat.js':['shared/combat.js',  'text/javascript'],
   '/shared/cargo.js': ['shared/cargo.js',   'text/javascript'],
@@ -388,4 +390,4 @@ setInterval(() => {
   }
 }, 1000 / TICK_HZ);
 
-server.listen(PORT, () => console.log(`Aphelion — http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`${GAME} — http://localhost:${PORT}`));

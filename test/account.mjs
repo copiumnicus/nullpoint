@@ -72,7 +72,7 @@ console.log('\non disk');
 {
   const fs = await import('node:fs');
   const cwd = process.cwd();
-  const tmp = fs.mkdtempSync('/tmp/aphelion-store-');
+  const tmp = fs.mkdtempSync('/tmp/nullpoint-store-');
   process.chdir(tmp);
   const store = await import('../store.js?fresh=' + Math.random());
   check('an empty directory reads as no accounts',
