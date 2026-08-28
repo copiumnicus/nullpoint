@@ -1,6 +1,7 @@
 import { stepContacts, ALLY, FRESH, STALE } from '../shared/radar.js';
 import { newShip } from '../shared/sim.js';
 import { HULLS, ATTRS, resolve } from '../shared/ships.js';
+const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -8,7 +9,7 @@ const check = (name, ok, detail = '') => {
   if (!ok) fails.push(name);
 };
 const dt = 1 / 30;
-const mk = (id, co, hull, x, y, fit = []) => ({ id, co, ship: newShip(x, y, hull, fit), contacts: new Map() });
+const mk = (id, co, hull, x, y, f = fit()) => ({ id, co, ship: newShip(x, y, hull, f), contacts: new Map() });
 
 console.log('\nhull sensors');
 const rad = Object.entries(HULLS).map(([k, h]) => [h.name, h.attrs.radar, h.attrs.signature]);
@@ -57,13 +58,12 @@ check('a cruiser is far harder to shake than an interceptor', lb > lk * 2,
 
 console.log('\nfitting changes what you see');
 const blind = mk(1, 'm', 'kestrel', 0, 0);                     // radar 2000
-const scout = mk(1, 'm', 'kestrel', 0, 0, ['array']);          // +45% -> 2900
-const bogey = mk(5, 'h', 'vanguard', 2500, 0);
-check('a sensor array finds what a bare hull cannot',
-  !stepContacts(blind, [blind, bogey], dt).has(5)
-  && stepContacts(scout, [scout, bogey], dt).get(5) === FRESH, '2500px out');
-check('but it makes you louder', resolve('kestrel', ['array']).signature > resolve('kestrel', []).signature);
-const quiet = resolve('bulwark', ['damper']);
+const scout = mk(1, 'm', 'kestrel', 0, 0, fit({ tech: ['damper'] }));   // -25% radar
+const bogey = mk(5, 'h', 'vanguard', 1800, 0);
+check('a bare hull sees what a damped one cannot',
+  stepContacts(blind, [blind, bogey], dt).get(5) === FRESH
+  && !stepContacts(scout, [scout, bogey], dt).has(5), '1800px out, kestrel radar 2000 vs 1500 damped');
+const quiet = resolve('bulwark', fit({ tech: ['damper'] }));
 check('a damper halves your signature and costs you range',
   quiet.signature === HULLS.bulwark.attrs.signature / 2 && quiet.radar < HULLS.bulwark.attrs.radar,
   `${quiet.signature}s, radar ${quiet.radar}`);

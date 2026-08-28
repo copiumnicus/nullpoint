@@ -2,7 +2,7 @@
 // with the chart open and closed. Any undefined field or bad colour throws.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
-import { MODULES } from '../shared/ships.js';
+import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout } from '../shared/hangar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
@@ -143,6 +143,7 @@ for (const id of Object.keys(MAPS)) {
   ], pods: Object.keys(MATERIALS).map((mat, i) =>
     packPod({ id: i + 1, x: 5800 + i * 120, y: 4400, mat, n: i + 1 })),
     hold: { iron: 6, platinum: 3, iridium: 1 }, cap: 60, credits: 4820, docked: true,
+    gear: { emitter: 2 }, power: { to: 'weapons', thrusters: 0.2, weapons: 0.9, shields: 0 },
     vault: { iron: 240, nickel: 88, rhodium: 4 },
     scoop: { id: 1, p: 0.4 } });
   feed({ t: 'award', amount: 140, what: 'Drifter', total: 4960 });
@@ -153,7 +154,8 @@ for (const id of Object.keys(MAPS)) {
   listeners.keydown.forEach(fn => fn({ key: 'h' }));           // hangar
   frame(t += 16); frames++;
   for (const h of ['kestrel', 'bulwark']) {                    // every hull, every module
-    feed({ t: 'fit', hull: h, fit: Object.keys(MODULES).slice(0, 3) });
+    feed({ t: 'fit', hull: h, fit: { weapon: ['emitter'], generator: ['cell'], tech: ['plating'] },
+           gear: { emitter: 2, damper: 1 }, credits: 9000 });
     frame(t += 16); frames++;
   }
   listeners.keydown.forEach(fn => fn({ key: 'h' }));
@@ -205,37 +207,27 @@ for (const id of Object.keys(MAPS)) {
   feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
                                     hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 2 })] });
   sent.length = 0;
-  const L = bayLayout(innerWidth, innerHeight);
+  const L = bayLayout(innerWidth, innerHeight, 'vanguard');
   evt('keydown', { key: 'h' });                                  // open the hangar
   frame(t += 16); frames++;
   for (const { r } of L.hulls) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
-  for (const { r } of L.mods)  evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+  for (const row of L.racks) if (!row.header)
+    evt('pointerdown', { clientX: row.r.x + row.r.w / 2, clientY: row.r.y + row.r.h / 2 });
+  for (const { r } of L.store) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
   frame(t += 16); frames++;
-  // If any of those clicks had landed outside the panel it would have closed, and
-  // this last one would go nowhere.
-  evt('pointerdown', { clientX: L.apply.x + L.apply.w / 2, clientY: L.apply.y + L.apply.h / 2 });
-  frame(t += 16); frames++;
-  const refit = sent.filter(m => m.t === 'refit');
-  if (!refit.length) errs.push('APPLY REFIT sent no refit message after clicking every row');
-  else console.log(`hangar: clicked all ${L.hulls.length} hulls + ${L.mods.length} modules, ` +
-                   `APPLY still works -> ${refit[0].hull} [${refit[0].fit}]`);
+  const kinds = new Set(sent.map(m => m.t));
+  for (const want of ['hull', 'install', 'buy'])
+    if (!kinds.has(want)) errs.push(`clicking every station row never produced a "${want}"`);
+  if (kinds.size) console.log(`station: ${L.hulls.length} hulls + ${L.racks.filter(r => !r.header).length} slots + ` +
+    `${L.store.length} store rows all reachable, sent ${[...kinds].join(', ')}`);
 
-  // the server confirming should close the panel and leave a notice on screen
-  feed({ t: 'fit', hull: refit[0].hull, fit: refit[0].fit });
-  frame(t += 16); frames++;
+  // power routing is a key, and must reach the server
   sent.length = 0;
-  evt('pointerdown', { clientX: L.apply.x + L.apply.w / 2, clientY: L.apply.y + L.apply.h / 2 });
-  if (sent.some(m => m.t === 'refit')) errs.push('hangar stayed open after the refit was confirmed');
-  else console.log('  confirmed refit closed the hangar');
-
-  // reopening with nothing changed must not fire another refit
-  evt('keydown', { key: 'h' });
+  for (const k of ['1', '2', '3']) evt('keydown', { key: k });
   frame(t += 16); frames++;
-  sent.length = 0;
-  evt('pointerdown', { clientX: L.apply.x + L.apply.w / 2, clientY: L.apply.y + L.apply.h / 2 });
-  frame(t += 16); frames++;
-  if (sent.some(m => m.t === 'refit')) errs.push('APPLY re-sent a refit with nothing changed');
-  else console.log('  an unchanged draft reports "already fitted" instead of re-sending');
+  const routes = sent.filter(m => m.t === 'power').map(m => m.sys);
+  if (routes.join() !== 'thrusters,weapons,shields') errs.push(`1/2/3 routed ${routes.join()}`);
+  else console.log('power: 1/2/3 route to thrusters, weapons, shields');
   evt('keydown', { key: 'h' });
 }
 

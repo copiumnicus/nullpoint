@@ -4,7 +4,8 @@
 // here so it can be captured on the way out, restored on the way back, and tested
 // without a server or a file.
 
-import { DEFAULT_HULL, sanitiseFit, HULLS } from './ships.js';
+import { DEFAULT_HULL, sanitiseFit, slotsOf, HULLS } from './ships.js';
+import { EQUIPMENT, emptyFit } from './gear.js';
 import { MAPS, COMPANIES } from './maps.js';
 import { MATERIALS } from './cargo.js';
 
@@ -23,7 +24,8 @@ export function newAccount(token, seq, now) {
   const home = co + '1', base = MAPS[home].base;
   return {
     token, seq, co, name: callsign(seq),
-    hull: DEFAULT_HULL, fit: [],
+    // one emitter in the rack, so a new pilot is armed rather than helpless
+    hull: DEFAULT_HULL, fit: { ...emptyFit(), weapon: ['emitter'] }, gear: {},
     credits: 0, vault: {}, hold: {},
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
@@ -40,9 +42,12 @@ export function sanitiseAccount(a, seq, now) {
     .filter(([k, n]) => MATERIALS[k] && Number.isFinite(n) && n > 0)
     .map(([k, n]) => [k, Math.floor(n)]));
   const base = MAPS[co + '1'].base;
+  const gear = Object.fromEntries(Object.entries(a?.gear ?? {})
+    .filter(([k, n]) => EQUIPMENT[k] && Number.isFinite(n) && n > 0)
+    .map(([k, n]) => [k, Math.floor(n)]));
   return {
     token: a.token, seq, co, name: typeof a?.name === 'string' ? a.name : callsign(seq),
-    hull, fit: sanitiseFit(hull, a?.fit),
+    hull, fit: sanitiseFit(hull, a?.fit), gear,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,
@@ -56,7 +61,8 @@ export function sanitiseAccount(a, seq, now) {
 export function capture(account, p, now) {
   account.co = p.co;
   account.hull = p.ship.hull;
-  account.fit = [...p.ship.fit];
+  account.fit = sanitiseFit(p.ship.hull, p.ship.fit);
+  account.gear = { ...p.gear };
   account.credits = p.credits;
   account.vault = { ...p.vault };
   account.hold = { ...p.hold };

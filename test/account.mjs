@@ -2,6 +2,8 @@ import { newAccount, sanitiseAccount, capture, callsign, companyFor } from '../s
 import { newShip, refit } from '../shared/sim.js';
 import { MAPS, COMPANIES } from '../shared/maps.js';
 import { HULLS, DEFAULT_HULL } from '../shared/ships.js';
+import { EQUIPMENT, fitCount } from '../shared/gear.js';
+const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 import { MATERIALS } from '../shared/cargo.js';
 
 const fails = [];
@@ -21,24 +23,28 @@ check('everyone starts at their own home dock',
 check('callsigns are stable for a given account', callsign(7) === callsign(7) && callsign(7) !== callsign(8));
 check('a new pilot owns nothing and flies the default hull',
   made.every(a => a.credits === 0 && !Object.keys(a.vault).length && a.hull === DEFAULT_HULL));
+check('but is not sent out unarmed', made.every(a => a.fit.weapon.length === 1),
+  'one emitter in the rack');
 
 console.log('\ncoming back');
 const acct = newAccount('abc', 4, 1000);
 const p = {
   co: acct.co, mapId: 'g1', credits: 4820,
   hold: { iron: 6, iridium: 1 }, vault: { platinum: 12 },
-  ship: refit(newShip(0, 0, 'kestrel', []), 'bulwark', ['plating', 'thruster']),
+  gear: { emitter: 3, plating: 1 },
+  ship: refit(newShip(0, 0, 'kestrel'), 'bulwark', fit({ weapon: ['emitter', 'emitter'], tech: ['plating'] })),
 };
 p.ship.x = 8123.4; p.ship.y = 2044.9;
 capture(acct, p, 2000);
 check('capture folds the session back into the account',
-  acct.hull === 'bulwark' && acct.fit.join() === 'plating,thruster' && acct.credits === 4820
+  acct.hull === 'bulwark' && acct.fit.weapon.length === 2 && acct.fit.tech.join() === 'plating'
+  && acct.gear.emitter === 3 && acct.credits === 4820
   && acct.mapId === 'g1' && acct.x === 8123 && acct.y === 2045);
 check('cargo and hangar both survive',
   acct.hold.iron === 6 && acct.hold.iridium === 1 && acct.vault.platinum === 12);
 check('capture copies rather than aliasing', (() => {
-  p.hold.iron = 999; p.ship.fit.push('ballast');
-  return acct.hold.iron === 6 && acct.fit.length === 2;
+  p.hold.iron = 999; p.ship.fit.weapon.push('emitter'); p.gear.emitter = 99;
+  return acct.hold.iron === 6 && acct.fit.weapon.length === 2 && acct.gear.emitter === 3;
 })(), 'a later change to the live ship must not rewrite history');
 const back = sanitiseAccount(JSON.parse(JSON.stringify(acct)), acct.seq, 3000);
 check('a round trip through JSON changes nothing that matters',
@@ -48,13 +54,20 @@ check('created is kept, seen is refreshed', back.created === 1000 && back.seen =
 
 console.log('\na file someone has edited');
 const junk = sanitiseAccount({
-  token: 'x', co: 'zz', hull: 'battlestar', fit: ['plating', 'wat', 'plating', 'thruster', 'ballast'],
+  token: 'x', co: 'zz', hull: 'battlestar',
+  fit: { weapon: ['emitter', 'wat', 'emitter', 'emitter', 'emitter'], tech: ['plating', 'plating'], generator: ['emitter'] },
+  gear: { emitter: 2.9, unobtanium: 4, cell: -2 },
   credits: -500, vault: { iron: 3.7, unobtanium: 99, nickel: -1, iridium: 4 },
   hold: null, mapId: 'nowhere', x: 'over there', y: NaN, name: 42,
 }, 3, 9);
 check('an unknown company falls back to the rotation', COMPANIES[junk.co]);
 check('an unknown hull falls back to the default', junk.hull === DEFAULT_HULL);
-check('an oversized fit is truncated and cleaned', junk.fit.length === 3 && !junk.fit.includes('wat'));
+check('an oversized rack is truncated and cleaned',
+  junk.fit.weapon.length === 3 && !junk.fit.weapon.includes('wat')
+  && junk.fit.tech.length === 1 && junk.fit.generator.length === 0,
+  'vanguard racks W3 G2 T2; duplicate tech collapses, wrong-slot item dropped');
+check('the locker is cleaned the same way',
+  JSON.stringify(junk.gear) === JSON.stringify({ emitter: 2 }));
 check('negative credits become zero', junk.credits === 0);
 check('invented materials are dropped from the hangar',
   JSON.stringify(junk.vault) === JSON.stringify({ iron: 3, iridium: 4 }),
@@ -79,7 +92,8 @@ console.log('\non disk');
     JSON.stringify(store.load()) === JSON.stringify({ accounts: {}, seq: 0 }));
   store.save({ accounts: { abc: acct }, seq: 5 });
   const read = store.load();
-  check('what was written comes back', read.seq === 5 && read.accounts.abc.credits === 4820);
+  check('what was written comes back',
+    read.seq === 5 && read.accounts.abc.credits === 4820 && read.accounts.abc.gear.emitter === 3);
   fs.writeFileSync('data/accounts.json', '{ not json at all');
   check('a corrupt file does not take the server down',
     JSON.stringify(store.load()) === JSON.stringify({ accounts: {}, seq: 0 }));

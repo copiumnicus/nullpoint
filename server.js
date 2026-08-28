@@ -4,14 +4,16 @@ import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { newAlien, respawnAlien, stepAlienAI, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
-import { HULLS, MODULES, sanitiseFit, DEFAULT_HULL } from './shared/ships.js';
+import { HULLS, sanitiseFit, slotsOf, resolve, DEFAULT_HULL } from './shared/ships.js';
+import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit } from './shared/gear.js';
+import { routeTo } from './shared/power.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
-import { rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
+import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
@@ -27,6 +29,8 @@ const FILES = {
   '/shared/radar.js': ['shared/radar.js',   'text/javascript'],
   '/shared/net.js':   ['shared/net.js',     'text/javascript'],
   '/shared/brand.js': ['shared/brand.js',   'text/javascript'],
+  '/shared/gear.js':  ['shared/gear.js',    'text/javascript'],
+  '/shared/power.js': ['shared/power.js',   'text/javascript'],
   '/shared/aliens.js':['shared/aliens.js',  'text/javascript'],
   '/shared/combat.js':['shared/combat.js',  'text/javascript'],
   '/shared/cargo.js': ['shared/cargo.js',   'text/javascript'],
@@ -139,9 +143,13 @@ wss.on('connection', (ws, req) => {
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
+                    gear: { ...acct.gear },
                     scoop: null, want: null, dead: false });
+  const outfit = () => ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
+                                                gear: players.get(id).gear, credits: players.get(id).credits }));
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
-                           map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit }));
+                           map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit,
+                           gear: acct.gear, credits: acct.credits }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -151,12 +159,54 @@ wss.on('connection', (ws, req) => {
     const P = players.get(id);
     if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
 
-    if (m.t === 'refit') {                        // only inside your own base ring
-      const map = MAPS[P.mapId];
-      if (map.owner !== P.co || !inBase(map, ship)) return;
-      const hull = HULLS[m.hull] ? m.hull : ship.hull;
-      refit(ship, hull, sanitiseFit(hull, m.fit));
-      return ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit }));
+    // --- station: everything below needs you sitting in your own base ring ---
+    const atStation = () => MAPS[P.mapId].owner === P.co && inBase(MAPS[P.mapId], ship);
+
+    if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
+
+    if (m.t === 'hull') {
+      if (!atStation() || !HULLS[m.key]) return;
+      const moved = reseat(slotsOf(m.key), ship.fit, P.gear);      // whatever will not fit comes off
+      P.gear = moved.gear;
+      refit(ship, m.key, moved.fit);
+      return outfit();
+    }
+    if (m.t === 'buy') {
+      const item = EQUIPMENT[m.item];
+      if (!atStation() || !item || P.credits < item.price) return;
+      P.credits -= item.price;
+      P.gear[m.item] = (P.gear[m.item] ?? 0) + 1;
+      return outfit();
+    }
+    if (m.t === 'install') {
+      const item = EQUIPMENT[m.item];
+      if (!atStation() || !item || !(P.gear[m.item] > 0)) return;
+      const rack = ship.fit[item.slot], room = slotsOf(ship.hull)[item.slot] ?? 0;
+      if (rack.length >= room) return;
+      if (item.slot === 'tech' && rack.includes(m.item)) return;   // technologies are unique
+      rack.push(m.item);
+      if (--P.gear[m.item] <= 0) delete P.gear[m.item];
+      refit(ship, ship.hull, ship.fit);
+      return outfit();
+    }
+    if (m.t === 'uninstall') {
+      if (!atStation() || !SLOTS.includes(m.slot)) return;
+      const rack = ship.fit[m.slot], i = +m.index;
+      if (!(i >= 0 && i < rack.length)) return;
+      const [item] = rack.splice(i, 1);
+      P.gear[item] = (P.gear[item] ?? 0) + 1;
+      refit(ship, ship.hull, ship.fit);
+      return outfit();
+    }
+    if (m.t === 'sell') {
+      if (!atStation() || !MATERIALS[m.mat]) return;
+      const have = P.vault[m.mat] ?? 0;
+      const n = Math.min(have, Math.max(1, Math.floor(+m.n || 0)));
+      if (n <= 0) return;
+      P.vault[m.mat] -= n;
+      if (P.vault[m.mat] <= 0) delete P.vault[m.mat];
+      P.credits += n * MATERIALS[m.mat].value;
+      return outfit();
     }
 
     if (m.t === 'respawn') {                      // you choose when to go back out
@@ -384,7 +434,9 @@ setInterval(() => {
     V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), blasts: flashes.map(packBlast),
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
-      credits: V.credits, docked: !!V.docked, vault: V.vault,
+      credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
+      power: { to: V.ship.power.to, thrusters: +V.ship.power.thrusters.toFixed(3),
+               weapons: +V.ship.power.weapons.toFixed(3), shields: +V.ship.power.shields.toFixed(3) },
       scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / SCOOP_TIME).toFixed(2) } : undefined,
       want: V.want ?? undefined }));
   }

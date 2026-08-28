@@ -5,6 +5,7 @@
 // changing course mid-flight is a real dodge rather than a stat check.
 
 import { applyDamage, SHOT_FLASH } from './sim.js';
+import { boostOf } from './power.js';
 
 // Bolt speed is a balance dial, not a cosmetic one. A shot has to be slow enough
 // that a ship can accelerate clear of where it was aimed: displacement goes with
@@ -28,7 +29,7 @@ export function fire(a, b, dt) {
   return {
     sx: a.x, sy: a.y,
     ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
-    dmg: a.stats.damage, target: b, foe: !!a.isAlien,
+    dmg: a.stats.damage * boostOf(a.power, 'weapons'), target: b, foe: !!a.isAlien,
     t: travel, ttl: Math.max(0.001, travel),
   };
 }

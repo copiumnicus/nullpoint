@@ -37,17 +37,17 @@ function fight(a, p, secs, { playerFires = false, drive = null } = {}) {
 }
 
 console.log('\nsanctuary');
-const inRing = newShip(map.base.x + 200, map.base.y, 'vanguard', []);
+const inRing = newShip(map.base.x + 200, map.base.y, 'vanguard');
 check('the base ring is sanctuary', inHaven(map, inRing) && inBase(map, inRing));
 const pg = map.portals[0];
 check('so is a portal mouth', inHaven(map, { x: pg.x + HAVEN_R * 0.5, y: pg.y }), `${HAVEN_R | 0}px around it`);
 check('open space is not', !inHaven(map, { x: map.base.x + 3000, y: map.base.y }));
 
-const parked = newShip(map.base.x + 300, map.base.y, 'vanguard', []);
+const parked = newShip(map.base.x + 300, map.base.y, 'vanguard');
 let r = fight(foe(map.base.x + 700, map.base.y), parked, 12);
 check('an unprovoked alien will not start on someone docked', !r.everTargeted && ehp(parked) === full(parked),
   '12s sat next to it, untouched');
-const atGate = newShip(pg.x + 60, pg.y, 'vanguard', []);
+const atGate = newShip(pg.x + 60, pg.y, 'vanguard');
 r = fight(foe(pg.x + 700, pg.y), atGate, 12);
 check('nor on someone sitting in a portal', !r.everTargeted && ehp(atGate) === full(atGate));
 
@@ -67,11 +67,11 @@ check('it gives up sooner than it used to, since it engages closer',
   D.leash > D.aggro * 2 && D.leash < 2400, `leash ${D.leash}`);
 
 console.log('\naggression');
-const open = newShip(map.base.x + 4000, map.base.y, 'vanguard', []);
+const open = newShip(map.base.x + 4000, map.base.y, 'vanguard');
 r = fight(foe(map.base.x + 4000 + D.aggro - 200, map.base.y), open, 14);
 check('in the open, inside aggro range, it engages', r.everTargeted && ehp(open) < full(open),
   `aggro ${D.aggro}px, took ${(full(open) - ehp(open)) | 0} damage`);
-const distant = newShip(map.base.x + 4000, map.base.y, 'vanguard', []);
+const distant = newShip(map.base.x + 4000, map.base.y, 'vanguard');
 const far = foe(map.base.x + 4000 + D.leash + 900, map.base.y);
 far.way = { x: far.x, y: far.y };                       // pin it so roaming can't wander into range
 let seen = false;
@@ -79,39 +79,39 @@ for (let i = 0; i < 30 * 8; i++) if (stepAlienAI(far, map, con(distant), dt)) se
 check('outside aggro range it ignores you', !seen);
 
 console.log('\nprovocation overrides sanctuary');
-const hider = newShip(map.base.x + 300, map.base.y, 'vanguard', []);
+const hider = newShip(map.base.x + 300, map.base.y, 'vanguard');
 const angry = foe(map.base.x + 900, map.base.y);
 angry.provoked.add(1);                                   // as if you had shot it
 r = fight(angry, hider, 14);
 check('once you shoot it, the base ring will not save you',
   r.everTargeted && ehp(hider) < full(hider), `${(full(hider) - ehp(hider)) | 0} damage taken while docked`);
 check('and it follows you in', inBase(map, angry), 'the alien entered the ring');
-const gateHider = newShip(pg.x + 40, pg.y, 'vanguard', []);
+const gateHider = newShip(pg.x + 40, pg.y, 'vanguard');
 const angry2 = foe(pg.x + 800, pg.y); angry2.provoked.add(1);
 r = fight(angry2, gateHider, 14);
 check('a portal mouth will not save you either', r.everTargeted && ehp(gateHider) < full(gateHider));
 
 console.log('\nbreaking off');
 // y=1500 keeps the whole chase clear of the base ring, so nothing else interferes
-const runner = newShip(10000, 1500, 'kestrel', []);
+const runner = newShip(10000, 1500, 'kestrel');
 const chaser = foe(10600, 1500); chaser.provoked.add(1); chaser.target = 1;
 fight(chaser, runner, 34, { drive: p => { p.dx = -1; p.dy = 0; } });   // full burn AWAY from it
 check('outrunning it drops the lock', chaser.target === null,
-  `kestrel ${resolve('kestrel', []).speed} vs drifter ${D.attrs.speed}`);
+  `kestrel ${resolve('kestrel').speed} vs drifter ${D.attrs.speed}`);
 check('and it forgets the grudge', !chaser.provoked.has(1), 'so sanctuary works again');
-const plodder = newShip(10000, 1500, 'bulwark', []);
+const plodder = newShip(10000, 1500, 'bulwark');
 const chaser2 = foe(10600, 1500); chaser2.provoked.add(1); chaser2.target = 1;
 fight(chaser2, plodder, 20, { drive: p => { p.dx = -1; p.dy = 0; } });
-const speeds = Object.keys(HULLS).map(h => resolve(h, []).speed).sort((a, b) => a - b);
+const speeds = Object.keys(HULLS).map(h => resolve(h).speed).sort((a, b) => a - b);
 check('alien speed sits just above the heaviest hull, and no higher',
   D.attrs.speed > speeds[0] && D.attrs.speed < speeds[1],
   `${speeds[0]} < ${D.attrs.speed} < ${speeds[1]} — heavies cannot walk away, and it stays clickable`);
 check('a slower hull cannot simply run', chaser2.target === 1,
-  `bulwark ${resolve('bulwark', []).speed} cannot break ${D.leash}px`);
+  `bulwark ${resolve('bulwark').speed} cannot break ${D.leash}px`);
 
 console.log('\ndying settles it');
 {
-  const victim = newShip(map.base.x + 4000, map.base.y, 'vanguard', []);
+  const victim = newShip(map.base.x + 4000, map.base.y, 'vanguard');
   const killer = foe(victim.x + 500, victim.y);
   killer.provoked.add(1); killer.target = 1;
   fight(killer, victim, 4);
@@ -121,7 +121,7 @@ console.log('\ndying settles it');
   check('death clears the lock and the grudge', killer.target === null && !killer.provoked.has(1));
 
   // and now sanctuary works again, which is the point
-  const reborn = newShip(map.base.x + 300, map.base.y, 'vanguard', []);
+  const reborn = newShip(map.base.x + 300, map.base.y, 'vanguard');
   killer.x = map.base.x + 900; killer.y = map.base.y;
   const r2 = fight(killer, reborn, 12);
   check('so it will not follow you into your own base afterwards',
@@ -135,25 +135,25 @@ console.log('\ndying settles it');
 
 console.log('\nthe fight itself');
 for (const h of ['kestrel', 'vanguard', 'bulwark']) {
-  const p = newShip(map.base.x + 4000, map.base.y, h, []);
+  const p = newShip(map.base.x + 4000, map.base.y, h);
   const a = foe(p.x + 900, p.y, 3);
   const res = fight(a, p, 200, { playerFires: true });
   console.log(`     ${h.padEnd(9)} ${a.hp <= 0 ? 'killed it' : 'DIED'} in ${res.t.toFixed(0)}s` +
               `  — left with ${Math.max(0, p.hp) | 0}/${p.stats.hull} hull`);
 }
-const vg = newShip(map.base.x + 4000, map.base.y, 'vanguard', []);
+const vg = newShip(map.base.x + 4000, map.base.y, 'vanguard');
 const vgFoe = foe(vg.x + 900, vg.y, 3);
 const vgRes = fight(vgFoe, vg, 200, { playerFires: true });
 check('a starter hull can win, but it costs', vgFoe.hp <= 0 && vg.hp < vg.stats.hull * 0.75,
   `${vgRes.t.toFixed(0)}s, down to ${(100 * vg.hp / vg.stats.hull) | 0}% hull`);
 check('every hull out-ranges the alien',
-  Object.keys(HULLS).every(h => resolve(h, []).weaponRange > D.attrs.weaponRange),
+  Object.keys(HULLS).every(h => resolve(h).weaponRange > D.attrs.weaponRange),
   `alien reaches only ${D.attrs.weaponRange}`);
 
 // The interceptor loses a straight trade — it has to use the range it paid for.
-const kite = newShip(3000, 1500, 'kestrel', []);
+const kite = newShip(3000, 1500, 'kestrel');
 const kFoe = foe(2400, 1500, 3);
-const band = resolve('kestrel', []).weaponRange - 30;
+const band = resolve('kestrel').weaponRange - 30;
 const kRes = fight(kFoe, kite, 200, { playerFires: true, drive: p => {
   const dx = p.x - kFoe.x, dy = p.y - kFoe.y, d = Math.hypot(dx, dy) || 1;
   if (d < band - 20)      { p.dx = dx / d;  p.dy = dy / d; }     // back off
@@ -162,7 +162,7 @@ const kRes = fight(kFoe, kite, 200, { playerFires: true, drive: p => {
 } });
 console.log(`     kestrel holding ${band}px: ${kFoe.hp <= 0 ? 'killed it' : 'DIED'} in ${kRes.t.toFixed(0)}s` +
             ` — left with ${Math.max(0, kite.hp) | 0}/${kite.stats.hull} hull`);
-const kStand = newShip(map.base.x + 4000, map.base.y, 'kestrel', []);
+const kStand = newShip(map.base.x + 4000, map.base.y, 'kestrel');
 const kStandFoe = foe(kStand.x + 900, kStand.y, 3);
 fight(kStandFoe, kStand, 200, { playerFires: true });
 check('an interceptor dies if it stands and trades', kStand.hp <= 0);
@@ -173,7 +173,7 @@ console.log('\ndodging');
 {
   const shotAt = (setup) => {                       // one bolt, resolved honestly
     const a = foe(6000, 4000, 2); a.vx = a.vy = 0;
-    const p = newShip(6400, 4000, 'kestrel', []);
+    const p = newShip(6400, 4000, 'kestrel');
     setup.aim(p);
     const bolt = fire(a, p, dt);
     const air = [bolt];
@@ -190,7 +190,7 @@ console.log('\ndodging');
 
   const takenOver = (secs, move) => {                // sustained fire, fixed range
     const a = foe(6000, 4000, 4); a.vx = a.vy = 0; a.target = 1; a.provoked.add(1);
-    const p = newShip(6400, 4000, 'kestrel', []);
+    const p = newShip(6400, 4000, 'kestrel');
     const before = ehp(p);
     const air = []; let t = 0;
     while (t < secs) { move(p, t); const s = fire(a, p, dt); if (s) air.push(s); stepBolts(air, dt); t += dt; }

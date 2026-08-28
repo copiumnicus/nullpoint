@@ -53,14 +53,14 @@ for (const [kind, table] of Object.entries(DROPS)) {
 }
 
 console.log('\nholds');
-const caps = Object.keys(HULLS).map(h => [h, resolve(h, []).cargo]);
+const caps = Object.keys(HULLS).map(h => [h, resolve(h).cargo]);
 caps.forEach(([h, c]) => console.log(`     ${h.padEnd(9)} ${String(c).padStart(4)}` +
-  `   with a Hold Expander ${Math.round(resolve(h, ['expander']).cargo)}`));
+  `   with a Hold Expander ${Math.round(resolve(h, { weapon: [], generator: [], tech: ['expander'] }).cargo)}`));
 check('a bigger hull carries more', caps[0][1] < caps[1][1] && caps[1][1] < caps[2][1]);
 check('cargo is a normal attribute, so a module can change it',
-  resolve('kestrel', ['expander']).cargo > resolve('kestrel', []).cargo && !!ATTRS.cargo);
+  resolve('kestrel', { weapon: [], generator: [], tech: ['expander'] }).cargo > resolve('kestrel').cargo && !!ATTRS.cargo);
 check('and the expander costs speed',
-  resolve('kestrel', ['expander']).speed < resolve('kestrel', []).speed);
+  resolve('kestrel', { weapon: [], generator: [], tech: ['expander'] }).speed < resolve('kestrel').speed);
 
 const h = {};
 check('stow reports what it actually took', stow(h, 'iron', 4, 30) === 4 && holdVol(h) === 12, 'iron is 3 per unit');
@@ -78,7 +78,7 @@ console.log('\ntractor beam');
 {
   const dt = 1 / 30;
   const near = () => ({ id: 1, x: 100, y: 0, mat: 'platinum', n: 3 });   // vol 1 each
-  const ship = () => newShip(0, 0, 'vanguard', []);
+  const ship = () => newShip(0, 0, 'vanguard');
 
   check('nothing to grab', beginScoop(ship(), {}, null) === 'gone');
   check('out of reach', beginScoop(ship(), {}, { ...near(), x: SCOOP_R + 50 }) === 'far');

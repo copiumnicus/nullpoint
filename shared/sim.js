@@ -3,6 +3,8 @@
 
 import { MAP_W, MAP_H, PORTAL_R } from './maps.js';
 import { resolve, radiusOf, DEFAULT_HULL } from './ships.js';
+import { emptyFit } from './gear.js';
+import { newPower, stepPower, boostOf } from './power.js';
 
 // The charted zone is 0..MAP_W / 0..MAP_H — exactly what the minimap draws. Space
 // keeps going past it, but only the lattice of navigation beacons inside that
@@ -40,7 +42,7 @@ export const SHIELD_FLASH = 0.45; // s   how long an impact bubble stays lit
 // step(), stepVitals(), applyDamage() and stepDrift() with no special cases.
 export function newBody(x, y, stats, r) {
   return {
-    x, y, vx: 0, vy: 0, heading: 0, stats, r,
+    x, y, vx: 0, vy: 0, heading: 0, stats, r, power: newPower(),
     hp: stats.hull, shield: stats.shield, sinceHit: 1e9, shieldHit: 0,
     cool: 0, shotFlash: 0,
     jumpCd: 0, charge: 0, chargeTo: null,
@@ -49,7 +51,7 @@ export function newBody(x, y, stats, r) {
   };
 }
 
-export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = []) {
+export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit()) {
   const s = newBody(x, y, resolve(hull, fit), radiusOf(hull));
   s.hull = hull; s.fit = fit;
   return s;
@@ -74,7 +76,9 @@ export function refit(s, hull, fit) {
 //   hold+drag -> a DIRECTION. Thrust that way for as long as it's held.
 export function step(s, dt) {
   if (s.jumpCd > 0) s.jumpCd -= dt;
-  const { speed: MAX, accel: ACC } = s.stats;
+  stepPower(s.power, dt);
+  const thr = boostOf(s.power, 'thrusters');
+  const MAX = s.stats.speed * thr, ACC = s.stats.accel * thr;
 
   let wantVx = 0, wantVy = 0;
   if (s.dx !== null) {
@@ -140,13 +144,14 @@ export function stepVitals(s, dt, docked = false) {
   // Repair only runs while nothing is shooting you. Otherwise a provoked alien
   // could follow you into the ring and the dock would simply out-heal it, which
   // would make running home a free escape and the chase pointless.
+  const shd = boostOf(s.power, 'shields');
   if (docked && s.sinceHit >= DOCK_INTERRUPT) {
-    s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * DOCK_SHIELD_MULT * dt);
+    s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * shd * DOCK_SHIELD_MULT * dt);
     s.hp     = Math.min(s.stats.hull,   s.hp     + s.stats.hull * DOCK_HULL_RATE * dt);
     return;
   }
-  if (s.sinceHit < s.stats.shieldDelay || s.shield >= s.stats.shield) return;
-  s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * dt);
+  if (s.sinceHit < s.stats.shieldDelay / shd || s.shield >= s.stats.shield) return;
+  s.shield = Math.min(s.stats.shield, s.shield + s.stats.shieldRegen * shd * dt);
 }
 
 export function applyDamage(s, amount) {
