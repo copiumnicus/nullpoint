@@ -6,7 +6,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DIR = 'data', FILE = path.join(DIR, 'accounts.json');
+// DATA_DIR lets a host point this at a mounted volume; without one the file is
+// wiped on every deploy and everybody loses their ship.
+const DIR = process.env.DATA_DIR || 'data';
+const FILE = path.join(DIR, 'accounts.json');
 
 export function load() {
   try {

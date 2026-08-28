@@ -63,7 +63,7 @@ const canvas = {
   setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight }),
 };
 globalThis.innerWidth = 1600; globalThis.innerHeight = 900; globalThis.devicePixelRatio = 2;
-globalThis.location = { host: 'localhost:3000' };
+globalThis.location = { host: 'localhost:3000', protocol: 'http:' };
 // seeded under the OLD key, to prove the rename migration runs
 const store = new Map([['aphelion.token', 'legacy-token']]);
 globalThis.localStorage = {

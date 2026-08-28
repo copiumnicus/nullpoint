@@ -17,7 +17,7 @@ import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop
          POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
 import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
-const PORT = 3000, TICK_HZ = 30;
+const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
 
 const FILES = {
   '/':                ['public/index.html', 'text/html'],
@@ -47,6 +47,12 @@ const server = http.createServer((req, res) => {
       return res.writeHead(404).end();
     res.writeHead(200, { 'content-type': SFX_TYPE[ext] });
     return res.end(fs.readFileSync(file));
+  }
+  if (url === '/healthz') {                       // most hosts want something to poll
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, game: GAME, online: players.size,
+                                    accounts: Object.keys(db.accounts).length,
+                                    uptime: Math.round(process.uptime()) }));
   }
   const hit = FILES[url];
   if (!hit) return res.writeHead(404).end();

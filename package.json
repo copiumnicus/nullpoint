@@ -3,10 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "node server.js",
     "dev": "node server.js",
     "test": "node test/account.mjs && node test/ships.mjs && node test/power.mjs && node test/cargo.mjs && node test/radar.mjs && node test/aliens.mjs && node test/sim.mjs && node test/render.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

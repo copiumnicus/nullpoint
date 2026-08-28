@@ -88,7 +88,9 @@ const cam = { x: 0, y: 0 };
 // --- net ---------------------------------------------------------------------
 // The token is the whole identity. It rides in the connect URL so the server can
 // resolve the account before the first frame, with no handshake round trip.
-const ws = new WebSocket(`ws://${location.host}/?t=${encodeURIComponent(readToken())}`);
+// wss when the page came over https, or the browser refuses it as mixed content.
+const WS_PROTO = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${WS_PROTO}//${location.host}/?t=${encodeURIComponent(readToken())}`);
 const send = o => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
 ws.onopen  = () => status = 'online';
 ws.onclose = () => status = 'disconnected';
