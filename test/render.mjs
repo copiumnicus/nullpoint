@@ -199,6 +199,35 @@ for (const id of Object.keys(MAPS)) {
     frame(t += 16); frames++;
   }
 }
+// Every module the page imports must be reachable, or the whole graph fails to
+// evaluate and the player gets a black screen with nothing in the console to
+// explain it. This is what shipping shared/level.js without serving it did.
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const root = new URL('../', import.meta.url).pathname;
+  const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const body = html.match(/<script type="module">([\s\S]*)<\/script>/)[1];
+  const grab = t => [...t.matchAll(/from '([^']+)'/g)].map(m => m[1]);
+  const seen = new Set(), queue = grab(body), missing = [], unserved = [];
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  while (queue.length) {
+    const url = queue.pop();
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const local = url === '/audio.js' ? 'public/audio.js' : url.replace(/^\//, '');
+    const abs = path.join(root, local);
+    if (!fs.existsSync(abs)) { missing.push(url); continue; }
+    // the server serves shared/*.js by pattern, anything else must be listed
+    if (!/^\/shared\/[a-z]+\.js$/.test(url) && !server.includes(`'${url}'`)) unserved.push(url);
+    for (const imp of grab(fs.readFileSync(abs, 'utf8')))
+      queue.push(imp.startsWith('.') ? '/shared/' + path.basename(imp) : imp);
+  }
+  if (missing.length) errs.push(`client imports files that do not exist: ${missing.join(', ')}`);
+  else if (unserved.length) errs.push(`client imports files the server will not serve: ${unserved.join(', ')}`);
+  else console.log(`imports: all ${seen.size} modules the page pulls in are reachable`);
+}
+
 // A rename must not orphan an existing pilot: the old key is read once, moved to
 // the new one, and the account survives.
 {
