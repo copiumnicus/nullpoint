@@ -25,9 +25,17 @@ export function fire(a, b, dt) {
   a.cool = 1 / a.stats.fireRate;
   a.shotFlash = SHOT_FLASH;
 
+  // Ships carry a cannon on each side and alternate between them, so fire comes
+  // from a hardpoint rather than from the middle of the hull. Aliens have no
+  // visible mounts, so they shoot from centre.
+  const side = a.muzzle ? 1 : -1;
+  a.muzzle = a.muzzle ? 0 : 1;
+  const ch = Math.cos(a.heading), sh = Math.sin(a.heading);
+  const fwd = a.isAlien ? 0 : a.r * 1.15, lat = a.isAlien ? 0 : a.r * 0.78 * side;
+
   const travel = d / BOLT_SPEED;
   return {
-    sx: a.x, sy: a.y,
+    sx: a.x + ch * fwd - sh * lat, sy: a.y + sh * fwd + ch * lat,
     ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
     dmg: a.stats.damage * boostOf(a.power, 'weapons', a.stats), target: b, foe: !!a.isAlien,
     w: a.guns ?? 1,                                   // a thicker beam for more emitters

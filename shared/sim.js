@@ -43,7 +43,7 @@ export const SHIELD_FLASH = 0.45; // s   how long an impact bubble stays lit
 export function newBody(x, y, stats, r) {
   return {
     x, y, vx: 0, vy: 0, heading: 0, stats, r,
-    power: newPower(stats.capacitor), shieldMult: 1, guns: 1,
+    power: newPower(stats.capacitor), shieldMult: 1, guns: 1, muzzle: 0,
     hp: stats.hull, shield: stats.shield, sinceHit: 1e9, shieldHit: 0,
     cool: 0, shotFlash: 0,
     jumpCd: 0, charge: 0, chargeTo: null,

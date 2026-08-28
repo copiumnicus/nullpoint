@@ -76,6 +76,25 @@ console.log('\nwhat the boost is worth');
   check('and the beam is as thick as the rack', shot.w === 2, '2 emitters fitted');
 }
 
+console.log('\ncannons');
+{
+  const s = newShip(0, 0, 'vanguard', { weapon: ['emitter1', 'emitter1'], generator: [], tech: [] });
+  s.heading = 0;                                   // nose along +x, so the mounts are +/- y
+  const mark = newShip(500, 0, 'kestrel');
+  const shots = [];
+  for (let i = 0; i < 4; i++) { s.cool = 0; shots.push(fire(s, mark, dt)); }
+  const sides = shots.map(b => Math.sign(+(b.sy - s.y).toFixed(6)));
+  console.log(`     muzzle offsets: ${shots.map(b => (b.sy - s.y).toFixed(1)).join(', ')}`);
+  check('shots leave a hardpoint, not the middle of the hull',
+    shots.every(b => Math.abs(b.sy - s.y) > 1 && b.sx > s.x));
+  check('and alternate between the two cannons',
+    sides.join() === '-1,1,-1,1' || sides.join() === '1,-1,1,-1');
+  const a = newShip(0, 0, 'vanguard'); a.isAlien = true; a.heading = 0; a.cool = 0;
+  const ab = fire(a, mark, dt);
+  check('a hostile with no visible mounts still fires from centre',
+    ab.sx === a.x && ab.sy === a.y);
+}
+
 console.log('\nshields scale the pool, charge included');
 {
   const s = newShip(0, 0, 'vanguard');
