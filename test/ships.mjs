@@ -35,8 +35,8 @@ check('flat adds apply before percentages', (() => {
   return r.hull === 1550 && Math.abs(r.speed - 340 * 0.91) < 1e-6;
 })());
 check('percentages sum instead of compounding', (() => {
-  const r = resolve('vanguard', fit({ generator: ['cell', 'cell'] }));   // -3% twice
-  return Math.abs(r.speed - 340 * 0.94) < 1e-6;               // 0.94, not 0.97²=0.9409
+  const r = resolve('vanguard', fit({ generator: ['cellA', 'cellA'] }));   // -2% twice
+  return Math.abs(r.speed - 340 * 0.96) < 1e-6;               // 0.96, not 0.98²=0.9604
 })(), 'two copies are worth two, never more');
 check('attributes are clamped to their floor', (() => {
   EQUIPMENT.__sink = { name: 'sink', slot: 'tech', price: 1, mods: [['speed', 'mul', -5]] };
@@ -55,33 +55,46 @@ const dominates = (A, B) => {
   const cmp = keys.map(k => (ATTRS[k].better === 'high' ? 1 : -1) * (A.attrs[k] - B.attrs[k]));
   return cmp.every(v => v >= 0) && cmp.some(v => v > 0);
 };
+const BOUGHT = Object.entries(HULLS).filter(([, h]) => h.price > 0);
 let dom = [];
-for (const [ka, A] of Object.entries(HULLS)) for (const [kb, B] of Object.entries(HULLS))
+for (const [ka, A] of BOUGHT) for (const [kb, B] of BOUGHT)
   if (ka !== kb && dominates(A, B)) dom.push(`${ka} > ${kb}`);
-check('no hull is strictly better than another', dom.length === 0, dom.join(', ') || 'all three are trade-offs');
-const totals = Object.keys(HULLS).map(h => SLOTS.reduce((n, s2) => n + slotsOf(h)[s2], 0));
-check('every hull has the same TOTAL slot count, distributed differently',
-  new Set(totals).size === 1 && new Set(Object.keys(HULLS).map(h => JSON.stringify(slotsOf(h)))).size === 3,
-  `${totals[0]} slots each: ` + Object.keys(HULLS).map(h => {
+check('no purchasable hull is strictly better than another', dom.length === 0,
+  dom.join(', ') || `${BOUGHT.length} ships, all trade-offs`);
+check('the starter is free and visibly outclassed, but not helpless', (() => {
+  const st = HULLS[DEFAULT_HULL];
+  return st.price === 0 && BOUGHT.every(([, h]) => dominates(h, st) || h.attrs.hull > st.attrs.hull)
+    && st.attrs.speed > 260 && st.attrs.cargo >= 90;
+})(), 'slower and softer than everything, but fast enough to kite and roomy enough to earn');
+check('prices climb with the ship', (() => {
+  const p2 = BOUGHT.map(([, h]) => h.price);
+  return p2.every((v, i) => i === 0 || v > p2[i - 1]);
+})(), BOUGHT.map(([, h]) => h.price).join(' < '));
+const totals = BOUGHT.map(([h]) => SLOTS.reduce((n, s2) => n + slotsOf(h)[s2], 0));
+check('every purchasable hull has the same TOTAL slots, distributed differently',
+  new Set(totals).size === 1 && new Set(BOUGHT.map(([h]) => JSON.stringify(slotsOf(h)))).size === BOUGHT.length,
+  `${totals[0]} slots each: ` + BOUGHT.map(([h]) => {
     const s2 = slotsOf(h); return `${h} W${s2.weapon}G${s2.generator}T${s2.tech}`; }).join(', '));
+check('the starter has fewer slots than any of them',
+  SLOTS.reduce((n, s2) => n + slotsOf(DEFAULT_HULL)[s2], 0) < totals[0]);
 
 console.log('\nfit validation');
 check('unknown items are dropped',
-  sanitiseFit('vanguard', fit({ weapon: ['emitter', 'wat'] })).weapon.join() === 'emitter');
+  sanitiseFit('vanguard', fit({ weapon: ['emitter1', 'wat'] })).weapon.join() === 'emitter1');
 check('an item in the wrong kind of slot is dropped',
-  sanitiseFit('vanguard', fit({ weapon: ['plating'], tech: ['emitter'] })).weapon.length === 0);
+  sanitiseFit('vanguard', fit({ weapon: ['plating'], tech: ['emitter1'] })).weapon.length === 0);
 check('weapons and generators stack, technologies do not',
-  sanitiseFit('bulwark', fit({ weapon: ['emitter', 'emitter'] })).weapon.length === 2
+  sanitiseFit('bulwark', fit({ weapon: ['emitter1', 'emitter1'] })).weapon.length === 2
   && sanitiseFit('kestrel', fit({ tech: ['plating', 'plating'] })).tech.length === 1,
   'or an interceptor with three tech slots out-tanks a cruiser');
 check('a rack cannot exceed the hull\'s slot count',
-  sanitiseFit('vanguard', fit({ weapon: Array(9).fill('emitter') })).weapon.length === slotsOf('vanguard').weapon);
+  sanitiseFit('vanguard', fit({ weapon: Array(9).fill('emitter1') })).weapon.length === slotsOf('vanguard').weapon);
 check('garbage input yields an empty rack',
   fitCount(sanitiseFit('vanguard', 'not-an-array')) === 0 && fitCount(sanitiseFit('vanguard', null)) === 0);
 check('changing hull returns whatever no longer fits to the locker', (() => {
-  const from = fit({ weapon: ['emitter', 'emitter', 'emitter', 'emitter'], tech: ['plating'] });
+  const from = fit({ weapon: ['emitter1', 'emitter1', 'emitter1', 'emitter1'], tech: ['plating'] });
   const { fit: kept, gear } = reseat(slotsOf('kestrel'), from, {});
-  return kept.weapon.length === 2 && gear.emitter === 2 && kept.tech.length === 1;
+  return kept.weapon.length === 2 && gear.emitter1 === 2 && kept.tech.length === 1;
 })(), 'nothing evaporates');
 
 console.log('\nvitals');
@@ -105,7 +118,7 @@ check('a ship dies when the hull is gone', hit.dead && s.hp === 0);
 
 console.log('\nmodules change the ship');
 const stock = newShip(0, 0, 'vanguard', []);
-const tanked = newShip(0, 0, 'vanguard', fit({ tech: ['plating'], generator: ['cell', 'cell'] }));
+const tanked = newShip(0, 0, 'vanguard', fit({ tech: ['plating'], generator: ['cellA', 'cellA'] }));
 check('a fit raises the pools it should',
   tanked.stats.hull > stock.stats.hull && tanked.stats.shield > stock.stats.shield,
   `${stock.stats.hull}/${stock.stats.shield} -> ${tanked.stats.hull}/${tanked.stats.shield}`);
@@ -252,7 +265,7 @@ const flown = (hull, fit = []) => {
 };
 const gap = r => DRIFT_MARGIN - r.depth;                  // px still between the wreck and the border
 const runs = [['kestrel', []], ['vanguard', []], ['bulwark', []],
-              ['bulwark', fit({ tech: ['plating'], generator: ['cell', 'cell'] })],   // the tankiest thing buildable
+              ['bulwark', fit({ tech: ['plating'], generator: ['cellA', 'cellA'] })],   // the tankiest thing buildable
               ['kestrel', ['thruster', 'ballast']]]             // and the fastest
   .map(([h, f]) => [`${h}${f.length ? '+' + f.length : ''}`, flown(h, f)]);
 runs.forEach(([h, r]) => console.log(`     ${h.padEnd(11)} dead at depth ${r.depth | 0}/${DRIFT_MARGIN}` +

@@ -1,12 +1,12 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { newAlien, respawnAlien, stepAlienAI, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
-import { HULLS, sanitiseFit, slotsOf, resolve, DEFAULT_HULL } from './shared/ships.js';
+import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit } from './shared/gear.js';
-import { routeTo } from './shared/power.js';
+import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
@@ -143,13 +143,14 @@ wss.on('connection', (ws, req) => {
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
-                    gear: { ...acct.gear },
+                    gear: { ...acct.gear }, hulls: [...acct.hulls],
                     scoop: null, want: null, dead: false });
   const outfit = () => ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
-                                                gear: players.get(id).gear, credits: players.get(id).credits }));
+                                                gear: players.get(id).gear, hulls: players.get(id).hulls,
+                                                credits: players.get(id).credits }));
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
                            map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit,
-                           gear: acct.gear, credits: acct.credits }));
+                           gear: acct.gear, hulls: acct.hulls, credits: acct.credits }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -164,8 +165,15 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
 
+    if (m.t === 'buyhull') {
+      if (!atStation() || !HULLS[m.key] || P.hulls.includes(m.key)) return;
+      if (P.credits < hullPrice(m.key)) return;
+      P.credits -= hullPrice(m.key);
+      P.hulls.push(m.key);
+      return outfit();
+    }
     if (m.t === 'hull') {
-      if (!atStation() || !HULLS[m.key]) return;
+      if (!atStation() || !HULLS[m.key] || !P.hulls.includes(m.key)) return;
       const moved = reseat(slotsOf(m.key), ship.fit, P.gear);      // whatever will not fit comes off
       P.gear = moved.gear;
       refit(ship, m.key, moved.fit);
@@ -395,9 +403,12 @@ setInterval(() => {
       heading: +p.ship.heading.toFixed(2), charge: +p.ship.charge.toFixed(2),
       co: p.co, hull: p.ship.hull,
       hp: Math.round(100 * p.ship.hp / p.ship.stats.hull),
-      sh: Math.round(100 * p.ship.shield / Math.max(1, p.ship.stats.shield)),
+      sh: Math.round(100 * p.ship.shield / Math.max(1, shieldMax(p.ship))),
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
-      tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH) });
+      tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH),
+      guns: p.ship.guns ?? 1,
+      psys: p.ship.power.to ? SYSTEMS.indexOf(p.ship.power.to) + 1 : 0,
+      plvl: p.ship.power.to ? Math.round(100 * levelOf(p.ship.power, p.ship.power.to, p.ship.stats)) : 0 });
     if (p.dead) continue;
     if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
     byMap.get(p.mapId).push({ id, co: p.co, ship: p.ship });
@@ -407,9 +418,10 @@ setInterval(() => {
     row.set(a.id, { id: a.id, x: Math.round(a.x), y: Math.round(a.y), heading: +a.heading.toFixed(2),
       charge: 0, co: 'x', hull: a.kind,
       hp: Math.round(100 * a.hp / a.stats.hull),
-      sh: Math.round(100 * a.shield / Math.max(1, a.stats.shield)),
+      sh: Math.round(100 * a.shield / Math.max(1, shieldMax(a))),
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
-      tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH) });
+      tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
+      guns: 1, psys: 0, plvl: 0 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
@@ -435,8 +447,12 @@ setInterval(() => {
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
-      power: { to: V.ship.power.to, thrusters: +V.ship.power.thrusters.toFixed(3),
-               weapons: +V.ship.power.weapons.toFixed(3), shields: +V.ship.power.shields.toFixed(3) },
+      // effective levels as whole percent, so the readout cannot jitter between
+      // 29 and 30 from a float that is a hair under one
+      power: { to: V.ship.power.to, cap: Math.round(100 * chargePct(V.ship.power, V.ship.stats)),
+               lv: Object.fromEntries(SYSTEMS.map(sy =>
+                 [sy, Math.round(100 * levelOf(V.ship.power, sy, V.ship.stats))])) },
+      shieldNow: Math.round(V.ship.shield), shieldMax: Math.round(shieldMax(V.ship)),
       scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / SCOOP_TIME).toFixed(2) } : undefined,
       want: V.want ?? undefined }));
   }

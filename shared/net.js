@@ -6,13 +6,14 @@
 // visibility as an impact flash. The order is declared once, here, and both sides
 // go through pack/unpack, so drifting apart is no longer possible.
 
-export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', 'hp', 'sh', 'flash', 'tgt', 'shot', 'vis'];
+export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', 'hp', 'sh', 'flash',
+                            'tgt', 'shot', 'guns', 'psys', 'plvl', 'vis'];
 
 // A bolt in flight: where it started, where it is aimed, how far along it is, and
 // whether a hostile fired it.
-export const BOLT_FIELDS = ['sx', 'sy', 'ax', 'ay', 'p', 'foe'];
+export const BOLT_FIELDS = ['sx', 'sy', 'ax', 'ay', 'p', 'foe', 'w'];
 export const packBolt   = o   => [Math.round(o.sx), Math.round(o.sy), Math.round(o.ax), Math.round(o.ay),
-                                  +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0];
+                                  +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0, o.w ?? 1];
 export const unpackBolt = arr => { const o = {}; for (let i = 0; i < BOLT_FIELDS.length; i++) o[BOLT_FIELDS[i]] = arr[i]; return o; };
 
 // A kill flash: where it happened, how big the thing was, how far along the

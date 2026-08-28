@@ -8,32 +8,40 @@
 export const SLOTS = ['weapon', 'generator', 'tech'];
 
 export const EQUIPMENT = {
-  emitter: {
-    name: 'MK-I Emitter', slot: 'weapon', price: 900,
-    blurb: 'A laser. Adds its output to the hull\'s own.',
-    mods: [['damage', 'add', 18]],
-  },
-  cell: {
-    name: 'A-Cell Generator', slot: 'generator', price: 1200,
-    blurb: 'Shield capacity and recovery, at the cost of mass.',
-    mods: [['shield', 'add', 240], ['shieldRegen', 'add', 9], ['speed', 'mul', -0.03]],
-  },
+  // weapons — each adds its output to the hull's own, and a visibly thicker beam
+  emitter1: { name: 'MK-I Emitter',  slot: 'weapon', tier: 1, price:   900,
+              blurb: 'A laser.', mods: [['damage', 'add', 18]] },
+  emitter2: { name: 'MK-II Emitter', slot: 'weapon', tier: 2, price:  2600,
+              blurb: 'A better laser.', mods: [['damage', 'add', 30]] },
+  emitter3: { name: 'MK-III Emitter', slot: 'weapon', tier: 3, price: 7200,
+              blurb: 'About as much as a hardpoint will carry.', mods: [['damage', 'add', 46]] },
 
-  plating: {
-    name: 'Composite Plating', slot: 'tech', price: 2600,
-    blurb: 'Hull at the cost of speed.',
-    mods: [['hull', 'add', 450], ['speed', 'mul', -0.09]],
-  },
-  damper: {
-    name: 'Signal Damper', slot: 'tech', price: 3400,
-    blurb: 'Hard to track, and half blind.',
-    mods: [['signature', 'mul', -0.5], ['radar', 'mul', -0.25]],
-  },
-  expander: {
-    name: 'Hold Expander', slot: 'tech', price: 2200,
-    blurb: 'Room for more ore, and slower with it.',
-    mods: [['cargo', 'mul', 0.65], ['speed', 'mul', -0.12]],
-  },
+  // generators — reactor gear. Capacitor, recharge and the free trickle.
+  cellA: { name: 'A-Cell Generator', slot: 'generator', tier: 1, price:  1200,
+           blurb: 'A little more reactor, a little more shield.',
+           mods: [['capacitor', 'add', 8], ['recharge', 'add', 0.4], ['shield', 'add', 120], ['speed', 'mul', -0.02]] },
+  cellB: { name: 'B-Cell Generator', slot: 'generator', tier: 2, price:  3400,
+           blurb: 'Holds more, and trickles harder.',
+           mods: [['capacitor', 'add', 16], ['recharge', 'add', 0.8], ['sustain', 'add', 0.02],
+                  ['shield', 'add', 200], ['speed', 'mul', -0.03]] },
+  cellC: { name: 'C-Cell Generator', slot: 'generator', tier: 3, price:  8800,
+           blurb: 'A reactor you can lean on.',
+           mods: [['capacitor', 'add', 26], ['recharge', 'add', 1.3], ['sustain', 'add', 0.04],
+                  ['shield', 'add', 300], ['speed', 'mul', -0.04]] },
+
+  // technologies — one of each, and every one costs you something
+  plating:  { name: 'Composite Plating', slot: 'tech', price: 2600,
+              blurb: 'Hull at the cost of speed.',
+              mods: [['hull', 'add', 450], ['speed', 'mul', -0.09]] },
+  damper:   { name: 'Signal Damper', slot: 'tech', price: 3400,
+              blurb: 'Hard to track, and half blind.',
+              mods: [['signature', 'mul', -0.5], ['radar', 'mul', -0.25]] },
+  expander: { name: 'Hold Expander', slot: 'tech', price: 2200,
+              blurb: 'Room for more ore, and slower with it.',
+              mods: [['cargo', 'mul', 0.65], ['speed', 'mul', -0.12]] },
+  flywheel: { name: 'Reactor Flywheel', slot: 'tech', price: 4200,
+              blurb: 'A far bigger capacitor, and slower shields.',
+              mods: [['capacitor', 'mul', 0.55], ['shieldRegen', 'mul', -0.22]] },
 };
 
 export const priceOf = key => EQUIPMENT[key]?.price ?? Infinity;

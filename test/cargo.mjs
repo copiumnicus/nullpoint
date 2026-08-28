@@ -53,7 +53,7 @@ for (const [kind, table] of Object.entries(DROPS)) {
 }
 
 console.log('\nholds');
-const caps = Object.keys(HULLS).map(h => [h, resolve(h).cargo]);
+const caps = Object.keys(HULLS).filter(h => HULLS[h].price > 0).map(h => [h, resolve(h).cargo]);
 caps.forEach(([h, c]) => console.log(`     ${h.padEnd(9)} ${String(c).padStart(4)}` +
   `   with a Hold Expander ${Math.round(resolve(h, { weapon: [], generator: [], tech: ['expander'] }).cargo)}`));
 check('a bigger hull carries more', caps[0][1] < caps[1][1] && caps[1][1] < caps[2][1]);

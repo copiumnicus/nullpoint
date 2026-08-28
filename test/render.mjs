@@ -143,7 +143,9 @@ for (const id of Object.keys(MAPS)) {
   ], pods: Object.keys(MATERIALS).map((mat, i) =>
     packPod({ id: i + 1, x: 5800 + i * 120, y: 4400, mat, n: i + 1 })),
     hold: { iron: 6, platinum: 3, iridium: 1 }, cap: 60, credits: 4820, docked: true,
-    gear: { emitter: 2 }, power: { to: 'weapons', thrusters: 0.2, weapons: 0.9, shields: 0 },
+    gear: { emitter1: 2 }, hulls: ['hauler','vanguard'],
+    power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
+    shieldNow: 640, shieldMax: 1170,
     vault: { iron: 240, nickel: 88, rhodium: 4 },
     scoop: { id: 1, p: 0.4 } });
   feed({ t: 'award', amount: 140, what: 'Drifter', total: 4960 });
@@ -154,8 +156,8 @@ for (const id of Object.keys(MAPS)) {
   listeners.keydown.forEach(fn => fn({ key: 'h' }));           // hangar
   frame(t += 16); frames++;
   for (const h of ['kestrel', 'bulwark']) {                    // every hull, every module
-    feed({ t: 'fit', hull: h, fit: { weapon: ['emitter'], generator: ['cell'], tech: ['plating'] },
-           gear: { emitter: 2, damper: 1 }, credits: 9000 });
+    feed({ t: 'fit', hull: h, fit: { weapon: ['emitter1'], generator: ['cellA'], tech: ['plating'] },
+           gear: { emitter1: 2, damper: 1 }, hulls: ['hauler','vanguard'], credits: 9000 });
     frame(t += 16); frames++;
   }
   listeners.keydown.forEach(fn => fn({ key: 'h' }));
@@ -216,7 +218,7 @@ for (const id of Object.keys(MAPS)) {
   for (const { r } of L.store) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
   frame(t += 16); frames++;
   const kinds = new Set(sent.map(m => m.t));
-  for (const want of ['hull', 'install', 'buy'])
+  for (const want of ['install', 'buy'])
     if (!kinds.has(want)) errs.push(`clicking every station row never produced a "${want}"`);
   if (kinds.size) console.log(`station: ${L.hulls.length} hulls + ${L.racks.filter(r => !r.header).length} slots + ` +
     `${L.store.length} store rows all reachable, sent ${[...kinds].join(', ')}`);

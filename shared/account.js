@@ -25,7 +25,8 @@ export function newAccount(token, seq, now) {
   return {
     token, seq, co, name: callsign(seq),
     // one emitter in the rack, so a new pilot is armed rather than helpless
-    hull: DEFAULT_HULL, fit: { ...emptyFit(), weapon: ['emitter'] }, gear: {},
+    hull: DEFAULT_HULL, fit: { ...emptyFit(), weapon: ['emitter1'] }, gear: {},
+    hulls: [DEFAULT_HULL],                        // the ships you own, not just the one you fly
     credits: 0, vault: {}, hold: {},
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
@@ -45,9 +46,11 @@ export function sanitiseAccount(a, seq, now) {
   const gear = Object.fromEntries(Object.entries(a?.gear ?? {})
     .filter(([k, n]) => EQUIPMENT[k] && Number.isFinite(n) && n > 0)
     .map(([k, n]) => [k, Math.floor(n)]));
+  const hulls = [...new Set([DEFAULT_HULL, ...(Array.isArray(a?.hulls) ? a.hulls : [])].filter(h => HULLS[h]))];
+  const flying = hulls.includes(hull) ? hull : DEFAULT_HULL;
   return {
     token: a.token, seq, co, name: typeof a?.name === 'string' ? a.name : callsign(seq),
-    hull, fit: sanitiseFit(hull, a?.fit), gear,
+    hull: flying, fit: sanitiseFit(flying, a?.fit), gear, hulls,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,
@@ -63,6 +66,7 @@ export function capture(account, p, now) {
   account.hull = p.ship.hull;
   account.fit = sanitiseFit(p.ship.hull, p.ship.fit);
   account.gear = { ...p.gear };
+  account.hulls = [...p.hulls];
   account.credits = p.credits;
   account.vault = { ...p.vault };
   account.hold = { ...p.hold };

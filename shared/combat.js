@@ -29,7 +29,8 @@ export function fire(a, b, dt) {
   return {
     sx: a.x, sy: a.y,
     ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
-    dmg: a.stats.damage * boostOf(a.power, 'weapons'), target: b, foe: !!a.isAlien,
+    dmg: a.stats.damage * boostOf(a.power, 'weapons', a.stats), target: b, foe: !!a.isAlien,
+    w: a.guns ?? 1,                                   // a thicker beam for more emitters
     t: travel, ttl: Math.max(0.001, travel),
   };
 }
