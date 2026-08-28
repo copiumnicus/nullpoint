@@ -27,7 +27,7 @@ export function newAccount(token, seq, now) {
     // one emitter in the rack, so a new pilot is armed rather than helpless
     hull: DEFAULT_HULL, fit: { ...emptyFit(), weapon: ['emitter1'] }, gear: {},
     hulls: [DEFAULT_HULL],                        // the ships you own, not just the one you fly
-    credits: 0, xp: 0, drones: [], vault: {}, hold: {},
+    credits: 0, xp: 0, drones: [], vault: {}, hold: {}, admin: false,
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
   };
@@ -53,6 +53,7 @@ export function sanitiseAccount(a, seq, now) {
     hull: flying, fit: sanitiseFit(flying, a?.fit), gear, hulls,
     drones: sanitiseDrones(a?.drones, sanitiseFit(flying, a?.fit)),
     xp: Number.isFinite(a?.xp) ? Math.max(0, Math.floor(a.xp)) : 0,
+    admin: a?.admin === true,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,

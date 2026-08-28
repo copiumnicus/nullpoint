@@ -13,6 +13,7 @@ import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice } from '/shared/gear.js';
 import { levelFor, progress } from '/shared/level.js';
+import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { SYSTEMS, BOOST } from '/shared/power.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout } from '/shared/hangar.js';
@@ -81,6 +82,10 @@ let invOpen = false, notice = null;
 const prevShot = new Map();       // for spotting the frame a gun goes off
 let thrust = 0, lastFrameAt = 0, prevSelf = null;
 let dead = null;                  // { lost, at } while you are a wreck
+// Chat, with a console inside it. While it is open every keystroke belongs to the
+// line being typed — otherwise 'h' would open the hangar mid-sentence.
+let chatOpen = false, chatLine = '', amAdmin = false;
+const chatLog = [];
 // Sitting idle keeps a socket, a ship and a ticking world alive for nobody. Sign
 // yourself out and the server can stop simulating entirely.
 const IDLE_LIMIT = 30 * 60 * 1000;
@@ -105,12 +110,17 @@ ws.onmessage = e => {
   if (m.t === 'welcome') {
     myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? {}; myHulls = m.hulls ?? [myHull]; credits = m.credits ?? 0;
-    myDrones = m.drones ?? []; myXp = m.xp ?? 0;
+    myDrones = m.drones ?? []; myXp = m.xp ?? 0; amAdmin = !!m.admin;
     myName = m.name ?? '';
     if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
     return;
   }
   if (m.t === 'bumped') { status = 'signed in from another tab'; return; }
+  if (m.t === 'chat') {
+    chatLog.push({ from: m.from ?? '', co: m.co, text: String(m.text ?? '').slice(0, MAX_LEN), at: performance.now() });
+    while (chatLog.length > LOG_KEEP) chatLog.shift();
+    return;
+  }
   if (m.t === 'fit') {                            // the station confirming a change
     myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? myGear;
@@ -232,6 +242,24 @@ function nearestHostile() {
 addEventListener('keydown', e => {
   audioReady();                                   // browsers want a gesture first
   stir();
+
+  if (chatOpen) {                                 // the line owns the keyboard
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (chatLine.trim()) send({ t: 'chat', text: chatLine });
+      chatLine = ''; chatOpen = false;
+      return;
+    }
+    if (e.key === 'Escape')    { e.preventDefault(); chatLine = ''; chatOpen = false; return; }
+    if (e.key === 'Backspace') { e.preventDefault(); chatLine = chatLine.slice(0, -1); return; }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (chatLine.length < MAX_LEN) chatLine += e.key;
+    }
+    return;
+  }
+  if (e.key === 'Enter' && !dead) { e.preventDefault(); chatOpen = true; chatLine = ''; return; }
+
   const k = e.key.toLowerCase();
   if (k === 'v') say(toggleAudio() ? 'Sound on' : 'Sound off', '#8ab4e6');
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
@@ -1353,6 +1381,7 @@ function drawFrame(now) {
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();
   if (dead) drawWreck(now);
+  if (chatOpen || chatLog.length) drawChat(now);
 
   if (!signedOff && performance.now() - lastInput > IDLE_LIMIT) {
     signedOff = true;
@@ -1360,6 +1389,49 @@ function drawFrame(now) {
     status = 'signed out';
   }
   if (signedOff) drawSignedOff();
+}
+
+function drawChat(now) {
+  const w = Math.min(620, VIEW_W - 80), x = (VIEW_W - w) / 2;
+  const recent = chatLog.filter(m => chatOpen || now - m.at < 12000).slice(-8);
+  const lineH = 18, boxH = recent.length * lineH + (chatOpen ? 34 : 8);
+  if (!boxH) return;
+  const y = VIEW_H * 0.42 - boxH / 2;
+
+  g.fillStyle = chatOpen ? 'rgba(6,10,16,0.9)' : 'rgba(6,10,16,0.55)';
+  g.fillRect(x, y, w, boxH);
+  if (chatOpen) { g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w - 1, boxH - 1); }
+
+  g.font = '12px ui-monospace, monospace'; g.textAlign = 'left';
+  recent.forEach((m, i) => {
+    const ty = y + 6 + i * lineH + 12;
+    if (m.from) {
+      g.fillStyle = COMPANIES[m.co]?.color ?? '#8ab4e6';
+      g.fillText(m.from, x + 10, ty);
+      g.fillStyle = '#cfe4ff';
+      g.fillText(m.text, x + 12 + g.measureText(m.from).width + 6, ty);
+    } else {
+      g.fillStyle = '#8ab4e6';                     // the console answering you
+      g.fillText(m.text, x + 10, ty);
+    }
+  });
+
+  if (chatOpen) {
+    const iy = y + boxH - 24;
+    g.fillStyle = 'rgba(255,255,255,0.04)'; g.fillRect(x + 6, iy, w - 12, 20);
+    g.fillStyle = amAdmin ? '#ffd479' : '#66748c';
+    g.fillText(amAdmin ? '»' : '>', x + 12, iy + 14);
+    g.fillStyle = '#fff';
+    g.fillText(chatLine, x + 26, iy + 14);
+    if ((now / 500 | 0) % 2) {
+      g.fillStyle = '#7de08a';
+      g.fillRect(x + 27 + g.measureText(chatLine).width, iy + 4, 7, 13);
+    }
+    g.fillStyle = '#3d4757'; g.textAlign = 'right';
+    g.fillText(amAdmin ? '/help · admin' : '/help', x + w - 10, iy + 14);
+    g.textAlign = 'left';
+  }
+  g.font = '12px ui-monospace, monospace';
 }
 
 function drawSignedOff() {

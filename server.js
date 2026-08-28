@@ -8,6 +8,7 @@ import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from '.
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones } from './shared/gear.js';
 import { levelFor } from './shared/level.js';
+import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
@@ -57,6 +58,13 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'content-type': hit[1] });
   res.end(fs.readFileSync(hit[0]));
 });
+
+// Cheats are opt-in and off by default. `npm run dev` sets DEV_ADMIN=1; `npm start`,
+// which is what a host runs, does not — so the deployed game has no console unless
+// a specific token is named in ADMIN_TOKENS.
+const DEV_ADMIN = process.env.DEV_ADMIN === '1';
+const ADMIN_TOKENS = new Set((process.env.ADMIN_TOKENS ?? '').split(',').map(t => t.trim()).filter(Boolean));
+const isAdmin = acct => DEV_ADMIN || acct.admin === true || ADMIN_TOKENS.has(acct.token);
 
 const players = new Map();   // id -> live session
 let nextId = 1;
@@ -171,7 +179,7 @@ wss.on('connection', (ws, req) => {
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
                            map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit,
                            gear: acct.gear, hulls: acct.hulls, credits: acct.credits,
-                           drones: acct.drones, xp: acct.xp }));
+                           drones: acct.drones, xp: acct.xp, admin: isAdmin(acct) }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -185,6 +193,77 @@ wss.on('connection', (ws, req) => {
     const atStation = () => MAPS[P.mapId].owner === P.co && inBase(MAPS[P.mapId], ship);
 
     if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
+
+    if (m.t === 'chat') {
+      const line = parse(m.text);
+      const tell = text => ws.readyState === 1 && ws.send(JSON.stringify({ t: 'chat', from: '', text }));
+
+      if (line.say !== undefined) {                 // ordinary talk, to your sector
+        if (!line.say) return;
+        const out = JSON.stringify({ t: 'chat', from: acct.name, co: P.co, text: line.say.slice(0, MAX_LEN) });
+        for (const q of players.values()) if (q.mapId === P.mapId && q.ws.readyState === 1) q.ws.send(out);
+        return;
+      }
+
+      const spec = COMMANDS[line.cmd];
+      if (!spec) return tell(`no such command: /${line.cmd} — try /help`);
+      if (spec.admin && !isAdmin(acct)) return tell(`/${line.cmd} is not available here`);
+      const [a1, a2] = line.args;
+
+      switch (line.cmd) {
+        case 'help':
+          return tell('commands: ' + Object.entries(COMMANDS)
+            .filter(([, c]) => !c.admin || isAdmin(acct))
+            .map(([k, c]) => '/' + k + (c.args ? ' ' + c.args : '')).join('   '));
+        case 'where':
+          return tell(`${MAPS[P.mapId].name} — ${MAPS[P.mapId].owner
+            ? COMPANIES[MAPS[P.mapId].owner].tag + ' space' : 'contested'}`);
+        case 'money':
+          P.credits += amount(a1); touch(P); outfit();
+          return tell(`credits: ${P.credits}`);
+        case 'xp': {
+          const before = levelFor(P.xp).level;
+          P.xp += amount(a1); touch(P);
+          const after = levelFor(P.xp).level;
+          return tell(`experience: ${P.xp} — level ${after}${after > before ? ' (up)' : ''}`);
+        }
+        case 'gear': {
+          if (!EQUIPMENT[a1]) return tell('items: ' + Object.keys(EQUIPMENT).join(' '));
+          P.gear[a1] = (P.gear[a1] ?? 0) + amount(a2 ?? 1, 99);
+          touch(P); outfit();
+          return tell(`locker: ${a1} x${P.gear[a1]}`);
+        }
+        case 'ship': {
+          if (!HULLS[a1]) return tell('hulls: ' + Object.keys(HULLS).join(' '));
+          if (!P.hulls.includes(a1)) P.hulls.push(a1);
+          touch(P); outfit();
+          return tell(`${HULLS[a1].name} is yours — switch to it at the dock`);
+        }
+        case 'ore': {
+          if (!MATERIALS[a1]) return tell('metals: ' + Object.keys(MATERIALS).join(' '));
+          P.vault[a1] = (P.vault[a1] ?? 0) + amount(a2 ?? 100, 99999);
+          touch(P);
+          return tell(`hangar: ${MATERIALS[a1].name} x${P.vault[a1]}`);
+        }
+        case 'tp': {
+          if (!MAPS[a1]) return tell('sectors: ' + Object.keys(MAPS).join(' '));
+          const at = arrivalFor(P.mapId, MAPS[a1]);
+          P.mapId = a1; P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
+          Object.assign(ship, { x: at.x, y: at.y, vx: 0, vy: 0, tx: null, ty: null,
+                                dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: JUMP_CD });
+          touch(P);
+          ws.send(JSON.stringify({ t: 'map', map: a1 }));
+          return tell(`jumped to ${MAPS[a1].name}`);
+        }
+        case 'heal':
+          ship.hp = ship.stats.hull;
+          ship.shield = ship.stats.shield * (ship.shieldMult ?? 1);
+          ship.power.charge = ship.stats.capacitor;
+          ship.sinceHit = 1e9;
+          return tell('patched up');
+      }
+      return;
+    }
 
     if (m.t === 'buyhull') {
       if (!atStation() || !HULLS[m.key] || P.hulls.includes(m.key)) return;

@@ -352,6 +352,35 @@ for (const id of Object.keys(MAPS)) {
 
 // Signing out is terminal until the page reloads, so this runs last — anything
 // after it would find every click swallowed by the reconnect prompt.
+  // Chat owns the keyboard while it is open, or typing would fire game hotkeys.
+  {
+    feed({ t: 'welcome', id: 1, token: 't', name: 'Vex-1', map: 'm1', co: 'm', hull: 'vanguard',
+           fit: { weapon: ['emitter1'], generator: [], tech: [] }, gear: {}, hulls: ['hauler', 'vanguard'],
+           credits: 0, drones: [], xp: 0, admin: true });
+    sent.length = 0;
+    evt('keydown', { key: 'Enter' });
+    for (const ch of '/money 100') evt('keydown', { key: ch });
+    frame(t += 16); frames++;
+    if (sent.length) errs.push(`typing sent ${sent.map(m => m.t)} instead of staying in the line`);
+    evt('keydown', { key: 'Enter' });
+    const said = sent.find(m => m.t === 'chat');
+    if (said?.text !== '/money 100') errs.push(`chat sent ${JSON.stringify(said?.text)}`);
+    else console.log('chat: ENTER opens it, typing stays in the line, ENTER sends');
+
+    // 'h' and 'i' must not have opened panels while typing
+    sent.length = 0;
+    evt('keydown', { key: 'Enter' });
+    for (const ch of 'hi123x') evt('keydown', { key: ch });
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'power' || m.t === 'target'))
+      errs.push('game hotkeys fired while the chat line had focus');
+    else console.log('chat: h i 1 2 3 x are letters while typing, not hotkeys');
+    evt('keydown', { key: 'Escape' });
+    feed({ t: 'chat', from: 'Harrow-2', co: 'h', text: 'hello' });
+    feed({ t: 'chat', from: '', text: 'credits: 100' });
+    frame(t += 16); frames++;
+  }
+
   // idle sign-out: the clock only advances with no input, and a click brings you back
   {
     const perf = performance.now;
