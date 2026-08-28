@@ -378,7 +378,15 @@ for (const id of Object.keys(MAPS)) {
     evt('keydown', { key: 'Escape' });
     feed({ t: 'chat', from: 'Harrow-2', co: 'h', text: 'hello' });
     feed({ t: 'chat', from: '', text: 'credits: 100' });
-    frame(t += 16); frames++;
+    frame(t += 16); frames++;                      // lingering, closed
+    const perf = performance.now;
+    performance.now = () => perf.call(performance) + 6000;
+    frame(t += 16); frames++;                      // long gone
+    evt('keydown', { key: 'Enter' });
+    frame(t += 16); frames++;                      // reopened: history is back
+    evt('keydown', { key: 'Escape' });
+    performance.now = perf;
+    console.log('chat: lingers briefly when closed, full history when reopened');
   }
 
   // idle sign-out: the clock only advances with no input, and a click brings you back

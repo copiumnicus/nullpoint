@@ -85,6 +85,7 @@ let dead = null;                  // { lost, at } while you are a wreck
 // Chat, with a console inside it. While it is open every keystroke belongs to the
 // line being typed — otherwise 'h' would open the hangar mid-sentence.
 let chatOpen = false, chatLine = '', amAdmin = false;
+const CHAT_LINGER = 4000, CHAT_FADE = 1200;   // gone shortly after you stop typing
 const chatLog = [];
 // Sitting idle keeps a socket, a ship and a ticking world alive for nobody. Sign
 // yourself out and the server can stop simulating entirely.
@@ -1381,7 +1382,7 @@ function drawFrame(now) {
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();
   if (dead) drawWreck(now);
-  if (chatOpen || chatLog.length) drawChat(now);
+  if (chatOpen || chatLog.some(m => now - m.at < CHAT_LINGER)) drawChat(now);
 
   if (!signedOff && performance.now() - lastInput > IDLE_LIMIT) {
     signedOff = true;
@@ -1393,18 +1394,32 @@ function drawFrame(now) {
 
 function drawChat(now) {
   const w = Math.min(620, VIEW_W - 80), x = (VIEW_W - w) / 2;
-  const recent = chatLog.filter(m => chatOpen || now - m.at < 12000).slice(-8);
+  // Open, it is a window onto the whole conversation. Closed, only the last few
+  // lines linger, and only briefly — the history is there when you ask for it.
+  const recent = chatOpen ? chatLog.slice(-8)
+                          : chatLog.filter(m => now - m.at < CHAT_LINGER).slice(-4);
+  if (!recent.length && !chatOpen) return;
   const lineH = 18, boxH = recent.length * lineH + (chatOpen ? 34 : 8);
-  if (!boxH) return;
   const y = VIEW_H * 0.42 - boxH / 2;
+  const fadeOf = m => {
+    if (chatOpen) return 1;
+    const left = CHAT_LINGER - (now - m.at);
+    return Math.max(0, Math.min(1, left / CHAT_FADE));
+  };
 
-  g.fillStyle = chatOpen ? 'rgba(6,10,16,0.9)' : 'rgba(6,10,16,0.55)';
-  g.fillRect(x, y, w, boxH);
-  if (chatOpen) { g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w - 1, boxH - 1); }
+  if (chatOpen) {
+    g.fillStyle = 'rgba(6,10,16,0.9)'; g.fillRect(x, y, w, boxH);
+    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w - 1, boxH - 1);
+  }
 
   g.font = '12px ui-monospace, monospace'; g.textAlign = 'left';
   recent.forEach((m, i) => {
     const ty = y + 6 + i * lineH + 12;
+    g.globalAlpha = fadeOf(m);
+    if (!chatOpen) {                               // no panel when closed, so a shadow keeps it legible
+      g.lineWidth = 3; g.strokeStyle = 'rgba(4,7,12,0.85)';
+      g.strokeText((m.from ? m.from + '  ' : '') + m.text, x + 10, ty);
+    }
     if (m.from) {
       g.fillStyle = COMPANIES[m.co]?.color ?? '#8ab4e6';
       g.fillText(m.from, x + 10, ty);
@@ -1414,6 +1429,7 @@ function drawChat(now) {
       g.fillStyle = '#8ab4e6';                     // the console answering you
       g.fillText(m.text, x + 10, ty);
     }
+    g.globalAlpha = 1;
   });
 
   if (chatOpen) {
