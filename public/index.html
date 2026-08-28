@@ -952,7 +952,10 @@ function drawFrame(now) {
       const inRange = Math.hypot(s.rx - me.rx, s.ry - me.ry) <= st.weaponRange;
       g.fillStyle = inRange ? '#ff5c6b' : '#7a5a60';
       g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
-      g.fillText(`${ALIENS[s.hull]?.name ?? '?'}  ${s.hp}%` + (inRange ? '' : '  OUT OF RANGE'), s.rx, s.ry - rr - 8);
+      const running = s.hp <= 10;
+      g.fillStyle = running ? '#ffc14d' : (inRange ? '#ff5c6b' : '#7a5a60');
+      g.fillText(`${ALIENS[s.hull]?.name ?? '?'}  ${s.hp}%` +
+                 (running ? '  FLEEING' : inRange ? '' : '  OUT OF RANGE'), s.rx, s.ry - rr - 8);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
 

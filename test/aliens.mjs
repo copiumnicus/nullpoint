@@ -1,4 +1,5 @@
-import { ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, forgetPlayer, roamPoint, rng } from '../shared/aliens.js';
+import { ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
+         forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
@@ -168,6 +169,44 @@ fight(kStandFoe, kStand, 200, { playerFires: true });
 check('an interceptor dies if it stands and trades', kStand.hp <= 0);
 check('but wins by holding range', kFoe.hp <= 0 && kite.hp > 0,
   'speed and reach are the answer, not hull');
+
+console.log('\nbreaking off when it is losing');
+{
+  const hurt = (frac) => { const a = foe(6000, 4000, 6); a.hp = a.stats.hull * frac;
+                           a.provoked.add(1); a.target = 1; return a; };
+  const chaser = hurt(0.5), prey = newShip(6500, 4000, 'vanguard');
+  const r1 = fight(chaser, prey, 3);
+  check('still fighting at half hull', r1.everTargeted && r1.fired > 0);
+
+  const runner = hurt(ALIENS.drifter.flee), quarry = newShip(6500, 4000, 'vanguard');
+  const gap0 = Math.hypot(runner.x - quarry.x, runner.y - quarry.y);
+  const r2 = fight(runner, quarry, 6);
+  const gap1 = Math.hypot(runner.x - quarry.x, runner.y - quarry.y);
+  console.log(`     at ${Math.round(ALIENS.drifter.flee * 100)}% hull it opened the range ${gap0 | 0} -> ${gap1 | 0}px in 6s`);
+  check('at its threshold it runs instead', gap1 > gap0 + 400);
+  check('and stops shooting while it runs', r2.fired === 0 && ehp(quarry) === full(quarry));
+  check('but it is still trackable and still killable', runner.target === 1 && runner.hp > 0);
+
+  const cornered = hurt(0.05); cornered.x = 700; cornered.y = 700;
+  const pursuer = newShip(1200, 1200, 'vanguard');
+  fight(cornered, pursuer, 20);
+  check('running never takes it out of charted space',
+    cornered.x > 0 && cornered.y > 0 && cornered.x < MAP_W && cornered.y < MAP_H
+    && cornered.hp === cornered.stats.hull * 0.05, 'no shear damage taken');
+
+  const escaped = foe(3000, 3000, 8);
+  escaped.hp = escaped.stats.hull * 0.1; escaped.sinceHit = 0;
+  for (let i = 0; i < 30 * (REPAIR_QUIET - 1); i++) stepAlienRepair(escaped, dt);
+  check('it does not patch up while it is still being shot at',
+    escaped.hp === escaped.stats.hull * 0.1, `${REPAIR_QUIET}s of quiet first`);
+  for (let i = 0; i < 30 * 60; i++) { escaped.sinceHit += dt; stepAlienRepair(escaped, dt); }
+  check('left alone long enough it repairs', escaped.hp === escaped.stats.hull,
+    'or an escapee is free salvage for whoever finds it next');
+  const engaged = foe(3000, 3000, 9);
+  engaged.hp = engaged.stats.hull * 0.1; engaged.sinceHit = 1e9; engaged.target = 1;
+  for (let i = 0; i < 30 * 30; i++) stepAlienRepair(engaged, dt);
+  check('it never repairs mid-fight', engaged.hp === engaged.stats.hull * 0.1);
+}
 
 console.log('\ndodging');
 {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
-import { newAlien, respawnAlien, stepAlienAI, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
+import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit } from './shared/gear.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
@@ -333,7 +333,7 @@ setInterval(() => {
     for (const a of list) {
       if (a.dead > 0) { a.dead -= dt; if (a.dead <= 0) respawnAlien(a, map); continue; }
       const tgt = stepAlienAI(a, map, here, dt);
-      step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false);
+      step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
       const victim = tgt ? here.find(c => c.id === tgt) : null;
       faceTarget(a, victim?.ship);
       const shot = fire(a, victim?.ship ?? null, dt);

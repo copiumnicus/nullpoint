@@ -26,6 +26,7 @@ export const ALIENS = {
     aggro: 420,       // picks a fight inside this
     leash: 1600,      // beyond this it starts losing interest
     patience: 3.0,    // s outside leash before it gives up and forgets you
+    flee: 0.10,       // turns and runs at this fraction of hull
     respawn: 14,      // s
     bounty: 140,      // credits your company pays for the kill
   },
@@ -79,6 +80,17 @@ export function forgetPlayer(list, id) {
   }
 }
 
+// A hostile that got away and has been left alone long enough patches itself up.
+// Without this a wreck that escaped once wanders at a tenth of its hull forever,
+// free salvage for whoever finds it next.
+export const REPAIR_RATE = 0.04;    // of max hull per second
+export const REPAIR_QUIET = 8;      // s of not being shot at before it starts
+
+export function stepAlienRepair(a, dt) {
+  if (a.target !== null || a.sinceHit < REPAIR_QUIET || a.hp >= a.stats.hull) return;
+  a.hp = Math.min(a.stats.hull, a.hp + a.stats.hull * REPAIR_RATE * dt);
+}
+
 export function respawnAlien(a, map) {
   const at = roamPoint(map, a.rand);
   a.x = at.x; a.y = at.y; a.vx = a.vy = 0;
@@ -121,6 +133,16 @@ export function stepAlienAI(a, map, contenders, dt) {
   }
 
   if (t) {
+    // Badly hurt, it stops fighting and runs — still tracked, still shootable,
+    // but it will not trade any more. Running is clamped inside charted space so
+    // it does not simply kill itself on the shear.
+    if (a.hp <= a.stats.hull * a.def.flee) {
+      const dx = a.x - t.ship.x, dy = a.y - t.ship.y, m = Math.hypot(dx, dy) || 1;
+      a.dx = a.dy = null;
+      a.tx = Math.max(500, Math.min(MAP_W - 500, a.x + (dx / m) * 2200));
+      a.ty = Math.max(500, Math.min(MAP_H - 500, a.y + (dy / m) * 2200));
+      return null;                                           // fleeing, not firing
+    }
     const d = dist(t), hold = a.stats.weaponRange * 0.7;
     a.dx = a.dy = null;
     if (d > hold) { a.tx = t.ship.x; a.ty = t.ship.y; }     // close
