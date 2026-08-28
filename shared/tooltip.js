@@ -7,7 +7,7 @@
 // up here for free and can never quietly disagree with the ship you fly.
 
 import { ATTRS, HULLS, resolve, slotsOf } from './ships.js';
-import { EQUIPMENT, SLOTS, MAX_DRONES, dronePrice } from './gear.js';
+import { EQUIPMENT, SLOTS, MAX_DRONES, dronePrice, topTier } from './gear.js';
 import { FORMATIONS, BONUS_AT, bonusScale } from './formation.js';
 
 const round = v => Math.abs(v) >= 100 ? Math.round(v)
@@ -90,8 +90,7 @@ export function tipFor(kind, key, ctx) {
     if (n >= MAX_DRONES) return null;
     // A drone's worth depends entirely on what you hang on it, so show the best
     // case you could actually build today rather than an empty bay's zero.
-    const best = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'weapon')
-      .sort((a, b) => EQUIPMENT[b].price - EQUIPMENT[a].price)[0];
+    const best = topTier('weapon');
     return {
       title: `Drone ${n + 1}`, price: dronePrice(n), blurb: 'Flies escort. One slot, anything you like in it.',
       sub: `${n}/${MAX_DRONES} bays used`,

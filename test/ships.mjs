@@ -1,10 +1,11 @@
 import { ATTRS, HULLS, DEFAULT_HULL, resolve, sanitiseFit, slotsOf, FIRE_RATE } from '../shared/ships.js';
-import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat } from '../shared/gear.js';
+import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat, topTier } from '../shared/gear.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
          DOCK_HULL_RATE, DOCK_INTERRUPT, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
+import { BOOST } from '../shared/power.js';
 import { FORMATIONS, FORMATION_KEYS, DEFAULT_FORMATION, slots as formSlots, droneAt,
          DRONE_R, HULL_R } from '../shared/formation.js';
 import { hardpoints } from '../shared/combat.js';
@@ -270,6 +271,60 @@ console.log('\ntooltips');
         (tipFor('form', 'wedge', { ...ctx, drones: [] })?.sub ?? '').includes('no effect'));
   check('an unknown key returns nothing rather than throwing',
         tipFor('item', 'nonesuch', ctx) === null && tipFor('hull', 'nonesuch', ctx) === null);
+}
+
+// ------------------------------------------------------------- the power curve
+// How far a finished ship is meant to sit above a new one. The ceiling is set
+// from the fiction: the things waiting on the far maps one-shot anyone who
+// wandered out there in a starter hull, so a finished ship has to hit that hard.
+console.log('\nthe power curve');
+{
+  const TOP = topTier('weapon'), CELL = topTier('generator');
+  const specced = h => {
+    const sl = slotsOf(h);
+    return resolve(h, fit({ weapon: Array(sl.weapon).fill(TOP),
+                            generator: Array(sl.generator).fill(CELL),
+                            tech: sl.tech ? ['plating'] : [] }), Array(6).fill(TOP), 'wedge');
+  };
+  const volley = st => st.damage * (1 + BOOST);
+  const weak = resolve(DEFAULT_HULL, fit({ weapon: ['emitter1'] }));
+  const weakEhp = weak.hull + weak.shield;
+
+  for (const h of Object.keys(HULLS)) {
+    const st = specced(h);
+    console.log(`     ${HULLS[h].cls.padEnd(12)} volley ${String(Math.round(volley(st))).padStart(5)}` +
+                `   ehp ${String(Math.round(st.hull + st.shield)).padStart(5)}   speed ${Math.round(st.speed)}`);
+  }
+  console.log(`     a new pilot flies ${Math.round(weakEhp)} effective hp and throws ` +
+              `${Math.round(volley(weak))} a volley`);
+
+  check('a finished ship one-shots a new one',
+    Object.keys(HULLS).every(h => volley(specced(h)) > weakEhp),
+    `every hull clears ${Math.round(weakEhp)} ehp with room`);
+  check('and it is not close', volley(specced('kestrel')) > weakEhp * 3,
+    `${(volley(specced('kestrel')) / weakEhp).toFixed(1)}x over`);
+  // The other end of the same rule: two finished ships must not delete each
+  // other on sight, or the top of the game has no fight left in it.
+  check('but a finished Cruiser survives a finished volley',
+    (() => { const c = specced('bulwark'); return c.hull + c.shield > volley(specced('bulwark')); })(),
+    'shields climb with the guns');
+
+  const ladder = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'weapon')
+    .sort((a, b) => EQUIPMENT[a].tier - EQUIPMENT[b].tier);
+  const dmgOf = k => EQUIPMENT[k].mods.find(([a]) => a === 'damage')[2];
+  console.log('     emitters: ' + ladder.map(k => `${EQUIPMENT[k].name.split(' ')[0]} ${dmgOf(k)}`).join('  '));
+  check('every rung of the weapon ladder is a real step up',
+    ladder.every((k, i) => i === 0 || dmgOf(k) >= dmgOf(ladder[i - 1]) * 1.7),
+    'no rung is a rounding error on the one below');
+  check('and costs more than the rung below',
+    ladder.every((k, i) => i === 0 || EQUIPMENT[k].price > EQUIPMENT[ladder[i - 1]].price));
+  const cells = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'generator')
+    .sort((a, b) => EQUIPMENT[a].tier - EQUIPMENT[b].tier);
+  const shOf = k => EQUIPMENT[k].mods.find(([a]) => a === 'shield')[2];
+  check('the shield ladder climbs with the weapon ladder',
+    shOf(cells.at(-1)) / shOf(cells[0]) > dmgOf(ladder.at(-1)) / dmgOf(ladder[0]) * 0.4,
+    `shields ${(shOf(cells.at(-1)) / shOf(cells[0])).toFixed(0)}x across the ladder, ` +
+    `guns ${(dmgOf(ladder.at(-1)) / dmgOf(ladder[0])).toFixed(0)}x`);
 }
 
 // ------------------------------------------------------------ what mods may do

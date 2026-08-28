@@ -21,7 +21,9 @@ export const HIT_R      = 38;     // px of slack around the aim point, plus the 
 // projectile; quantity adds more of them. A rack of four MK-Is throws four
 // ordinary bolts, four MK-IIIs four heavy ones — which is the difference you
 // actually paid for, and it reads without staring at the barrels.
-export const boltWidth = dmg => Math.max(1.5, Math.min(7, 1 + (dmg ?? 45) / 18));
+// Square-rooted, because the ladder spans roughly 40 to 400 damage a bolt and a
+// linear scale would peg everything above MK-II at the same fat line.
+export const boltWidth = dmg => Math.max(1.5, Math.min(7.5, 1.2 + Math.sqrt(Math.max(0, dmg ?? 45)) * 0.28));
 
 // Every emitter is its own gun and fires its own bolt, one after another rather
 // than merged into a single fat shot. A cycle's damage is split across them, so

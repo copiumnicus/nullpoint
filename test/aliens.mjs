@@ -5,6 +5,7 @@ import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { HULLS, resolve } from '../shared/ships.js';
 import { BOOST } from '../shared/power.js';
+import { topTier } from '../shared/gear.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -151,8 +152,9 @@ for (const h of ['kestrel', 'vanguard', 'bulwark']) {
 }
 // The headline: once a ship is actually finished, the first thing you ever met
 // dies in one trigger pull. This is the top of the curve the drifter is set from.
-const decked = resolve('vanguard', { weapon: ['emitter3', 'emitter3', 'emitter3'], generator: [], tech: [] },
-                       Array(6).fill('emitter3'), 'wedge');
+const TOP = topTier('weapon');
+const decked = resolve('vanguard', { weapon: Array(3).fill(TOP), generator: [], tech: [] },
+                       Array(6).fill(TOP), 'wedge');
 const volley = decked.damage * (1 + BOOST);
 const husk = D.attrs.hull + D.attrs.shield;
 check('a fully outfitted Fighter kills one in a single volley', volley >= husk,

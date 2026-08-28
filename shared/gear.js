@@ -20,13 +20,22 @@ export const MAX_DRONES = 6;
 export const dronePrice = owned => 3000 + owned * 2600;
 
 export const EQUIPMENT = {
-  // weapons — each adds its output to the hull's own, and a visibly thicker beam
-  emitter1: { name: 'MK-I Emitter',  slot: 'weapon', tier: 1, price:   900,
+  // Weapons — each adds its output to the hull's own, and throws a visibly
+  // heavier bolt for it. The ladder is steep on purpose: a finished ship deletes
+  // a home-map husk in one trigger pull, and the things waiting further out will
+  // do the same to anyone who wandered there in a starter hull. Five rungs so
+  // that climb has steps rather than one cliff.
+  emitter1: { name: 'MK-I Emitter',  slot: 'weapon', tier: 1, price:    900,
               blurb: 'A laser.', mods: [['damage', 'add', 18]] },
-  emitter2: { name: 'MK-II Emitter', slot: 'weapon', tier: 2, price:  2600,
-              blurb: 'A better laser.', mods: [['damage', 'add', 30]] },
-  emitter3: { name: 'MK-III Emitter', slot: 'weapon', tier: 3, price: 7200,
-              blurb: 'About as much as a hardpoint will carry.', mods: [['damage', 'add', 46]] },
+  emitter2: { name: 'MK-II Emitter', slot: 'weapon', tier: 2, price:   2600,
+              blurb: 'A better laser.', mods: [['damage', 'add', 45]] },
+  emitter3: { name: 'MK-III Emitter', slot: 'weapon', tier: 3, price:  7200,
+              blurb: 'The last one you can afford by accident.', mods: [['damage', 'add', 110]] },
+  emitter4: { name: 'MK-IV Emitter', slot: 'weapon', tier: 4, price:  16000,
+              blurb: 'Fleet issue. Nothing on the home map survives a full rack.',
+              mods: [['damage', 'add', 220]] },
+  emitter5: { name: 'MK-V Emitter',  slot: 'weapon', tier: 5, price:  34000,
+              blurb: 'About as much as a hardpoint will carry.', mods: [['damage', 'add', 400]] },
 
   // generators — reactor gear. Capacitor, recharge and the free trickle.
   cellA: { name: 'A-Cell Generator', slot: 'generator', tier: 1, price:  1200,
@@ -40,6 +49,17 @@ export const EQUIPMENT = {
            blurb: 'A reactor you can lean on.',
            mods: [['capacitor', 'add', 26], ['recharge', 'add', 1.3], ['sustain', 'add', 0.04],
                   ['shield', 'add', 300], ['speed', 'add', -18]] },
+  // The shield ladder climbs with the weapon ladder, or the top of the game is
+  // two finished ships deleting each other on sight. Capacitor and trickle climb
+  // gently — those are seconds and fractions, and they do not need to go 8x.
+  cellD: { name: 'D-Cell Generator', slot: 'generator', tier: 4, price: 19000,
+           blurb: 'Fleet issue. A wall of shield, and heavy with it.',
+           mods: [['capacitor', 'add', 34], ['recharge', 'add', 1.9], ['sustain', 'add', 0.06],
+                  ['shield', 'add', 750], ['speed', 'add', -24]] },
+  cellE: { name: 'E-Cell Generator', slot: 'generator', tier: 5, price: 40000,
+           blurb: 'More shield than most hulls have hull.',
+           mods: [['capacitor', 'add', 42], ['recharge', 'add', 2.5], ['sustain', 'add', 0.08],
+                  ['shield', 'add', 1400], ['speed', 'add', -30]] },
 
   // technologies — one of each, and every one costs you something
   plating:  { name: 'Composite Plating', slot: 'tech', price: 2600,
@@ -57,6 +77,14 @@ export const EQUIPMENT = {
 };
 
 export const priceOf = key => EQUIPMENT[key]?.price ?? Infinity;
+
+// The best thing money can currently buy for a slot. Everything that means "the
+// top of the ladder" goes through this, so adding a rung moves every one of them
+// at once instead of leaving a hardcoded MK-III behind.
+export const topTier = slot => Object.keys(EQUIPMENT)
+  .filter(k => EQUIPMENT[k].slot === slot)
+  .sort((a, b) => (EQUIPMENT[a].tier ?? 0) - (EQUIPMENT[b].tier ?? 0) || EQUIPMENT[a].price - EQUIPMENT[b].price)
+  .at(-1);
 export const forSlot = slot => Object.entries(EQUIPMENT).filter(([, e]) => e.slot === slot);
 
 // An empty rack, shaped by a hull's slot counts.
