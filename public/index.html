@@ -11,7 +11,8 @@ import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
-import { EQUIPMENT, SLOTS, emptyFit, fitCount } from '/shared/gear.js';
+import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice } from '/shared/gear.js';
+import { levelFor, progress } from '/shared/level.js';
 import { SYSTEMS, BOOST } from '/shared/power.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout } from '/shared/hangar.js';
@@ -62,7 +63,7 @@ const readToken = () => {
 };
 let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
-let shieldNow = 0, shieldTop = 0;
+let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -99,6 +100,7 @@ ws.onmessage = e => {
   if (m.t === 'welcome') {
     myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? {}; myHulls = m.hulls ?? [myHull]; credits = m.credits ?? 0;
+    myDrones = m.drones ?? []; myXp = m.xp ?? 0;
     myName = m.name ?? '';
     if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
     return;
@@ -108,12 +110,17 @@ ws.onmessage = e => {
     myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? myGear;
     myHulls = m.hulls ?? myHulls;
+    myDrones = m.drones ?? myDrones;
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
   if (m.t === 'award') {
     credits = m.total;
-    say(`${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short} for a ${m.what}`, '#ffd479');
+    say(m.promoted
+        ? `${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short} — and promotes you to level ${m.level}`
+        : `${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short}` +
+          (m.xp ? ` and ${m.xp} XP` : '') + ` for a ${m.what}`,
+        m.promoted ? '#7de08a' : '#ffd479');
     return;
   }
   if (m.t === 'dead')    { dead = { lost: m.lost ?? {}, at: performance.now() }; return; }
@@ -143,6 +150,8 @@ ws.onmessage = e => {
   myGear = m.gear ?? myGear;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
+  if (m.drones) myDrones = m.drones;
+  if (m.rank) { myRank = m.rank; myXp = m.xp ?? myXp; }
   const seen = new Set();
   for (const raw of m.ships) {
     const n = unpackShip(raw);
@@ -442,7 +451,7 @@ function drawSystem(me) {
 // --- hangar -------------------------------------------------------------------
 // Geometry lives in one place so drawing and hit-testing can never disagree
 // about where a row is.
-const bayGeom = () => bayLayout(VIEW_W, VIEW_H, myHull);
+const bayGeom = () => bayLayout(VIEW_W, VIEW_H, myHull, myDrones.length);
 
 function bayClick(v) {
   const G = bayGeom();
@@ -458,6 +467,19 @@ function bayClick(v) {
   }
   for (const row of G.racks) {
     if (row.header || !inside(row.r)) continue;
+    if (row.slot === 'drone') {
+      if (row.buy) {
+        const cost = dronePrice(myDrones.length);
+        return credits >= cost ? send({ t: 'buydrone' })
+                               : say(`A drone costs ${cost} ${CURRENCY.short}`, '#e0a53f');
+      }
+      if (myDrones[row.index]) return send({ t: 'dronestrip', index: row.index });
+      // a drone takes anything; offer whatever is in the locker, in order
+      const any = Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
+        && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)));
+      return any ? send({ t: 'dronefit', index: row.index, item: any })
+                 : say('Nothing in the locker to mount', '#8ab4e6');
+    }
     const fitted = (myFit[row.slot] ?? [])[row.index];
     if (fitted) return send({ t: 'uninstall', slot: row.slot, index: row.index });
     const owned = Object.keys(EQUIPMENT).find(k => EQUIPMENT[k].slot === row.slot && (myGear[k] ?? 0) > 0
@@ -540,8 +562,34 @@ function drawBay() {
     const r = row.r;
     if (row.header) {
       g.fillStyle = '#3d4757'; g.font = '10px ui-monospace, monospace';
-      g.fillText(row.slot.toUpperCase(), r.x + 2, r.y + r.h - 4);
+      g.fillText(row.slot === 'drone' ? `DRONES  ${myDrones.length}/${MAX_DRONES}` : row.slot.toUpperCase(),
+                 r.x + 2, r.y + r.h - 4);
       g.font = '11px ui-monospace, monospace';
+      continue;
+    }
+    if (row.slot === 'drone') {
+      if (row.buy) {
+        const cost = dronePrice(myDrones.length), can = credits >= cost;
+        g.globalAlpha = can ? 1 : 0.45;
+        g.fillStyle = 'rgba(255,212,121,0.10)'; g.fillRect(r.x, r.y, r.w, r.h);
+        g.strokeStyle = '#ffd479'; g.lineWidth = 1; g.setLineDash([4, 3]);
+        g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); g.setLineDash([]);
+        g.fillStyle = '#ffd479';
+        g.fillText(`buy a drone  ${cost} ${CURRENCY.short}`, r.x + 10, r.y + r.h / 2 + 4);
+        g.globalAlpha = 1;
+        continue;
+      }
+      const held = EQUIPMENT[myDrones[row.index]];
+      g.fillStyle = held ? 'rgba(125,224,138,0.12)' : 'rgba(255,255,255,0.02)';
+      g.fillRect(r.x, r.y, r.w, r.h);
+      g.strokeStyle = held ? '#7de08a' : '#2c3d55'; g.lineWidth = 1;
+      if (!held) g.setLineDash([3, 3]);
+      g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); g.setLineDash([]);
+      g.fillStyle = COMPANIES[myCo].color; g.fillRect(r.x + 8, r.y + r.h / 2 - 3, 6, 6);
+      g.fillStyle = held ? '#cfe4ff' : '#3d4757';
+      g.fillText(held ? held.name : 'empty bay', r.x + 22, r.y + r.h / 2 + 4);
+      if (held) { g.fillStyle = '#66748c'; g.textAlign = 'right';
+                  g.fillText('remove', r.x + r.w - 10, r.y + r.h / 2 + 4); g.textAlign = 'left'; }
       continue;
     }
     const item = EQUIPMENT[(myFit[row.slot] ?? [])[row.index]];
@@ -961,6 +1009,16 @@ function drawFrame(now) {
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
 
+    for (let d = 0; d < (s.drones ?? 0); d++) {    // escort, holding formation astern
+      const a0 = s.heading + Math.PI + (d - ((s.drones - 1) / 2)) * 0.34;
+      const dist = R * 3.1, dx = s.rx + Math.cos(a0) * dist, dy = s.ry + Math.sin(a0) * dist;
+      g.save(); g.translate(dx, dy); g.rotate(s.heading);
+      g.globalAlpha = lost ? 0.3 : 0.9;
+      g.fillStyle = colOf(s); g.fillRect(-3.5, -3.5, 7, 7);
+      g.fillStyle = '#0a0f16'; g.fillRect(1.2, -1, 2.4, 2);
+      g.globalAlpha = 1; g.restore();
+    }
+
     if (lost) continue;                            // no vitals read on a fading track
 
     // PLACEHOLDER shield impact. Lit only while the shields are catching the hit;
@@ -981,6 +1039,13 @@ function drawFrame(now) {
     g.fillStyle = '#5fd0ff'; g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 16, (bw - 2) * (s.sh ?? 0) / 100, 2.5);
     g.fillStyle = (s.hp ?? 100) > 33 ? '#7de08a' : '#e05a5a';
     g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 12.5, (bw - 2) * (s.hp ?? 0) / 100, 2.5);
+    if (s.lvl > 0) {                               // rank, so everyone can read it
+      g.fillStyle = 'rgba(4,7,12,0.8)';
+      g.fillRect(s.rx + bw / 2 + 3, s.ry - R - 18, 20, 11);
+      g.fillStyle = '#cfe4ff'; g.font = 'bold 9px ui-monospace, monospace'; g.textAlign = 'center';
+      g.fillText(String(s.lvl), s.rx + bw / 2 + 13, s.ry - R - 9.5);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
   }
   // Damage you deal is red and loud. Damage you take is amber — unless your own
   // shields caught it, in which case it is drawn in the same blue as your shield
@@ -1177,7 +1242,8 @@ function drawFrame(now) {
   g.fillStyle = map.owner ? COMPANIES[map.owner].color : '#e05a5a';
   g.fillText(terr, 20 + g.measureText(map.name).width, 24);
   g.fillStyle = '#5b6b85';
-  g.fillText(`${myName || '…'} · ${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls} · ` +
+  g.fillText(`${myName || '…'} · ${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls}` +
+             `${myDrones.filter(Boolean).length ? ` +${myDrones.filter(Boolean).length} drones` : ''} · ` +
              `${status} · ${ships.size} in sector`, 16, 42);
   if (me) {
     const hp = Math.round(st.hull * (me.hp ?? 100) / 100);
@@ -1221,6 +1287,12 @@ function drawFrame(now) {
                (vol ? `  ${holdValue(hold)} cr` : ''), 16 + gw + 10, 103);
     g.fillStyle = '#ffd479';
     g.fillText(`${credits} ${CURRENCY.short}`, 16, 124);
+    const rank = myRank ?? levelFor(myXp);
+    g.fillStyle = '#cfe4ff';
+    g.fillText(`LVL ${rank.level}`, 16 + 96, 124);
+    const bx = 16 + 152, bw2 = 60;
+    g.fillStyle = '#1b222d'; g.fillRect(bx, 117, bw2, 6);
+    g.fillStyle = '#8ab4e6'; g.fillRect(bx, 117, bw2 * progress(myXp), 6);
     if (atDock && vol > 0) {
       g.fillStyle = COMPANIES[myCo].color;
       g.fillText('docked — press I to stow cargo', 16 + 96, 124);

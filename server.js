@@ -5,7 +5,9 @@ import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beg
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
-import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit } from './shared/gear.js';
+import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
+         MAX_DRONES, dronePrice, sanitiseDrones } from './shared/gear.js';
+import { levelFor } from './shared/level.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { stepContacts } from './shared/radar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from './shared/net.js';
@@ -75,8 +77,18 @@ const persistAll = () => {
   const now = Date.now();
   for (const p of players.values()) capture(p.acct, p, now);
   store.save(db);
+  dirty = false;
 };
-setInterval(persistAll, 5000);
+
+// Accounts are written when they CHANGE, not on the way out. Some hosts give a
+// process zero seconds between SIGTERM and SIGKILL — Railway's default is exactly
+// that — so a shutdown hook is not somewhere state can safely live. The exit hook
+// below is belt and braces; this is the thing that actually protects a player's
+// ship, and it bounds any loss to about a second.
+let dirty = false;
+const touch = p => { capture(p.acct, p, Date.now()); dirty = true; };
+setInterval(() => { if (dirty) { store.save(db); dirty = false; } }, 1000);
+setInterval(persistAll, 15000);   // positions drift without changing anything
 for (const sig of ['SIGINT', 'SIGTERM'])
   process.on(sig, () => { persistAll(); console.log('accounts saved'); process.exit(0); });
 
@@ -111,9 +123,14 @@ const killAlien = (mapId, a, byId = null) => {
   if (a.dead > 0) return;
   const killer = byId !== null ? players.get(byId) : null;
   if (killer) {                                   // your company pays out on confirmation
+    const was = levelFor(killer.xp).level;
     killer.credits += a.def.bounty;
+    killer.xp += a.def.xp ?? a.def.bounty;
+    const now2 = levelFor(killer.xp);
+    touch(killer);                                // credits and rank banked immediately
     if (killer.ws.readyState === 1) killer.ws.send(JSON.stringify(
-      { t: 'award', amount: a.def.bounty, what: a.def.name, total: killer.credits }));
+      { t: 'award', amount: a.def.bounty, xp: a.def.xp ?? a.def.bounty, what: a.def.name,
+        total: killer.credits, level: now2.level, promoted: now2.level > was }));
   }
   boom(mapId, a, true, a.id);
   const loot = rollDrop(a.kind, a.rand);          // seeded, so drops replay with the alien
@@ -145,18 +162,20 @@ wss.on('connection', (ws, req) => {
     players.delete(pid);
   }
 
-  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit);
+  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones);
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
-                    gear: { ...acct.gear }, hulls: [...acct.hulls],
+                    gear: { ...acct.gear }, hulls: [...acct.hulls], xp: acct.xp,
                     scoop: null, want: null, dead: false });
-  const outfit = () => ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
+  const outfit = () => (touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
+                                                drones: ship.drones,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
-                                                credits: players.get(id).credits }));
+                                                credits: players.get(id).credits })));
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
                            map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit,
-                           gear: acct.gear, hulls: acct.hulls, credits: acct.credits }));
+                           gear: acct.gear, hulls: acct.hulls, credits: acct.credits,
+                           drones: acct.drones, xp: acct.xp }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -182,7 +201,35 @@ wss.on('connection', (ws, req) => {
       if (!atStation() || !HULLS[m.key] || !P.hulls.includes(m.key)) return;
       const moved = reseat(slotsOf(m.key), ship.fit, P.gear);      // whatever will not fit comes off
       P.gear = moved.gear;
-      refit(ship, m.key, moved.fit);
+      refit(ship, m.key, moved.fit, ship.drones);                  // the escort follows you across
+      return outfit();
+    }
+    if (m.t === 'buydrone') {
+      if (!atStation() || ship.drones.length >= MAX_DRONES) return;
+      const cost = dronePrice(ship.drones.length);
+      if (P.credits < cost) return;
+      P.credits -= cost;
+      refit(ship, ship.hull, ship.fit, [...ship.drones, null]);
+      return outfit();
+    }
+    if (m.t === 'dronefit') {
+      const item = EQUIPMENT[m.item], i = +m.index;
+      if (!atStation() || !item || !(P.gear[m.item] > 0)) return;
+      if (!(i >= 0 && i < ship.drones.length) || ship.drones[i]) return;
+      const next = [...ship.drones]; next[i] = m.item;
+      const clean = sanitiseDrones(next, ship.fit);
+      if (clean[i] !== m.item) return;              // refused, e.g. a duplicate technology
+      if (--P.gear[m.item] <= 0) delete P.gear[m.item];
+      refit(ship, ship.hull, ship.fit, clean);
+      return outfit();
+    }
+    if (m.t === 'dronestrip') {
+      const i = +m.index;
+      if (!atStation() || !(i >= 0 && i < ship.drones.length) || !ship.drones[i]) return;
+      const item = ship.drones[i];
+      P.gear[item] = (P.gear[item] ?? 0) + 1;
+      const next = [...ship.drones]; next[i] = null;
+      refit(ship, ship.hull, ship.fit, next);
       return outfit();
     }
     if (m.t === 'buy') {
@@ -200,7 +247,7 @@ wss.on('connection', (ws, req) => {
       if (item.slot === 'tech' && rack.includes(m.item)) return;   // technologies are unique
       rack.push(m.item);
       if (--P.gear[m.item] <= 0) delete P.gear[m.item];
-      refit(ship, ship.hull, ship.fit);
+      refit(ship, ship.hull, ship.fit, ship.drones);
       return outfit();
     }
     if (m.t === 'uninstall') {
@@ -209,7 +256,7 @@ wss.on('connection', (ws, req) => {
       if (!(i >= 0 && i < rack.length)) return;
       const [item] = rack.splice(i, 1);
       P.gear[item] = (P.gear[item] ?? 0) + 1;
-      refit(ship, ship.hull, ship.fit);
+      refit(ship, ship.hull, ship.fit, ship.drones);
       return outfit();
     }
     if (m.t === 'sell') {
@@ -232,6 +279,7 @@ wss.on('connection', (ws, req) => {
       Object.assign(ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
                             vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
                             charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0 });
+      touch(P);
       return ws.send(JSON.stringify({ t: 'map', map: home, respawned: true }));
     }
     if (P.dead) return;                           // nothing else reaches a wreck
@@ -315,6 +363,7 @@ setInterval(() => {
       p.targetId = null; p.want = null; p.scoop = null; p.contacts.clear();
       for (const list of aliens.values()) forgetPlayer(list, id);   // death settles every grudge
       Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, charge: 0, chargeTo: null });
+      touch(p);                                   // a lost hold must survive a hard kill
       if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'dead', lost, where: p.mapId }));
       continue;
     }
@@ -327,6 +376,7 @@ setInterval(() => {
     p.targetId = null;             // jumping out breaks the engagement
     p.want = null; p.scoop = null;
     Object.assign(p.ship, { x: a.x, y: a.y, vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, jumpCd: JUMP_CD, charge: 0, chargeTo: null });
+    touch(p);
     if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: p.mapId }));
   }
 
@@ -342,8 +392,7 @@ setInterval(() => {
       step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
       const victim = tgt ? here.find(c => c.id === tgt) : null;
       faceTarget(a, victim?.ship);
-      const shot = fire(a, victim?.ship ?? null, dt);
-      if (shot) bolts.get(mapId).push(shot);
+      for (const shot of fire(a, victim?.ship ?? null, dt)) bolts.get(mapId).push(shot);
       if (a.hp <= 0) killAlien(mapId, a);
     }
   }
@@ -355,10 +404,9 @@ setInterval(() => {
       : null;
     if (!foe) { p.targetId = null; fire(p.ship, null, dt); continue; }
     faceTarget(p.ship, foe);
-    const shot = fire(p.ship, foe, dt);
-    if (!shot) continue;
-    shot.owner = id;
-    bolts.get(p.mapId).push(shot);
+    const volley = fire(p.ship, foe, dt);
+    if (!volley.length) continue;
+    for (const shot of volley) { shot.owner = id; bolts.get(p.mapId).push(shot); }
     foe.provoked.add(id);                        // pulling the trigger is the provocation,
     if (!foe.target) foe.target = id;            // whether or not the shot lands
   }
@@ -412,7 +460,7 @@ setInterval(() => {
       sh: Math.round(100 * p.ship.shield / Math.max(1, shieldMax(p.ship))),
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
       tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH),
-      guns: p.ship.guns ?? 1,
+      guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.drones.length,
       psys: p.ship.power.to ? SYSTEMS.indexOf(p.ship.power.to) + 1 : 0,
       plvl: p.ship.power.to ? Math.round(100 * levelOf(p.ship.power, p.ship.power.to, p.ship.stats)) : 0 });
     if (p.dead) continue;
@@ -427,7 +475,7 @@ setInterval(() => {
       sh: Math.round(100 * a.shield / Math.max(1, shieldMax(a))),
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
-      guns: 1, psys: 0, plvl: 0 });
+      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
@@ -453,6 +501,7 @@ setInterval(() => {
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
+      xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
       // effective levels as whole percent, so the readout cannot jitter between
       // 29 and 30 from a float that is a hair under one
       power: { to: V.ship.power.to, cap: Math.round(100 * chargePct(V.ship.power, V.ship.stats)),

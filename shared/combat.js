@@ -15,32 +15,60 @@ import { boostOf } from './power.js';
 export const BOLT_SPEED = 1000;   // px/s
 export const HIT_R      = 38;     // px of slack around the aim point, plus the hull's own radius
 
+// Every emitter is its own gun and fires its own bolt, one after another rather
+// than merged into a single fat shot. A cycle's damage is split across them, so
+// more emitters means a longer, heavier stream and not a bigger blob.
+//
+// Past four they double up, because eight bolts strung across one cycle would
+// arrive slower than one gun does — the cadence has to stay a cadence.
+export const MAX_VOLLEY_STEPS = 4;
+export const salvoOf = guns => Math.ceil(Math.max(1, guns) / MAX_VOLLEY_STEPS);
+export const stepsOf = guns => Math.ceil(Math.max(1, guns) / salvoOf(guns));
+
 // Cooldown runs whether or not there is anything to shoot at. Returns a bolt, or null.
+// Advances this ship's guns. Returns the bolts released this tick — none, one,
+// or a pair once the rack is big enough to double up.
 export function fire(a, b, dt) {
   a.cool = Math.max(0, a.cool - dt);
   a.shotFlash = Math.max(0, a.shotFlash - dt);
-  if (!b || b.hp <= 0 || a.hp <= 0) return null;
-  const d = Math.hypot(b.x - a.x, b.y - a.y);
-  if (d > a.stats.weaponRange || a.cool > 0) return null;
-  a.cool = 1 / a.stats.fireRate;
+
+  const guns = Math.max(1, a.guns ?? 1);
+  const live = b && b.hp > 0 && a.hp > 0 &&
+               Math.hypot(b.x - a.x, b.y - a.y) <= a.stats.weaponRange;
+
+  if (a.volley > 0) {                              // mid-stream
+    if (!live) { a.volley = 0; return []; }        // target gone or out of reach: hold fire
+    a.volleyCool -= dt;
+    if (a.volleyCool > 0) return [];
+  } else {
+    if (!live || a.cool > 0) return [];
+    a.cool = 1 / a.stats.fireRate;                 // a fresh cycle
+    a.volley = guns;
+  }
+
+  const salvo = Math.min(a.volley, salvoOf(guns));
+  a.volley -= salvo;
+  a.volleyCool = (1 / a.stats.fireRate) / stepsOf(guns);
   a.shotFlash = SHOT_FLASH;
 
-  // Ships carry a cannon on each side and alternate between them, so fire comes
-  // from a hardpoint rather than from the middle of the hull. Aliens have no
-  // visible mounts, so they shoot from centre.
-  const side = a.muzzle ? 1 : -1;
-  a.muzzle = a.muzzle ? 0 : 1;
-  const ch = Math.cos(a.heading), sh = Math.sin(a.heading);
-  const fwd = a.isAlien ? 0 : a.r * 1.55, lat = a.isAlien ? 0 : a.r * 0.95 * side;
-
-  const travel = d / BOLT_SPEED;
-  return {
-    sx: a.x + ch * fwd - sh * lat, sy: a.y + sh * fwd + ch * lat,
-    ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
-    dmg: a.stats.damage * boostOf(a.power, 'weapons', a.stats), target: b, foe: !!a.isAlien,
-    w: a.guns ?? 1,                                   // a thicker beam for more emitters
-    t: travel, ttl: Math.max(0.001, travel),
-  };
+  const each = (a.stats.damage * boostOf(a.power, 'weapons', a.stats)) / guns;
+  const out = [];
+  for (let i = 0; i < salvo; i++) {
+    // One gun a side, alternating; a doubled salvo goes out both at once.
+    const side = salvo > 1 ? (i % 2 ? 1 : -1) : (a.muzzle ? 1 : -1);
+    if (salvo === 1) a.muzzle = a.muzzle ? 0 : 1;
+    const ch = Math.cos(a.heading), sh = Math.sin(a.heading);
+    const fwd = a.isAlien ? 0 : a.r * 1.55, lat = a.isAlien ? 0 : a.r * 0.95 * side;
+    const sx = a.x + ch * fwd - sh * lat, sy = a.y + sh * fwd + ch * lat;
+    const travel = Math.hypot(b.x - sx, b.y - sy) / BOLT_SPEED;
+    out.push({
+      sx, sy,
+      ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
+      dmg: each, target: b, foe: !!a.isAlien, w: Math.min(4, guns),
+      t: travel, ttl: Math.max(0.001, travel),
+    });
+  }
+  return out;
 }
 
 // Advances every bolt and settles the ones that land this tick. Returns the hits,

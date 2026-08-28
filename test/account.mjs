@@ -2,7 +2,8 @@ import { newAccount, sanitiseAccount, capture, callsign, companyFor } from '../s
 import { newShip, refit } from '../shared/sim.js';
 import { MAPS, COMPANIES } from '../shared/maps.js';
 import { HULLS, DEFAULT_HULL } from '../shared/ships.js';
-import { EQUIPMENT, fitCount } from '../shared/gear.js';
+import { EQUIPMENT, fitCount, MAX_DRONES } from '../shared/gear.js';
+import { levelFor, costOf } from '../shared/level.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 import { MATERIALS } from '../shared/cargo.js';
 
@@ -31,8 +32,10 @@ const acct = newAccount('abc', 4, 1000);
 const p = {
   co: acct.co, mapId: 'g1', credits: 4820,
   hold: { iron: 6, iridium: 1 }, vault: { platinum: 12 },
-  gear: { emitter1: 3, plating: 1 }, hulls: ['hauler', 'bulwark'],
-  ship: refit(newShip(0, 0, 'kestrel'), 'bulwark', fit({ weapon: ['emitter1', 'emitter1'], tech: ['plating'] })),
+  gear: { emitter1: 3, plating: 1 }, hulls: ['hauler', 'bulwark'], xp: 8400,
+  xp: 8400,
+  ship: refit(newShip(0, 0, 'kestrel'), 'bulwark',
+              fit({ weapon: ['emitter1', 'emitter1'], tech: ['plating'] }), ['emitter1', null]),
 };
 p.ship.x = 8123.4; p.ship.y = 2044.9;
 capture(acct, p, 2000);
@@ -40,6 +43,8 @@ check('capture folds the session back into the account',
   acct.hull === 'bulwark' && acct.fit.weapon.length === 2 && acct.fit.tech.join() === 'plating'
   && acct.gear.emitter1 === 3 && acct.credits === 4820
   && acct.mapId === 'g1' && acct.x === 8123 && acct.y === 2045);
+check('rank and escort come back too', acct.xp === 8400 && acct.drones.length === 2,
+  `level ${levelFor(acct.xp).level}`);
 check('cargo and hangar both survive',
   acct.hold.iron === 6 && acct.hold.iridium === 1 && acct.vault.platinum === 12);
 check('capture copies rather than aliasing', (() => {
@@ -84,6 +89,37 @@ check('nothing thrown on a totally empty record', (() => {
   const e = sanitiseAccount({}, 0, 1);
   return !!COMPANIES[e.co] && !!HULLS[e.hull] && !!MAPS[e.mapId];
 })());
+
+console.log('\nrank and escort');
+{
+  check('everyone starts at level one with nothing flown yet',
+    made.every(a => a.xp === 0 && levelFor(a.xp).level === 1 && a.drones.length === 0));
+  const climb = [0, 140, 500, 5000, 50000].map(x => [x, levelFor(x).level]);
+  console.log('     ' + climb.map(([x, l]) => `${x}xp=L${l}`).join('  '));
+  check('rank climbs with kills and never goes backwards',
+    climb.every(([, l], i) => i === 0 || l >= climb[i - 1][1]) && levelFor(140).level === 2);
+  check('a level is standing, not power', (() => {
+    const veteran = sanitiseAccount({ token: 'x', xp: 999999 }, 0, 1);
+    const rookie = sanitiseAccount({ token: 'y', xp: 0 }, 1, 1);
+    return JSON.stringify(veteran.fit) === JSON.stringify(rookie.fit) && veteran.hull === rookie.hull;
+  })(), 'the same ship flies the same for both');
+
+  const withEscort = sanitiseAccount({
+    token: 'z', hull: 'vanguard', hulls: ['hauler', 'vanguard'],
+    fit: { weapon: ['emitter1'], generator: [], tech: ['plating'] },
+    drones: ['emitter1', 'plating', 'nonsense', null, 'cellA', 'damper', 'emitter2', 'emitter3'],
+    xp: -20,
+  }, 2, 1);
+  check('negative experience becomes zero', withEscort.xp === 0);
+  check('an escort is capped at the fleet limit', withEscort.drones.length === MAX_DRONES,
+    `${MAX_DRONES} drones`);
+  check('a drone cannot mount a technology the ship already has',
+    withEscort.drones[1] === null, 'plating is fitted on the hull');
+  check('but it can mount a second of anything else',
+    withEscort.drones[0] === 'emitter1' && withEscort.drones[4] === 'cellA');
+  check('an invented item leaves the bay empty rather than being kept',
+    withEscort.drones[2] === null);
+}
 
 console.log('\non disk');
 {

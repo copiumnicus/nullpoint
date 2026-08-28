@@ -5,7 +5,7 @@
 // new attribute means adding one line to ATTRS; adding a new module means one
 // entry in MODULES. No other file changes.
 
-import { EQUIPMENT, emptyFit, fitList, sanitiseFit as cleanFit } from './gear.js';
+import { EQUIPMENT, emptyFit, fitList, droneItems, sanitiseFit as cleanFit } from './gear.js';
 
 export const ATTRS = {
   hull:        { label: 'Hull',         unit: '',    dflt: 1000, better: 'high', min: 1 },
@@ -63,17 +63,22 @@ export const DEFAULT_HULL = 'hauler';
 export const slotsOf  = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).slots;
 export const radiusOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).r;
 export const hullPrice = hullKey => HULLS[hullKey]?.price ?? Infinity;
+
+// Every emitter is a gun in its own right, wherever it is mounted.
+export const gunsOf = (fit, drones = []) =>
+  Math.max(1, (fit?.weapon?.length ?? 0) +
+              droneItems(drones).filter(k => EQUIPMENT[k]?.slot === 'weapon').length);
 export const sanitiseFit = (hullKey, fit) => cleanFit(slotsOf(hullKey), fit);
 
 // base + every flat add, then multiplied once by the SUM of the percentages.
 // Summing rather than compounding keeps three copies of a module worth three
 // times one, instead of spiralling — the usual way stacking becomes pay-to-win.
-export function resolve(hullKey, fit = emptyFit()) {
+export function resolve(hullKey, fit = emptyFit(), drones = []) {
   const hull = HULLS[hullKey] ?? HULLS[DEFAULT_HULL];
   const out = {}, pct = {};
   for (const [k, a] of Object.entries(ATTRS)) out[k] = hull.attrs[k] ?? a.dflt;
 
-  for (const key of fitList(fit)) {
+  for (const key of [...fitList(fit), ...droneItems(drones)]) {
     for (const [attr, op, v] of EQUIPMENT[key]?.mods ?? []) {
       if (!(attr in out)) continue;                       // unknown attribute: ignore, never crash
       if (op === 'add') out[attr] += v;

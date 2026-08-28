@@ -49,6 +49,10 @@ const CTX = {
   setTransform(...a) { num('setTransform', ...a); },
   beginPath() {}, closePath() {}, stroke() {}, fill() {}, save() {}, restore() {}, clip() {},
   setLineDash(d) { this._dash = d; },
+  createLinearGradient(...a) {
+    num('createLinearGradient', ...a);
+    return { addColorStop(o, c) { if (!COLOUR.test(String(c))) bad.push(`addColorStop bad colour ${c}`); } };
+  },
   createRadialGradient(...a) {
     num('createRadialGradient', ...a);
     if (a[2] < 0 || a[5] < 0) bad.push('gradient negative radius');
@@ -123,10 +127,10 @@ let t = 0, frames = 0;
 for (const id of Object.keys(MAPS)) {
   feed({ t: 'map', map: id });
   feed({ t: 's', ships: [
-    packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0,   co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 100, tgt: 1e6, shot: 100, vis: 2 }),
-    packShip({ id: 2, x: 5200, y: 3400, heading: 1.9, charge: 0,  co: 'm', hull: 'bulwark',  hp:  80, sh:  60, flash:  40, vis: 2 }),
-    packShip({ id: 3, x: 3000, y: 2000, heading: 1.2, charge: 1.4, co: 'h', hull: 'kestrel', hp:  30, sh:   0, flash:   0, vis: 1 }),
-    packShip({ id: 4, x: 9000, y: 6000, heading: 2, charge: 0,    co: 'k', hull: 'bulwark',  hp:   5, sh:  55, flash:  70, vis: 0 }),
+    packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0,   co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 100, tgt: 1e6, shot: 100, guns: 3, psys: 1, plvl: 70, lvl: 14, drones: 3, vis: 2 }),
+    packShip({ id: 2, x: 5200, y: 3400, heading: 1.9, charge: 0,  co: 'm', hull: 'bulwark',  hp: 80, sh: 60, flash: 40, guns: 4, psys: 3, plvl: 40, lvl: 31, drones: 6, vis: 2 }),
+    packShip({ id: 3, x: 3000, y: 2000, heading: 1.2, charge: 1.4, co: 'h', hull: 'kestrel', hp: 30, sh: 0, flash: 0, guns: 1, lvl: 0, drones: 0, vis: 1 }),
+    packShip({ id: 4, x: 9000, y: 6000, heading: 2, charge: 0,    co: 'k', hull: 'bulwark',  hp: 5, sh: 55, flash: 70, guns: 1, lvl: 0, drones: 0, vis: 0 }),
     packShip({ id: 1e6, x: 6400, y: 4300, heading: .2, charge: 0,  co: 'x', hull: 'drifter',  hp:  70, sh:  30, flash:  20, tgt: 1, shot: 90, vis: 1 }),
     packShip({ id: 1e6 + 1, x: 2200, y: 6600, heading: 3, charge: 0, co: 'x', hull: 'drifter', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 0 }),
   ], bolts: [
@@ -143,12 +147,15 @@ for (const id of Object.keys(MAPS)) {
   ], pods: Object.keys(MATERIALS).map((mat, i) =>
     packPod({ id: i + 1, x: 5800 + i * 120, y: 4400, mat, n: i + 1 })),
     hold: { iron: 6, platinum: 3, iridium: 1 }, cap: 60, credits: 4820, docked: true,
-    gear: { emitter1: 2 }, hulls: ['hauler','vanguard'],
+    gear: { emitter1: 2, cellA: 1 }, hulls: ['hauler','vanguard'],
+    drones: ['emitter1', null, 'cellA'], xp: 5200, rank: { level: 14, into: 300, need: 900 },
     power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
     shieldNow: 640, shieldMax: 1170,
     vault: { iron: 240, nickel: 88, rhodium: 4 },
     scoop: { id: 1, p: 0.4 } });
-  feed({ t: 'award', amount: 140, what: 'Drifter', total: 4960 });
+  feed({ t: 'award', amount: 140, xp: 140, what: 'Drifter', total: 4960, level: 14, promoted: false });
+  frame(t += 16); frames++;
+  feed({ t: 'award', amount: 140, what: 'Drifter', total: 5100 });   // an award with no xp field
   frame(t += 16); frames++;                                    // world view
   listeners.keydown.forEach(fn => fn({ key: 'm' }));           // star system chart
   frame(t += 16); frames++;
@@ -157,7 +164,8 @@ for (const id of Object.keys(MAPS)) {
   frame(t += 16); frames++;
   for (const h of ['kestrel', 'bulwark']) {                    // every hull, every module
     feed({ t: 'fit', hull: h, fit: { weapon: ['emitter1'], generator: ['cellA'], tech: ['plating'] },
-           gear: { emitter1: 2, damper: 1 }, hulls: ['hauler','vanguard'], credits: 9000 });
+           gear: { emitter1: 2, damper: 1 }, hulls: ['hauler','vanguard'], credits: 90000,
+           drones: ['emitter1', null] });
     frame(t += 16); frames++;
   }
   listeners.keydown.forEach(fn => fn({ key: 'h' }));
@@ -208,8 +216,13 @@ for (const id of Object.keys(MAPS)) {
   feed({ t: 'map', map: 'm1' });
   feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
                                     hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 2 })] });
+  // pin hull and escort so the computed rows are the rows the client draws
+  feed({ t: 'fit', hull: 'vanguard',
+         fit: { weapon: ['emitter1'], generator: ['cellA'], tech: ['plating'] },
+         drones: ['emitter1', null], gear: { emitter1: 2, damper: 1 },
+         hulls: ['hauler', 'vanguard'], credits: 90000 });
   sent.length = 0;
-  const L = bayLayout(innerWidth, innerHeight, 'vanguard');
+  const L = bayLayout(innerWidth, innerHeight, 'vanguard', 2);
   evt('keydown', { key: 'h' });                                  // open the hangar
   frame(t += 16); frames++;
   for (const { r } of L.hulls) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
@@ -218,7 +231,7 @@ for (const id of Object.keys(MAPS)) {
   for (const { r } of L.store) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
   frame(t += 16); frames++;
   const kinds = new Set(sent.map(m => m.t));
-  for (const want of ['install', 'buy'])
+  for (const want of ['install', 'buy', 'buydrone', 'dronestrip'])
     if (!kinds.has(want)) errs.push(`clicking every station row never produced a "${want}"`);
   if (kinds.size) console.log(`station: ${L.hulls.length} hulls + ${L.racks.filter(r => !r.header).length} slots + ` +
     `${L.store.length} store rows all reachable, sent ${[...kinds].join(', ')}`);

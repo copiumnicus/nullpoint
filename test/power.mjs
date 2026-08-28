@@ -2,7 +2,7 @@ import { SYSTEMS, BOOST, SPOOL_UP, SPOOL_DN, newPower, routeTo, stepPower, level
   from '../shared/power.js';
 import { newShip, step, stepVitals, applyDamage, shieldMax } from '../shared/sim.js';
 import { resolve, HULLS } from '../shared/ships.js';
-import { fire } from '../shared/combat.js';
+import { fire, salvoOf, stepsOf, MAX_VOLLEY_STEPS } from '../shared/combat.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -68,12 +68,13 @@ console.log('\nwhat the boost is worth');
   check('thrusters actually move you faster',
     (s.x - before) / 4 > base.speed * 1.2, `${Math.round((s.x - before) / 4)} vs ${base.speed} px/s`);
 
-  const g = newShip(0, 0, 'vanguard', { weapon: ['emitter1', 'emitter1'], generator: [], tech: [] });
+  const g = newShip(0, 0, 'vanguard', { weapon: ['emitter1'], generator: [], tech: [] });
   routeTo(g.power, 'weapons'); hold(g, SPOOL_UP);
-  const shot = fire(g, newShip(400, 0, 'kestrel'), dt);
+  const mark0 = newShip(400, 0, 'kestrel');
+  let shot = null;
+  for (let i = 0; i < 200 && !shot; i++) shot = fire(g, mark0, dt)[0] ?? null;
   check('weapons hit harder', Math.abs(shot.dmg - g.stats.damage * (1 + BOOST)) < 0.01,
     `${Math.round(g.stats.damage)} -> ${Math.round(shot.dmg)}`);
-  check('and the beam is as thick as the rack', shot.w === 2, '2 emitters fitted');
 }
 
 console.log('\ncannons');
@@ -82,17 +83,57 @@ console.log('\ncannons');
   s.heading = 0;                                   // nose along +x, so the mounts are +/- y
   const mark = newShip(500, 0, 'kestrel');
   const shots = [];
-  for (let i = 0; i < 4; i++) { s.cool = 0; shots.push(fire(s, mark, dt)); }
+  for (let i = 0; i < 600 && shots.length < 4; i++) for (const b of fire(s, mark, dt)) shots.push(b);
   const sides = shots.map(b => Math.sign(+(b.sy - s.y).toFixed(6)));
   console.log(`     muzzle offsets: ${shots.map(b => (b.sy - s.y).toFixed(1)).join(', ')}`);
   check('shots leave a hardpoint, not the middle of the hull',
     shots.every(b => Math.abs(b.sy - s.y) > 1 && b.sx > s.x));
   check('and alternate between the two cannons',
     sides.join() === '-1,1,-1,1' || sides.join() === '1,-1,1,-1');
-  const a = newShip(0, 0, 'vanguard'); a.isAlien = true; a.heading = 0; a.cool = 0;
-  const ab = fire(a, mark, dt);
+  check('the beam is as thick as the rack', shots[0].w === 2, '2 emitters fitted');
+  const a = newShip(0, 0, 'vanguard'); a.isAlien = true; a.heading = 0;
+  let ab = null;
+  for (let i = 0; i < 200 && !ab; i++) ab = fire(a, mark, dt)[0] ?? null;
   check('a hostile with no visible mounts still fires from centre',
     ab.sx === a.x && ab.sy === a.y);
+}
+
+console.log('\none bolt per emitter');
+{
+  const rig = guns => {
+    const w = Array(Math.min(4, guns)).fill('emitter1');
+    const d = Array(Math.max(0, guns - 4)).fill('emitter1');
+    const s = newShip(0, 0, 'bulwark', { weapon: w, generator: [], tech: [] }, d);
+    s.heading = 0; return s;
+  };
+  const cycleOf = (guns) => {
+    const s = rig(guns), mark = newShip(400, 0, 'kestrel');
+    let bolts = 0, dmg = 0, t = 0;
+    while (t < 1 / s.stats.fireRate - 1e-9) { for (const b of fire(s, mark, dt)) { bolts++; dmg += b.dmg; } t += dt; }
+    return { bolts, dmg, guns: s.guns, total: s.stats.damage };
+  };
+  for (const n of [1, 2, 4, 8]) {
+    const c = cycleOf(n);
+    console.log(`     ${String(n).padStart(2)} emitters -> ${String(c.bolts).padStart(2)} bolts a cycle, ` +
+                `${Math.round(c.dmg / c.bolts)} each, ${Math.round(c.dmg)} total`);
+  }
+  check('every emitter fires its own bolt', [1, 2, 4, 8].every(n => cycleOf(n).bolts === n));
+  check("a cycle still delivers exactly the ship's damage",
+    [1, 2, 4, 8].every(n => { const c = cycleOf(n); return Math.abs(c.dmg - c.total) < 0.01; }),
+    'split across the stream rather than merged into one fat shot');
+  check('more emitters means more total damage, as they always did',
+    cycleOf(8).dmg > cycleOf(4).dmg && cycleOf(4).dmg > cycleOf(1).dmg);
+  check('past four they double up instead of stringing out',
+    salvoOf(4) === 1 && salvoOf(8) === 2 && stepsOf(8) === MAX_VOLLEY_STEPS,
+    'eight bolts strung across one cycle would arrive slower than one gun does');
+  check('a volley stops if the target dies partway through', (() => {
+    const s = rig(4), mark = newShip(400, 0, 'kestrel');
+    let got = 0;
+    for (const b of fire(s, mark, dt)) got++;      // opens the volley
+    mark.hp = 0;
+    for (let i = 0; i < 200; i++) got += fire(s, mark, dt).length;
+    return got === 1 && s.volley === 0;
+  })(), 'no firing into a wreck');
 }
 
 console.log('\nshields scale the pool, charge included');

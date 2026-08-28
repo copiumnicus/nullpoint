@@ -25,11 +25,11 @@ function fight(a, p, secs, { playerFires = false, drive = null } = {}) {
     if (tgt) everTargeted = true;
     step(a, dt); step(p, dt); stepVitals(a, dt); stepVitals(p, dt);
     faceTarget(a, tgt ? p : null);
-    const s1 = fire(a, tgt ? p : null, dt); if (s1) { air.push(s1); fired++; }
+    for (const s1 of fire(a, tgt ? p : null, dt)) { air.push(s1); fired++; }
     if (playerFires) {
       faceTarget(p, a);
-      const s2 = fire(p, a, dt);
-      if (s2) { air.push(s2); a.provoked.add(1); a.target ??= 1; }
+      const volley = fire(p, a, dt);
+      if (volley.length) { air.push(...volley); a.provoked.add(1); a.target ??= 1; }
     }
     stepBolts(air, dt);
     t += dt;
@@ -214,8 +214,7 @@ console.log('\ndodging');
     const a = foe(6000, 4000, 2); a.vx = a.vy = 0;
     const p = newShip(6400, 4000, 'kestrel');
     setup.aim(p);
-    const bolt = fire(a, p, dt);
-    const air = [bolt];
+    const air = fire(a, p, dt);
     while (air.length) { setup.fly(p); stepBolts(air, dt); }
     return ehp(p) < full(p);
   };
@@ -232,7 +231,7 @@ console.log('\ndodging');
     const p = newShip(6400, 4000, 'kestrel');
     const before = ehp(p);
     const air = []; let t = 0;
-    while (t < secs) { move(p, t); const s = fire(a, p, dt); if (s) air.push(s); stepBolts(air, dt); t += dt; }
+    while (t < secs) { move(p, t); air.push(...fire(a, p, dt)); stepBolts(air, dt); t += dt; }
     return before - ehp(p);
   };
   const weave = (at) => (p, t) => { p.x = 6000 + at; p.y = 4000 + 150 * Math.sin(t * 3);

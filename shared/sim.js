@@ -2,7 +2,7 @@
 // file so the two can never drift. Pure, deterministic, no I/O, no wall-clock.
 
 import { MAP_W, MAP_H, PORTAL_R } from './maps.js';
-import { resolve, radiusOf, DEFAULT_HULL } from './ships.js';
+import { resolve, radiusOf, gunsOf, DEFAULT_HULL } from './ships.js';
 import { emptyFit } from './gear.js';
 import { newPower, stepPower, boostOf, levelOf, BOOST } from './power.js';
 
@@ -45,17 +45,17 @@ export function newBody(x, y, stats, r) {
     x, y, vx: 0, vy: 0, heading: 0, stats, r,
     power: newPower(stats.capacitor), shieldMult: 1, guns: 1, muzzle: 0,
     hp: stats.hull, shield: stats.shield, sinceHit: 1e9, shieldHit: 0,
-    cool: 0, shotFlash: 0,
+    cool: 0, shotFlash: 0, volley: 0, volleyCool: 0,
     jumpCd: 0, charge: 0, chargeTo: null,
     tx: null, ty: null,      // click-to-move destination
     dx: null, dy: null,      // hold-to-steer thrust vector (magnitude 0..1)
   };
 }
 
-export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit()) {
-  const s = newBody(x, y, resolve(hull, fit), radiusOf(hull));
-  s.hull = hull; s.fit = fit;
-  s.guns = Math.max(1, fit?.weapon?.length ?? 0);   // drives barrel count and beam thickness
+export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = []) {
+  const s = newBody(x, y, resolve(hull, fit, drones), radiusOf(hull));
+  s.hull = hull; s.fit = fit; s.drones = drones;
+  s.guns = gunsOf(fit, drones);                     // ship rack plus whatever the escort carries
   return s;
 }
 
@@ -64,11 +64,12 @@ export const shieldMax = s => s.stats.shield * (s.shieldMult ?? 1);
 
 // Re-fit in place. Vitals are restored, so this must only be allowed somewhere
 // safe — swapping to a tanky hull mid-fight would otherwise be free.
-export function refit(s, hull, fit) {
-  s.hull = hull; s.fit = fit;
-  s.stats = resolve(hull, fit);
+export function refit(s, hull, fit, drones = s.drones ?? []) {
+  s.hull = hull; s.fit = fit; s.drones = drones;
+  s.stats = resolve(hull, fit, drones);
   s.r = radiusOf(hull);
-  s.guns = Math.max(1, fit?.weapon?.length ?? 0);
+  s.guns = gunsOf(fit, drones);
+  s.volley = 0; s.volleyCool = 0;
   s.hp = s.stats.hull;
   s.shieldMult = 1;
   s.shield = s.stats.shield;

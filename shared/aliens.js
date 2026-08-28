@@ -29,6 +29,7 @@ export const ALIENS = {
     flee: 0.10,       // turns and runs at this fraction of hull
     respawn: 14,      // s
     bounty: 140,      // credits your company pays for the kill
+    xp: 140,          // and what the kill is worth toward your rank
   },
 };
 

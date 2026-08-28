@@ -7,6 +7,11 @@
 
 export const SLOTS = ['weapon', 'generator', 'tech'];
 
+// Drones fly escort and carry one item each, of any kind. They are the only way
+// past a hull's own rack, and they cost more the more you already have.
+export const MAX_DRONES = 6;
+export const dronePrice = owned => 3000 + owned * 2600;
+
 export const EQUIPMENT = {
   // weapons — each adds its output to the hull's own, and a visibly thicker beam
   emitter1: { name: 'MK-I Emitter',  slot: 'weapon', tier: 1, price:   900,
@@ -82,3 +87,20 @@ export function reseat(slots, fit, gear) {
   return { fit: kept, gear: back };
 }
 export const fitList = fit => SLOTS.flatMap(s => fit?.[s] ?? []);
+
+// Only real items, only as many as there are drones. A drone may hold anything,
+// including a second of something the ship already has — except a technology,
+// which stays unique across the whole ship-and-escort.
+export function sanitiseDrones(list, fit, max = MAX_DRONES) {
+  const out = [];
+  const techs = new Set(fit?.tech ?? []);
+  for (const k of (Array.isArray(list) ? list : []).slice(0, max)) {
+    if (k === null || !EQUIPMENT[k]) { out.push(null); continue; }
+    if (EQUIPMENT[k].slot === 'tech' && techs.has(k)) { out.push(null); continue; }
+    if (EQUIPMENT[k].slot === 'tech') techs.add(k);
+    out.push(k);
+  }
+  return out;
+}
+
+export const droneItems = drones => (drones ?? []).filter(Boolean);

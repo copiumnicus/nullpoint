@@ -5,9 +5,9 @@
 // is how the old module rack broke.
 
 import { HULLS, slotsOf } from './ships.js';
-import { EQUIPMENT, SLOTS } from './gear.js';
+import { EQUIPMENT, SLOTS, MAX_DRONES } from './gear.js';
 
-export function bayLayout(VIEW_W, VIEW_H, hullKey) {
+export function bayLayout(VIEW_W, VIEW_H, hullKey, droneCount = 0) {
   const w = Math.min(980, VIEW_W - 50), h = Math.min(600, VIEW_H - 50);
   const x = (VIEW_W - w) / 2, y = (VIEW_H - h) / 2;
   const colW = (w - 60) / 3, top = y + 88;
@@ -21,7 +21,10 @@ export function bayLayout(VIEW_W, VIEW_H, hullKey) {
   // one row per slot the hull actually has, grouped by kind
   const racks = [];
   const counts = slotsOf(hullKey) ?? { weapon: 0, generator: 0, tech: 0 };
-  const total = SLOTS.reduce((n, s) => n + (counts[s] ?? 0), 0) + SLOTS.length;   // + headers
+  const drones = Math.min(MAX_DRONES, droneCount);
+  const buyRow = drones < MAX_DRONES ? 1 : 0;
+  const total = SLOTS.reduce((n, s) => n + (counts[s] ?? 0), 0) + SLOTS.length
+              + 1 + drones + buyRow;                       // + drone header, bays, buy row
   const rStep = Math.min(34, room / total);
   let ry = top;
   for (const slot of SLOTS) {
@@ -33,6 +36,15 @@ export function bayLayout(VIEW_W, VIEW_H, hullKey) {
       ry += rStep;
     }
   }
+
+  // Drone bays sit under the ship's own racks, with a buy row while there is room.
+  racks.push({ slot: 'drone', header: true, r: { x: x + 30 + colW, y: ry, w: colW, h: rStep - 6 } });
+  ry += rStep;
+  for (let i = 0; i < drones; i++) {
+    racks.push({ slot: 'drone', index: i, r: { x: x + 30 + colW, y: ry, w: colW, h: rStep - 6 } });
+    ry += rStep;
+  }
+  if (buyRow) { racks.push({ slot: 'drone', buy: true, r: { x: x + 30 + colW, y: ry, w: colW, h: rStep - 6 } }); ry += rStep; }
 
   const sKeys = Object.keys(EQUIPMENT);
   const sStep = Math.min(52, room / sKeys.length);
