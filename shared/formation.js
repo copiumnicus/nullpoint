@@ -40,6 +40,13 @@ export const formationPrice = k => FORMATIONS[k]?.price ?? Infinity;
 // How much of the bonus an escort this size actually delivers.
 export const bonusScale = drones => Math.min(1, (drones ?? 0) / BONUS_AT);
 
+// How big a drone is drawn, and how far the hull really reaches — both in ship
+// radii. The hull polygon stops at 1.35R but the cannons stick out past it, so
+// a slot placed off the nominal circle still ends up sitting on the guns. Every
+// layout below keeps its drones clear of BOTH numbers; the test checks it.
+export const DRONE_R = 0.52;
+export const HULL_R  = 1.75;
+
 // Where each drone sits, in multiples of the ship's radius, relative to heading.
 // fwd is along the nose, lat is to starboard.
 export function slots(kind, n) {
@@ -47,21 +54,27 @@ export function slots(kind, n) {
   for (let i = 0; i < n; i++) {
     const half = (n - 1) / 2, off = i - half;
     switch (kind) {
-      case 'wedge':                                 // ahead and outboard, guns first
-        out.push({ fwd: 2.2 - Math.abs(off) * 1.5, lat: off * 2.6 });
+      case 'wedge': {                               // an arrowhead, opening forward
+        // Odd counts get a point; the rest pair off down two arms. Ranks step
+        // back 1.7 and out 2.3, which keeps neighbours a clear drone-width apart.
+        const odd = n % 2, j = i - odd;
+        if (odd && i === 0) { out.push({ fwd: 3.8, lat: 0 }); break; }
+        const rank = Math.floor(j / 2), side = j % 2 ? 1 : -1;
+        out.push({ fwd: 1.9 - rank * 1.7, lat: side * (3.2 + rank * 2.3) });
         break;
-      case 'shell': {                               // an even ring
+      }
+      case 'shell': {                               // an even ring, well off the hull
         const a = (i / n) * Math.PI * 2 + Math.PI / 2;
-        out.push({ fwd: Math.cos(a) * 4.4, lat: Math.sin(a) * 4.4 });
+        out.push({ fwd: Math.cos(a) * 5.2, lat: Math.sin(a) * 5.2 });
         break;
       }
       case 'slipstream':                            // two tight columns in the wake
         // Paired rather than strung out single file: a six-drone tail would put
         // the last one 13R astern, firing from somewhere off the back of the screen.
-        out.push({ fwd: -3.2 - Math.floor(i / 2) * 1.8, lat: (i % 2 ? 1.3 : -1.3) });
+        out.push({ fwd: -3.6 - Math.floor(i / 2) * 2.4, lat: (i % 2 ? 2.0 : -2.0) });
         break;
       default:                                      // line astern, spread wide
-        out.push({ fwd: -3.4 - Math.abs(off) * 0.8, lat: off * 2.4 });
+        out.push({ fwd: -3.6 - Math.abs(off) * 0.9, lat: off * 2.8 });
     }
   }
   return out;

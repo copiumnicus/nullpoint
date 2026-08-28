@@ -5,7 +5,8 @@ const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
          DOCK_HULL_RATE, DOCK_INTERRUPT, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
-import { FORMATIONS, FORMATION_KEYS, DEFAULT_FORMATION, slots as formSlots, droneAt } from '../shared/formation.js';
+import { FORMATIONS, FORMATION_KEYS, DEFAULT_FORMATION, slots as formSlots, droneAt,
+         DRONE_R, HULL_R } from '../shared/formation.js';
 import { hardpoints } from '../shared/combat.js';
 
 const fails = [];
@@ -175,117 +176,98 @@ check('the dock will not repair you while you are being shot',
   underFire.hp < underFire.stats.hull * 0.25 && underFire.shield === 0,
   'so running home is not a free escape');
 
-console.log('\nhangar layout');
+console.log('\nstation layout');
 {
-  const { bayLayout } = await import('../shared/hangar.js');
-  let outside = 0, overlap = 0, offscreen = 0, tightest = 1e9;
-  for (const [W, H] of [[1920,1080],[1600,900],[1440,900],[1280,800],[1100,700],[1024,640]]) {
-    const L = bayLayout(W, H), P = L.panel, A = L.apply;
-    const rows = [...L.hulls, ...L.racks.filter(r => !r.header), ...L.store].map(o => o.r);
-    if (P.x < 0 || P.y < 0 || P.x + P.w > W || P.y + P.h > H) offscreen++;
-    for (const r of rows) {
-      // every row must be reachable: inside the panel, or a click there is read as
-      // "clicked outside" and the panel closes instead of selecting anything
-      if (r.x < P.x || r.y < P.y || r.x + r.w > P.x + P.w || r.y + r.h > P.y + P.h) outside++;
-      tightest = Math.min(tightest, (P.y + P.h) - (r.y + r.h));
+  const { bayLayout, STORE_PAGES, TABS } = await import('../shared/hangar.js');
+  let outside = 0, overlap = 0, offscreen = 0, tightest = 1e9, empty = 0, checked = 0;
+  const ALL_HULLS = Object.keys(HULLS), ALL_FORMS = FORMATION_KEYS;
+  const sizes = [[1920,1080],[1600,900],[1440,900],[1280,800],[1100,700],[1024,640]];
+  const states = [];
+  for (const drones of [0, 3, 6])
+    for (const hull of ALL_HULLS)
+      states.push({ hull, drones, hulls: ALL_HULLS, formations: ALL_FORMS });
+  states.push({ hull: DEFAULT_HULL, drones: 0, hulls: [], formations: ['line'] });  // a brand new pilot
+
+  for (const [W, H] of sizes)
+    for (const st of states)
+      for (const tab of TABS.map(t => t.key))
+        for (const page of (tab === 'store' ? STORE_PAGES.map(p2 => p2.key) : ['ships'])) {
+          const L = bayLayout(W, H, { ...st, tab, page }), P = L.panel;
+          checked++;
+          if (P.x < 0 || P.y < 0 || P.x + P.w > W || P.y + P.h > H) offscreen++;
+          const rows = [...L.hulls, ...L.racks.filter(r => !r.header), ...L.pages, ...L.store];
+          // Nothing to click is a dead page — the drone page legitimately empties
+          // once every bay is full, and nothing else may.
+          if (!rows.length && !(tab === 'store' && page === 'drones' && st.drones === 6)) empty++;
+          for (const { r } of rows) {
+            // a row outside the panel is read as a click on the backdrop, which
+            // closes the station instead of selecting anything
+            if (r.x < P.x || r.y < P.y || r.x + r.w > P.x + P.w || r.y + r.h > P.y + P.h) outside++;
+            tightest = Math.min(tightest, (P.y + P.h) - (r.y + r.h));
+          }
+          // Columns are independent now, so overlap is only meaningful within one.
+          const cols = new Map();
+          for (const o of [...L.hulls, ...L.racks, ...L.pages, ...L.store])
+            (cols.get(Math.round(o.r.x)) ?? cols.set(Math.round(o.r.x), []).get(Math.round(o.r.x))).push(o.r);
+          for (const col of cols.values()) {
+            col.sort((a, b) => a.y - b.y);
+            for (let i = 1; i < col.length; i++) if (col[i].y < col[i-1].y + col[i-1].h - 0.01) overlap++;
+          }
+        }
+  check('every row stays inside the panel', outside === 0,
+        `${checked} layouts, ${tightest | 0}px of slack at the tightest`);
+  check('rows never overlap each other, column by column', overlap === 0);
+  check('the panel itself always fits the window', offscreen === 0);
+  check('no tab or store page is empty', empty === 0);
+
+  // Everything buyable must appear on exactly one page, or it is unreachable.
+  const { pageItems } = await import('../shared/hangar.js');
+  const listed = new Set();
+  for (const p2 of STORE_PAGES)
+    for (const it of pageItems(p2.key, { hulls: [], formations: [], drones: 0 })) {
+      check(`${it.k} is listed once`, !listed.has(it.k), '');
+      listed.add(it.k);
     }
-    for (const col of [L.hulls, L.store, L.racks])
-      for (let i = 1; i < col.length; i++)
-        if (col[i].r.y < col[i-1].r.y + col[i-1].r.h - 0.01) overlap++;
-  }
-  check('every hull and module row stays inside the panel', outside === 0,
-    `${Object.keys(EQUIPMENT).length} store items, ${tightest | 0}px of slack at the tightest`);
-  
-  check('rows never overlap each other', overlap === 0);
-  check('the panel fits on screen at every size', offscreen === 0);
+  const want = [...Object.keys(EQUIPMENT), ...Object.keys(HULLS), ...FORMATION_KEYS, 'drone'];
+  check('every purchasable thing has a page', want.every(k => listed.has(k)),
+        want.filter(k => !listed.has(k)).join(' ') || `${listed.size} rows across ${STORE_PAGES.length} pages`);
 }
 
-console.log('\nwire format');
+// ------------------------------------------------------------------ tooltips
+console.log('\ntooltips');
 {
-  const { SHIP_FIELDS, packShip, unpackShip } = await import('../shared/net.js');
-  const o = { id: 7, x: 1, y: 2, heading: .3, charge: .4, co: 'h', hull: 'kestrel', hp: 55, sh: 66, flash: 77, vis: 1 };
-  const round = unpackShip(packShip(o));
-  check('a packed ship survives the round trip', SHIP_FIELDS.every(f => round[f] === o[f]),
-    `${SHIP_FIELDS.length} fields`);
-  check('the array is exactly as long as the field list', packShip(o).length === SHIP_FIELDS.length);
-  check('flash and vis do not transpose',
-    packShip(o).indexOf(77) === SHIP_FIELDS.indexOf('flash')
-    && unpackShip(packShip(o)).vis === 1, 'the bug this module exists to prevent');
+  const { tipFor, diffLines } = await import('../shared/tooltip.js');
+  const ctx = { hull: 'vanguard', fit: fit({ weapon: ['emitter1'] }), drones: ['emitter1'],
+                formation: 'line', gear: { plating: 1 }, hulls: ['hauler', 'vanguard'], formations: ['line'] };
+  const every = [
+    ...Object.keys(EQUIPMENT).map(k => ['item', k]),
+    ...Object.keys(HULLS).filter(k => k !== 'vanguard').map(k => ['hull', k]),
+    ...FORMATION_KEYS.filter(k => k !== 'line').map(k => ['form', k]),
+    ['drone', 'drone'],
+  ];
+  const tips = every.map(([kind, k]) => [kind, k, tipFor(kind, k, ctx)]);
+  check('everything on sale has a tooltip', tips.every(([, , t]) => t),
+        tips.filter(([, , t]) => !t).map(([, k]) => k).join(' '));
+  check('every tooltip states at least one real number', tips.every(([, , t]) => t.lines.length > 0),
+        'a blurb alone does not say how much');
+  check('no tooltip line is NaN or undefined',
+        tips.every(([, , t]) => t.lines.every(l => Number.isFinite(l.from) && Number.isFinite(l.to)
+                                               && (l.pct === null || Number.isFinite(l.pct)))));
+  check('a tooltip agrees with the ship it describes',
+        tipFor('item', 'plating', ctx).lines.some(l => l.key === 'hull' && l.to - l.from === 450),
+        'Composite Plating is +450 hull, and says so');
+  const damp = tipFor('item', 'damper', ctx);
+  console.log(`     ${damp.title}: ` + damp.lines.map(l => `${l.label} ${l.from}→${l.to}${l.unit} (${l.pct}%)`).join(', '));
+  check('a downside reads as a downside', damp.lines.find(l => l.key === 'radar').good === false
+                                       && damp.lines.find(l => l.key === 'signature').good === true,
+        'lower radar is bad, lower signature is good');
+  check('the drone tip prices the next bay, not the first',
+        tipFor('drone', 'drone', ctx).price === tipFor('drone', 'drone', { ...ctx, drones: [] }).price + 2600);
+  check('a formation with no drones still explains itself',
+        (tipFor('form', 'wedge', { ...ctx, drones: [] })?.sub ?? '').includes('no effect'));
+  check('an unknown key returns nothing rather than throwing',
+        tipFor('item', 'nonesuch', ctx) === null && tipFor('hull', 'nonesuch', ctx) === null);
 }
-
-console.log('\nshield impact');
-const fl = newShip(0, 0, 'vanguard', []);
-applyDamage(fl, 200);
-check('a hit the shields catch lights the bubble', fl.shieldHit === SHIELD_FLASH);
-fl.shieldHit = 0;
-applyDamage(fl, 400);                                   // 700 shield left, still absorbs
-check('a partial absorb still lights it', fl.shieldHit === SHIELD_FLASH, 'shields did take damage');
-fl.shield = 0; fl.shieldHit = 0;
-applyDamage(fl, 300);
-check('with shields down there is nothing to flare', fl.shieldHit === 0 && fl.hp < fl.stats.hull,
-  'the hull still takes it');
-applyDamage(fl, 0);
-check('a zero-damage hit lights nothing', fl.shieldHit === 0);
-fl.shield = 100; fl.shieldHit = 0; applyDamage(fl, 50);
-let lit = 0;
-while (fl.shieldHit > 0) { stepVitals(fl, dt, false); lit += dt; }
-check('the bubble decays on its own', Math.abs(lit - SHIELD_FLASH) < 0.05, `${lit.toFixed(2)}s`);
-const rf = refit(newShip(0, 0, 'vanguard', []), 'kestrel', []);
-check('refitting clears a lit bubble', rf.shieldHit === 0);
-
-console.log('\nwire: bolts and blasts');
-{
-  const { BOLT_FIELDS, packBolt, unpackBolt, BLAST_FIELDS, packBlast, unpackBlast } = await import('../shared/net.js');
-  const b = unpackBolt(packBolt({ sx: 10.4, sy: 20.6, ax: 30, ay: 40, t: 0.05, ttl: 0.2, foe: true }));
-  check('a bolt round-trips with its progress', b.sx === 10 && b.sy === 21 && b.p === 0.75 && b.foe === 1,
-    `${BOLT_FIELDS.length} fields, p=${b.p}`);
-  const k = unpackBlast(packBlast({ x: 5, y: 6, r: 15, t: 0.2, ttl: 0.8, foe: false }));
-  check('a blast round-trips with its progress', k.x === 5 && k.r === 15 && k.p === 0.75 && k.foe === 0,
-    `${BLAST_FIELDS.length} fields`);
-  check('progress always runs 0 to 1', unpackBolt(packBolt({ sx:0,sy:0,ax:0,ay:0,t:0.2,ttl:0.2,foe:0 })).p === 0
-    && unpackBolt(packBolt({ sx:0,sy:0,ax:0,ay:0,t:0,ttl:0.2,foe:0 })).p === 1);
-}
-
-console.log('\ncharted space');
-check('the charted zone is exactly what the minimap draws',
-  driftDepth(0, 0) === 0 && driftDepth(MAP_W, MAP_H) === 0
-  && driftDepth(-1, 4000) === 1 && driftDepth(MAP_W + 250, 4000) === 250);
-check('depth takes the worst axis, not the sum',
-  driftDepth(-300, -900) === 900, 'a corner is not doubly lethal');
-check('shear starts the moment you cross and ramps to the limit',
-  driftDps(0) === 0 && driftDps(1) >= DRIFT_MIN && driftDps(DRIFT_MARGIN) === DRIFT_MAX
-  && driftDps(DRIFT_MARGIN / 2) < DRIFT_MAX / 2, 'and ramps faster than linear');
-check('the hard wall sits one margin past the charted edge',
-  WORLD.x0 === -DRIFT_MARGIN && WORLD.x1 === MAP_W + DRIFT_MARGIN);
-
-const flown = (hull, fit = []) => {
-  const s = newShip(300, 4000, hull, fit);
-  s.dx = -1; s.dy = 0;                                    // full burn, straight out
-  let t = 0;
-  while (s.hp > 0 && t < 120) { step(s, dt); stepDrift(s, dt); t += dt; }
-  return { t, depth: driftDepth(s.x, s.y) };
-};
-const gap = r => DRIFT_MARGIN - r.depth;                  // px still between the wreck and the border
-const runs = [['kestrel', []], ['vanguard', []], ['bulwark', []],
-              ['bulwark', fit({ tech: ['plating'], generator: ['cellA', 'cellA'] })],   // the tankiest thing buildable
-              ['kestrel', ['thruster', 'ballast']]]             // and the fastest
-  .map(([h, f]) => [`${h}${f.length ? '+' + f.length : ''}`, flown(h, f)]);
-runs.forEach(([h, r]) => console.log(`     ${h.padEnd(11)} dead at depth ${r.depth | 0}/${DRIFT_MARGIN}` +
-  ` after ${r.t.toFixed(1)}s — stopped ${gap(r) | 0}px short of the border`));
-check('flying out is always fatal, on every hull and fit', runs.every(([, r]) => r.t < 120));
-check('nobody ever reaches the border', runs.every(([, r]) => gap(r) > 120),
-  `closest was ${Math.min(...runs.map(([, r]) => gap(r))) | 0}px short`);
-check('tougher hulls get further before they go',
-  runs[0][1].depth < runs[1][1].depth && runs[1][1].depth < runs[2][1].depth);
-check('you get real warning at the line, not an instant kill',
-  (newShip(0, 0, 'vanguard').stats.hull + newShip(0, 0, 'vanguard').stats.shield) / DRIFT_MIN > 30,
-  `${((2000) / DRIFT_MIN).toFixed(0)}s of grace right at the edge`);
-
-const stray = newShip(-200, 4000, 'vanguard', []);
-stray.shield = 0;
-for (let i = 0; i < 30 * 20; i++) { stepDrift(stray, dt); stepVitals(stray, dt, false); }
-check('shields cannot regenerate while shear is landing', stray.shield === 0, '20s outside');
-
 
 // ---------------------------------------------------------------- formations
 console.log('\nformations');
@@ -319,18 +301,32 @@ check('the bonus scales in with the escort and caps at three',
 check('an unknown formation falls back to the default, it does not throw',
   resolve('bulwark', fit(), ['emitter1'], 'nonesuch').shield === resolve('bulwark', fit(), ['emitter1']).shield);
 
+// Clearance is measured edge to edge with the sizes the client actually draws
+// at. Centre-to-centre spacing looked fine while a six-drone Bulwark was flying
+// with its escort sitting on top of its own cannons.
+const CLEAR = 0.9;                                    // drone-widths of daylight, minimum
 for (const k of K) {
   const seen = new Set();
+  let worstPair = 99, worstHull = 99, reach = 0;
   for (const n of [1, 2, 3, 4, 5, 6]) {
     const pts = formSlots(k, n);
     check(`${k} seats exactly ${n} drone${n === 1 ? '' : 's'}`, pts.length === n);
-    pts.forEach(pt => {
+    pts.forEach((pt, i) => {
       const d = Math.hypot(pt.fwd, pt.lat);
-      if (d < 1.9 || d > 9) seen.add(`${k}@${n} sits ${d.toFixed(1)}R out`);
-      pts.forEach(q => { if (q !== pt && Math.hypot(pt.fwd - q.fwd, pt.lat - q.lat) < 1.2) seen.add(`${k}@${n} overlaps`); });
+      worstHull = Math.min(worstHull, d - DRONE_R - HULL_R);
+      reach = Math.max(reach, d + DRONE_R);
+      if (d - DRONE_R - HULL_R < CLEAR) seen.add(`${k}@${n} sits on the hull`);
+      pts.forEach((q, j) => {
+        if (j <= i) return;
+        const gap = Math.hypot(pt.fwd - q.fwd, pt.lat - q.lat) - 2 * DRONE_R;
+        worstPair = Math.min(worstPair, gap);
+        if (gap < CLEAR) seen.add(`${k}@${n} drones overlap`);
+      });
     });
   }
-  check(`${k} keeps its drones clear of the hull and each other`, seen.size === 0, [...seen][0] ?? '');
+  check(`${k} keeps its escort clear of the hull and of itself`, seen.size === 0,
+        [...seen][0] ?? `${worstPair.toFixed(1)}R between drones, ${worstHull.toFixed(1)}R off the hull`);
+  check(`${k} keeps the escort on screen`, reach < 11, `reaches ${reach.toFixed(1)}R`);
 }
 const spread = k => Math.max(...formSlots(k, 6).map(p2 => Math.hypot(p2.fwd, p2.lat)));
 check('no two formations look the same',

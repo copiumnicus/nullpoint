@@ -17,7 +17,8 @@ import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
 import { SYSTEMS, BOOST } from '/shared/power.js';
 import { chartLayout } from '/shared/chart.js';
-import { bayLayout } from '/shared/hangar.js';
+import { bayLayout, STORE_PAGES } from '/shared/hangar.js';
+import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { audioReady, setThrust, laser, explosion, toggleAudio, audioOn } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
@@ -490,232 +491,341 @@ function drawSystem(me) {
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
 
-// --- hangar -------------------------------------------------------------------
+// --- station: hangar and store ------------------------------------------------
 // Geometry lives in one place so drawing and hit-testing can never disagree
-// about where a row is.
-const bayGeom = () => bayLayout(VIEW_W, VIEW_H, myHull, myDrones.length);
+// about where a row is. Two tabs: HANGAR arranges what you own, STORE spends
+// money, paged by category so one column never holds everything at once.
+let bayTab = 'hangar', bayPage = 'ships';
+
+const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
+  tab: bayTab, page: bayPage, hull: myHull, drones: myDrones.length,
+  hulls: myHulls, formations: myForms, gear: myGear });
+
+const shipCtx = () => ({ hull: myHull, fit: myFit, drones: myDrones, formation: myForm,
+                         gear: myGear, hulls: myHulls, formations: myForms, credits });
+
+// Anything in the locker that would go in this slot, and is not a technology we
+// are already flying — the same rule the server applies, so a click never bounces.
+const spare = slot => Object.keys(EQUIPMENT).find(k => EQUIPMENT[k].slot === slot && (myGear[k] ?? 0) > 0
+  && !(slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)));
 
 function bayClick(v) {
   const G = bayGeom();
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
   if (!inside(G.panel)) { bayOpen = false; return; }
-  if (!docked()) return say(`Dock at ${COMPANIES[myCo].tag}-1 to outfit`, '#e0a53f');
+  if (!docked()) return say('Fly into your base ring to use the station', '#e0a53f');
 
-  for (const { k, r } of G.hulls) if (inside(r)) {
-    if (k === myHull) return;
-    if (myHulls.includes(k)) return send({ t: 'hull', key: k });
-    if (credits < HULLS[k].price) return say(`A ${HULLS[k].name} costs ${HULLS[k].price} ${CURRENCY.short}`, '#e0a53f');
-    return send({ t: 'buyhull', key: k });
-  }
-  for (const row of G.racks) {
-    if (row.header || !inside(row.r)) continue;
-    if (row.slot === 'form') {
-      if (row.key === myForm) return;
-      if (myForms.includes(row.key)) return send({ t: 'formation', key: row.key });
-      const cost = FORMATIONS[row.key].price;
-      return credits >= cost ? send({ t: 'buyformation', key: row.key })
-                             : say(`${FORMATIONS[row.key].name} costs ${cost} ${CURRENCY.short}`, '#e0a53f');
+  for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; return; }
+  for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; return; }
+
+  if (bayTab === 'hangar') {
+    for (const { k, r } of G.hulls) if (inside(r)) {
+      if (k === myHull) return;
+      return send({ t: 'hull', key: k });               // owned only in here; buying is the store's job
     }
-    if (row.slot === 'drone') {
-      if (row.buy) {
-        const cost = dronePrice(myDrones.length);
-        return credits >= cost ? send({ t: 'buydrone' })
-                               : say(`A drone costs ${cost} ${CURRENCY.short}`, '#e0a53f');
+    for (const row of G.racks) {
+      if (row.header || !inside(row.r)) continue;
+      if (row.slot === 'form') {
+        if (row.key === myForm) return;
+        return send({ t: 'formation', key: row.key });
       }
-      if (myDrones[row.index]) return send({ t: 'dronestrip', index: row.index });
-      // a drone takes anything; offer whatever is in the locker, in order
-      const any = Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
-        && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)));
-      return any ? send({ t: 'dronefit', index: row.index, item: any })
-                 : say('Nothing in the locker to mount', '#8ab4e6');
+      if (row.slot === 'drone') {
+        if (myDrones[row.index]) return send({ t: 'dronestrip', index: row.index });
+        const any = Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
+          && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)));
+        return any ? send({ t: 'dronefit', index: row.index, item: any })
+                   : say('Nothing in the locker to mount — buy one in the store', '#8ab4e6');
+      }
+      if ((myFit[row.slot] ?? [])[row.index]) return send({ t: 'uninstall', slot: row.slot, index: row.index });
+      const owned = spare(row.slot);
+      return owned ? send({ t: 'install', item: owned })
+                   : say(`Nothing in the locker for a ${row.slot} slot — buy one in the store`, '#8ab4e6');
     }
-    const fitted = (myFit[row.slot] ?? [])[row.index];
-    if (fitted) return send({ t: 'uninstall', slot: row.slot, index: row.index });
-    const owned = Object.keys(EQUIPMENT).find(k => EQUIPMENT[k].slot === row.slot && (myGear[k] ?? 0) > 0
-      && !(row.slot === 'tech' && (myFit.tech ?? []).includes(k)));
-    return owned ? send({ t: 'install', item: owned })
-                 : say(`Nothing in the locker for that slot — buy one`, '#8ab4e6');
+    return;
   }
-  for (const { k, r } of G.store) if (inside(r)) {
-    if (credits < EQUIPMENT[k].price) return say(`Not enough credits for a ${EQUIPMENT[k].name}`, '#e0a53f');
-    return send({ t: 'buy', item: k });
+
+  for (const it of G.store) {
+    if (!inside(it.r)) continue;
+    if (it.kind === 'hull') {
+      if (it.owned) return it.k === myHull ? undefined : send({ t: 'hull', key: it.k });
+      return credits >= HULLS[it.k].price ? send({ t: 'buyhull', key: it.k })
+        : say(`A ${HULLS[it.k].name} costs ${HULLS[it.k].price} ${CURRENCY.short}`, '#e0a53f');
+    }
+    if (it.kind === 'form') {
+      if (it.owned) return it.k === myForm ? undefined : send({ t: 'formation', key: it.k });
+      return credits >= FORMATIONS[it.k].price ? send({ t: 'buyformation', key: it.k })
+        : say(`${FORMATIONS[it.k].name} costs ${FORMATIONS[it.k].price} ${CURRENCY.short}`, '#e0a53f');
+    }
+    if (it.kind === 'drone') {
+      const cost = dronePrice(myDrones.length);
+      return credits >= cost ? send({ t: 'buydrone' })
+        : say(`A drone costs ${cost} ${CURRENCY.short}`, '#e0a53f');
+    }
+    return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
+      : say(`Not enough credits for a ${EQUIPMENT[it.k].name}`, '#e0a53f');
   }
 }
 
 const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
 
+// A framed box of real numbers, placed beside the cursor and nudged back on
+// screen at the edges. This is the only place the effect of a module is stated
+// exactly — a blurb reads well and tells you nothing.
+function drawTip(tip, at) {
+  if (!tip) return;
+  g.font = '11px ui-monospace, monospace';
+  const lines = tip.lines.slice(0, 12);
+  const cut = tip.lines.length - lines.length;
+  const widest = Math.max(g.measureText(tip.title).width + 90,
+                          g.measureText(tip.blurb ?? '').width,
+                          g.measureText(tip.note ?? '').width,
+                          ...lines.map(l => g.measureText(`${l.label}  ${l.from} → ${l.to}${l.unit}`).width + 54));
+  const w = Math.min(340, Math.max(190, widest + 24));
+  const h = 40 + (tip.blurb ? 15 : 0) + lines.length * 15 + (cut ? 14 : 0) + (tip.note ? 20 : 0);
+  const x = Math.min(at.x + 18, VIEW_W - w - 8), y = Math.min(at.y + 14, VIEW_H - h - 8);
+
+  g.fillStyle = 'rgba(6,10,16,0.97)'; g.fillRect(x, y, w, h);
+  g.strokeStyle = '#3d5876'; g.lineWidth = 1; g.strokeRect(x + .5, y + .5, w - 1, h - 1);
+
+  let ty = y + 19;
+  g.textAlign = 'left'; g.fillStyle = '#cfe4ff'; g.font = '12px ui-monospace, monospace';
+  g.fillText(tip.title, x + 10, ty);
+  if (tip.price) { g.textAlign = 'right'; g.fillStyle = credits >= tip.price ? '#ffd479' : '#7a6a45';
+                   g.fillText(`${tip.price} ${CURRENCY.short}`, x + w - 10, ty); g.textAlign = 'left'; }
+  ty += 14;
+  g.font = '10px ui-monospace, monospace'; g.fillStyle = '#66748c';
+  g.fillText(tip.sub ?? '', x + 10, ty); ty += tip.blurb ? 15 : 6;
+  if (tip.blurb) { g.fillStyle = '#8ea3bd'; g.fillText(tip.blurb, x + 10, ty); ty += 8; }
+
+  g.font = '11px ui-monospace, monospace';
+  for (const l of lines) {
+    ty += 15;
+    g.fillStyle = '#7b8ba3'; g.fillText(l.label, x + 10, ty);
+    g.textAlign = 'right';
+    g.fillStyle = '#66748c'; g.fillText(String(l.from), x + w - 96, ty);
+    g.fillStyle = '#3d4757'; g.fillText('→', x + w - 84, ty);
+    g.fillStyle = l.good ? '#7de08a' : '#e07a7a';
+    g.fillText(`${l.to}${l.unit}`, x + w - 44, ty);
+    if (l.pct !== null) { g.font = '10px ui-monospace, monospace';
+                          g.fillText(`${l.pct > 0 ? '+' : ''}${l.pct}%`, x + w - 10, ty);
+                          g.font = '11px ui-monospace, monospace'; }
+    g.textAlign = 'left';
+  }
+  if (cut) { ty += 14; g.fillStyle = '#4a5568'; g.font = '10px ui-monospace, monospace';
+             g.fillText(`+${cut} more`, x + 10, ty); }
+  if (tip.note) { ty += 18; g.fillStyle = '#5b6b85'; g.font = '10px ui-monospace, monospace';
+                  g.fillText(tip.note, x + 10, ty); }
+  g.font = '11px ui-monospace, monospace';
+}
+
 function drawBay() {
   const G = bayGeom(), P = G.panel;
-  const racks = slotsOf(myHull);
-  const stats = resolve(myHull, myFit), bare = resolve(myHull, emptyFit());
+  const stats = resolve(myHull, myFit, myDrones, myForm), bare = resolve(myHull, emptyFit());
   const home = docked();
+  const at = hover && hover.x > P.x && hover.x < P.x + P.w && hover.y > P.y && hover.y < P.y + P.h ? hover : null;
+  const over = r => at && at.x > r.x && at.x < r.x + r.w && at.y > r.y && at.y < r.y + r.h;
+  let tip = null;
 
   g.fillStyle = 'rgba(3,5,9,0.92)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
   g.fillStyle = 'rgba(8,12,19,0.98)'; g.fillRect(P.x, P.y, P.w, P.h);
   g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
 
-  g.textAlign = 'left'; g.font = '15px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
-  g.fillText('OUTFITTING', P.x + 20, P.y + 32);
-  g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffd479'; g.textAlign = 'right';
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  for (const t of G.tabs) {
+    const on = t.key === G.tab;
+    g.fillStyle = on ? 'rgba(90,150,220,0.18)' : 'rgba(255,255,255,0.02)';
+    g.fillRect(t.r.x, t.r.y, t.r.w, t.r.h);
+    g.strokeStyle = on ? '#7fd4ff' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
+    g.strokeRect(t.r.x + .5, t.r.y + .5, t.r.w - 1, t.r.h - 1);
+    g.fillStyle = on ? '#cfe4ff' : '#66748c'; g.textAlign = 'center';
+    g.fillText(t.name, t.r.x + t.r.w / 2, t.r.y + t.r.h / 2 + 4);
+  }
+  g.textAlign = 'right'; g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffd479';
   g.fillText(`${credits} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = home ? '#66748c' : '#e0a53f';
-  g.fillText(home ? 'docked — every change takes effect at once, no confirmation needed'
-                  : `fly into the ${COMPANIES[myCo].tag}-1 base ring to outfit`, P.x + 118, P.y + 32);
+  g.fillText(home ? 'docked — every change takes effect at once'
+                  : `fly into the ${COMPANIES[myCo].tag}-1 base ring to outfit`, P.x + 236, P.y + 32);
 
   // a live stat line, so the effect of a click is visible immediately
   let sx = P.x + 20;
   for (const k of ['hull', 'shield', 'damage', 'speed', 'capacitor']) {
     const d = stats[k] - bare[k];
-    g.fillStyle = '#66748c'; g.fillText(ATTRS[k].label.toUpperCase(), sx, P.y + 56);
+    g.fillStyle = '#66748c'; g.fillText(ATTRS[k].label.toUpperCase(), sx, P.y + 62);
     g.fillStyle = '#cfe4ff'; g.font = '13px ui-monospace, monospace';
-    g.fillText(String(Math.round(stats[k])), sx, P.y + 72);
+    g.fillText(String(Math.round(stats[k])), sx, P.y + 78);
     if (Math.abs(d) > 0.01) {
       g.fillStyle = (ATTRS[k].better === 'high') === (d > 0) ? '#7de08a' : '#e07a7a';
       g.font = '10px ui-monospace, monospace';
-      g.fillText(`${d > 0 ? '+' : ''}${Math.round(d)}`, sx + 44, P.y + 72);
+      g.fillText(`${d > 0 ? '+' : ''}${Math.round(d)}`, sx + 44, P.y + 78);
     }
     g.font = '11px ui-monospace, monospace';
     sx += G.colW * 0.62;
   }
 
-  g.fillStyle = '#5b6b85';
-  g.fillText('HULL', P.x + 20, G.top - 10);
-  g.fillText(`RACKS  ${fitCount(myFit)}/${SLOTS.reduce((n, s2) => n + racks[s2], 0)}`, P.x + 30 + G.colW, G.top - 10);
-  g.fillText('STORE', P.x + 40 + G.colW * 2, G.top - 10);
-
-  for (const { k, r } of G.hulls) {
-    const H = HULLS[k], on = k === myHull, sl = slotsOf(k), owned = myHulls.includes(k);
-    g.globalAlpha = owned || credits >= H.price ? 1 : 0.5;
-    g.fillStyle = on ? 'rgba(90,150,220,0.16)' : 'rgba(255,255,255,0.03)';
-    g.fillRect(r.x, r.y, r.w, r.h);
-    g.strokeStyle = on ? '#7fd4ff' : owned ? '#2c3d55' : '#4a3a20'; g.lineWidth = on ? 1.6 : 1;
-    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
-    if (!owned) {
-      g.fillStyle = credits >= H.price ? '#ffd479' : '#7a6a45'; g.textAlign = 'right';
-      g.font = '11px ui-monospace, monospace';
-      g.fillText(`${H.price} ${CURRENCY.short}`, r.x + r.w - 10, r.y + 20);
-      g.textAlign = 'left';
-    }
-    g.fillStyle = COMPANIES[myCo].color;
-    g.fillRect(r.x + 16 - H.r / 2, r.y + r.h / 2 - H.r / 2, H.r, H.r);
-    g.fillStyle = on ? '#fff' : '#93a3b5'; g.font = '12px ui-monospace, monospace';
-    g.fillText(H.name, r.x + 36, r.y + 20);
-    g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
-    g.fillText(`${H.cls}   W${sl.weapon} G${sl.generator} T${sl.tech}   ${H.attrs.hull} hull  ` +
-               `${H.attrs.cargo} hold  ${H.attrs.capacitor}s cap`, r.x + 36, r.y + 35);
-    g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
-  }
-
   const pct = v => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%`;
   const SHORT = { damage: 'dmg', hull: 'hull', shield: 'shld', speed: 'spd', accel: 'acc' };
-  for (const row of G.racks) {
-    const r = row.r;
-    if (row.header) {
-      g.fillStyle = '#3d4757'; g.font = '10px ui-monospace, monospace';
-      g.fillText(row.slot === 'drone' ? `DRONES  ${myDrones.length}/${MAX_DRONES}`
-               : row.slot === 'form'  ? `FORMATION${myDrones.length ? '' : '  (needs drones)'}`
-                                      : row.slot.toUpperCase(),
-                 r.x + 2, r.y + r.h - 4);
-      g.font = '11px ui-monospace, monospace';
-      continue;
-    }
-    if (row.slot === 'form') {
-      const F = FORMATIONS[row.key], owned = myForms.includes(row.key), flying = row.key === myForm;
-      const can = owned || credits >= F.price;
-      g.globalAlpha = can ? 1 : 0.45;
-      g.fillStyle = flying ? 'rgba(125,224,138,0.12)' : 'rgba(255,255,255,0.02)';
+
+  if (G.tab === 'hangar') {
+    g.fillStyle = '#5b6b85';
+    g.fillText('YOUR SHIPS', P.x + 20, G.top - 10);
+    g.fillText(`RACKS  ${fitCount(myFit)}/${SLOTS.reduce((n, s2) => n + slotsOf(myHull)[s2], 0)}`,
+               P.x + 30 + G.colW, G.top - 10);
+    g.fillText('ESCORT', P.x + 40 + G.colW * 2, G.top - 10);
+
+    for (const { k, r } of G.hulls) {
+      const H = HULLS[k], on = k === myHull, sl = slotsOf(k);
+      if (over(r) && !on) tip = tipFor('hull', k, shipCtx());
+      g.fillStyle = on ? 'rgba(90,150,220,0.16)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
       g.fillRect(r.x, r.y, r.w, r.h);
-      g.strokeStyle = flying ? '#7de08a' : owned ? '#2c3d55' : '#ffd479'; g.lineWidth = 1;
-      if (!owned) g.setLineDash([4, 3]);
-      g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); g.setLineDash([]);
-      const mid = r.y + r.h / 2 + 4;
-      g.fillStyle = flying ? '#cfe4ff' : owned ? '#8ea3bd' : '#ffd479';
-      g.fillText(F.name, r.x + 10, mid);
-      g.textAlign = 'right';
-      g.fillStyle = flying ? '#7de08a' : owned ? '#66748c' : '#ffd479';
-      g.fillText(flying ? 'FLYING' : owned ? 'fly it' : `${F.price} ${CURRENCY.short}`, r.x + r.w - 10, mid);
-      g.textAlign = 'left';
-      // The bonus is scaled by how many drones are actually flying it, so quote
-      // what this escort would really deliver — not the brochure number. One line:
-      // a fully kitted Bulwark squeezes these rows down to 15px.
-      const k = bonusScale(myDrones.length);
-      const nameW = g.measureText(F.name).width, stateW = g.measureText('9000 cr').width;
-      g.font = '10px ui-monospace, monospace';
-      const mx = r.x + 20 + nameW, room = r.x + r.w - 16 - stateW - mx;
-      // Fall back through shorter spellings, then give up rather than run the
-      // summary under the price. A narrow window squeezes this column hard.
-      const forms = F.mods.length
-        ? [F.mods.map(([a, , v]) => `${SHORT[a] ?? a} ${pct(v * k)}`).join('  '),
-           F.mods.map(([a, , v]) => `${SHORT[a] ?? a}${pct(v * k)}`).join(' '), '']
-        : ['no effect', ''];
-      g.fillStyle = '#66748c';
-      g.fillText(forms.find(t => g.measureText(t).width <= room) ?? '', mx, mid);
-      g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
-      continue;
+      g.strokeStyle = on ? '#7fd4ff' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
+      g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+      g.fillStyle = COMPANIES[myCo].color;
+      g.fillRect(r.x + 16 - H.r / 2, r.y + r.h / 2 - H.r / 2, H.r, H.r);
+      g.fillStyle = on ? '#fff' : '#93a3b5'; g.font = '12px ui-monospace, monospace';
+      g.fillText(H.name, r.x + 36, r.y + 20);
+      g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
+      g.fillText(`${H.cls}   W${sl.weapon} G${sl.generator} T${sl.tech}   ${H.attrs.hull} hull  ` +
+                 `${H.attrs.cargo} hold`, r.x + 36, r.y + 35);
+      if (on) { g.fillStyle = '#7fd4ff'; g.textAlign = 'right';
+                g.fillText('FLYING', r.x + r.w - 10, r.y + 20); g.textAlign = 'left'; }
+      g.font = '11px ui-monospace, monospace';
     }
-    if (row.slot === 'drone') {
-      if (row.buy) {
-        const cost = dronePrice(myDrones.length), can = credits >= cost;
-        g.globalAlpha = can ? 1 : 0.45;
-        g.fillStyle = 'rgba(255,212,121,0.10)'; g.fillRect(r.x, r.y, r.w, r.h);
-        g.strokeStyle = '#ffd479'; g.lineWidth = 1; g.setLineDash([4, 3]);
-        g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); g.setLineDash([]);
-        g.fillStyle = '#ffd479';
-        g.fillText(`buy a drone  ${cost} ${CURRENCY.short}`, r.x + 10, r.y + r.h / 2 + 4);
-        g.globalAlpha = 1;
+
+    for (const row of G.racks) {
+      const r = row.r;
+      if (row.header) {
+        g.fillStyle = '#3d4757'; g.font = '10px ui-monospace, monospace';
+        g.fillText(row.slot === 'drone' ? `DRONE BAYS  ${myDrones.length}/${MAX_DRONES}`
+                 : row.slot === 'form'  ? `FORMATION${myDrones.length ? '' : '  (needs drones)'}`
+                                        : row.slot.toUpperCase(),
+                   r.x + 2, r.y + r.h - 4);
+        g.font = '11px ui-monospace, monospace';
         continue;
       }
-      const held = EQUIPMENT[myDrones[row.index]];
-      g.fillStyle = held ? 'rgba(125,224,138,0.12)' : 'rgba(255,255,255,0.02)';
+      if (row.slot === 'form') {
+        const F = FORMATIONS[row.key], flying = row.key === myForm;
+        if (over(r)) tip = tipFor('form', row.key, shipCtx());
+        g.fillStyle = flying ? 'rgba(125,224,138,0.12)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
+        g.fillRect(r.x, r.y, r.w, r.h);
+        g.strokeStyle = flying ? '#7de08a' : '#2c3d55'; g.lineWidth = 1;
+        g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+        const mid = r.y + r.h / 2 + 4;
+        g.fillStyle = flying ? '#cfe4ff' : '#8ea3bd';
+        g.fillText(F.name, r.x + 10, mid);
+        g.textAlign = 'right';
+        g.fillStyle = flying ? '#7de08a' : '#66748c';
+        g.fillText(flying ? 'FLYING' : 'fly it', r.x + r.w - 10, mid);
+        g.textAlign = 'left';
+        // What this escort would really deliver, not the brochure number.
+        const k = bonusScale(myDrones.length);
+        const nameW = g.measureText(F.name).width;
+        g.font = '10px ui-monospace, monospace';
+        const mx = r.x + 20 + nameW, room = r.x + r.w - 60 - mx;
+        const forms = F.mods.length
+          ? [F.mods.map(([a, , v]) => `${SHORT[a] ?? a} ${pct(v * k)}`).join('  '),
+             F.mods.map(([a, , v]) => `${SHORT[a] ?? a}${pct(v * k)}`).join(' '), '']
+          : ['no effect', ''];
+        g.fillStyle = '#66748c';
+        g.fillText(forms.find(t => g.measureText(t).width <= room) ?? '', mx, mid);
+        g.font = '11px ui-monospace, monospace';
+        continue;
+      }
+      const held = row.slot === 'drone' ? myDrones[row.index] : (myFit[row.slot] ?? [])[row.index];
+      const item = EQUIPMENT[held];
+      // An empty slot previews whatever clicking it would actually fit, so you
+      // can see the numbers before you commit rather than after.
+      const would = item ? null
+                  : row.slot === 'drone'
+                    ? Object.keys(EQUIPMENT).find(k => (myGear[k] ?? 0) > 0
+                        && !(EQUIPMENT[k].slot === 'tech' && (myFit.tech ?? []).concat(myDrones).includes(k)))
+                    : spare(row.slot);
+      if (over(r) && (held || would)) tip = tipFor('item', held ?? would, shipCtx());
+      if (tip && would) tip = { ...tip, note: 'in your locker — click to fit it' };
+      g.fillStyle = item ? 'rgba(125,224,138,0.12)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
       g.fillRect(r.x, r.y, r.w, r.h);
-      g.strokeStyle = held ? '#7de08a' : '#2c3d55'; g.lineWidth = 1;
-      if (!held) g.setLineDash([3, 3]);
+      g.strokeStyle = item ? '#7de08a' : '#2c3d55'; g.lineWidth = 1;
+      if (!item) g.setLineDash([3, 3]);
       g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); g.setLineDash([]);
-      g.fillStyle = COMPANIES[myCo].color; g.fillRect(r.x + 8, r.y + r.h / 2 - 3, 6, 6);
-      g.fillStyle = held ? '#cfe4ff' : '#3d4757';
-      g.fillText(held ? held.name : 'empty bay', r.x + 22, r.y + r.h / 2 + 4);
-      if (held) { g.fillStyle = '#66748c'; g.textAlign = 'right';
+      let tx = r.x + 10;
+      if (row.slot === 'drone') { g.fillStyle = COMPANIES[myCo].color;
+                                  g.fillRect(r.x + 8, r.y + r.h / 2 - 3, 6, 6); tx = r.x + 22; }
+      g.fillStyle = item ? '#cfe4ff' : '#3d4757';
+      g.fillText(item ? item.name : row.slot === 'drone' ? 'empty bay' : 'empty', tx, r.y + r.h / 2 + 4);
+      if (!item && would) { g.fillStyle = '#4d6a45'; g.textAlign = 'right';
+                            g.fillText('fit ' + EQUIPMENT[would].name, r.x + r.w - 10, r.y + r.h / 2 + 4);
+                            g.textAlign = 'left'; }
+      if (item) { g.fillStyle = '#66748c'; g.textAlign = 'right';
                   g.fillText('remove', r.x + r.w - 10, r.y + r.h / 2 + 4); g.textAlign = 'left'; }
-      continue;
     }
-    const item = EQUIPMENT[(myFit[row.slot] ?? [])[row.index]];
-    g.fillStyle = item ? 'rgba(125,224,138,0.12)' : 'rgba(255,255,255,0.02)';
-    g.fillRect(r.x, r.y, r.w, r.h);
-    g.strokeStyle = item ? '#7de08a' : '#2c3d55'; g.lineWidth = 1;
-    if (!item) g.setLineDash([3, 3]);
-    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
-    g.setLineDash([]);
-    g.fillStyle = item ? '#cfe4ff' : '#3d4757';
-    g.fillText(item ? item.name : 'empty', r.x + 10, r.y + r.h / 2 + 4);
-    if (item) {
-      g.fillStyle = '#66748c'; g.textAlign = 'right';
-      g.fillText('remove', r.x + r.w - 10, r.y + r.h / 2 + 4);
-      g.textAlign = 'left';
-    }
+
+    g.fillStyle = '#5b6b85';
+    g.fillText('click a slot to fit what is in your locker · a filled slot to strip it · H or Esc to close',
+               P.x + 20, P.y + P.h - 18);
+    g.font = '12px ui-monospace, monospace';
+    drawTip(tip, at ?? { x: 0, y: 0 });
+    return;
   }
 
-  for (const { k, r } of G.store) {
-    const e = EQUIPMENT[k], afford = credits >= e.price, owned = myGear[k] ?? 0;
-    g.globalAlpha = afford ? 1 : 0.45;
-    g.fillStyle = 'rgba(255,255,255,0.03)'; g.fillRect(r.x, r.y, r.w, r.h);
-    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+  // --- store ---------------------------------------------------------------
+  g.fillStyle = '#5b6b85';
+  g.fillText('DEPARTMENT', P.x + 20, G.top - 10);
+  g.fillText(STORE_PAGES.find(p => p.key === G.page)?.hint ?? '', P.x + 30 + G.pages[0].r.w, G.top - 10);
+
+  for (const p of G.pages) {
+    const on = p.key === G.page, r = p.r;
+    g.fillStyle = on ? 'rgba(90,150,220,0.16)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = on ? '#7fd4ff' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    g.fillStyle = on ? '#cfe4ff' : '#8ea3bd'; g.font = '12px ui-monospace, monospace';
+    g.fillText(p.name, r.x + 12, r.y + r.h / 2 + 4);
+    g.font = '11px ui-monospace, monospace';
+  }
+
+  for (const it of G.store) {
+    const r = it.r;
+    const price = it.kind === 'hull' ? HULLS[it.k].price
+                : it.kind === 'form' ? FORMATIONS[it.k].price
+                : it.kind === 'drone' ? dronePrice(myDrones.length)
+                                      : EQUIPMENT[it.k].price;
+    const name = it.kind === 'hull' ? HULLS[it.k].name
+               : it.kind === 'form' ? FORMATIONS[it.k].name
+               : it.kind === 'drone' ? `Drone ${myDrones.length + 1}`
+                                     : EQUIPMENT[it.k].name;
+    const blurb = it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}`
+                : it.kind === 'form' ? FORMATIONS[it.k].blurb
+                : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
+                                      : EQUIPMENT[it.k].blurb;
+    const afford = credits >= price;
+    if (over(r)) tip = tipFor(it.kind, it.k, shipCtx());
+
+    g.globalAlpha = it.owned || afford ? 1 : 0.5;
+    g.fillStyle = it.owned ? 'rgba(125,224,138,0.10)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = it.owned ? '#2c3d55' : afford ? '#3d5876' : '#2c3d55'; g.lineWidth = 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
     g.fillStyle = '#cfe4ff'; g.font = '12px ui-monospace, monospace';
-    g.fillText(e.name, r.x + 10, r.y + 17);
+    g.fillText(name, r.x + 12, r.y + 20);
     g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
-    g.fillText(e.blurb, r.x + 10, r.y + 31);
+    g.fillText(blurb, r.x + 12, r.y + 35);
     g.textAlign = 'right';
-    g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
-    g.fillText(`${e.price} ${CURRENCY.short}`, r.x + r.w - 10, r.y + 17);
-    if (owned) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
-                 g.fillText(`${owned} in locker`, r.x + r.w - 10, r.y + 31); }
+    if (it.owned) { g.fillStyle = '#7de08a'; g.font = '11px ui-monospace, monospace';
+                    g.fillText((it.kind === 'hull' ? it.k === myHull : it.k === myForm) ? 'FLYING' : 'owned — fly it',
+                               r.x + r.w - 12, r.y + 20); }
+    else { g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
+           g.fillText(`${price} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
+    const stock = it.kind === 'item' ? (myGear[it.k] ?? 0) : 0;
+    if (stock) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
+                 g.fillText(`${stock} in locker`, r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';
   }
 
   g.fillStyle = '#5b6b85';
-  g.fillText('click a store item to buy · an empty slot to fit · a filled slot to remove · H or Esc to close',
+  g.fillText('hover for exact numbers · click to buy · fit it in the HANGAR tab · H or Esc to close',
              P.x + 20, P.y + P.h - 18);
   g.font = '12px ui-monospace, monospace';
+  drawTip(tip, at ?? { x: 0, y: 0 });
 }
 
 // --- inventory / company hangar -----------------------------------------------

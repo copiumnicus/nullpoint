@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
-import { bayLayout } from '../shared/hangar.js';
+import { bayLayout, STORE_PAGES } from '../shared/hangar.js';
 import { packShip, packBolt, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -251,21 +251,44 @@ for (const id of Object.keys(MAPS)) {
   feed({ t: 'fit', hull: 'vanguard',
          fit: { weapon: ['emitter1'], generator: ['cellA'], tech: ['plating'] },
          drones: ['emitter1', null], gear: { emitter1: 2, damper: 1 },
+         formation: 'line', formations: ['line', 'wedge'],
          hulls: ['hauler', 'vanguard'], credits: 90000 });
   sent.length = 0;
-  const L = bayLayout(innerWidth, innerHeight, 'vanguard', 2);
-  evt('keydown', { key: 'h' });                                  // open the hangar
+  const state = { hull: 'vanguard', drones: 2, hulls: ['hauler', 'vanguard'],
+                  formations: ['line', 'wedge'], gear: { emitter1: 2, damper: 1 } };
+  const click = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+  const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+  evt('keydown', { key: 'h' });                                  // open the station
   frame(t += 16); frames++;
-  for (const { r } of L.hulls) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
-  for (const row of L.racks) if (!row.header)
-    evt('pointerdown', { clientX: row.r.x + row.r.w / 2, clientY: row.r.y + row.r.h / 2 });
-  for (const { r } of L.store) evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+
+  // HANGAR: hover every row (which draws its tooltip) then click it
+  let rows = 0;
+  const H = bayLayout(innerWidth, innerHeight, { ...state, tab: 'hangar' });
+  for (const o of [...H.hulls, ...H.racks.filter(r => !r.header)]) {
+    hoverAt(o.r); frame(t += 16); frames++; rows++;
+    click(o.r);
+  }
   frame(t += 16); frames++;
+
+  // STORE: every page, every row on it. A page whose rows are never drawn or
+  // never clickable is how the old rack quietly stopped working.
+  let storeRows = 0;
+  for (const page of STORE_PAGES.map(p2 => p2.key)) {
+    const S = bayLayout(innerWidth, innerHeight, { ...state, tab: 'store', page });
+    click(S.tabs.find(x => x.key === 'store').r);
+    click(S.pages.find(x => x.key === page).r);
+    frame(t += 16); frames++;
+    for (const it of S.store) {
+      hoverAt(it.r); frame(t += 16); frames++; storeRows++;
+      click(it.r);
+    }
+    frame(t += 16); frames++;
+  }
   const kinds = new Set(sent.map(m => m.t));
-  for (const want of ['install', 'buy', 'buydrone', 'dronestrip', 'buyformation'])
+  for (const want of ['install', 'buy', 'buydrone', 'dronestrip', 'buyformation', 'buyhull', 'hull', 'formation'])
     if (!kinds.has(want)) errs.push(`clicking every station row never produced a "${want}"`);
-  if (kinds.size) console.log(`station: ${L.hulls.length} hulls + ${L.racks.filter(r => !r.header).length} slots + ` +
-    `${L.store.length} store rows all reachable, sent ${[...kinds].join(', ')}`);
+  if (kinds.size) console.log(`station: ${rows} hangar rows + ${storeRows} store rows across ` +
+    `${STORE_PAGES.length} pages, all hovered and clicked; sent ${[...kinds].join(', ')}`);
 
   // power routing is a key, and must reach the server
   sent.length = 0;
