@@ -21,23 +21,15 @@ import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js'
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
 
+// Only two hand-listed entries. Everything under shared/ is served by pattern —
+// the list used to be maintained by hand, and adding shared/level.js without
+// adding it here 404'd one module. A missing module fails the whole import graph,
+// so the page executes nothing at all and the player gets a black screen.
 const FILES = {
-  '/':                ['public/index.html', 'text/html'],
-  '/shared/sim.js':   ['shared/sim.js',     'text/javascript'],
-  '/shared/maps.js':  ['shared/maps.js',    'text/javascript'],
-  '/shared/chart.js': ['shared/chart.js',   'text/javascript'],
-  '/shared/hangar.js':['shared/hangar.js',  'text/javascript'],
-  '/shared/ships.js': ['shared/ships.js',   'text/javascript'],
-  '/shared/radar.js': ['shared/radar.js',   'text/javascript'],
-  '/shared/net.js':   ['shared/net.js',     'text/javascript'],
-  '/shared/brand.js': ['shared/brand.js',   'text/javascript'],
-  '/shared/gear.js':  ['shared/gear.js',    'text/javascript'],
-  '/shared/power.js': ['shared/power.js',   'text/javascript'],
-  '/shared/aliens.js':['shared/aliens.js',  'text/javascript'],
-  '/shared/combat.js':['shared/combat.js',  'text/javascript'],
-  '/shared/cargo.js': ['shared/cargo.js',   'text/javascript'],
-  '/audio.js':        ['public/audio.js',   'text/javascript'],
+  '/':          ['public/index.html', 'text/html'],
+  '/audio.js':  ['public/audio.js',   'text/javascript'],
 };
+const SHARED_JS = /^\/shared\/[a-z]+\.js$/;   // no traversal, no other directory
 const SFX_TYPE = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4' };
 const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
@@ -55,6 +47,10 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ok: true, game: GAME, online: players.size,
                                     accounts: Object.keys(db.accounts).length,
                                     uptime: Math.round(process.uptime()) }));
+  }
+  if (SHARED_JS.test(url) && fs.existsSync(url.slice(1))) {
+    res.writeHead(200, { 'content-type': 'text/javascript' });
+    return res.end(fs.readFileSync(url.slice(1)));
   }
   const hit = FILES[url];
   if (!hit) return res.writeHead(404).end();
@@ -338,10 +334,20 @@ wss.on('connection', (ws, req) => {
 });
 
 let last = performance.now();
+let idling = false;
 setInterval(() => {
   const now = performance.now();
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+
+  // With nobody connected there is nothing to simulate and nobody to see it.
+  // Aliens hold position, bolts stay put, and a metered host stops billing for a
+  // process that is only talking to itself.
+  if (players.size === 0) {
+    if (!idling) { persistAll(); idling = true; console.log('no players — world paused'); }
+    return;
+  }
+  if (idling) { idling = false; console.log('world resumed'); }
 
   for (const [id, p] of players) {
     step(p.ship, dt);

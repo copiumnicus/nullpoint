@@ -81,6 +81,11 @@ let invOpen = false, notice = null;
 const prevShot = new Map();       // for spotting the frame a gun goes off
 let thrust = 0, lastFrameAt = 0, prevSelf = null;
 let dead = null;                  // { lost, at } while you are a wreck
+// Sitting idle keeps a socket, a ship and a ticking world alive for nobody. Sign
+// yourself out and the server can stop simulating entirely.
+const IDLE_LIMIT = 30 * 60 * 1000;
+let lastInput = performance.now(), signedOff = false;
+const stir = () => { lastInput = performance.now(); };
 const heardBooms = new Set();
 const respawnBtn = () => ({ x: VIEW_W / 2 - 130, y: VIEW_H * 0.6, w: 260, h: 52 });
 const say = (text, colour) => notice = { text, colour, at: performance.now() };
@@ -226,6 +231,7 @@ function nearestHostile() {
 }
 addEventListener('keydown', e => {
   audioReady();                                   // browsers want a gesture first
+  stir();
   const k = e.key.toLowerCase();
   if (k === 'v') say(toggleAudio() ? 'Sound on' : 'Sound off', '#8ab4e6');
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
@@ -256,6 +262,8 @@ addEventListener('keydown', e => {
 
 c.addEventListener('pointerdown', e => {
   audioReady();
+  stir();
+  if (signedOff) { location.reload(); return; }
   const v = toView(e);
   if (dead) {                                     // a wreck has exactly one control
     const b = respawnBtn();
@@ -297,7 +305,8 @@ c.addEventListener('pointerdown', e => {
 });
 c.addEventListener('pointermove', e => {
   const v = toView(e);
-  hover = v;                                          // tracked always, so we can preview the pick
+  hover = v;
+  if (held) stir();                                          // tracked always, so we can preview the pick
   if (!held) return;
   cur = v;
   if (Math.hypot(cur.x - down.x, cur.y - down.y) > DRAG_PX) steering = true;
@@ -1344,6 +1353,26 @@ function drawFrame(now) {
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();
   if (dead) drawWreck(now);
+
+  if (!signedOff && performance.now() - lastInput > IDLE_LIMIT) {
+    signedOff = true;
+    try { ws.close(4002, 'idle'); } catch {}
+    status = 'signed out';
+  }
+  if (signedOff) drawSignedOff();
+}
+
+function drawSignedOff() {
+  g.fillStyle = 'rgba(3,5,9,0.93)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.textAlign = 'center';
+  g.fillStyle = '#8ab4e6'; g.font = '26px ui-monospace, SFMono-Regular, monospace';
+  g.fillText('SIGNED OUT', VIEW_W / 2, VIEW_H * 0.45);
+  g.fillStyle = '#66748c'; g.font = '13px ui-monospace, monospace';
+  g.fillText(`${IDLE_LIMIT / 60000} minutes without input — your ship was docked and the sector released`,
+             VIEW_W / 2, VIEW_H * 0.45 + 28);
+  g.fillStyle = '#7de08a'; g.font = '14px ui-monospace, monospace';
+  g.fillText('click anywhere to come back', VIEW_W / 2, VIEW_H * 0.45 + 60);
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
 
 function drawWreck(now) {

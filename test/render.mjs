@@ -218,8 +218,9 @@ for (const id of Object.keys(MAPS)) {
     const local = url === '/audio.js' ? 'public/audio.js' : url.replace(/^\//, '');
     const abs = path.join(root, local);
     if (!fs.existsSync(abs)) { missing.push(url); continue; }
-    // the server serves shared/*.js by pattern, anything else must be listed
-    if (!/^\/shared\/[a-z]+\.js$/.test(url) && !server.includes(`'${url}'`)) unserved.push(url);
+    // credit the pattern route only if the server actually has one
+    const byPattern = server.includes('SHARED_JS.test(url)') && /^\/shared\/[a-z]+\.js$/.test(url);
+    if (!byPattern && !server.includes(`'${url}'`)) unserved.push(url);
     for (const imp of grab(fs.readFileSync(abs, 'utf8')))
       queue.push(imp.startsWith('.') ? '/shared/' + path.basename(imp) : imp);
   }
@@ -348,6 +349,25 @@ for (const id of Object.keys(MAPS)) {
   feed({ t: 'map', map: 'm1', respawned: true });
   frame(t += 33); frames++;
 }
+
+// Signing out is terminal until the page reloads, so this runs last — anything
+// after it would find every click swallowed by the reconnect prompt.
+  // idle sign-out: the clock only advances with no input, and a click brings you back
+  {
+    const perf = performance.now;
+    let reloaded = false;
+    globalThis.location.reload = () => { reloaded = true; };
+    sent.length = 0;
+    performance.now = () => perf.call(performance) + 31 * 60 * 1000;   // half an hour later
+    frame(t += 16); frames++;
+    evt('pointerdown', { clientX: 400, clientY: 400 });
+    performance.now = perf;
+    if (!reloaded) errs.push('a click after signing out did not bring the player back');
+    else if (sent.length) errs.push(`a signed-out client still sent ${sent.map(m => m.t)}`);
+    else console.log('idle: signs itself out after 30 minutes, and a click reconnects');
+    evt('keydown', { key: 'q' });                 // any input resets the clock
+    frame(t += 16); frames++;
+  }
 
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));
