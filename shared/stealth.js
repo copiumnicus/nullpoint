@@ -44,20 +44,37 @@ const ease = a => a * a * (3 - 2 * a);
 export const alphaAt = aspect => MIN_ALPHA + (MAX_ALPHA - MIN_ALPHA) * ease(aspect);
 export const dutyAt  = aspect => MIN_DUTY + (1 - MIN_DUTY) * ease(aspect) ** 1.4;
 
-// Is it drawn this instant? Two slow waves beaten against each other, so it
-// shimmers rather than strobes, and every Bandit does it out of step with the
-// others. Deterministic in time and id: two clients watching the same Bandit
-// see it wink at the same moments.
-export function shownAt(aspect, now, seed = 0) {
-  if (aspect >= 0.999) return true;
+// How much of it is there this instant, 0 to 1. Two slow waves beaten against
+// each other, so it shimmers rather than strobes, and every Bandit does it out
+// of step with the others. Deterministic in time and id: two clients watching
+// the same Bandit see it come and go at the same moments.
+//
+// It crosses smoothly rather than snapping. A hard cut between drawn and not
+// drawn reads as a rendering fault — a thing flickering out of existence — where
+// a fade over a couple of hundred milliseconds reads as a contact you are
+// losing. Same duty cycle either way; only the edges are different.
+export const SOFT = 0.2;                       // width of the crossing, ~200ms of fade
+
+const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+const smooth = v => v * v * (3 - 2 * v);
+
+export function presenceAt(aspect, now, seed = 0) {
+  if (aspect >= 0.999) return 1;
   const t = now / 1000, k = seed * 1.7;
   const wave = 0.5 + 0.25 * Math.sin(t * BLINK_HZ + k)
                    + 0.25 * Math.sin(t * BLINK_HZ * 0.41 + k * 2.3);
-  return wave < dutyAt(aspect);
+  return smooth(clamp01((dutyAt(aspect) - wave) / SOFT + 0.5));
 }
 
-// Everything the client needs to draw one, in one call.
+// The same judgement as a yes or no, for anything that needs one — a missile
+// seeker either has the target or it does not.
+export const shownAt = (aspect, now, seed = 0) => presenceAt(aspect, now, seed) >= 0.5;
+
+// Everything the client needs to draw one, in one call. The alpha already has
+// the fade folded in, so a caller that just multiplies by it gets the whole
+// effect without knowing there are two parts to it.
 export function seenAs(alien, viewer, now, seed = 0) {
   const aspect = aspectOf(alien, viewer);
-  return { aspect, alpha: alphaAt(aspect), shown: shownAt(aspect, now, seed) };
+  const presence = presenceAt(aspect, now, seed);
+  return { aspect, presence, alpha: alphaAt(aspect) * presence, shown: presence > 0.02 };
 }

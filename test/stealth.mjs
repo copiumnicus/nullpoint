@@ -52,6 +52,34 @@ check('on the beam it comes and goes rather than fading',
   'the half-visible case is the interesting one, and it flickers');
 check('tail-on it is simply a ship', seenFor(180).seen === 1 && alphaAt(1) === MAX_ALPHA);
 
+console.log('\nit fades rather than snapping');
+{
+  const { presenceAt, SOFT } = await import('../shared/stealth.js');
+  // A hard cut between drawn and not drawn reads as a rendering fault. A fade
+  // over a couple of hundred milliseconds reads as a contact you are losing.
+  const asp = aspectOf(bandit, at(90));
+  let prev = presenceAt(asp, 0, 3), worst = 0, sawMid = 0, n = 0;
+  for (let i = 1; i <= 900; i++) {                 // fifteen seconds at 60fps
+    const v = presenceAt(asp, i * 16.7, 3);
+    worst = Math.max(worst, Math.abs(v - prev));
+    if (v > 0.15 && v < 0.85) sawMid++;
+    prev = v; n++;
+  }
+  console.log(`     biggest step in one frame ${worst.toFixed(3)}, part-way between ` +
+              `${Math.round(100 * sawMid / n)}% of the time`);
+  check('presence never jumps', worst < 0.25, 'a hard cut would be 1.0');
+  check('and it spends real time part-way there', sawMid / n > 0.03,
+    'which is the fade you can actually see');
+  check('it still reaches both ends', (() => {
+    let lo = 1, hi = 0;
+    for (let i = 0; i < 900; i++) { const v = presenceAt(asp, i * 16.7, 3); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return lo < 0.05 && hi > 0.95;
+  })(), 'a fade that never finishes is just fog');
+  check('a plain target is simply there, with no shimmer at all',
+    presenceAt(1, 0, 3) === 1 && presenceAt(1, 999, 7) === 1);
+  check('the crossing is a real width', SOFT > 0 && SOFT < 1);
+}
+
 console.log('\nthe flicker itself');
 {
   // It has to shimmer, not strobe: a value that flips every frame is a headache
