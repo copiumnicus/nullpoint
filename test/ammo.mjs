@@ -224,6 +224,43 @@ console.log('\nthe bar');
     'so a box means the same thing every time you look at it');
 }
 
+console.log('\nthe mixing desk');
+{
+  const { settingsLayout, valueAt, ROWS } = await import('../shared/settings.js');
+  let off = 0, overlap = 0;
+  for (const [W, H] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 640], [900, 600], [760, 520]]) {
+    const L = settingsLayout(W, H), P = L.panel;
+    if (P.x < 0 || P.y < 0 || P.x + P.w > W || P.y + P.h > H) off++;
+    const hits = [...L.rows.map(r => r.toggle), ...L.rows.filter(r => r.hit).map(r => r.hit), L.skip];
+    for (const r of hits)
+      if (r.x < P.x || r.y < P.y || r.x + r.w > P.x + P.w || r.y + r.h > P.y + P.h) off++;
+    for (let i = 1; i < L.rows.length; i++)
+      if (L.rows[i].r.y < L.rows[i - 1].r.y + L.rows[i - 1].r.h - 0.01) overlap++;
+    // A fader whose grab area overlaps its own mute switch is a fader that mutes
+    // when you meant to turn it down.
+    for (const row of L.rows)
+      if (row.hit && row.hit.x + row.hit.w > row.toggle.x) overlap++;
+  }
+  check('every control sits inside the panel, at every size', off === 0,
+    `${ROWS.length} rows across six windows`);
+  check('rows do not overlap, and no fader reaches its own mute', overlap === 0);
+
+  const L = settingsLayout(1280, 720);
+  const t = L.rows.find(r => r.key === 'music').track;
+  check('a click maps to the value under it',
+    valueAt(t, t.x) === 0 && valueAt(t, t.x + t.w) === 1
+    && Math.abs(valueAt(t, t.x + t.w / 2) - 0.5) < 1e-9);
+  check('and a drag past either end clamps instead of wrapping',
+    valueAt(t, t.x - 500) === 0 && valueAt(t, t.x + t.w + 500) === 1);
+  check('sound and music are separate rows',
+    L.rows.some(r => r.key === 'sfx') && L.rows.some(r => r.key === 'music')
+    && L.rows.some(r => r.key === 'master'),
+    'one mute cannot silence the game and leave the score playing');
+  check('every row has a mute, in the same place on each',
+    L.rows.every(r => r.toggle) && new Set(L.rows.map(r => r.toggle.x)).size === 1,
+    'so muting is the same gesture whichever bus it is');
+}
+
 console.log('\nthe playlist');
 {
   const { isTrack, typeOf, servable, MOOD_OF, AUDIO_TYPE } = await import('../shared/music.js');

@@ -6,6 +6,8 @@ import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
 import { AMMO_KEYS, FEEDS, barLayout, feedMenu } from '../shared/ammo.js';
+import { settingsLayout } from '../shared/settings.js';
+import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume } from '../public/audio.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -380,10 +382,98 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
     at(6000, 4000); frame(t += 16); frames++;
   }
 
+  // Settings. Two faders and three switches, because writing music for the game
+  // means wanting the game running and the game silent at the same time.
+  {
+    const L = settingsLayout(innerWidth, innerHeight);
+    evt('keydown', { key: 'o' });
+    frame(t += 16); frames++;
+
+    const mid = r => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+    // Drag the music fader to the far left and the sound fader to the far right.
+    const music = L.rows.find(r => r.key === 'music');
+    evt('pointerdown', { clientX: music.track.x + 1, clientY: mid(music.track).y });
+    evt('pointerup', {});
+    frame(t += 16); frames++;
+    if (musicVolume() > 0.05) errs.push(`dragging the music fader to zero left it at ${musicVolume()}`);
+
+    const sfx = L.rows.find(r => r.key === 'sfx');
+    evt('pointerdown', { clientX: sfx.track.x + sfx.track.w - 1, clientY: mid(sfx.track).y });
+    evt('pointerup', {});
+    frame(t += 16); frames++;
+    if (sfxVolume() < 0.95) errs.push(`dragging the sound fader to full left it at ${sfxVolume()}`);
+
+    // Each switch mutes its own bus and nothing else.
+    const wasSfx = sfxOnly(), wasMusic = musicOnly();
+    evt('pointerdown', { clientX: mid(sfx.toggle).x, clientY: mid(sfx.toggle).y });
+    evt('pointerup', {});
+    frame(t += 16); frames++;
+    if (sfxOnly() === wasSfx) errs.push('the SOUND switch did nothing');
+    if (musicOnly() !== wasMusic) errs.push('muting sound also muted the music');
+    evt('pointerdown', { clientX: mid(sfx.toggle).x, clientY: mid(sfx.toggle).y });
+    evt('pointerup', {}); frame(t += 16); frames++;
+
+    // The master takes everything down without losing either level.
+    const keepM = musicVolume(), keepS = sfxVolume();
+    const master = L.rows.find(r => r.key === 'master');
+    evt('pointerdown', { clientX: mid(master.toggle).x, clientY: mid(master.toggle).y });
+    evt('pointerup', {}); frame(t += 16); frames++;
+    if (audioOn()) errs.push('the MASTER switch did nothing');
+    if (musicVolume() !== keepM || sfxVolume() !== keepS)
+      errs.push('muting threw the levels away instead of remembering them');
+    evt('pointerdown', { clientX: mid(master.toggle).x, clientY: mid(master.toggle).y });
+    evt('pointerup', {}); frame(t += 16); frames++;
+    if (!audioOn()) errs.push('the MASTER switch would not come back on');
+
+    for (const r of L.rows) { hoverAt(r.toggle); frame(t += 16); frames++; }
+    evt('keydown', { key: 'Escape' });
+    frame(t += 16); frames++;
+    console.log(`settings: ${L.rows.length} buses, faders drag, each switch mutes only its own`);
+
+    // ...and closed again, a click goes back to flying the ship
+    sent.length = 0;
+    evt('pointerdown', { clientX: mid(master.toggle).x, clientY: mid(master.toggle).y });
+    evt('pointerup', {}); frame(t += 16); frames++;
+    if (!sent.some(m => m.t === 'intent')) errs.push('Escape left the settings panel swallowing clicks');
+  }
+
+  // TAB engages, TAB TAB breaks off — the same thought on the same key.
+  {
+    feed({ t: 's', ships: [
+      packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+                 hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 }),
+      packShip({ id: 1e6, x: 6200, y: 4100, heading: 0, charge: 0, co: 'x', hull: 'drifter',
+                 hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 1 })] });
+    frame(t += 16); frames++;
+    // The harness runs start to finish inside a few milliseconds of real time, so
+    // anything with a window in it needs the clock driven by hand — otherwise
+    // every gesture in the file reads as a double.
+    const perf = performance.now;
+    let clock = 1e6;
+    performance.now = () => clock;
+    const tab = () => { evt('keydown', { key: 'Tab' }); frame(t += 16); frames++; };
+    try {
+      sent.length = 0;
+      clock += 5000; tab();
+      const first = sent.filter(m => m.t === 'target').at(-1);
+      if (first?.id !== 1e6) errs.push(`TAB engaged ${JSON.stringify(first)} instead of the hostile`);
+      clock += 120; tab();                                 // straight away: break off
+      const second = sent.filter(m => m.t === 'target').at(-1);
+      if (second?.id !== 0) errs.push(`TAB TAB sent ${JSON.stringify(second)} instead of breaking off`);
+
+      sent.length = 0;
+      clock += 5000; tab();
+      clock += 5000; tab();                                // slowly: two engagements
+      if (sent.filter(m => m.t === 'target').some(m => m.id === 0))
+        errs.push('two slow TABs were read as a double tap');
+      else console.log('target: TAB engages, TAB TAB breaks off, slow taps re-engage');
+    } finally { performance.now = perf; }
+  }
+
   // The ammunition bar. Every box is clickable, the two loaded grades are the
   // ones the weapons draw from, and a rack with nothing behind it does not fire.
   {
-    evt('keydown', { key: 'h' });                                  // shut the station
+    evt('keydown', { key: 'Escape' });                             // shut whatever is open
     feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
                                       hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
                                       rk: 0, vis: 2 })],
@@ -450,7 +540,7 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
   // prompt above the bar is drawn from the same function the key runs, so it can
   // never offer something the key refuses.
   {
-    evt('keydown', { key: 'h' });                                // close the station
+    evt('keydown', { key: 'Escape' });                           // shut whatever is open
     const at = (docked, hold) => feed({ t: 's', docked, hold, vault: {}, credits: 90000,
       ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
                          hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });

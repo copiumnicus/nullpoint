@@ -11,7 +11,11 @@
 
 let ctx = null, master = null, verb = null, drive = null;
 let thrGain = null, thrFilter = null;
-let on = true;
+// Three levels, three switches. `on` is the master — one key, everything quiet.
+// Under it the effects and the score are independent, because working on music
+// for a game means wanting the game running and the game silent at the same time.
+let on = true, sfxOn = true, musicOn = true;
+let sfxVol = 0.5;
 const firing = [];                 // when each live gun voice ends, oldest first
 
 // Drop files into public/sfx and they replace the synthesis. rate below 1 plays
@@ -63,7 +67,7 @@ export function audioReady() {
   ctx = new AC();
 
   master = ctx.createGain();
-  master.gain.value = 0.5;
+  master.gain.value = sfxLevel();
   drive = ctx.createWaveShaper();
   drive.curve = saturation();
   master.connect(drive);
@@ -343,7 +347,7 @@ export function nextTrack(step = 1) {
 // after a gesture. Until then the element's own volume carries the setting.
 function applyMusicGain() {
   if (!musicEl) return;
-  const want = on && musicWanted ? musicVol : 0;
+  const want = musicLevel();
   if (ctx && !musicGain && typeof ctx.createMediaElementSource === 'function') {
     try {
       musicGain = ctx.createGain();
@@ -357,10 +361,31 @@ function applyMusicGain() {
 }
 
 export function setMusicVolume(v) {
-  musicVol = Math.max(0, Math.min(1, +v.toFixed(2)));
+  musicVol = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
   applyMusicGain();
   return musicVol;
 }
 
-export function toggleAudio() { on = !on; if (!on) setThrust(0); applyMusicGain(); return on; }
+// What each bus should actually be at, given the master and its own switch.
+const sfxLevel   = () => (on && sfxOn ? sfxVol : 0);
+const musicLevel = () => (on && musicOn && musicWanted ? musicVol : 0);
+
+function applyAll() {
+  if (master) master.gain.value = sfxLevel();
+  if (!sfxLevel()) setThrust(0);                   // the thruster is a held tone, not a one-shot
+  applyMusicGain();
+}
+
+export function setSfxVolume(v) {
+  sfxVol = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
+  applyAll();
+  return sfxVol;
+}
+export const sfxVolume = () => sfxVol;
+
+export function toggleAudio() { on = !on; applyAll(); return on; }
+export function toggleSfx()   { sfxOn = !sfxOn; applyAll(); return sfxOn; }
+export function toggleMusic() { musicOn = !musicOn; applyAll(); return musicOn; }
 export const audioOn = () => on;
+export const sfxOnly = () => sfxOn;
+export const musicOnly = () => musicOn;
