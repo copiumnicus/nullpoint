@@ -8,6 +8,7 @@ import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALI
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
+import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones, topTier } from './shared/gear.js';
@@ -258,7 +259,13 @@ wss.on('connection', (ws, req) => {
                     gear: { ...acct.gear }, hulls: [...acct.hulls], xp: acct.xp,
                     formations: [...acct.formations],
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
+                    kits: { ...acct.kits }, kit: acct.kit, fixing: null,
                     scoop: null, want: null, dead: false });
+  // A line back to this pilot only. Lives out here rather than inside the chat
+  // handler because anything that refuses a request owes an explanation, and the
+  // repair rack was the first thing outside chat that needed one.
+  const tell = text => ws.readyState === 1 && ws.send(JSON.stringify({ t: 'chat', from: '', text }));
+
   // Every purchase says so. Watching a number tick down is not a receipt, and a
   // refused click and a successful one looked identical from the outside.
   const receipt = (what, cost, note = '') => {
@@ -270,6 +277,7 @@ wss.on('connection', (ws, req) => {
                                                 formations: players.get(id).formations,
                                                 ammo: players.get(id).ammo, using: players.get(id).using,
                                                 armed: players.get(id).armed,
+                                                kits: players.get(id).kits, kit: players.get(id).kit,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
@@ -277,7 +285,8 @@ wss.on('connection', (ws, req) => {
                            gear: acct.gear, hulls: acct.hulls, credits: acct.credits,
                            drones: acct.drones, xp: acct.xp, admin: isAdmin(acct),
                            formation: acct.formation, formations: acct.formations,
-                           ammo: acct.ammo, using: acct.using, armed: acct.armed }));
+                           ammo: acct.ammo, using: acct.using, armed: acct.armed,
+                           kits: acct.kits, kit: acct.kit }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -294,7 +303,6 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'chat') {
       const line = parse(m.text);
-      const tell = text => ws.readyState === 1 && ws.send(JSON.stringify({ t: 'chat', from: '', text }));
 
       if (line.say !== undefined) {                 // ordinary talk, to your sector
         if (!line.say) return;
@@ -406,6 +414,32 @@ wss.on('connection', (ws, req) => {
       const moved = reseat(slotsOf(m.key), ship.fit, P.gear);      // whatever will not fit comes off
       P.gear = moved.gear;
       refit(ship, m.key, moved.fit, ship.drones);                  // the escort follows you across
+      return outfit();
+    }
+    if (m.t === 'buykit') {                       // repair drones are a dock purchase
+      const k = KITS[m.key];
+      if (!atStation() || !k || P.credits < kitPrice(m.key)) return;
+      P.credits -= kitPrice(m.key);
+      P.kits[m.key] = (P.kits[m.key] ?? 0) + 1;
+      receipt(k.name, kitPrice(m.key), `${P.kits[m.key]} aboard`);
+      return outfit();
+    }
+    if (m.t === 'kit') {                          // which one the button uses
+      if (!KITS[m.key]) return;
+      P.kit = sanitiseKit(m.key);
+      touch(P);
+      return outfit();
+    }
+    if (m.t === 'repair') {
+      const why = whyNotRepair({ kits: P.kits, using: P.kit, docked: !!P.docked,
+                                 sinceHit: ship.sinceHit, hurt: ship.hp < ship.stats.hull,
+                                 busy: !!P.fixing });
+      if (why) return tell(why);
+      const k = KITS[P.kit];
+      if (--P.kits[P.kit] <= 0) delete P.kits[P.kit];
+      P.fixing = { key: P.kit, left: k.secs, secs: k.secs,
+                   rate: (k.heal * ship.stats.hull) / k.secs };
+      touch(P);
       return outfit();
     }
     if (m.t === 'arm') {                          // safe a weapon, or bring it back
@@ -608,6 +642,20 @@ setInterval(() => {
     p.docked = canDock(map, p.co, p.ship);
     stepVitals(p.ship, dt, p.docked);
 
+    // A repair drone works while nothing is shooting at you. Take a hit and it
+    // stops, and the kit is gone — standing still for five seconds in open
+    // space is the whole cost of not flying home.
+    if (p.fixing) {
+      if (p.ship.sinceHit < KIT_QUIET * 0.25 || p.ship.hp <= 0) {
+        p.fixing = null;
+        if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'chat', from: '', text: 'repair interrupted' }));
+      } else {
+        p.ship.hp = Math.min(p.ship.stats.hull, p.ship.hp + p.fixing.rate * dt);
+        p.fixing.left -= dt;
+        if (p.fixing.left <= 0 || p.ship.hp >= p.ship.stats.hull) { p.fixing = null; touch(p); }
+      }
+    }
+
 
 
     if (p.dead) continue;                         // a wreck does not fly, shoot or scoop
@@ -742,6 +790,7 @@ setInterval(() => {
       sh: Math.round(100 * p.ship.shield / Math.max(1, shieldMax(p.ship))),
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
       tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH),
+      fix: p.fixing ? Math.round(100 * (1 - p.fixing.left / p.fixing.secs)) : 0,
       rk: Math.round(100 * (p.ship.rocketFlash ?? 0) / LAUNCH_FLASH),
       guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.drones.length,
       form: Math.max(0, FORMATION_KEYS.indexOf(p.ship.formation)),
@@ -760,7 +809,7 @@ setInterval(() => {
       sh: Math.round(100 * a.shield / Math.max(1, shieldMax(a))),
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
-      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0 });
+      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
@@ -792,7 +841,7 @@ setInterval(() => {
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
-      ammo: V.ammo, using: V.using, armed: V.armed,
+      ammo: V.ammo, using: V.using, armed: V.armed, kits: V.kits, kit: V.kit,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
       // effective levels as whole percent, so the readout cannot jitter between
       // 29 and 30 from a float that is a hair under one

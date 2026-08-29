@@ -33,6 +33,7 @@ import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
+import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
          barLayout, feedMenu } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
@@ -81,6 +82,7 @@ let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } }
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
 let myForm = 'line', myForms = ['line'];
 let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
+let myKits = {}, myKit = DEFAULT_KIT;
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -194,6 +196,7 @@ ws.onmessage = e => {
     myForm = m.formation ?? 'line'; myForms = m.formations ?? ['line'];
     myAmmo = m.ammo ?? {}; myUsing = { ...DEFAULT_AMMO, ...(m.using ?? {}) };
     myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
+    myKits = m.kits ?? {}; myKit = m.kit ?? DEFAULT_KIT;
     myName = m.name ?? '';
     if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
     return;
@@ -212,6 +215,7 @@ ws.onmessage = e => {
     myForm = m.formation ?? myForm; myForms = m.formations ?? myForms;
     myAmmo = m.ammo ?? myAmmo; myUsing = m.using ? { ...DEFAULT_AMMO, ...m.using } : myUsing;
     if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
+    myKits = m.kits ?? myKits; myKit = m.kit ?? myKit;
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
@@ -272,6 +276,11 @@ ws.onmessage = e => {
     ships.set(n.id, s);
   }
   const self = ships.get(myId);
+  if (self) {                                    // the wire carries a flash, not a timestamp
+    const wasHp = prevHp;
+    if ((self.flash ?? 0) > 0 || (wasHp !== null && self.hp < wasHp)) lastHitAt = performance.now();
+    prevHp = self.hp;
+  }
   for (const [id, sh] of ships) {
     const was = prevShot.get(id) ?? 0;
     const d = self ? Math.hypot(sh.x - self.x, sh.y - self.y) : 1e9;
@@ -728,6 +737,11 @@ function bayClick(v) {
       return credits >= a.price ? send({ t: 'buyammo', key: it.k, n: 1 })
         : say(`A crate of ${a.name} costs ${a.price} ${CURRENCY.short}`, '#e0a53f');
     }
+    if (it.kind === 'kit') {
+      const k = KITS[it.k];
+      return credits >= k.price ? send({ t: 'buykit', key: it.k })
+        : say(`A ${k.name} costs ${k.price} ${CURRENCY.short}`, '#e0a53f');
+    }
     return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
       : say(`Not enough credits for a ${EQUIPMENT[it.k].name}`, '#e0a53f');
   }
@@ -998,16 +1012,19 @@ function drawBay() {
                 : it.kind === 'form' ? FORMATIONS[it.k].price
                 : it.kind === 'drone' ? dronePrice(myDrones.length)
                 : it.kind === 'ammo' ? AMMO[it.k].price
+                : it.kind === 'kit' ? KITS[it.k].price
                                       : EQUIPMENT[it.k].price;
     const name = it.kind === 'hull' ? HULLS[it.k].name
                : it.kind === 'form' ? FORMATIONS[it.k].name
                : it.kind === 'drone' ? `Drone ${myDrones.length + 1}`
                : it.kind === 'ammo' ? `${AMMO[it.k].name}   crate of ${AMMO[it.k].pack}`
+               : it.kind === 'kit' ? KITS[it.k].name
                                      : EQUIPMENT[it.k].name;
     const blurb = it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}`
                 : it.kind === 'form' ? FORMATIONS[it.k].blurb
                 : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
+                : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
                                       : EQUIPMENT[it.k].blurb;
     const afford = credits >= price;
     const sells = sellsAt(G.page, home);
@@ -1029,9 +1046,11 @@ function drawBay() {
     else { g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
            g.fillText(`${price} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
     const stock = it.kind === 'item' ? (myGear[it.k] ?? 0)
-                : it.kind === 'ammo' ? (myAmmo[it.k] ?? 0) : 0;
+                : it.kind === 'ammo' ? (myAmmo[it.k] ?? 0)
+                : it.kind === 'kit' ? (myKits[it.k] ?? 0) : 0;
     if (stock) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
-                 g.fillText(it.kind === 'ammo' ? `${stock} rounds held` : `${stock} in locker`,
+                 g.fillText(it.kind === 'ammo' ? `${stock} rounds held`
+                          : it.kind === 'kit' ? `${stock} aboard` : `${stock} in locker`,
                             r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';
   }
@@ -1369,7 +1388,23 @@ function nowPlaying() {
 let feedOpen = null;                            // which box has its menu up
 let lastBox = { feed: null, t: -Infinity };     // for spotting a double click on one
 
-const heldGrades = feed => forWeapon(feed).filter(k => (myAmmo[k] ?? 0) > 0);
+const heldGrades = feed => feed === 'repair'
+  ? KIT_KEYS.filter(k => (myKits[k] ?? 0) > 0)
+  : forWeapon(feed).filter(k => (myAmmo[k] ?? 0) > 0);
+
+// Why the repair button is not available, or null. The button, its tooltip and
+// the server all ask the same function, so it never offers what it will refuse.
+function repairBlocked() {
+  const me = ships.get(myId);
+  return whyNotRepair({
+    kits: myKits, using: myKit, docked: docked(),
+    sinceHit: sinceHitSecs(), hurt: !!me && (me.hp ?? 100) < 100, busy: !!me?.fix,
+  });
+}
+// The wire carries a shield-impact flash, not a timestamp, so track the last
+// frame we saw one and count from there.
+let lastHitAt = -1e9, prevHp = null;
+const sinceHitSecs = () => (performance.now() - lastHitAt) / 1000;
 
 function barClick(v) {
   const L = barLayout(VIEW_W, VIEW_H);
@@ -1379,7 +1414,8 @@ function barClick(v) {
     const box = L.boxes.find(b => b.feed === feedOpen);
     const M = feedMenu(box, heldGrades(feedOpen));
     for (const row of M.rows) if (inside(row.r)) {
-      if (row.k !== myUsing[feedOpen]) send({ t: 'ammo', key: row.k });
+      if (feedOpen === 'repair') { if (row.k !== myKit) send({ t: 'kit', key: row.k }); }
+      else if (row.k !== myUsing[feedOpen]) send({ t: 'ammo', key: row.k });
       feedOpen = null;
       return true;
     }
@@ -1403,6 +1439,13 @@ function barClick(v) {
       return true;
     }
     const held = heldGrades(b.feed);
+    if (b.feed === 'repair') {                  // a click spends one, if it may
+      if (!held.length) { say('No repair drones aboard — they are sold at a dock', '#e0a53f'); return true; }
+      const why = repairBlocked();
+      if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+      send({ t: 'repair' });
+      return true;
+    }
     if (!held.length) { say(`No ${b.feed === 'laser' ? 'cells' : 'warheads'} — buy a crate at the dock`, '#e0a53f'); return true; }
     if (held.length === 1) {                    // nothing to choose between
       if (held[0] !== myUsing[b.feed]) send({ t: 'ammo', key: held[0] });
@@ -1453,11 +1496,56 @@ function drawSpacePrompt() {
   g.fillText(act.label, x + 44, y + 16);
 }
 
+// The repair rack. Amber when it will work, dim when it will not, and the reason
+// is one hover away rather than something you learn by clicking.
+function drawRepairBox(b) {
+  const r = b.r, k = KITS[myKit], n = myKits[myKit] ?? 0;
+  const me = ships.get(myId), busy = (me?.fix ?? 0) > 0;
+  const why = repairBlocked(), ready = !why;
+  const over = hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
+
+  g.fillStyle = 'rgba(6,10,16,0.82)'; g.fillRect(r.x, r.y, r.w, r.h);
+  g.strokeStyle = busy ? '#7de08a' : ready ? '#e0a53f' : over ? '#4a6785' : '#243448';
+  g.lineWidth = busy || ready ? 2 : 1;
+  g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+
+  g.save();                                      // a spanner, near enough
+  g.translate(r.x + r.w / 2, r.y + 24);
+  g.globalAlpha = n ? (ready || busy ? 1 : 0.4) : 0.25;
+  g.strokeStyle = busy ? '#7de08a' : '#cfe9ff'; g.lineWidth = 3; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(-5, 6); g.lineTo(4, -4); g.stroke();
+  g.beginPath(); g.arc(6, -6, 4.4, 0.7, 5.4); g.stroke();
+  g.lineCap = 'butt'; g.restore();
+
+  if (k?.tier > 1) {
+    g.fillStyle = n ? '#ffd479' : '#4a4230';
+    for (let i = 0; i < k.tier - 1; i++) g.fillRect(r.x + 6 + i * 6, r.y + 6, 4, 4);
+  }
+  g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
+  g.fillStyle = busy ? '#7de08a' : n ? (ready ? '#e0a53f' : '#5b6b85') : '#3d4757';
+  g.fillText(busy ? `${me.fix}%` : String(n), r.x + r.w / 2, r.y + r.h - 10);
+  if (KIT_KEYS.filter(kk => myKits[kk] > 0).length > 1) {
+    g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
+    g.fillText('\u25b2', r.x + r.w - 9, r.y + 12);
+  }
+  if (over && !feedOpen) {
+    const t = busy ? 'repairing…' : why ? why : `${k.name} — +${Math.round(k.heal * 100)}% hull`;
+    g.font = '11px ui-monospace, monospace';
+    const w = g.measureText(t).width + 18;
+    const x = Math.max(6, Math.min(VIEW_W - w - 6, r.x + r.w / 2 - w / 2));
+    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - 24, w, 20);
+    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - 23.5, w - 1, 19);
+    g.fillStyle = why && !busy ? '#e0a53f' : '#cfe4ff'; g.fillText(t, x + w / 2, r.y - 10);
+  }
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+}
+
 function drawBar() {
   const L = barLayout(VIEW_W, VIEW_H);
   const over = r => hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
 
   for (const b of L.boxes) {
+    if (b.feed === 'repair') { drawRepairBox(b); continue; }
     const key = myUsing[b.feed], a = AMMO[key], n = myAmmo[key] ?? 0;
     const r = b.r, safed = !myArmed[b.feed], dry = !safed && n === 0;
     const low = !dry && !safed && n < (b.feed === 'rocket' ? 60 : 300);
@@ -1515,18 +1603,22 @@ function drawBar() {
     g.strokeStyle = '#5a86b8'; g.lineWidth = 1.4;
     g.strokeRect(M.box.x + .5, M.box.y + .5, M.box.w - 1, M.box.h - 1);
     for (const row of M.rows) {
-      const a = AMMO[row.k], on = myUsing[feedOpen] === row.k, hot = over(row.r);
+      const kit = feedOpen === 'repair';
+      const a = kit ? KITS[row.k] : AMMO[row.k];
+      const on = kit ? myKit === row.k : myUsing[feedOpen] === row.k;
+      const hot = over(row.r);
       g.fillStyle = on ? 'rgba(125,224,138,0.14)' : hot ? 'rgba(122,180,240,0.16)' : 'rgba(255,255,255,0.02)';
       g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
-      roundIcon(feedOpen, row.r.x + 14, row.r.y + row.r.h / 2, on ? '#7de08a' : '#8fa8c4', 0.6);
+      if (!kit) roundIcon(feedOpen, row.r.x + 14, row.r.y + row.r.h / 2, on ? '#7de08a' : '#8fa8c4', 0.6);
       g.font = '11px ui-monospace, monospace';
       g.fillStyle = on ? '#cfe4ff' : '#a8bcd4';
-      g.fillText(a.name, row.r.x + 28, row.r.y + row.r.h / 2 - 1);
+      g.fillText(a.name, row.r.x + (kit ? 12 : 28), row.r.y + row.r.h / 2 - 1);
       g.font = '9px ui-monospace, monospace'; g.fillStyle = '#66748c';
-      g.fillText(`x${a.mult.toFixed(2)}`, row.r.x + 28, row.r.y + row.r.h / 2 + 10);
+      g.fillText(kit ? `+${Math.round(a.heal * 100)}% over ${a.secs}s` : `x${a.mult.toFixed(2)}`,
+                 row.r.x + (kit ? 12 : 28), row.r.y + row.r.h / 2 + 10);
       g.textAlign = 'right';
       g.fillStyle = on ? '#7de08a' : '#8ea3bd'; g.font = '11px ui-monospace, monospace';
-      g.fillText(String(myAmmo[row.k] ?? 0), row.r.x + row.r.w - 10, row.r.y + row.r.h / 2 + 3);
+      g.fillText(String((kit ? myKits : myAmmo)[row.k] ?? 0), row.r.x + row.r.w - 10, row.r.y + row.r.h / 2 + 3);
       g.textAlign = 'left';
     }
     g.font = '12px ui-monospace, monospace';
@@ -1874,6 +1966,34 @@ function drawFrame(now) {
       g.fillText(`${ALIENS[s.hull]?.name ?? '?'}  ${s.hp}%` +
                  (running ? '  FLEEING' : inRange ? '' : '  OUT OF RANGE'), s.rx, s.ry - rr - 8);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
+
+    // A repair drone at work: one small machine going round and round the hull
+    // with a torch on it. Drawn for anyone you can see, not just yourself.
+    if ((s.fix ?? 0) > 0) {
+      const a0 = now / 340, rr = R * 2.5;
+      const px = s.rx + Math.cos(a0) * rr, py = s.ry + Math.sin(a0) * rr * 0.55;
+      const grd = g.createRadialGradient(s.rx, s.ry, R * 0.4, s.rx, s.ry, R * 2.9);
+      grd.addColorStop(0, 'rgba(125,224,138,0.16)');
+      grd.addColorStop(1, 'rgba(125,224,138,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(s.rx, s.ry, R * 2.9, 0, 7); g.fill();
+      g.strokeStyle = 'rgba(125,224,138,0.30)'; g.lineWidth = 1;
+      g.beginPath(); g.ellipse(s.rx, s.ry, rr, rr * 0.55, 0, 0, 7); g.stroke();
+      g.strokeStyle = 'rgba(125,224,138,0.55)'; g.lineWidth = 1.4;   // the torch beam
+      g.beginPath(); g.moveTo(px, py); g.lineTo(s.rx, s.ry); g.stroke();
+      const spark = 0.55 + 0.45 * Math.sin(now / 46);
+      g.fillStyle = `rgba(190,255,205,${spark.toFixed(2)})`;
+      g.beginPath(); g.arc(s.rx, s.ry, 2.4 + spark * 1.6, 0, 7); g.fill();
+      g.fillStyle = '#0a0f16'; g.fillRect(px - 5, py - 4, 10, 8);
+      g.fillStyle = '#7de08a'; g.fillRect(px - 4, py - 3, 8, 6);
+      g.fillStyle = '#0a0f16'; g.fillRect(px - 1.5, py - 1.5, 3, 3);
+      if (id === myId) {                          // your own progress, in words
+        g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
+        g.fillStyle = 'rgba(125,224,138,0.85)';
+        g.fillText(`REPAIRING ${s.fix}%`, s.rx, s.ry - R * 3.2);
+        g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+      }
     }
 
     // Escort, in whatever formation it is flying. Armed drones are drawn with a

@@ -5,7 +5,7 @@ import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
-import { AMMO_KEYS, FEEDS, barLayout, feedMenu } from '../shared/ammo.js';
+import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu } from '../shared/ammo.js';
 import { settingsLayout } from '../shared/settings.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
@@ -711,7 +711,8 @@ const dismiss = () => {
            ammo: { cell1: 4000, cell3: 250, head1: 400 }, using: { laser: 'cell1', rocket: 'head1' } });
     frame(t += 16); frames++;
     const B = barLayout(innerWidth, innerHeight);
-    if (B.boxes.length !== FEEDS.length) errs.push(`the bar has ${B.boxes.length} boxes for ${FEEDS.length} weapons`);
+    if (B.boxes.length !== BAR_SLOTS.length)
+      errs.push(`the bar has ${B.boxes.length} boxes for ${BAR_SLOTS.join('/')}`);
     if (B.r.x < 0 || B.r.x + B.r.w > innerWidth || B.r.y + B.r.h > innerHeight)
       errs.push('the ammunition bar runs off the screen');
 

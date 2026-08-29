@@ -86,17 +86,23 @@ export const hasRounds = (stock, using, feed) => magazine(stock, using, feed).n 
 // Six boxes said everything at once and took a strip of screen to do it. Two say
 // what is loaded, and the choosing happens in a menu that opens over the world
 // and closes again the moment you have picked.
-export const BAR_BOX = 64, BAR_GAP = 12;
+export const BAR_BOX = 64, BAR_GAP = 12, BAR_SPLIT = 26;
+
+// Two weapons and the repair rack, in that order, always. The gap before the
+// repair box says it is a different kind of thing — that one is spent, not fired.
+export const BAR_SLOTS = [...FEEDS, 'repair'];
 
 export function barLayout(VIEW_W, VIEW_H) {
-  const w = FEEDS.length * BAR_BOX + (FEEDS.length - 1) * BAR_GAP;
+  const n = BAR_SLOTS.length;
+  const w = n * BAR_BOX + (n - 1) * BAR_GAP + (BAR_SPLIT - BAR_GAP);
   const x0 = Math.round((VIEW_W - w) / 2), y = Math.round(VIEW_H - BAR_BOX - 14);
-  return {
-    r: { x: x0, y, w, h: BAR_BOX },
-    boxes: FEEDS.map((feed, i) => ({
-      feed, r: { x: x0 + i * (BAR_BOX + BAR_GAP), y, w: BAR_BOX, h: BAR_BOX },
-    })),
-  };
+  let x = x0;
+  const boxes = BAR_SLOTS.map(feed => {
+    const box = { feed, r: { x, y, w: BAR_BOX, h: BAR_BOX } };
+    x += BAR_BOX + (feed === FEEDS.at(-1) ? BAR_SPLIT : BAR_GAP);
+    return box;
+  });
+  return { r: { x: x0, y, w, h: BAR_BOX }, boxes };
 }
 
 // The chooser that opens above a box. Grades run bottom-up so the one nearest

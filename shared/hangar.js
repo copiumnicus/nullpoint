@@ -14,6 +14,7 @@ import { EQUIPMENT, SLOTS, MAX_DRONES, emptyFit } from './gear.js';
 import { launcherRoom } from './rockets.js';
 import { FORMATION_KEYS } from './formation.js';
 import { AMMO_KEYS } from './ammo.js';
+import { KIT_KEYS } from './repair.js';
 
 export const TABS = [{ key: 'hangar', name: 'HANGAR' }, { key: 'store', name: 'STORE' }];
 
@@ -29,6 +30,7 @@ export const STORE_PAGES = [
   { key: 'generator', name: 'Generators',  hint: 'reactor and shield capacity' },
   { key: 'tech',      name: 'Technology',  hint: 'one of each, every one a trade' },
   { key: 'ammo',      name: 'Ammunition',  hint: 'sold by the crate, carried without limit' },
+  { key: 'kits',      name: 'Repair',      hint: 'single use, and only sold at a dock' },
   { key: 'drones',    name: 'Drones',      hint: 'escort, one slot apiece' },
   { key: 'forms',     name: 'Formations',  hint: 'how the escort flies' },
 ];
@@ -45,6 +47,7 @@ export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}
     case 'rocket': return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'rocket')
                      .map(k => ({ kind: 'item', k, owned: false }));
     case 'ammo':   return AMMO_KEYS.map(k => ({ kind: 'ammo', k, owned: false }));
+    case 'kits':   return KIT_KEYS.map(k => ({ kind: 'kit', k, owned: false }));
     default:       return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === page)
                      .map(k => ({ kind: 'item', k, owned: false }));
   }

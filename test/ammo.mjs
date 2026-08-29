@@ -1,12 +1,13 @@
 import { AMMO, AMMO_KEYS, FEEDS, forWeapon, DEFAULT_AMMO, STARTING_AMMO,
          sanitiseAmmo, sanitiseUsing, magazine, hasRounds, roundPrice,
-         barLayout, feedMenu } from '../shared/ammo.js';
+         barLayout, feedMenu, BAR_SLOTS } from '../shared/ammo.js';
 import { newShip } from '../shared/sim.js';
 import { fire } from '../shared/combat.js';
 import { launch, ROCKET_RATE } from '../shared/rockets.js';
 import { sanitiseFit } from '../shared/gear.js';
 import { slotsOf, resolve, gunsOf, FIRE_RATE } from '../shared/ships.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
+import { KITS, KIT_KEYS, whyNotRepair, KIT_QUIET, sanitiseKits } from '../shared/repair.js';
 import { ALIENS, WILD, effectiveHp, bountyFor, BOUNTY_RATE } from '../shared/aliens.js';
 import { BOOST } from '../shared/power.js';
 
@@ -206,32 +207,72 @@ console.log('\nwhere it is sold');
   check('at the ring everything does', STORE_PAGES.every(p => sellsAt(p.key, true)));
 }
 
+console.log('\nrepair drones');
+{
+  const tiers = KIT_KEYS.map(k => KITS[k]);
+  console.log('     ' + tiers.map(k => `${k.name} +${Math.round(k.heal * 100)}%/${k.secs}s ${k.price}cr`).join('   '));
+  check('a better kit heals more, takes longer and costs more',
+    tiers.every((k, i) => i === 0 || (k.heal > tiers[i - 1].heal && k.secs > tiers[i - 1].secs
+                                   && k.price > tiers[i - 1].price)),
+    'no tier is a straight upgrade');
+  check('the best one is a full hull, and none goes past it',
+    tiers.at(-1).heal === 1 && tiers.every(k => k.heal <= 1));
+
+  // One function answers for the button, its tooltip and the server, so the
+  // screen never offers a repair the server will refuse.
+  const can = o => whyNotRepair({ kits: { kit1: 2 }, using: 'kit1', hurt: true, sinceHit: 99, ...o });
+  check('hurt, quiet and in open space, it goes', can({}) === null);
+  check('not at a dock', can({ docked: true }) !== null, 'the station does it free and faster');
+  check('not while being shot at', can({ sinceHit: KIT_QUIET - 0.1 }) !== null,
+    `${KIT_QUIET}s of quiet first, so it cannot be a mid-fight heal`);
+  check('not on an undamaged hull', can({ hurt: false }) !== null);
+  check('not with an empty rack', can({ kits: {} }) !== null);
+  check('and not twice at once', can({ busy: true }) !== null);
+  check('every refusal says why in words',
+    [{ docked: true }, { sinceHit: 0 }, { hurt: false }, { kits: {} }, { busy: true }]
+      .every(o => typeof can(o) === 'string' && can(o).length > 6),
+    can({ sinceHit: 0 }));
+
+  check('a bought kit survives a round trip', (() => {
+    const acct = newAccount('r', 3, 1000);
+    const p2 = { co: acct.co, mapId: 'm1', credits: 0, hold: {}, vault: {}, gear: {}, hulls: [], xp: 0,
+                 formations: ['line'], ammo: {}, using: {}, armed: {}, kits: { kit3: 2 }, kit: 'kit3',
+                 ship: newShip(0, 0, 'hauler', fit({ weapon: ['emitter1'] })) };
+    capture(acct, p2, 2000);
+    const back = sanitiseAccount(acct, 3, 3000);
+    return back.kits.kit3 === 2 && back.kit === 'kit3';
+  })());
+  check('a nonsense kit selection falls back to the cheap one',
+    sanitiseKits({ kit1: 1.7, nope: 9, kit2: -3 }).kit1 === 1
+    && !('nope' in sanitiseKits({ nope: 9 })));
+}
+
 console.log('\nthe bar');
 {
   let off = 0, overlap = 0, menuOff = 0;
   for (const [W, H] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 640], [900, 600]]) {
     const L = barLayout(W, H);
-    if (L.boxes.length !== FEEDS.length) off++;
+    if (L.boxes.length !== BAR_SLOTS.length) off++;
     if (L.r.x < 0 || L.r.x + L.r.w > W || L.r.y < 0 || L.r.y + L.r.h > H) off++;
     for (let i = 1; i < L.boxes.length; i++)
       if (L.boxes[i].r.x < L.boxes[i - 1].r.x + L.boxes[i - 1].r.w) overlap++;
     // The chooser opens upward over the world, and must stay on screen with every
     // grade in the game listed at once.
     for (const b of L.boxes) {
-      const M = feedMenu(b, forWeapon(b.feed));
+      const M = feedMenu(b, b.feed === 'repair' ? KIT_KEYS : forWeapon(b.feed));
       if (M.box.x < 0 || M.box.y < 0 || M.box.x + M.box.w > W || M.box.y + M.box.h > H) menuOff++;
       for (const r of M.rows)
         if (r.r.x < M.box.x || r.r.y < M.box.y
          || r.r.x + r.r.w > M.box.x + M.box.w || r.r.y + r.r.h > M.box.y + M.box.h) menuOff++;
     }
   }
-  check('one box per weapon, centred, fitting every window', off === 0 && overlap === 0,
-    `${FEEDS.length} boxes instead of ${AMMO_KEYS.length}`);
+  check('one box per weapon plus the repair rack, fitting every window', off === 0 && overlap === 0,
+    BAR_SLOTS.join(' '));
   check('and the chooser opens over the world without leaving it', menuOff === 0,
     'every grade listed, on the smallest window');
   const L = barLayout(1280, 720);
-  check('lasers sit left of warheads, always in the same place',
-    L.boxes[0].feed === 'laser' && L.boxes[1].feed === 'rocket',
+  check('lasers, then warheads, then repair — always in the same place',
+    L.boxes.map(b => b.feed).join() === BAR_SLOTS.join(),
     'so a box means the same thing every time you look at it');
 }
 
