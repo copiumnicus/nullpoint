@@ -1591,6 +1591,12 @@ function drawFrame(now) {
   const terr = map.dev ? 'TESTING GROUND' : map.owner ? `${COMPANIES[map.owner].tag} TERRITORY` : 'CONTESTED';
   g.fillStyle = map.dev ? '#7de08a' : map.owner ? COMPANIES[map.owner].color : '#e05a5a';
   g.fillText(terr, 20 + g.measureText(map.name).width, 24);
+  // The way out, on screen for as long as you are in here. It was said once in
+  // chat, which fades after four seconds, so it may as well not have been said.
+  if (map.dev) {
+    g.fillStyle = 'rgba(125,224,138,0.55)';
+    g.fillText('· /dev to leave', 26 + g.measureText(map.name).width + g.measureText(terr).width, 24);
+  }
   g.fillStyle = '#5b6b85';
   g.fillText(`${myName || '…'} · ${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls}` +
              `${myDrones.filter(Boolean).length ? ` +${myDrones.filter(Boolean).length} drones` : ''} · ` +
