@@ -34,6 +34,7 @@ import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
+import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
          barLayout, feedMenu } from '/shared/ammo.js';
@@ -199,7 +200,15 @@ ws.onmessage = e => {
     myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
     myKits = m.kits ?? {}; myKit = m.kit ?? DEFAULT_KIT;
     myName = m.name ?? '';
-    if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
+    signup = null; joinSaid = '';                 // whoever you are, you are in now
+    // Written and then read back. A storage write that silently fails loses the
+    // pilot on the next reload, and the only moment we can tell is this one.
+    if (m.token) {
+      let kept = null;
+      try { localStorage.setItem(TOKEN_KEY, m.token); kept = localStorage.getItem(TOKEN_KEY); } catch {}
+      if (kept !== m.token)
+        say('This browser will not remember you — private window, or storage is blocked', '#e0a53f');
+    }
     return;
   }
   if (m.t === 'bumped') { status = 'signed in from another tab'; return; }
@@ -218,6 +227,12 @@ ws.onmessage = e => {
     if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
     myKits = m.kits ?? myKits; myKit = m.kit ?? myKit;
     if (typeof m.credits === 'number') credits = m.credits;
+    return;
+  }
+  if (m.t === 'signup') {
+    signup = { companies: m.companies ?? [] };
+    if (m.problem) joinSaid = m.problem;
+    status = 'choose a callsign';
     return;
   }
   if (m.t === 'bought') {
@@ -372,6 +387,7 @@ addEventListener('keydown', e => {
     }
     return;
   }
+  if (signup) return joinKey(e);                 // the form owns the keyboard
   if (e.key === 'Enter' && !dead) { e.preventDefault(); chatOpen = true; chatLine = ''; return; }
 
   const k = e.key.toLowerCase();
@@ -440,6 +456,7 @@ c.addEventListener('pointerdown', e => {
     if (v.x > b.x && v.x < b.x + b.w && v.y > b.y && v.y < b.y + b.h) send({ t: 'respawn' });
     return;
   }
+  if (signup) { joinClick(v); return; }
   if (leaving()) { cancelLeaving('Staying'); return; }
   if (setOpen) { settingsClick(v); return; }
   if (sysOpen) { sysOpen = false; return; }
@@ -1162,6 +1179,119 @@ function drawInventory() {
   g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
   g.fillText('I or Esc to close', P.x + P.w - 130, P.y + P.h - 30);
   g.font = '12px ui-monospace, monospace';
+}
+
+// --- joining -----------------------------------------------------------------
+// A first visit picks a callsign and a side, and nothing else exists until they
+// do — no token, no row in the accounts file, no ship in anyone's sector. The
+// name is what everyone else sees on your hull, so it is worth asking for.
+let signup = null, joinName = '', joinCo = null, joinSaid = '';
+
+function joinLayout() {
+  const w = Math.min(560, VIEW_W - 40), h = 380;
+  const x = Math.round((VIEW_W - w) / 2), y = Math.round((VIEW_H - h) / 2);
+  const cards = (signup?.companies ?? []);
+  const cw = (w - 40 - (cards.length - 1) * 12) / Math.max(1, cards.length);
+  return {
+    panel: { x, y, w, h },
+    field: { x: x + 20, y: y + 74, w: w - 40, h: 42 },
+    cards: cards.map((c, i) => ({ ...c, r: { x: x + 20 + i * (cw + 12), y: y + 168, w: cw, h: 104 } })),
+    go: { x: x + 20, y: y + h - 66, w: w - 40, h: 44 },
+  };
+}
+
+function joinClick(v) {
+  const L = joinLayout();
+  const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
+  for (const c of L.cards) if (inside(c.r)) { joinCo = c.key; joinSaid = ''; return; }
+  if (inside(L.go)) return tryJoin();
+}
+
+function tryJoin() {
+  const why = nameProblem(joinName);
+  if (why) { joinSaid = why; return; }
+  if (!joinCo) { joinSaid = 'pick a side'; return; }
+  send({ t: 'join', name: cleanName(joinName), co: joinCo });
+}
+
+// The name field takes keys directly — there is no DOM input on this canvas.
+function joinKey(e) {
+  if (e.key === 'Enter') { e.preventDefault(); return tryJoin(); }
+  if (e.key === 'Backspace') { e.preventDefault(); joinName = joinName.slice(0, -1); joinSaid = ''; return; }
+  if (e.key === 'Tab') {
+    e.preventDefault();                            // Tab walks the companies
+    const keys = (signup?.companies ?? []).map(c => c.key);
+    joinCo = keys[(keys.indexOf(joinCo) + 1) % Math.max(1, keys.length)] ?? null;
+    return;
+  }
+  if (e.key.length !== 1 || e.metaKey || e.ctrlKey) return;
+  if (joinName.length >= NAME_MAX) return;
+  joinName += e.key;
+  joinSaid = '';
+}
+
+function drawJoin(now) {
+  const L = joinLayout(), P = L.panel;
+  const over = r => hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
+  g.fillStyle = '#03050a'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.fillStyle = 'rgba(8,12,19,0.98)'; g.fillRect(P.x, P.y, P.w, P.h);
+  g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+
+  g.textAlign = 'center';
+  g.font = '20px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
+  g.fillText(GAME.toUpperCase(), P.x + P.w / 2, P.y + 40);
+  g.font = '11px ui-monospace, monospace'; g.fillStyle = '#5b6b85';
+  g.fillText('pick a callsign and a side — both are yours for good', P.x + P.w / 2, P.y + 60);
+
+  const f = L.field;                               // the name, typed straight in
+  g.textAlign = 'left';
+  g.fillStyle = 'rgba(255,255,255,0.03)'; g.fillRect(f.x, f.y, f.w, f.h);
+  g.strokeStyle = joinSaid ? '#e05a5a' : '#3d5876'; g.lineWidth = 1.4;
+  g.strokeRect(f.x + .5, f.y + .5, f.w - 1, f.h - 1);
+  g.font = '18px ui-monospace, monospace';
+  g.fillStyle = joinName ? '#cfe4ff' : '#3d4757';
+  g.fillText(joinName || 'callsign', f.x + 14, f.y + 28);
+  if (Math.floor(now / 500) % 2 === 0 && joinName.length < NAME_MAX) {
+    const w2 = g.measureText(joinName).width;
+    g.fillStyle = '#7fd4ff'; g.fillRect(f.x + 16 + w2, f.y + 12, 2, 20);
+  }
+  g.font = '10px ui-monospace, monospace'; g.textAlign = 'right';
+  g.fillStyle = '#3d4757'; g.fillText(`${joinName.length}/${NAME_MAX}`, f.x + f.w - 12, f.y + 28);
+  g.textAlign = 'left';
+
+  g.font = '10px ui-monospace, monospace'; g.fillStyle = '#3d4757';
+  g.fillText('SIDE', L.cards[0]?.r.x ?? P.x + 20, L.cards[0] ? L.cards[0].r.y - 10 : P.y + 150);
+
+  for (const c of L.cards) {
+    const on = joinCo === c.key, r = c.r;
+    g.fillStyle = on ? c.color + '22' : over(r) ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = on ? c.color : '#2c3d55'; g.lineWidth = on ? 2 : 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    g.textAlign = 'center';
+    g.fillStyle = c.color; g.font = '17px ui-monospace, monospace';
+    g.fillText(c.tag, r.x + r.w / 2, r.y + 32);
+    g.fillStyle = on ? '#cfe4ff' : '#66748c'; g.font = '9px ui-monospace, monospace';
+    for (const [i, word] of c.name.split(' ').entries())
+      g.fillText(word, r.x + r.w / 2, r.y + 50 + i * 11);
+    g.fillStyle = '#4a5568'; g.font = '10px ui-monospace, monospace';
+    g.fillText(`${c.pilots} pilot${c.pilots === 1 ? '' : 's'}`, r.x + r.w / 2, r.y + r.h - 10);
+    g.textAlign = 'left';
+  }
+
+  const b = L.go, ready = !nameProblem(joinName) && joinCo;
+  g.fillStyle = ready ? 'rgba(125,224,138,0.16)' : 'rgba(255,255,255,0.03)';
+  g.fillRect(b.x, b.y, b.w, b.h);
+  g.strokeStyle = ready ? '#7de08a' : '#2c3d55'; g.lineWidth = ready ? 1.8 : 1;
+  g.strokeRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1);
+  g.textAlign = 'center'; g.font = '15px ui-monospace, monospace';
+  g.fillStyle = ready ? '#7de08a' : '#3d4757';
+  g.fillText('LAUNCH', b.x + b.w / 2, b.y + 28);
+  if (joinSaid) {
+    g.font = '11px ui-monospace, monospace'; g.fillStyle = '#e05a5a';
+    g.fillText(joinSaid, P.x + P.w / 2, b.y - 12);
+  }
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
 
 // --- settings -----------------------------------------------------------------
@@ -2392,14 +2522,17 @@ function drawFrame(now) {
 
   stirMusic(now);
   stepSignOut();
-  if (!dead) drawToasts(now);
   if (!dead && !sysOpen && !setOpen) { drawBar(); drawSpacePrompt(); }   // under the panels, over the world
+  if (signup) { drawJoin(now); return; }
   if (leaving()) drawLeaving();
   if (setOpen) drawSettings();
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();
   if (dead) drawWreck(now);
+  // Receipts go on top of the panels. Drawn under them, the station's own
+  // backdrop dimmed the confirmation for the purchase you just made in it.
+  if (!dead) drawToasts(now);
   if (chatOpen || chatLog.some(m => now - m.at < CHAT_LINGER)) drawChat(now);
 
   if (!signedOff && performance.now() - lastInput > IDLE_LIMIT) {

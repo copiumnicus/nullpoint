@@ -8,6 +8,7 @@ import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALI
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
+import { nameProblem, cleanName } from './shared/signup.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
@@ -230,11 +231,14 @@ wss.on('connection', (ws, req) => {
   try { token = new URL(req.url, 'http://x').searchParams.get('t') || ''; } catch {}
   let acct = db.accounts[token];
   const returning = !!acct;
-  if (!acct) {                                       // first visit, or a lost token
+  // A first visit gets a pilot that exists but is not written down: no token
+  // saved, no row in the accounts file, and no presence in anyone's sector until
+  // they have chosen a name and a company. Wander off before then and nothing of
+  // you was ever kept.
+  let lobby = !acct;
+  if (!acct) {
     token = crypto.randomBytes(16).toString('hex');
     acct = newAccount(token, db.seq++, now);
-    db.accounts[token] = acct;
-    store.save(db);
   }
 
   // One session per account. A second tab takes over rather than running a second
@@ -260,7 +264,7 @@ wss.on('connection', (ws, req) => {
                     formations: [...acct.formations],
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
-                    scoop: null, want: null, dead: false });
+                    scoop: null, want: null, dead: false, lobby });
   // A line back to this pilot only. Lives out here rather than inside the chat
   // handler because anything that refuses a request owes an explanation, and the
   // repair rack was the first thing outside chat that needed one.
@@ -280,20 +284,52 @@ wss.on('connection', (ws, req) => {
                                                 kits: players.get(id).kits, kit: players.get(id).kit,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
-  ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
+  const sendWelcome = () => ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
                            map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit,
                            gear: acct.gear, hulls: acct.hulls, credits: acct.credits,
                            drones: acct.drones, xp: acct.xp, admin: isAdmin(acct),
                            formation: acct.formation, formations: acct.formations,
                            ammo: acct.ammo, using: acct.using, armed: acct.armed,
                            kits: acct.kits, kit: acct.kit }));
-  console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
-              `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
+
+  // Who the sides are and how full each is, so somebody choosing can see whether
+  // they would be evening things up.
+  const sides = () => ({ companies: Object.entries(COMPANIES).map(([key, c]) => ({
+    key, tag: c.tag, name: c.name, color: c.color,
+    pilots: Object.values(db.accounts).filter(a => a.co === key).length })) });
+
+  if (lobby) ws.send(JSON.stringify({ t: 'signup', ...sides() }));
+  else {
+    sendWelcome();
+    console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
+                `back in ${MAPS[acct.mapId].name} (${players.size} online)`);
+  }
 
   // Clients send INTENT only — never position. The server owns the truth.
   ws.on('message', buf => {
     let m; try { m = JSON.parse(buf); } catch { return; }
     const P = players.get(id);
+
+    if (lobby) {                                  // nothing works until you exist
+      if (m.t !== 'join') return;
+      const why = nameProblem(m.name, Object.values(db.accounts).map(a => a.name));
+      if (why) return ws.send(JSON.stringify({ t: 'signup', problem: why, ...sides() }));
+      if (!COMPANIES[m.co]) return ws.send(JSON.stringify({ t: 'signup', problem: 'pick a side', ...sides() }));
+      acct.name = cleanName(m.name);
+      acct.co = m.co;
+      acct.mapId = m.co + '1';
+      const b = MAPS[acct.mapId].base;
+      acct.x = b.x; acct.y = b.y;
+      Object.assign(ship, { x: b.x, y: b.y, vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null });
+      P.co = acct.co; P.mapId = acct.mapId;
+      db.accounts[token] = acct;
+      store.save(db);                             // on disk before they fly anywhere
+      lobby = false; P.lobby = false;
+      sendWelcome();
+      console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] joined (${players.size} online)`);
+      return;
+    }
+
     if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
 
     // --- station: everything below needs you sitting in your own base ring ---
@@ -612,10 +648,10 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     const p = players.get(id);
-    if (p) { capture(p.acct, p, Date.now()); store.save(db); }   // last word on where you were
+    if (p && !p.lobby) { capture(p.acct, p, Date.now()); store.save(db); }   // last word on where you were
     for (const list of aliens.values()) forgetPlayer(list, id);
     players.delete(id);
-    console.log(`- ${acct.name} (${players.size} online)`);
+    if (!lobby) console.log(`- ${acct.name} (${players.size} online)`);
   });
 });
 
@@ -636,6 +672,7 @@ setInterval(() => {
   if (idling) { idling = false; console.log('world resumed'); }
 
   for (const [id, p] of players) {
+    if (p.lobby) continue;                        // still choosing a name
     step(p.ship, dt);
     stepDrift(p.ship, dt);
     const map = MAPS[p.mapId];
@@ -813,7 +850,7 @@ setInterval(() => {
       dmask: p.ship.drones.reduce((m2, k, i) => m2 | (EQUIPMENT[k]?.slot === 'weapon' ? 1 << i : 0), 0),
       psys: p.ship.power.to ? SYSTEMS.indexOf(p.ship.power.to) + 1 : 0,
       plvl: p.ship.power.to ? Math.round(100 * levelOf(p.ship.power, p.ship.power.to, p.ship.stats)) : 0 });
-    if (p.dead) continue;
+    if (p.dead || p.lobby) continue;
     if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
     byMap.get(p.mapId).push({ id, co: p.co, ship: p.ship });
   }
@@ -830,7 +867,7 @@ setInterval(() => {
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
   for (const [vid, V] of players) {
-    if (V.ws.readyState !== 1) continue;
+    if (V.ws.readyState !== 1 || V.lobby) continue;
     V.id = vid;
     const seen = stepContacts(V, byMap.get(V.mapId) ?? [], dt);
     const ships = [];

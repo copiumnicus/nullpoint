@@ -145,6 +145,17 @@ globalThis.fetch = url => Promise.resolve({
 const errs = [];
 console.error = (...a) => errs.push(a.join(' '));
 
+// The join form's geometry, kept in step with the client by hand — it is drawn
+// before there is any session, so it cannot come from a shared layout the way
+// the station's does without shipping the lobby to everyone.
+const joinLayoutFor = (W, H, n) => {
+  const w = Math.min(560, W - 40), h = 380;
+  const x = Math.round((W - w) / 2), y = Math.round((H - h) / 2);
+  const cw = (w - 40 - (n - 1) * 12) / n;
+  return { cards: Array.from({ length: n }, (_, i) => ({ x: x + 20 + i * (cw + 12), y: y + 168, w: cw, h: 104 })),
+           go: { x: x + 20, y: y + h - 66, w: w - 40, h: 44 } };
+};
+
 await import('./.client.mjs');
 
 const ws = socks[0];
@@ -278,6 +289,55 @@ for (const id of Object.keys(MAPS)) {
   if (seen !== 'legacy-token') errs.push(`a token under ${OLD_TOKEN_KEYS[0]} was not migrated (got ${seen})`);
   else if (store.get(OLD_TOKEN_KEYS[0]) !== undefined) errs.push('the old key was left behind');
   else console.log(`identity: a pilot stored under ${OLD_TOKEN_KEYS[0]} carried over to ${TOKEN_KEY}`);
+}
+
+// A first visit chooses a name and a side, and can do nothing else until it has.
+{
+  const welcomeAgain = () => feed({ t: 'welcome', id: 1, token: 'test-token', name: 'Tester',
+    map: 'm1', co: 'm', hull: 'vanguard', fit: { weapon: ['emitter1'], generator: [], tech: [] },
+    gear: {}, hulls: ['hauler', 'vanguard'], credits: 90000, drones: [], xp: 0, admin: true,
+    formation: 'line', formations: ['line'], ammo: { cell1: 4000, head1: 400 },
+    using: { laser: 'cell1', rocket: 'head1' }, armed: { laser: true, rocket: true },
+    kits: {}, kit: 'kit1' });
+
+  feed({ t: 'signup', companies: [
+    { key: 'm', tag: 'MTC', name: 'Meridian Trade Consortium', color: '#4a9fe0', pilots: 3 },
+    { key: 'h', tag: 'HXI', name: 'Helion Extractive Industries', color: '#e0a53f', pilots: 1 },
+    { key: 'k', tag: 'KVR', name: 'Kuiper Void Reclamation', color: '#8f6fe0', pilots: 2 }] });
+  frame(t += 16); frames++;
+
+  sent.length = 0;
+  evt('pointerdown', { clientX: 400, clientY: 300 });
+  evt('keydown', { key: 'h' });                     // a hotkey elsewhere; here it is a letter
+  evt('keydown', { key: 'Tab' });                   // and Tab walks the sides
+  frame(t += 16); frames++;
+  if (sent.some(m => m.t === 'intent' || m.t === 'target'))
+    errs.push('the join form let a click fly a ship that does not exist yet');
+
+  // A name too short will not launch; a good one plus a side will. Clear first —
+  // the 'h' above went into the field, which is the point of the check.
+  for (let i = 0; i < 4; i++) evt('keydown', { key: 'Backspace' });
+  for (const ch of 'Vy') evt('keydown', { key: ch });
+  frame(t += 16); frames++;
+  const L = joinLayoutFor(innerWidth, innerHeight, 3);
+  sent.length = 0;
+  evt('pointerdown', { clientX: L.go.x + L.go.w / 2, clientY: L.go.y + L.go.h / 2 });
+  frame(t += 16); frames++;
+  if (sent.some(m => m.t === 'join')) errs.push('the form launched on a callsign that is too short');
+
+  for (const ch of 'per') evt('keydown', { key: ch });
+  evt('pointerdown', { clientX: L.cards[2].x + 20, clientY: L.cards[2].y + 40 });   // pick a side
+  frame(t += 16); frames++;
+  sent.length = 0;
+  evt('pointerdown', { clientX: L.go.x + L.go.w / 2, clientY: L.go.y + L.go.h / 2 });
+  frame(t += 16); frames++;
+  const join = sent.find(m => m.t === 'join');
+  if (!join) errs.push('a valid callsign and a side still would not launch');
+  else if (join.name !== 'Vyper' || !join.co) errs.push(`the form sent ${JSON.stringify(join)}`);
+  else console.log(`join: a first visit picks a callsign and a side, and flies nothing until it has`);
+
+  welcomeAgain();                                  // and the rest of the file is a pilot again
+  frame(t += 16); frames++;
 }
 
 const click = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
