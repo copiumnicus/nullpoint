@@ -284,12 +284,13 @@ export function explosion(dist, foe) {
 // laser, and it would put the same grit on a chord.
 
 let musicEl = null, musicGain = null, playlist = [], atTrack = -1, musicVol = 0.55;
-let musicWanted = false, onTrack = null;
+let musicWanted = false, onTrack = null, parked = [];
 
 export const MUSIC_VOL_STEP = 0.1;
 export const musicTrack = () => (atTrack >= 0 ? playlist[atTrack] ?? null : null);
 export const musicVolume = () => musicVol;
 export const musicList = () => [...playlist];
+export const musicParked = () => [...parked];
 
 // Called whenever the current track changes, so the HUD can name it.
 export const onMusicChange = fn => { onTrack = fn; };
@@ -297,14 +298,26 @@ export const onMusicChange = fn => { onTrack = fn; };
 const shuffle = a => { for (let i = a.length - 1; i > 0; i--) {
   const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-export async function startMusic() {
+// `keep` decides which of the files on disk are in the shuffle. It is passed in
+// rather than imported because this module deliberately depends on nothing — it
+// is synthesis and playback, and the rules about moods live in shared/music.js
+// with the tests that hold them.
+export async function startMusic(keep = () => true) {
   musicWanted = true;
   if (playlist.length || typeof fetch !== 'function' || typeof Audio !== 'function') return;
+  let all = [];
   try {
     const r = await fetch('/music/list');
     if (!r.ok) return;
-    playlist = shuffle(await r.json());
+    all = await r.json();
   } catch { return; }                              // no server, no music, no noise about it
+  // Only the moods there is something to play them for. A boss folder can sit
+  // there ready without turning up between two ambient tracks.
+  playlist = shuffle(all.filter(keep));
+  parked = all.filter(n => !keep(n));
+  if (parked.length)
+    console.info(`music: ${playlist.length} in rotation, ${parked.length} parked ` +
+                 `— waiting on a system to play them`);
   if (playlist.length) nextTrack();
 }
 

@@ -243,8 +243,25 @@ console.log('\nthe playlist');
   check('an unlisted one is not, however it is spelled',
     ['../server.js', 'one.mp3/../../server.js', 'ONE.mp3', 'ambient/three.mp3']
       .every(n => !servable(n, listed)));
-  check('a subfolder is remembered as a mood, for later',
+  check('a subfolder is the track\'s mood',
     MOOD_OF('combat/hard.mp3') === 'combat' && MOOD_OF('loose.mp3') === 'all');
+
+  // A folder is how you park something. Boss music can sit there fully loaded
+  // until there is a boss to play it at, without being renamed or deleted or
+  // turning up between two ambient tracks in the meantime.
+  const { inRotation, parkedMoods, LIVE_MOODS } = await import('../shared/music.js');
+  const folder = ['Silent Orbit.mp3', 'ambient/long-dark.mp3',
+                  'boss/Iron Pulse.mp3', 'combat/hard-burn.mp3'];
+  check('loose files and ambient play',
+    inRotation('Silent Orbit.mp3') && inRotation('ambient/long-dark.mp3'));
+  check('a mood with no system to play it stays parked',
+    !inRotation('boss/Iron Pulse.mp3') && !inRotation('combat/hard-burn.mp3'),
+    `parked: ${parkedMoods(folder).join(', ')}`);
+  check('parked is not hidden — the file still lists and still serves',
+    servable('boss/Iron Pulse.mp3', folder),
+    'it is out of the shuffle, not out of the directory');
+  check('every live mood is a real one', LIVE_MOODS.every(m => typeof m === 'string' && m),
+    LIVE_MOODS.join(' '));
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`

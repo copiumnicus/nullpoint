@@ -28,6 +28,7 @@ import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
+import { inRotation } from '/shared/music.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon,
          barLayout, feedMenu } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
@@ -289,7 +290,7 @@ function nearestHostile() {
 }
 addEventListener('keydown', e => {
   audioReady();                                   // browsers want a gesture first
-  startMusic();
+  startMusic(inRotation);
   stir();
 
   if (chatOpen) {                                 // the line owns the keyboard
@@ -349,7 +350,7 @@ addEventListener('keydown', e => {
 
 c.addEventListener('pointerdown', e => {
   audioReady();
-  startMusic();
+  startMusic(inRotation);
   stir();
   if (signedOff) { location.reload(); return; }
   const v = toView(e);
