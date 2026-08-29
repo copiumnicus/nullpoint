@@ -783,7 +783,13 @@ setInterval(() => {
     const step2 = approachPod(p.ship, p.hold, pod);
     if (step2.fly) { p.ship.tx = step2.fly.x; p.ship.ty = step2.fly.y; p.ship.dx = p.ship.dy = null; }
     else if (step2.scoop) { p.scoop = step2.scoop; p.want = null; p.ship.tx = p.ship.ty = null; }
-    else p.want = null;
+    else {
+      // Flying all the way there and then stopping without a word is the worst
+      // of the three outcomes. Say which one it was.
+      if (step2.why === 'full' && p.ws.readyState === 1)
+        p.ws.send(JSON.stringify({ t: 'chat', from: '', text: 'hold is full — dock and stow it' }));
+      p.want = null;
+    }
   }
 
   // Collector rigs pull anything in reach without being asked. Your own order

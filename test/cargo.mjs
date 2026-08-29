@@ -178,6 +178,26 @@ check('a kill is worth more than its own drop, but not by much', (() => {
   return ALIENS.drifter.bounty > avg && ALIENS.drifter.bounty < avg * 6;
 })(), 'so cargo is worth hauling, and killing is worth doing');
 
+console.log('\nwhen the hold is full');
+{
+  const { roomFor, holdFullFor } = await import('../shared/cargo.js');
+  // Volume differs by metal, so "full" is a question about a particular ore.
+  // A hold with three units of room takes three iridium or no iron at all.
+  const nearly = { iron: 19 };                     // 57 of a 60 hold
+  console.log('     57/60 used: ' + ['iron', 'iridium'].map(m =>
+    `${MATERIALS[m].name} ${MATERIALS[m].vol}vol -> room for ${roomFor(nearly, m, 60)}`).join(', '));
+  check('room is counted in the ore you are looking at',
+    roomFor(nearly, 'iron', 60) === 1 && roomFor(nearly, 'iridium', 60) === 3);
+  const brimming = { iron: 20 };                   // 60 of 60
+  check('a hold with nothing left is full for everything',
+    ['iron', 'iridium', 'platinum'].every(m => holdFullFor(brimming, m, 60)));
+  check('and one with a sliver left is not full for the small stuff',
+    holdFullFor({ iron: 19, iridium: 2 }, 'iron', 60)
+    && !holdFullFor({ iron: 19, iridium: 2 }, 'iridium', 60),
+    'no room for another iron, room for one more iridium');
+  check('room never goes negative', roomFor({ iron: 99 }, 'iron', 60) === 0);
+}
+
 console.log('\ncollector rigs');
 {
   const { EQUIPMENT, isCollector, collectorReach } = await import('../shared/gear.js');

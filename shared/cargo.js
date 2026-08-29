@@ -70,6 +70,13 @@ export const holdValue = hold => Object.entries(hold).reduce((s, [m, n]) => s + 
 
 // Stows what fits and reports how much that was. Never overfills, never throws on
 // an unknown material — it just refuses it.
+// How many units of this would actually fit. Volume differs by metal, so "full"
+// is a question about a particular ore rather than about the hold — there can be
+// room for an iridium and none for an iron.
+export const roomFor = (hold, mat, cap) =>
+  Math.max(0, Math.floor((cap - holdVol(hold)) / volOf(mat)));
+export const holdFullFor = (hold, mat, cap) => roomFor(hold, mat, cap) <= 0;
+
 export function stow(hold, mat, n, cap) {
   if (!MATERIALS[mat] || n <= 0) return 0;
   const room = Math.max(0, cap - holdVol(hold));

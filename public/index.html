@@ -28,7 +28,8 @@ import { audioReady, setThrust, laser, rocket, explosion,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
-import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
+import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor,
+         SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
@@ -423,7 +424,11 @@ addEventListener('keydown', e => {
   if (e.key === ' ') {                            // one action key
     e.preventDefault();
     const act = spaceAction();
-    if (act.kind === 'scoop') return send({ t: 'scoop', id: act.pod.id });
+    if (act.kind === 'scoop') {
+      if (holdFullFor(hold, act.pod.mat, cargoCap))
+        return say(`Hold is full — no room for ${MATERIALS[act.pod.mat]?.name ?? 'that'}`, '#e0a53f');
+      return send({ t: 'scoop', id: act.pod.id });
+    }
     if (act.kind === 'stow') {
       for (const mt of act.mats) send({ t: 'stash', mat: mt });
       return say(`Stowed ${act.mats.length} stack${act.mats.length === 1 ? '' : 's'}`, '#7de08a');
@@ -475,7 +480,11 @@ c.addEventListener('pointerdown', e => {
   const can = podAt(w.x, w.y);
   if (can) { lastClick = { t: performance.now(), x: v.x, y: v.y };
              marker = { x: can.x, y: can.y };        // show the course you just ordered
-             return send({ t: 'scoop', id: can.id }); }
+             {
+               if (holdFullFor(hold, can.mat, cargoCap))
+                 return say(`Hold is full — no room for ${MATERIALS[can.mat]?.name ?? 'that'}`, '#e0a53f');
+               return send({ t: 'scoop', id: can.id });
+             } }
 
   // Double-click on empty space breaks off. Single click still just sets a course,
   // and the second click repeats that harmlessly.
@@ -2181,11 +2190,13 @@ function drawFrame(now) {
         g.save(); g.translate(dx, dy); g.rotate(s.heading);
         g.globalAlpha = lost ? 0.3 : 0.95;
         g.fillStyle = '#0a0f16'; g.fillRect(-dr - 1, -dr - 1, dr * 2 + 2, dr * 2 + 2);
-        g.fillStyle = rig ? (stuffed ? '#8a7550' : '#c2a24f') : colOf(s);
+        // A working rig is warm brass; a full one goes grey and dead, so you can
+        // tell at a glance why it has stopped without reading the tag.
+        g.fillStyle = rig ? (stuffed ? '#55606e' : '#c2a24f') : colOf(s);
         g.fillRect(-dr, -dr, dr * 2, dr * 2);
         if (armed) { g.fillStyle = '#c2cede'; g.fillRect(dr * 0.4, -1.3, dr * 1.5, 2.6); }
         if (rig) {                                 // an open cradle, facing out
-          g.strokeStyle = stuffed ? '#6b5a3a' : '#ffd479'; g.lineWidth = 1.6;
+          g.strokeStyle = stuffed ? '#3c4551' : '#ffd479'; g.lineWidth = 1.6;
           g.beginPath();
           g.moveTo(dr * 0.3, -dr * 1.15); g.lineTo(dr * 1.25, -dr * 0.75);
           g.moveTo(dr * 0.3, dr * 1.15);  g.lineTo(dr * 1.25, dr * 0.75);
@@ -2194,9 +2205,11 @@ function drawFrame(now) {
         g.fillStyle = '#0a0f16'; g.fillRect(-dr * 0.35, -dr * 0.35, dr * 0.7, dr * 0.7);
         g.globalAlpha = 1; g.restore();
         if (rig && stuffed) {                      // it has stopped, and says so
-          g.textAlign = 'center'; g.font = '9px ui-monospace, monospace';
-          g.fillStyle = 'rgba(6,10,16,0.85)'; g.fillRect(dx - 15, dy - dr - 15, 30, 12);
-          g.fillStyle = '#e0a53f'; g.fillText('FULL', dx, dy - dr - 6);
+          g.textAlign = 'center'; g.font = 'bold 9px ui-monospace, monospace';
+          g.fillStyle = 'rgba(224,90,90,0.16)'; g.fillRect(dx - 17, dy - dr - 17, 34, 13);
+          g.strokeStyle = 'rgba(224,90,90,0.55)'; g.lineWidth = 1;
+          g.strokeRect(dx - 16.5, dy - dr - 16.5, 33, 12);
+          g.fillStyle = '#e05a5a'; g.fillText('FULL', dx, dy - dr - 7);
           g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
         }
       });
