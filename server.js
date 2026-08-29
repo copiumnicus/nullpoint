@@ -41,7 +41,9 @@ const SFX_TYPE = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: '
 // Whatever is sitting in public/music right now, one subfolder deep. Read fresh
 // each time so a track dropped in during a session shows up on the next reload
 // without restarting the server. What counts as a track is in shared/music.js.
-const MUSIC_DIR = 'public/music';
+// Configurable so the tracks can live on the same mounted volume as the save
+// file in production — they are deliberately not in the repo.
+const MUSIC_DIR = process.env.MUSIC_DIR || 'public/music';
 function listMusic() {
   const out = [];
   const scan = (dir, prefix) => {
@@ -89,8 +91,11 @@ const server = http.createServer((req, res) => {
                            'content-length': to - from + 1 });
       return fs.createReadStream(file, { start: from, end: to }).pipe(res);
     }
+    // Track names are effectively immutable here — a new mix gets a new name —
+    // so a week of caching keeps a reload from re-pulling five megabytes.
     res.writeHead(200, { 'content-type': type, 'accept-ranges': 'bytes',
-                         'content-length': size });
+                         'content-length': size,
+                         'cache-control': 'public, max-age=604800, immutable' });
     return fs.createReadStream(file).pipe(res);
   }
   if (url === '/healthz') {                       // most hosts want something to poll
