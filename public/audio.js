@@ -306,16 +306,20 @@ export const musicMood = () => mood;
 export const musicList = () => [...pools[CALM], ...pools[COMBAT]];
 export const musicParked = () => [...parked];
 export const hasMood = m => pools[m]?.length > 0;
-export const musicTrack = () => {
-  const d = decks[mood];
-  return d && d.at >= 0 ? pools[mood][d.at] ?? null : null;
-};
+export const musicTrack = () => decks[mood]?.last ?? null;
 
 // Called whenever the audible track changes, so the HUD can name it.
 export const onMusicChange = fn => { onTrack = fn; };
 
 const shuffle = a => { for (let i = a.length - 1; i > 0; i--) {
   const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+// `pick` chooses the next track for a deck from its bag, returning { pick, bag }.
+// Passed in with `sort` because this module depends on nothing: the rules about
+// moods and about not repeating yourself live in shared/music.js, next to the
+// tests that hold them.
+let choose = (bag, pool) => ({ pick: pool[0] ?? null, bag: [] });
+export const setPicker = fn => { choose = fn; };
 
 // `sort` says which deck a filename belongs on, or null to leave it parked. It is
 // passed in rather than imported because this module depends on nothing.
@@ -335,43 +339,46 @@ export async function startMusic(sort = () => CALM) {
   shuffle(pools[CALM]); shuffle(pools[COMBAT]);
   console.info(`music: ${pools[CALM].length} calm, ${pools[COMBAT].length} combat` +
                (parked.length ? `, ${parked.length} parked` : ''));
-  if (pools[CALM].length) { deckFor(CALM); play(CALM, 0); }
+  if (pools[CALM].length) { deckFor(CALM); play(CALM); }
 }
 
 function deckFor(m) {
   if (decks[m] || typeof Audio !== 'function') return decks[m];
   const el = new Audio();
   el.crossOrigin = 'anonymous';
-  el.addEventListener('ended', () => play(m, 1));
+  el.addEventListener('ended', () => play(m));
   // A track that will not decode should not stall the deck behind it.
-  el.addEventListener('error', () => { if (pools[m].length > 1) play(m, 1); });
-  decks[m] = { el, gain: null, at: -1, level: m === mood ? 1 : 0 };
+  el.addEventListener('error', () => { if (pools[m].length > 1) play(m); });
+  decks[m] = { el, gain: null, bag: [], last: null, level: m === mood ? 1 : 0 };
   return decks[m];
 }
 
-function play(m, step) {
+function play(m) {
   const d = deckFor(m);
   if (!d || !pools[m].length) return;
-  d.at = ((d.at + step) % pools[m].length + pools[m].length) % pools[m].length;
-  d.el.src = '/music/' + encodeURIComponent(pools[m][d.at]).replace(/%2F/gi, '/');
+  const { pick, bag } = choose(d.bag, pools[m], d.last);
+  if (!pick) return;
+  d.bag = bag; d.last = pick;
+  d.el.src = '/music/' + encodeURIComponent(pick).replace(/%2F/gi, '/');
   wire(d);
   const go = d.el.play();
   if (go?.catch) go.catch(() => {});              // autoplay refused: the next gesture retries
-  if (m === mood && onTrack) onTrack(pools[m][d.at]);
+  if (m === mood && onTrack) onTrack(pick);
 }
 
 // Skip whatever is audible right now.
-export function nextTrack(step = 1) { play(mood, step); }
+export function nextTrack() { play(mood); }
 
 // Move to a mood. Nothing happens if there is no music for it, so an empty
 // combat/ folder leaves the score alone rather than dropping to silence.
+//
+// Every switch draws a fresh track rather than resuming where that deck was
+// paused. Coming back to the same combat piece from thirty seconds in, every
+// fight, is the thing that makes a soundtrack feel small.
 export function setMood(m) {
   if (m === mood || !pools[m]?.length) return mood;
   mood = m;
-  const d = deckFor(m);
-  if (d && d.at < 0) play(m, 0);                  // first time on this deck
-  else if (d) { const go = d.el.play(); if (go?.catch) go.catch(() => {}); }
-  if (d && onTrack) onTrack(pools[m][d.at]);
+  play(m);
   ramp();
   return mood;
 }

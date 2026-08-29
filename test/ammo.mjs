@@ -316,6 +316,33 @@ console.log('\nthe playlist');
   check('a fight starting again re-arms the hold from now',
     moodFor(true, 50_000, 0).until === 50_000 + COMBAT_HOLD);
 
+  // Which track comes next. Plain random plays the same piece twice in a row
+  // often enough to notice and leaves one unheard for an hour; a bag hands out
+  // every track before it hands out any of them twice.
+  const { drawNext } = await import('../shared/music.js');
+  const pool = ['a', 'b', 'c', 'd', 'e'];
+  let bag = [], last = null;
+  const out = [];
+  for (let i = 0; i < 30; i++) { const r = drawNext(bag, pool, last); bag = r.bag; last = r.pick; out.push(r.pick); }
+  console.log(`     thirty draws from five: ${out.join(' ')}`);
+  check('every pass hands out the whole pool before repeating any of it',
+    [0, 5, 10, 15, 20, 25].every(i => new Set(out.slice(i, i + 5)).size === pool.length));
+  check('and never the same track twice in a row, even across a refill',
+    out.every((k, i) => i === 0 || k !== out[i - 1]));
+  check('a pool of one still plays', drawNext([], ['solo'], 'solo').pick === 'solo');
+  check('an empty pool draws nothing rather than throwing',
+    drawNext([], [], null).pick === null && drawNext(['gone'], [], null).bag.length === 0);
+  check('a bag holding tracks that are no longer there refills',
+    drawNext(['deleted'], pool, null).pick !== 'deleted',
+    'the folder can change under it');
+  // Every switch draws afresh, which is the point: the alternative is hearing
+  // the same combat piece from thirty seconds in for every fight of the session.
+  const fights = [];
+  let cbag = [], clast = null;
+  for (let i = 0; i < 8; i++) { const r = drawNext(cbag, ['x', 'y', 'z'], clast); cbag = r.bag; clast = r.pick; fights.push(r.pick); }
+  check('eight fights do not open on the same track twice running',
+    fights.every((k, i) => i === 0 || k !== fights[i - 1]), fights.join(' '));
+
   check('every live mood lands on a deck',
     LIVE_MOODS.every(m => [CALM, COMBAT].includes(poolOf(m === 'all' ? 'loose.mp3' : `${m}/x.mp3`))),
     LIVE_MOODS.join(' '));

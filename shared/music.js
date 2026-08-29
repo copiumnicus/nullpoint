@@ -56,3 +56,28 @@ export function moodFor(fighting, now, heldUntil = 0) {
   const until = fighting ? now + COMBAT_HOLD : heldUntil;
   return { mood: now < until ? COMBAT : CALM, until };
 }
+
+// Picking the next track.
+//
+// Not plain random: plain random plays the same piece twice in a row often
+// enough to notice, and leaves one track unheard for an hour. This is a bag —
+// every track goes in, they come out one at a time in a shuffled order, and the
+// bag is only refilled once it is empty. So you hear all of them before you hear
+// any of them twice, and a refill never lands on whatever just finished.
+//
+// Pure so it can be tested. The caller keeps the bag and the last pick.
+export function drawNext(bag, pool, last = null, rand = Math.random) {
+  if (!pool.length) return { pick: null, bag: [] };
+  let next = bag.filter(k => pool.includes(k));      // the pool can change under us
+  if (!next.length) {
+    next = [...pool];
+    for (let i = next.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [next[i], next[j]] = [next[j], next[i]];
+    }
+    // A fresh bag that opens on the track that just played is the one repeat
+    // this is meant to avoid, so move it back.
+    if (next.length > 1 && next[0] === last) next.push(next.shift());
+  }
+  return { pick: next[0], bag: next.slice(1) };
+}

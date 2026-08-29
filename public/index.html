@@ -24,13 +24,13 @@ import { audioReady, setThrust, laser, rocket, explosion,
          toggleAudio, toggleSfx, toggleMusic, audioOn, sfxOnly, musicOnly,
          setSfxVolume, sfxVolume, setMusicVolume, musicVolume,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
-         setMood, musicMood, hasMood } from '/audio.js';
+         setMood, musicMood, hasMood, setPicker } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
-import { poolOf, moodFor, CALM, COMBAT } from '/shared/music.js';
+import { poolOf, moodFor, drawNext, CALM, COMBAT } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon,
          barLayout, feedMenu } from '/shared/ammo.js';
@@ -295,6 +295,7 @@ function nearestHostile() {
 }
 addEventListener('keydown', e => {
   audioReady();                                   // browsers want a gesture first
+  setPicker(drawNext);
   startMusic(poolOf);
   stir();
 
@@ -369,6 +370,7 @@ addEventListener('keydown', e => {
 
 c.addEventListener('pointerdown', e => {
   audioReady();
+  setPicker(drawNext);
   startMusic(poolOf);
   stir();
   if (signedOff) { location.reload(); return; }
