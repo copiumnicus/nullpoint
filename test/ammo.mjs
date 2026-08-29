@@ -286,18 +286,38 @@ console.log('\nthe playlist');
   // A folder is how you park something. Boss music can sit there fully loaded
   // until there is a boss to play it at, without being renamed or deleted or
   // turning up between two ambient tracks in the meantime.
-  const { inRotation, parkedMoods, LIVE_MOODS } = await import('../shared/music.js');
+  const { inRotation, parkedMoods, LIVE_MOODS, poolOf, CALM, COMBAT } = await import('../shared/music.js');
   const folder = ['Silent Orbit.mp3', 'ambient/long-dark.mp3',
                   'boss/Iron Pulse.mp3', 'combat/hard-burn.mp3'];
-  check('loose files and ambient play',
-    inRotation('Silent Orbit.mp3') && inRotation('ambient/long-dark.mp3'));
+  check('loose files and ambient are the score you fly to',
+    poolOf('Silent Orbit.mp3') === CALM && poolOf('ambient/long-dark.mp3') === CALM);
+  check('combat/ is its own deck',
+    poolOf('combat/hard-burn.mp3') === COMBAT && inRotation('combat/hard-burn.mp3'));
   check('a mood with no system to play it stays parked',
-    !inRotation('boss/Iron Pulse.mp3') && !inRotation('combat/hard-burn.mp3'),
-    `parked: ${parkedMoods(folder).join(', ')}`);
+    poolOf('boss/Iron Pulse.mp3') === null && !inRotation('boss/Iron Pulse.mp3'),
+    `parked: ${parkedMoods(folder).join(', ') || 'nothing'}`);
   check('parked is not hidden — the file still lists and still serves',
     servable('boss/Iron Pulse.mp3', folder),
     'it is out of the shuffle, not out of the directory');
-  check('every live mood is a real one', LIVE_MOODS.every(m => typeof m === 'string' && m),
+  // Arriving is instant, leaving is not. A lull between passes is not the end of
+  // a fight, and music that drops out and comes straight back is worse than music
+  // that never changed.
+  const { moodFor, COMBAT_HOLD } = await import('../shared/music.js');
+  let until = 0, clock = 0;
+  const step = (fighting, ms) => { clock += ms; const r = moodFor(fighting, clock, until); until = r.until; return r.mood; };
+  check('quiet is quiet', step(false, 100) === CALM);
+  check('the first shot switches immediately', step(true, 100) === COMBAT);
+  check('a lull between passes does not end it', step(false, 2000) === COMBAT
+    && step(true, 100) === COMBAT && step(false, COMBAT_HOLD - 1000) === COMBAT,
+    `${COMBAT_HOLD / 1000}s of quiet is what ends it`);
+  check('and enough quiet does', step(false, 1200) === CALM);
+  check('the hold is long enough to cover a reload, short enough to notice',
+    COMBAT_HOLD >= 4000 && COMBAT_HOLD <= 15000, `${COMBAT_HOLD / 1000}s`);
+  check('a fight starting again re-arms the hold from now',
+    moodFor(true, 50_000, 0).until === 50_000 + COMBAT_HOLD);
+
+  check('every live mood lands on a deck',
+    LIVE_MOODS.every(m => [CALM, COMBAT].includes(poolOf(m === 'all' ? 'loose.mp3' : `${m}/x.mp3`))),
     LIVE_MOODS.join(' '));
 }
 

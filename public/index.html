@@ -23,13 +23,14 @@ import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { audioReady, setThrust, laser, rocket, explosion,
          toggleAudio, toggleSfx, toggleMusic, audioOn, sfxOnly, musicOnly,
          setSfxVolume, sfxVolume, setMusicVolume, musicVolume,
-         startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP } from '/audio.js';
+         startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
+         setMood, musicMood, hasMood } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
-import { inRotation } from '/shared/music.js';
+import { poolOf, moodFor, CALM, COMBAT } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon,
          barLayout, feedMenu } from '/shared/ammo.js';
@@ -294,7 +295,7 @@ function nearestHostile() {
 }
 addEventListener('keydown', e => {
   audioReady();                                   // browsers want a gesture first
-  startMusic(inRotation);
+  startMusic(poolOf);
   stir();
 
   if (chatOpen) {                                 // the line owns the keyboard
@@ -353,15 +354,22 @@ addEventListener('keydown', e => {
     if (act.kind === 'jump') return send({ t: 'jump' });
     return say(atDock ? 'Hold is empty' : 'Nothing in reach', '#66748c');
   }
-  if (e.key === 'Escape') { if (setOpen) { setOpen = false; return; }
-                           if (feedOpen) { feedOpen = null; return; }
-                           if (picking) { picking = null; return; }
-                           sysOpen = false; bayOpen = false; invOpen = false; }
+  if (e.key === 'Escape') {
+    // Escape closes whatever is on top, and once there is nothing left to close
+    // it opens the menu — which is where anything that is not flying the ship
+    // ends up living.
+    if (setOpen) { setOpen = false; return; }
+    if (feedOpen) { feedOpen = null; return; }
+    if (picking) { picking = null; return; }
+    if (sysOpen || bayOpen || invOpen) { sysOpen = bayOpen = invOpen = false; return; }
+    setOpen = true;
+    return;
+  }
 });
 
 c.addEventListener('pointerdown', e => {
   audioReady();
-  startMusic(inRotation);
+  startMusic(poolOf);
   stir();
   if (signedOff) { location.reload(); return; }
   const v = toView(e);
@@ -1070,6 +1078,27 @@ function drawInventory() {
 // wanting the game running and the game silent at the same time.
 let setOpen = false, dragging = null;
 
+// Is this a fight? You are shooting at something, something is shooting at you,
+// or your shields are still ringing from a hit. How long that verdict is held
+// afterwards is moodFor's problem, in shared/music.js, with the test on it.
+let fightUntil = 0;
+
+function inAFight() {
+  const me = ships.get(myId);
+  if (!me || dead) return false;
+  if (me.tgt) return true;                      // you are engaging something
+  if ((me.flash ?? 0) > 0) return true;         // something just landed on your shields
+  for (const s of ships.values()) if (s.co === 'x' && s.tgt === myId) return true;
+  return false;
+}
+
+// Every frame. Cheap, and setMood ignores anything that is not a change.
+function stirMusic(now) {
+  const m = moodFor(inAFight(), now, fightUntil);
+  fightUntil = m.until;
+  setMood(m.mood);
+}
+
 const busOn = key => key === 'master' ? audioOn() : key === 'sfx' ? sfxOnly() : musicOnly();
 const busVol = key => key === 'sfx' ? sfxVolume() : musicVolume();
 const setVol = (key, v) => key === 'sfx' ? setSfxVolume(v) : setMusicVolume(v);
@@ -1091,6 +1120,20 @@ function settingsClick(v) {
       return;
     }
   }
+  for (const a of L.actions) if (inside(a.r)) {
+    if (a.key === 'signout') { setOpen = false; signOut(); }
+    return;
+  }
+}
+
+// Releases the sector and the socket. The token stays in local storage, so this
+// is putting the ship down rather than giving it away — a click brings you back
+// to the same pilot, which is what the idle timeout already did quietly.
+function signOut() {
+  if (signedOff) return;
+  signedOff = true;
+  try { ws.close(4002, 'signed out'); } catch {}
+  status = 'signed out';
 }
 
 // A fader you can only click once is a fader you fight. Held, it tracks.
@@ -1109,9 +1152,16 @@ function drawSettings() {
   g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
 
   g.textAlign = 'left'; g.font = '15px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
-  g.fillText('SETTINGS', P.x + 20, P.y + 32);
+  g.fillText('MENU', P.x + 20, P.y + 32);
   g.font = '11px ui-monospace, monospace'; g.fillStyle = '#5b6b85';
-  g.fillText('O or Esc to close', P.x + P.w - 130, P.y + 32);
+  g.fillText('Esc or O to close', P.x + P.w - 132, P.y + 32);
+  for (const sec of L.sections) {
+    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#3d4757';
+    g.fillText(sec.label, P.x + 20, sec.y);
+    const tw = g.measureText(sec.label).width;
+    g.strokeStyle = 'rgba(61,71,87,0.45)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(P.x + 28 + tw, sec.y - 4); g.lineTo(P.x + P.w - 20, sec.y - 4); g.stroke();
+  }
 
   for (const row of L.rows) {
     const live = busOn(row.key), master = audioOn();
@@ -1149,9 +1199,8 @@ function drawSettings() {
 
   const track = musicTrack();
   g.font = '11px ui-monospace, monospace'; g.fillStyle = track ? '#8ea3bd' : '#3d4757';
-  const title = track ? '\u266a  ' + track.split('/').pop().replace(/\.[a-z0-9]+$/i, '')
-                      : 'no tracks — drop files into public/music';
-  g.fillText(title.length > 34 ? title.slice(0, 33) + '\u2026' : title, L.now.x, L.now.y + 15);
+  const title = track ? nowPlaying() : 'no tracks — drop files into public/music';
+  g.fillText(title.length > 36 ? title.slice(0, 35) + '\u2026' : title, L.now.x, L.now.y + 16);
   if (track) {
     const b = L.skip;
     g.fillStyle = over(b) ? 'rgba(122,180,240,0.16)' : 'rgba(255,255,255,0.03)';
@@ -1161,7 +1210,30 @@ function drawSettings() {
     g.fillText('SKIP  N', b.x + b.w / 2, b.y + 17);
     g.textAlign = 'left';
   }
+
+  for (const a of L.actions) {
+    const r = a.r, hot = over(r);
+    g.fillStyle = hot ? 'rgba(224,90,90,0.16)' : 'rgba(255,255,255,0.03)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = hot ? '#e05a5a' : '#3d4757'; g.lineWidth = 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    g.font = '11px ui-monospace, monospace'; g.fillStyle = hot ? '#e0a53f' : '#8ea3bd';
+    g.fillText(a.label, r.x + 12, r.y + r.h / 2 + 4);
+    g.font = '9px ui-monospace, monospace'; g.fillStyle = '#4a5568';
+    g.textAlign = 'right';
+    g.fillText(a.hint, r.x + r.w - 12, r.y + r.h / 2 + 4);
+    g.textAlign = 'left';
+  }
   g.font = '12px ui-monospace, monospace';
+}
+
+// One phrasing of the current track, used by the menu and by the readout beside
+// the star system button — the folder is dropped and so is the extension, so a
+// filename reads as a title.
+function nowPlaying() {
+  const t = musicTrack();
+  if (!t) return '';
+  return '\u266a  ' + t.split('/').pop().replace(/\.[a-z0-9]+$/i, '');
 }
 
 // --- ammunition bar -----------------------------------------------------------
@@ -1891,6 +1963,31 @@ function drawFrame(now) {
   for (const [dx, dy] of [[9, 15], [27, 10], [27, 20]]) { g.beginPath(); g.arc(sb.x + dx, sb.y + dy, 2.5, 0, 7); g.fill(); }
   g.fillStyle = '#8ab4e6'; g.fillText('STAR SYSTEM', sb.x + 38, sb.y + 19);
 
+  // What is playing, beside the button. Right-aligned so it grows leftward and
+  // never crowds anything, and dimmed while it is only the score — a lit tag is
+  // the tell that the fight has taken over the deck.
+  const tune = nowPlaying();
+  if (tune) {
+    const fight = musicMood() === COMBAT;
+    g.font = '11px ui-monospace, monospace'; g.textAlign = 'right';
+    const label = tune.length > 30 ? tune.slice(0, 29) + '\u2026' : tune;
+    const tw = g.measureText(label).width + (fight ? 52 : 0);
+    g.fillStyle = 'rgba(6,10,16,0.7)';
+    g.beginPath(); g.roundRect(sb.x - 18 - tw, sb.y, tw + 14, sb.h, 5); g.fill();
+    if (fight) {
+      g.textAlign = 'left'; g.font = '9px ui-monospace, monospace';
+      g.fillStyle = 'rgba(224,90,90,0.18)';
+      g.fillRect(sb.x - 12 - tw, sb.y + 9, 44, 13);
+      g.fillStyle = '#e05a5a';
+      g.fillText('COMBAT', sb.x - 8 - tw, sb.y + 19);
+      g.textAlign = 'right';
+    }
+    g.font = '11px ui-monospace, monospace';
+    g.fillStyle = fight ? '#cfe4ff' : '#5b7290';
+    g.fillText(label, sb.x - 12, sb.y + 19);
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+
   // --- hud ---
   g.fillStyle = map.tint; g.fillText(map.name, 16, 24);
   const terr = map.dev ? 'TESTING GROUND' : map.owner ? `${COMPANIES[map.owner].tag} TERRITORY` : 'CONTESTED';
@@ -2001,6 +2098,7 @@ function drawFrame(now) {
     }
   }
 
+  stirMusic(now);
   if (!dead && !sysOpen && !setOpen) { drawBar(); drawSpacePrompt(); }   // under the panels, over the world
   if (setOpen) drawSettings();
   if (sysOpen) drawSystem(me);

@@ -13,16 +13,28 @@ export const ROWS = [
   { key: 'music',  label: 'MUSIC',     kind: 'slider', hint: '[ and ] · N skips' },
 ];
 
-export const PANEL_W = 420, ROW_H = 46, HEAD = 54, FOOT = 62;
+// Everything that is not flying the ship ends up in here. Actions are a list so
+// the next one is a line of data rather than a layout change.
+export const ACTIONS = [
+  { key: 'signout', label: 'SIGN OUT',
+    hint: 'releases the sector — your pilot and everything on it stay yours' },
+];
+
+export const PANEL_W = 440, ROW_H = 46, HEAD = 54, NOW_H = 42, SECT_H = 26,
+             ACT_H = 34, FOOT = 22;
 
 export function settingsLayout(VIEW_W, VIEW_H) {
-  const h = HEAD + ROWS.length * ROW_H + FOOT;
+  const h = HEAD + SECT_H + ROWS.length * ROW_H + NOW_H + SECT_H + ACTIONS.length * ACT_H + FOOT;
   const w = Math.min(PANEL_W, VIEW_W - 40);
   const x = Math.round((VIEW_W - w) / 2), y = Math.round((VIEW_H - h) / 2);
   const panel = { x, y, w, h };
 
-  const rows = ROWS.map((r, i) => {
-    const top = y + HEAD + i * ROW_H;
+  let cy = y + HEAD;
+  const sections = [{ label: 'AUDIO', y: cy + 16 }];
+  cy += SECT_H;
+
+  const rows = ROWS.map(r => {
+    const top = cy;
     const row = { ...r, r: { x, y: top, w, h: ROW_H } };
     // The switch sits hard right on every row, so muting is always the same
     // gesture whichever bus you are muting.
@@ -31,15 +43,24 @@ export function settingsLayout(VIEW_W, VIEW_H) {
       row.track = { x: x + 108, y: top + 20, w: w - 108 - 96, h: 6 };
       row.hit = { x: row.track.x - 8, y: top + 6, w: row.track.w + 16, h: ROW_H - 12 };
     }
+    cy += ROW_H;
     return row;
   });
 
-  return {
-    panel, rows,
-    // Bottom strip: what is playing and a way past it.
-    now: { x: x + 18, y: y + h - FOOT + 12, w: w - 120, h: 22 },
-    skip: { x: x + w - 92, y: y + h - FOOT + 10, w: 74, h: 26 },
-  };
+  // What is playing, and a way past it.
+  const now = { x: x + 20, y: cy + 6, w: w - 130, h: 24 };
+  const skip = { x: x + w - 96, y: cy + 4, w: 76, h: 26 };
+  cy += NOW_H;
+
+  sections.push({ label: 'SESSION', y: cy + 16 });
+  cy += SECT_H;
+  const actions = ACTIONS.map(a => {
+    const r = { ...a, r: { x: x + 20, y: cy + 2, w: w - 40, h: ACT_H - 8 } };
+    cy += ACT_H;
+    return r;
+  });
+
+  return { panel, rows, now, skip, sections, actions };
 }
 
 // Where along a slider a click landed, 0..1.

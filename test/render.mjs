@@ -252,6 +252,13 @@ for (const id of Object.keys(MAPS)) {
 
 const click = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
 const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+// Every key that closes a panel also opens something — 'h' toggles the station,
+// Escape opens the menu once there is nothing left to close. A click on bare
+// space is the only unconditional dismiss, so that is what the blocks use.
+const dismiss = () => {
+  evt('pointerdown', { clientX: 4, clientY: 4 });
+  evt('pointerup', {});
+};
 
 // The hangar's APPLY button: does clicking it actually ask the server for a refit?
 {
@@ -426,9 +433,29 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
     if (!audioOn()) errs.push('the MASTER switch would not come back on');
 
     for (const r of L.rows) { hoverAt(r.toggle); frame(t += 16); frames++; }
+
+    // The menu is where anything that is not flying the ship lives, so it has a
+    // section for actions and at least one in it.
+    if (!L.actions.length) errs.push('the menu has nowhere to put an action');
+    for (const a of L.actions) { hoverAt(a.r); frame(t += 16); frames++; }
+
     evt('keydown', { key: 'Escape' });
     frame(t += 16); frames++;
-    console.log(`settings: ${L.rows.length} buses, faders drag, each switch mutes only its own`);
+    console.log(`settings: ${L.rows.length} buses + ${L.actions.length} action, ` +
+                'faders drag, each switch mutes only its own');
+
+    // Escape closes what is open, and opens the menu once nothing is.
+    evt('keydown', { key: 'Escape' });
+    frame(t += 16); frames++;
+    sent.length = 0;
+    click(L.rows.find(r => r.key === 'master').toggle);
+    evt('pointerup', {}); frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'intent'))
+      errs.push('Escape on an empty screen did not open the menu');
+    if (audioOn()) errs.push('the menu opened by Escape does not take clicks');
+    click(L.rows.find(r => r.key === 'master').toggle);
+    evt('pointerup', {}); frame(t += 16); frames++;
+    dismiss();
 
     // ...and closed again, a click goes back to flying the ship
     sent.length = 0;
@@ -473,7 +500,7 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
   // The ammunition bar. Every box is clickable, the two loaded grades are the
   // ones the weapons draw from, and a rack with nothing behind it does not fire.
   {
-    evt('keydown', { key: 'Escape' });                             // shut whatever is open
+    dismiss();                                                     // shut whatever is open
     feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
                                       hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
                                       rk: 0, vis: 2 })],
@@ -540,7 +567,7 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
   // prompt above the bar is drawn from the same function the key runs, so it can
   // never offer something the key refuses.
   {
-    evt('keydown', { key: 'Escape' });                           // shut whatever is open
+    dismiss();                                                   // shut whatever is open
     const at = (docked, hold) => feed({ t: 's', docked, hold, vault: {}, credits: 90000,
       ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
                          hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });

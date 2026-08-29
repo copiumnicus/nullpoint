@@ -280,84 +280,149 @@ export function explosion(dist, foe) {
 }
 
 // --- music --------------------------------------------------------------------
-// Whatever is sitting in public/music, shuffled and played through on a loop.
-// The directory is the manifest, so adding a track is copying a file in.
+// Two decks running side by side, one per mood, crossfaded between. Whatever is
+// sitting in public/music is sorted onto them once at startup: loose files and
+// ambient/ are what you fly to, combat/ is what comes up when something is
+// shooting at you. Anything else is parked and plays on neither.
 //
-// It routes to its own gain straight at the output rather than through the
-// saturation the effects go through — that curve is there to put grit on a
-// laser, and it would put the same grit on a chord.
+// Nothing cuts. The deck coming up ramps in over a couple of seconds while the
+// other ramps out, and the caller decides when a fight is over — a short lull is
+// not the end of one, so that judgement lives with whoever can see the fight.
+//
+// With no combat tracks on disk the combat deck simply never exists and the
+// score carries on, which is the right behaviour for a folder you have not filled.
 
-let musicEl = null, musicGain = null, playlist = [], atTrack = -1, musicVol = 0.55;
-let musicWanted = false, onTrack = null, parked = [];
+export const CALM = 'calm', COMBAT = 'combat';
+export const FADE_S = 2.2;                       // seconds either deck takes to arrive or leave
+
+const pools = { [CALM]: [], [COMBAT]: [] };
+const decks = {};                                // mood -> { el, gain, at, level }
+let musicVol = 0.55, musicWanted = false, onTrack = null, parked = [];
+let mood = CALM, fader = null;
 
 export const MUSIC_VOL_STEP = 0.1;
-export const musicTrack = () => (atTrack >= 0 ? playlist[atTrack] ?? null : null);
 export const musicVolume = () => musicVol;
-export const musicList = () => [...playlist];
+export const musicMood = () => mood;
+export const musicList = () => [...pools[CALM], ...pools[COMBAT]];
 export const musicParked = () => [...parked];
+export const hasMood = m => pools[m]?.length > 0;
+export const musicTrack = () => {
+  const d = decks[mood];
+  return d && d.at >= 0 ? pools[mood][d.at] ?? null : null;
+};
 
-// Called whenever the current track changes, so the HUD can name it.
+// Called whenever the audible track changes, so the HUD can name it.
 export const onMusicChange = fn => { onTrack = fn; };
 
 const shuffle = a => { for (let i = a.length - 1; i > 0; i--) {
   const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-// `keep` decides which of the files on disk are in the shuffle. It is passed in
-// rather than imported because this module deliberately depends on nothing — it
-// is synthesis and playback, and the rules about moods live in shared/music.js
-// with the tests that hold them.
-export async function startMusic(keep = () => true) {
+// `sort` says which deck a filename belongs on, or null to leave it parked. It is
+// passed in rather than imported because this module depends on nothing.
+export async function startMusic(sort = () => CALM) {
   musicWanted = true;
-  if (playlist.length || typeof fetch !== 'function' || typeof Audio !== 'function') return;
+  if (musicList().length || typeof fetch !== 'function' || typeof Audio !== 'function') return;
   let all = [];
   try {
     const r = await fetch('/music/list');
     if (!r.ok) return;
     all = await r.json();
   } catch { return; }                              // no server, no music, no noise about it
-  // Only the moods there is something to play them for. A boss folder can sit
-  // there ready without turning up between two ambient tracks.
-  playlist = shuffle(all.filter(keep));
-  parked = all.filter(n => !keep(n));
-  if (parked.length)
-    console.info(`music: ${playlist.length} in rotation, ${parked.length} parked ` +
-                 `— waiting on a system to play them`);
-  if (playlist.length) nextTrack();
+  for (const name of all) {
+    const p = sort(name);
+    if (p && pools[p]) pools[p].push(name); else parked.push(name);
+  }
+  shuffle(pools[CALM]); shuffle(pools[COMBAT]);
+  console.info(`music: ${pools[CALM].length} calm, ${pools[COMBAT].length} combat` +
+               (parked.length ? `, ${parked.length} parked` : ''));
+  if (pools[CALM].length) { deckFor(CALM); play(CALM, 0); }
 }
 
-export function nextTrack(step = 1) {
-  if (!playlist.length || typeof Audio !== 'function') return;
-  atTrack = ((atTrack + step) % playlist.length + playlist.length) % playlist.length;
-  const src = '/music/' + encodeURIComponent(playlist[atTrack]).replace(/%2F/gi, '/');
-  if (!musicEl) {
-    musicEl = new Audio();
-    musicEl.crossOrigin = 'anonymous';
-    musicEl.addEventListener('ended', () => nextTrack());
-    // A track that will not decode should not stall the playlist behind it.
-    musicEl.addEventListener('error', () => { if (playlist.length > 1) nextTrack(); });
-  }
-  musicEl.src = src;
-  applyMusicGain();
-  const go = musicEl.play();
-  if (go?.catch) go.catch(() => {});              // autoplay refused: the next gesture retries
-  if (onTrack) onTrack(playlist[atTrack]);
+function deckFor(m) {
+  if (decks[m] || typeof Audio !== 'function') return decks[m];
+  const el = new Audio();
+  el.crossOrigin = 'anonymous';
+  el.addEventListener('ended', () => play(m, 1));
+  // A track that will not decode should not stall the deck behind it.
+  el.addEventListener('error', () => { if (pools[m].length > 1) play(m, 1); });
+  decks[m] = { el, gain: null, at: -1, level: m === mood ? 1 : 0 };
+  return decks[m];
 }
+
+function play(m, step) {
+  const d = deckFor(m);
+  if (!d || !pools[m].length) return;
+  d.at = ((d.at + step) % pools[m].length + pools[m].length) % pools[m].length;
+  d.el.src = '/music/' + encodeURIComponent(pools[m][d.at]).replace(/%2F/gi, '/');
+  wire(d);
+  const go = d.el.play();
+  if (go?.catch) go.catch(() => {});              // autoplay refused: the next gesture retries
+  if (m === mood && onTrack) onTrack(pools[m][d.at]);
+}
+
+// Skip whatever is audible right now.
+export function nextTrack(step = 1) { play(mood, step); }
+
+// Move to a mood. Nothing happens if there is no music for it, so an empty
+// combat/ folder leaves the score alone rather than dropping to silence.
+export function setMood(m) {
+  if (m === mood || !pools[m]?.length) return mood;
+  mood = m;
+  const d = deckFor(m);
+  if (d && d.at < 0) play(m, 0);                  // first time on this deck
+  else if (d) { const go = d.el.play(); if (go?.catch) go.catch(() => {}); }
+  if (d && onTrack) onTrack(pools[m][d.at]);
+  ramp();
+  return mood;
+}
+
+// Where each deck should sit: the audible one at the set level, the others out.
+const target = m => (m === mood ? musicLevel() : 0);
+
+function ramp() {
+  if (fader || typeof setInterval !== 'function') { applyMusicGain(); return; }
+  const stepEvery = 50, per = stepEvery / (FADE_S * 1000);
+  fader = setInterval(() => {
+    let moving = false;
+    for (const m of Object.keys(decks)) {
+      const d = decks[m], want = target(m);
+      if (Math.abs(d.level - want) < 1e-3) { d.level = want; }
+      else { d.level += Math.sign(want - d.level) * Math.min(per, Math.abs(want - d.level)); moving = true; }
+      setGain(d);
+      // A deck that has faded all the way out stops, so it is not burning
+      // bandwidth playing to nobody.
+      if (!moving && d.level === 0 && m !== mood && !d.el.paused) d.el.pause();
+    }
+    if (!moving) { clearInterval(fader); fader = null; }
+  }, stepEvery);
+}
+
+const musicLevel = () => (on && musicOn && musicWanted ? musicVol : 0);
 
 // The graph is only available once a context exists, and a context only exists
 // after a gesture. Until then the element's own volume carries the setting.
+function wire(d) {
+  if (d.gain || !ctx || typeof ctx.createMediaElementSource !== 'function') return;
+  try {
+    d.gain = ctx.createGain();
+    ctx.createMediaElementSource(d.el).connect(d.gain);
+    d.gain.connect(ctx.destination);               // past the saturation, on purpose
+    d.el.volume = 1;
+  } catch { d.gain = null; }                       // some browsers refuse; fall back to el.volume
+}
+
+function setGain(d) {
+  wire(d);
+  if (d.gain) d.gain.gain.value = d.level;
+  else d.el.volume = Math.max(0, Math.min(1, d.level));
+}
+
 function applyMusicGain() {
-  if (!musicEl) return;
-  const want = musicLevel();
-  if (ctx && !musicGain && typeof ctx.createMediaElementSource === 'function') {
-    try {
-      musicGain = ctx.createGain();
-      ctx.createMediaElementSource(musicEl).connect(musicGain);
-      musicGain.connect(ctx.destination);          // past the saturation, on purpose
-      musicEl.volume = 1;
-    } catch { musicGain = null; }                  // some browsers refuse; fall back to el.volume
+  for (const m of Object.keys(decks)) {
+    const d = decks[m];
+    d.level = target(m);
+    setGain(d);
   }
-  if (musicGain) musicGain.gain.value = want;
-  else musicEl.volume = want;
 }
 
 export function setMusicVolume(v) {
@@ -365,10 +430,7 @@ export function setMusicVolume(v) {
   applyMusicGain();
   return musicVol;
 }
-
-// What each bus should actually be at, given the master and its own switch.
 const sfxLevel   = () => (on && sfxOn ? sfxVol : 0);
-const musicLevel = () => (on && musicOn && musicWanted ? musicVol : 0);
 
 function applyAll() {
   if (master) master.gain.value = sfxLevel();
