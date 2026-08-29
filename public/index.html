@@ -109,6 +109,25 @@ const heardBooms = new Set();
 const respawnBtn = () => ({ x: VIEW_W / 2 - 130, y: VIEW_H * 0.6, w: 260, h: 52 });
 const say = (text, colour) => notice = { text, colour, at: performance.now() };
 
+// What SPACE would do right now. The prompt at the bottom of the screen and the
+// key itself both read this, so the screen can never offer something the key
+// will not do — and stowing no longer needs the hold open to reach it.
+function spaceAction() {
+  const me2 = ships.get(myId);
+  if (!me2 || dead) return { kind: 'none' };
+  const pod = pods.filter(pd => Math.hypot(pd.x - me2.rx, pd.y - me2.ry) <= SCOOP_R)
+                  .sort((a, b) => Math.hypot(a.x - me2.rx, a.y - me2.ry)
+                                - Math.hypot(b.x - me2.rx, b.y - me2.ry))[0];
+  if (pod) return { kind: 'scoop', pod, label: `haul in ${MATERIALS[pod.mat]?.name ?? 'cargo'}` };
+  const mats = Object.keys(hold).filter(mt => (hold[mt] ?? 0) > 0);
+  if (atDock && mats.length) {
+    const n = mats.reduce((t, mt) => t + hold[mt], 0);
+    return { kind: 'stow', mats, label: `stow ${n} of ore into the company hangar` };
+  }
+  if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump' };
+  return { kind: 'none' };
+}
+
 // Name a track as it starts, then get out of the way — the folder it came from
 // is dropped, and so is the extension, so a filename reads as a title.
 onMusicChange(name => say('\u266a  ' + name.split('/').pop().replace(/\.[a-z0-9]+$/i, ''), '#8ab4e6'));
@@ -312,24 +331,16 @@ addEventListener('keydown', e => {
   }
   if (k === 'k') send({ t: 'dev-damage' });        // self-damage, for watching the shield timer
   if (dead && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); send({ t: 'respawn' }); return; }
-  if (e.key === ' ') {                            // one action key: haul, or jump
+  if (e.key === ' ') {                            // one action key
     e.preventDefault();
-    // With the hold open, the obvious thing to want is everything off the ship.
-    if (invOpen) {
-      if (!atDock) return say('Dock at your base to move cargo', '#e0a53f');
-      const mats = Object.keys(hold).filter(mt => (hold[mt] ?? 0) > 0);
-      if (!mats.length) return say('Hold is already empty', '#66748c');
-      for (const mt of mats) send({ t: 'stash', mat: mt });
-      return say(`Stowed ${mats.length} stack${mats.length === 1 ? '' : 's'}`, '#7de08a');
+    const act = spaceAction();
+    if (act.kind === 'scoop') return send({ t: 'scoop', id: act.pod.id });
+    if (act.kind === 'stow') {
+      for (const mt of act.mats) send({ t: 'stash', mat: mt });
+      return say(`Stowed ${act.mats.length} stack${act.mats.length === 1 ? '' : 's'}`, '#7de08a');
     }
-    const me2 = ships.get(myId);
-    if (!me2) return;
-    const pod = pods.filter(pd => Math.hypot(pd.x - me2.rx, pd.y - me2.ry) <= SCOOP_R)
-                    .sort((a2, b2) => Math.hypot(a2.x - me2.rx, a2.y - me2.ry) - Math.hypot(b2.x - me2.rx, b2.y - me2.ry))[0];
-    if (pod) return send({ t: 'scoop', id: pod.id });
-    if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return send({ t: 'jump' });
-    say('Nothing in reach', '#66748c');
-    return;
+    if (act.kind === 'jump') return send({ t: 'jump' });
+    return say(atDock ? 'Hold is empty' : 'Nothing in reach', '#66748c');
   }
   if (e.key === 'Escape') { if (feedOpen) { feedOpen = null; return; }
                            if (picking) { picking = null; return; }
@@ -1098,6 +1109,28 @@ function roundIcon(feed, cx, cy, col, k = 1) {
          g.lineTo(cx, cy + 4 * k); g.lineTo(cx - 5 * k, cy + 8 * k); g.closePath(); g.fill(); }
 }
 
+// The one thing SPACE would do, said plainly, right above the bar. It reads the
+// same function the key does, so it can never offer something the key refuses.
+function drawSpacePrompt() {
+  const act = spaceAction();
+  if (act.kind === 'none') return;
+  const L = barLayout(VIEW_W, VIEW_H);
+  g.font = '12px ui-monospace, monospace';
+  const w = 30 + g.measureText(act.label).width + 22;
+  const x = Math.round((VIEW_W - w) / 2), y = L.r.y - 34;
+  g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(x, y, w, 24);
+  g.strokeStyle = act.kind === 'stow' ? '#7de08a' : '#3d5876'; g.lineWidth = 1;
+  g.strokeRect(x + .5, y + .5, w - 1, 23);
+  g.fillStyle = act.kind === 'stow' ? 'rgba(125,224,138,0.16)' : 'rgba(122,180,240,0.12)';
+  g.fillRect(x + 6, y + 5, 30, 14);
+  g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
+  g.fillStyle = act.kind === 'stow' ? '#7de08a' : '#8ab4e6';
+  g.fillText('SPACE', x + 21, y + 15);
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  g.fillStyle = '#cfe4ff';
+  g.fillText(act.label, x + 44, y + 16);
+}
+
 function drawBar() {
   const L = barLayout(VIEW_W, VIEW_H);
   const over = r => hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
@@ -1817,8 +1850,8 @@ function drawFrame(now) {
                `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
-  g.fillText(`click a hostile or TAB to engage · click cargo to haul it in · I inventory · H hangar · M star system · V sound ${audioOn() ? 'on' : 'off'}` +
-             (docked() ? '' : ' (dock first)') + ' · K take test damage', 16, VIEW_H - 16);
+  g.fillText(`click a hostile or TAB to engage · click cargo to haul it in · I inventory · H hangar · ` +
+             `M star system · Q E ammo · N track · V sound ${audioOn() ? 'on' : 'off'}`, 16, VIEW_H - 16);
 
   if (depth > 0 && !sysOpen && !bayOpen) {
     const t = Math.min(1, depth / DRIFT_MARGIN);
@@ -1855,7 +1888,7 @@ function drawFrame(now) {
     }
   }
 
-  if (!dead && !sysOpen) drawBar();               // under the panels, over the world
+  if (!dead && !sysOpen) { drawBar(); drawSpacePrompt(); }   // under the panels, over the world
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();

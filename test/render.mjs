@@ -446,24 +446,51 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
     else console.log('rockets: a volley is heard once as it leaves, not once a frame while it fades');
   }
 
-  // SPACE with the hold open empties the ship, rather than reaching for a pod
-  sent.length = 0;
-  evt('keydown', { key: 'h' });                                  // close the station
-  feed({ t: 's', docked: true, hold: { iron: 12, iridium: 3, platinum: 1 }, vault: {}, credits: 90000,
-         ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
-                            hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, vis: 2 })] });
-  evt('keydown', { key: 'i' });
-  frame(t += 16); frames++;
-  evt('keydown', { key: ' ' });
-  frame(t += 16); frames++;
-  const stashed = sent.filter(m => m.t === 'stash').map(m => m.mat).sort();
-  if (stashed.join() !== 'iridium,iron,platinum')
-    errs.push(`SPACE in the hold stowed [${stashed}], not every stack`);
-  else console.log(`cargo: SPACE with the hold open stowed all ${stashed.length} stacks`);
-  if (sent.some(m => m.t === 'scoop' || m.t === 'jump'))
-    errs.push('SPACE in the hold also fired the haul/jump action');
-  evt('keydown', { key: 'i' });                                  // back out
-  frame(t += 16); frames++;
+  // Docked with ore aboard, SPACE empties the ship — no panel, no I first. The
+  // prompt above the bar is drawn from the same function the key runs, so it can
+  // never offer something the key refuses.
+  {
+    evt('keydown', { key: 'h' });                                // close the station
+    const at = (docked, hold) => feed({ t: 's', docked, hold, vault: {}, credits: 90000,
+      ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                         hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+
+    at(true, { iron: 12, iridium: 3, platinum: 1 });
+    frame(t += 16); frames++;
+    sent.length = 0;
+    evt('keydown', { key: ' ' });
+    frame(t += 16); frames++;
+    const stashed = sent.filter(m => m.t === 'stash').map(m => m.mat).sort();
+    if (stashed.join() !== 'iridium,iron,platinum')
+      errs.push(`SPACE at the dock stowed [${stashed}], not every stack`);
+    else console.log(`cargo: SPACE at the dock stowed all ${stashed.length} stacks without opening anything`);
+    if (sent.some(m => m.t === 'scoop' || m.t === 'jump'))
+      errs.push('SPACE at the dock also fired the haul/jump action');
+
+    // an empty hold at the dock has nothing to offer, and must not send anything
+    at(true, {});
+    frame(t += 16); frames++;
+    sent.length = 0;
+    evt('keydown', { key: ' ' });
+    frame(t += 16); frames++;
+    if (sent.length) errs.push(`SPACE with an empty hold sent ${JSON.stringify(sent[0])}`);
+
+    // ...and away from the dock a full hold is not stowable either
+    at(false, { iron: 5 });
+    frame(t += 16); frames++;
+    sent.length = 0;
+    evt('keydown', { key: ' ' });
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'stash')) errs.push('SPACE stowed cargo without being docked');
+
+    // the inventory panel still works the same way
+    at(true, { iron: 4 });
+    evt('keydown', { key: 'i' }); frame(t += 16); frames++;
+    sent.length = 0;
+    evt('keydown', { key: ' ' }); frame(t += 16); frames++;
+    if (!sent.some(m => m.t === 'stash')) errs.push('SPACE stopped working with the hold open');
+    evt('keydown', { key: 'i' }); frame(t += 16); frames++;
+  }
 
   // power routing is a key, and must reach the server
   sent.length = 0;
