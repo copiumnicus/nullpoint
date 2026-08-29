@@ -690,6 +690,35 @@ const dismiss = () => {
     }
   }
 
+  // A rig out fetching: it leaves formation, flies to the pod and comes back,
+  // and the beam leaves the drone rather than the hull. The guard rejects any
+  // NaN that falls out of the easing, which is the failure mode here.
+  {
+    dismiss();
+    feed({ t: 'fit', hull: 'vanguard', fit: { weapon: ['emitter1'], generator: [], tech: [] },
+           drones: ['emitter5', 'collect3', null], gear: {}, formation: 'wedge',
+           formations: ['line', 'wedge'], hulls: ['vanguard'], credits: 9000,
+           ammo: { cell1: 900 }, using: { laser: 'cell1', rocket: 'head1' },
+           armed: { laser: true, rocket: true }, kits: {}, kit: 'kit1' });
+    let drawn = 0;
+    for (const p2 of [0, 0.3, 0.6, 0.85, 1]) {
+      feed({ t: 's', docked: false, hold: { iron: 2 }, cap: 240,
+             scoop: { id: 77, p: p2 },
+             pods: [packPod({ id: 77, x: 6600, y: 4400, mat: 'iron', n: 3, t: 60, ttl: 120 })],
+             ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0.4, charge: 0, co: 'm',
+               hull: 'vanguard', hp: 90, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, fix: 0,
+               drones: 3, form: 1, dmask: 0b001, vis: 2 })] });
+      frame(t += 16); frames++; drawn++;
+    }
+    // ...and with the hold full it stops and says so, which is a different path
+    feed({ t: 's', docked: false, hold: { iron: 999 }, cap: 10, pods: [],
+           ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0.4, charge: 0, co: 'm',
+             hull: 'vanguard', hp: 90, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, fix: 0,
+             drones: 3, form: 1, dmask: 0b001, vis: 2 })] });
+    frame(t += 16); frames++;
+    console.log(`rig: drawn fetching across ${drawn} points of the pull, and again with the hold full`);
+  }
+
   // A receipt for every purchase. A refused click and a successful one looked
   // identical from the outside, which is what made buying feel broken.
   {

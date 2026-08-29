@@ -1516,6 +1516,11 @@ function nowPlaying() {
 //
 // A weapon with nothing behind it does not fire, so the count is not decoration
 // and the box says so before you find out the hard way.
+// Where the hauling rig is right now, when one is out fetching. Set while the
+// escort is drawn and read by the tractor beam a few lines later, so the beam
+// leaves the drone that is actually doing the work rather than the hull.
+let rigAt = null;
+
 let feedOpen = null;                            // which box has its menu up
 let lastBox = { feed: null, t: -Infinity };     // for spotting a double click on one
 
@@ -1953,16 +1958,19 @@ function drawFrame(now) {
   if (scoop && me) {                               // tractor beam
     const pod = pods.find(p => p.id === scoop.id);
     if (pod) {
+      // A rig does the hauling if you have one; otherwise it is your own arm.
+      const from = rigAt ?? { x: me.rx, y: me.ry };
       const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
-      const px = pod.x + (me.rx - pod.x) * scoop.p, py = pod.y + (me.ry - pod.y) * scoop.p;
-      g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 10;
-      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
-      g.globalAlpha = 0.9; g.lineWidth = 2;
-      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+      const px = pod.x + (from.x - pod.x) * scoop.p, py = pod.y + (from.y - pod.y) * scoop.p;
+      g.strokeStyle = col; g.globalAlpha = rigAt ? 0.22 : 0.35; g.lineWidth = rigAt ? 6 : 10;
+      g.beginPath(); g.moveTo(from.x, from.y); g.lineTo(pod.x, pod.y); g.stroke();
+      g.globalAlpha = 0.9; g.lineWidth = rigAt ? 1.4 : 2;
+      g.beginPath(); g.moveTo(from.x, from.y); g.lineTo(pod.x, pod.y); g.stroke();
       g.fillStyle = col; g.globalAlpha = 1;       // the cargo itself, sliding in
       g.beginPath(); g.arc(px, py, 7 * (1 - scoop.p * 0.6), 0, 7); g.fill();
     }
   }
+  rigAt = null;                                    // one frame only
 
   for (const b of bolts) {                         // bolts first, so hulls sit on top
     const p1 = Math.min(1, b.p), p0 = Math.max(0, b.p - 0.22);
@@ -2135,9 +2143,21 @@ function drawFrame(now) {
       const c0 = Math.cos(s.heading), s0 = Math.sin(s.heading), dr = Math.max(5, R * 0.52);
       const mine2 = id === myId;
       const stuffed = mine2 && holdVol(hold) >= cargoCap;
+      // The bay that goes and gets it. A rig does not sit in formation while a
+      // pod is being pulled in — it flies out, takes it, and comes back.
+      const fetching = mine2 && scoop ? pods.find(pd => pd.id === scoop.id) : null;
+      const rigBay = fetching ? myDrones.findIndex(isCollector) : -1;
+      // Out over the first stretch, back over the rest.
+      const reach = fetching ? (scoop.p < 0.6 ? scoop.p / 0.6 : 1 - (scoop.p - 0.6) / 0.4) : 0;
       layout.forEach((pt, d) => {
-        const dx = s.rx + (c0 * pt.fwd - s0 * pt.lat) * R;
-        const dy = s.ry + (s0 * pt.fwd + c0 * pt.lat) * R;
+        let dx = s.rx + (c0 * pt.fwd - s0 * pt.lat) * R;
+        let dy = s.ry + (s0 * pt.fwd + c0 * pt.lat) * R;
+        if (d === rigBay) {                        // out to the pod and back
+          const k = reach * reach * (3 - 2 * reach);   // ease, so it does not jerk off the mark
+          dx += (fetching.x - dx) * k;
+          dy += (fetching.y - dy) * k;
+          rigAt = { x: dx, y: dy };
+        }
         const armed = ((s.dmask ?? 0) >> d) & 1;
         // Only your own bays are on the wire by name, so only your own rigs get
         // drawn as rigs. Somebody else's escort is just an escort.

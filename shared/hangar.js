@@ -31,7 +31,7 @@ export const STORE_PAGES = [
   { key: 'tech',      name: 'Technology',  hint: 'one of each, every one a trade' },
   { key: 'ammo',      name: 'Ammunition',  hint: 'sold by the crate, carried without limit' },
   { key: 'kits',      name: 'Repair',      hint: 'single use, and only sold at a dock' },
-  { key: 'drones',    name: 'Drones',      hint: 'escort, one slot apiece' },
+  { key: 'drones',    name: 'Drones',      hint: 'bays, and the rigs that haul instead of shoot' },
   { key: 'forms',     name: 'Formations',  hint: 'how the escort flies' },
 ];
 
