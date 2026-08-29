@@ -5,6 +5,7 @@ import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
+import { AMMO_KEYS, barLayout } from '../shared/ammo.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -379,6 +380,46 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
     at(6000, 4000); frame(t += 16); frames++;
   }
 
+  // The ammunition bar. Every box is clickable, the two loaded grades are the
+  // ones the weapons draw from, and a rack with nothing behind it does not fire.
+  {
+    evt('keydown', { key: 'h' });                                  // shut the station
+    feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                                      hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
+                                      rk: 0, vis: 2 })],
+           ammo: { cell1: 4000, cell3: 250, head1: 400 }, using: { laser: 'cell1', rocket: 'head1' } });
+    frame(t += 16); frames++;
+    const B = barLayout(innerWidth, innerHeight);
+    if (B.boxes.length !== AMMO_KEYS.length) errs.push(`the bar has ${B.boxes.length} boxes for ${AMMO_KEYS.length} grades`);
+    if (B.r.x < 0 || B.r.x + B.r.w > innerWidth || B.r.y + B.r.h > innerHeight)
+      errs.push('the ammunition bar runs off the screen');
+
+    sent.length = 0;
+    click(B.boxes.find(b => b.k === 'cell3').r);                   // a grade we hold
+    frame(t += 16); frames++;
+    const pick = sent.find(m => m.t === 'ammo');
+    if (pick?.key !== 'cell3') errs.push(`clicking a held grade sent ${JSON.stringify(pick)}`);
+
+    sent.length = 0;
+    click(B.boxes.find(b => b.k === 'head3').r);                   // one we hold none of
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'ammo')) errs.push('the bar loaded a grade with no rounds behind it');
+
+    sent.length = 0;
+    evt('keydown', { key: 'q' });                                  // cycle the laser feed
+    frame(t += 16); frames++;
+    if (!sent.some(m => m.t === 'ammo')) errs.push('Q did not step the laser feed');
+    sent.length = 0;
+    evt('keydown', { key: 'e' });                                  // only one warhead grade held
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'ammo')) errs.push('E switched warheads with nothing else to switch to');
+
+    // clicking a box must not also order the ship somewhere
+    if (sent.some(m => m.t === 'intent')) errs.push('a click on the bar flew the ship');
+    for (const b of B.boxes) { hoverAt(b.r); frame(t += 16); frames++; }
+    console.log(`ammo: ${B.boxes.length} boxes, loaded pair outlined, empty grades refuse to load`);
+  }
+
   // A rocket volley is heard once, on the frame the rails light, and never again
   // while the flash decays — the same rule the guns follow.
   {
@@ -517,11 +558,11 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
     // 'h' and 'i' must not have opened panels while typing
     sent.length = 0;
     evt('keydown', { key: 'Enter' });
-    for (const ch of 'hi123x') evt('keydown', { key: ch });
+    for (const ch of 'hiqe123x') evt('keydown', { key: ch });
     frame(t += 16); frames++;
-    if (sent.some(m => m.t === 'power' || m.t === 'target'))
+    if (sent.some(m => m.t === 'power' || m.t === 'target' || m.t === 'ammo'))
       errs.push('game hotkeys fired while the chat line had focus');
-    else console.log('chat: h i 1 2 3 x are letters while typing, not hotkeys');
+    else console.log('chat: h i q e 1 2 3 x are letters while typing, not hotkeys');
     evt('keydown', { key: 'Escape' });
     feed({ t: 'chat', from: 'Harrow-2', co: 'h', text: 'hello' });
     feed({ t: 'chat', from: '', text: 'credits: 100' });

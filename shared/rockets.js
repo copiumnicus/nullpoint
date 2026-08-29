@@ -65,18 +65,25 @@ export const launcherRoom = fit => MAX_LAUNCHERS - launchersIn(fit).length;
 // Advances the rack and returns the rockets released this tick. A volley leaves
 // all at once — the fan is the whole point, and dribbling it out one at a time
 // would just look like bad lasers.
-export function launch(a, b, dt) {
+// `mag` is the warhead stock, or null for anything that does not carry any —
+// aliens shoot forever, which is their whole advantage.
+export function launch(a, b, dt, mag = null) {
   a.rocketCool = Math.max(0, (a.rocketCool ?? 0) - dt);
   a.rocketFlash = Math.max(0, (a.rocketFlash ?? 0) - dt);
-  const n = Math.round(a.stats?.rockets ?? 0);
-  if (!n) return [];
+  const rated = Math.round(a.stats?.rockets ?? 0);
+  if (!rated) return [];
   const live = b && b.hp > 0 && a.hp > 0 &&
                Math.hypot(b.x - a.x, b.y - a.y) <= a.stats.weaponRange;
   if (!live || a.rocketCool > 0) return [];
+  // Short of warheads it throws what it has. Each one still hits for its full
+  // share: you are firing fewer rockets, not weaker ones.
+  const n = mag ? Math.min(rated, mag.n) : rated;
+  if (!n) return [];
   a.rocketCool = 1 / ROCKET_RATE;
   a.rocketFlash = LAUNCH_FLASH;          // one per volley, not one per rocket
+  if (mag) mag.n -= n;
 
-  const each = (a.stats.rocketVolley * boostOf(a.power, 'weapons', a.stats)) / n;
+  const each = (a.stats.rocketVolley * boostOf(a.power, 'weapons', a.stats) * (mag?.mult ?? 1)) / rated;
   const mounts = hardpoints(a);
   const aim = Math.atan2(b.y - a.y, b.x - a.x);
   const half = (n - 1) / 2;

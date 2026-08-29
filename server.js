@@ -6,6 +6,7 @@ import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
+import { AMMO, magazine, sanitiseUsing } from './shared/ammo.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones, topTier } from './shared/gear.js';
@@ -205,17 +206,20 @@ wss.on('connection', (ws, req) => {
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
                     gear: { ...acct.gear }, hulls: [...acct.hulls], xp: acct.xp,
                     formations: [...acct.formations],
+                    ammo: { ...acct.ammo }, using: { ...acct.using },
                     scoop: null, want: null, dead: false });
   const outfit = () => (touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
                                                 drones: ship.drones, formation: ship.formation,
                                                 formations: players.get(id).formations,
+                                                ammo: players.get(id).ammo, using: players.get(id).using,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
                            map: acct.mapId, co: acct.co, hull: acct.hull, fit: acct.fit,
                            gear: acct.gear, hulls: acct.hulls, credits: acct.credits,
                            drones: acct.drones, xp: acct.xp, admin: isAdmin(acct),
-                           formation: acct.formation, formations: acct.formations }));
+                           formation: acct.formation, formations: acct.formations,
+                           ammo: acct.ammo, using: acct.using }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -262,6 +266,13 @@ wss.on('connection', (ws, req) => {
           P.xp += amount(a1); touch(P);
           const after = levelFor(P.xp).level;
           return tell(`experience: ${P.xp} — level ${after}${after > before ? ' (up)' : ''}`);
+        }
+        case 'ammo': {
+          if (!AMMO[a1]) return tell('ammunition: ' + Object.keys(AMMO).join(' '));
+          const n = amount(a2, 1e7) || AMMO[a1].pack * 10;
+          P.ammo[a1] = (P.ammo[a1] ?? 0) + n;
+          touch(P); outfit();
+          return tell(`${n} ${AMMO[a1].name}`);
         }
         case 'gear': {
           if (!EQUIPMENT[a1]) return tell('items: ' + Object.keys(EQUIPMENT).join(' '));
@@ -336,6 +347,22 @@ wss.on('connection', (ws, req) => {
       const moved = reseat(slotsOf(m.key), ship.fit, P.gear);      // whatever will not fit comes off
       P.gear = moved.gear;
       refit(ship, m.key, moved.fit, ship.drones);                  // the escort follows you across
+      return outfit();
+    }
+    if (m.t === 'ammo') {                         // which grade feeds which weapon
+      const want = sanitiseUsing({ ...P.using, ...(AMMO[m.key] ? { [AMMO[m.key].for]: m.key } : {}) });
+      P.using = want;
+      touch(P);
+      return outfit();
+    }
+    if (m.t === 'buyammo') {
+      const a = AMMO[m.key];
+      if (!atStation() || !a) return;
+      const crates = Math.max(1, Math.min(99, Math.floor(+m.n) || 1));
+      const cost = a.price * crates;
+      if (P.credits < cost) return;
+      P.credits -= cost;
+      P.ammo[m.key] = (P.ammo[m.key] ?? 0) + a.pack * crates;   // no cap, on purpose
       return outfit();
     }
     if (m.t === 'buyformation') {
@@ -565,8 +592,17 @@ setInterval(() => {
       : null;
     if (!foe) { p.targetId = null; fire(p.ship, null, dt); launch(p.ship, null, dt); continue; }
     faceTarget(p.ship, foe);
-    const volley = fire(p.ship, foe, dt);
-    const salvo = launch(p.ship, foe, dt);
+    // Magazines are read fresh each tick and written straight back, so a pilot
+    // cannot outrun their own ammunition by holding the trigger.
+    const bolts0 = magazine(p.ammo, p.using, 'laser');
+    const heads0 = magazine(p.ammo, p.using, 'rocket');
+    const volley = fire(p.ship, foe, dt, bolts0);
+    const salvo = launch(p.ship, foe, dt, heads0);
+    for (const m0 of [bolts0, heads0]) {
+      if (m0.n === (p.ammo[m0.key] ?? 0)) continue;
+      if (m0.n > 0) p.ammo[m0.key] = m0.n; else delete p.ammo[m0.key];
+      touch(p);
+    }
     for (const shot of volley) { shot.owner = id; bolts.get(p.mapId).push(shot); }
     for (const rk of salvo)    { rk.owner = id;   rockets.get(p.mapId).push(rk); }
     if (!volley.length && !salvo.length) continue;
@@ -681,6 +717,7 @@ setInterval(() => {
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
+      ammo: V.ammo, using: V.using,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
       // effective levels as whole percent, so the readout cannot jitter between
       // 29 and 30 from a float that is a hair under one

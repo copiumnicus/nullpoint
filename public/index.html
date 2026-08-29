@@ -26,6 +26,7 @@ import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
+import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon, barLayout } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
@@ -71,6 +72,7 @@ let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
 let myForm = 'line', myForms = ['line'];
+let myAmmo = {}, myUsing = { ...DEFAULT_AMMO };
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -121,6 +123,7 @@ ws.onmessage = e => {
     myGear = m.gear ?? {}; myHulls = m.hulls ?? [myHull]; credits = m.credits ?? 0;
     myDrones = m.drones ?? []; myXp = m.xp ?? 0; amAdmin = !!m.admin;
     myForm = m.formation ?? 'line'; myForms = m.formations ?? ['line'];
+    myAmmo = m.ammo ?? {}; myUsing = { ...DEFAULT_AMMO, ...(m.using ?? {}) };
     myName = m.name ?? '';
     if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
     return;
@@ -137,6 +140,7 @@ ws.onmessage = e => {
     myHulls = m.hulls ?? myHulls;
     myDrones = m.drones ?? myDrones;
     myForm = m.formation ?? myForm; myForms = m.formations ?? myForms;
+    myAmmo = m.ammo ?? myAmmo; myUsing = m.using ? { ...DEFAULT_AMMO, ...m.using } : myUsing;
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
@@ -176,6 +180,8 @@ ws.onmessage = e => {
   vault = m.vault ?? vault; credits = m.credits ?? credits;
   atDock = !!m.docked; scoop = m.scoop ?? null; want = m.want ?? null;
   myGear = m.gear ?? myGear;
+  if (m.ammo) myAmmo = m.ammo;
+  if (m.using) myUsing = { ...DEFAULT_AMMO, ...m.using };
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
   if (m.drones) myDrones = m.drones;
@@ -283,6 +289,8 @@ addEventListener('keydown', e => {
                    bayOpen = !bayOpen; sysOpen = false; invOpen = false; }
   if (k === '1' || k === '2' || k === '3') send({ t: 'power', sys: SYSTEMS[+k - 1] });
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
+  if (k === 'q') cycleAmmo('laser');
+  if (k === 'e') cycleAmmo('rocket');
   if (k === 'x') send({ t: 'target', id: 0 });     // break off
   if (e.key === 'Tab') {                          // engage the closest thing on the plot
     e.preventDefault();
@@ -327,6 +335,7 @@ c.addEventListener('pointerdown', e => {
   if (sysOpen) { sysOpen = false; return; }
   if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
   if (invOpen) { invClick(v); return; }
+  if (barClick(v)) return;                        // the ammunition bar sits over the world
   const sb = sysBtn();
   if (v.x > sb.x && v.x < sb.x + sb.w && v.y > sb.y && v.y < sb.y + sb.h) { sysOpen = true; return; }
   const b = btn();
@@ -603,6 +612,11 @@ function bayClick(v) {
       return credits >= cost ? send({ t: 'buydrone' })
         : say(`A drone costs ${cost} ${CURRENCY.short}`, '#e0a53f');
     }
+    if (it.kind === 'ammo') {
+      const a = AMMO[it.k];
+      return credits >= a.price ? send({ t: 'buyammo', key: it.k, n: 1 })
+        : say(`A crate of ${a.name} costs ${a.price} ${CURRENCY.short}`, '#e0a53f');
+    }
     return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
       : say(`Not enough credits for a ${EQUIPMENT[it.k].name}`, '#e0a53f');
   }
@@ -865,14 +879,17 @@ function drawBay() {
     const price = it.kind === 'hull' ? HULLS[it.k].price
                 : it.kind === 'form' ? FORMATIONS[it.k].price
                 : it.kind === 'drone' ? dronePrice(myDrones.length)
+                : it.kind === 'ammo' ? AMMO[it.k].price
                                       : EQUIPMENT[it.k].price;
     const name = it.kind === 'hull' ? HULLS[it.k].name
                : it.kind === 'form' ? FORMATIONS[it.k].name
                : it.kind === 'drone' ? `Drone ${myDrones.length + 1}`
+               : it.kind === 'ammo' ? `${AMMO[it.k].name}   crate of ${AMMO[it.k].pack}`
                                      : EQUIPMENT[it.k].name;
     const blurb = it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}`
                 : it.kind === 'form' ? FORMATIONS[it.k].blurb
                 : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
+                : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
                                       : EQUIPMENT[it.k].blurb;
     const afford = credits >= price;
     if (over(r)) tip = tipFor(it.kind, it.k, shipCtx());
@@ -892,9 +909,11 @@ function drawBay() {
                                r.x + r.w - 12, r.y + 20); }
     else { g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
            g.fillText(`${price} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
-    const stock = it.kind === 'item' ? (myGear[it.k] ?? 0) : 0;
+    const stock = it.kind === 'item' ? (myGear[it.k] ?? 0)
+                : it.kind === 'ammo' ? (myAmmo[it.k] ?? 0) : 0;
     if (stock) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
-                 g.fillText(`${stock} in locker`, r.x + r.w - 12, r.y + 35); }
+                 g.fillText(it.kind === 'ammo' ? `${stock} rounds held` : `${stock} in locker`,
+                            r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';
   }
 
@@ -1005,6 +1024,83 @@ function drawInventory() {
   g.fillText('I or Esc to close', P.x + P.w - 130, P.y + P.h - 30);
   g.font = '12px ui-monospace, monospace';
 }
+
+// --- ammunition bar -----------------------------------------------------------
+// Bottom centre, one box per grade, lasers on the left and warheads on the right.
+// The box a weapon is drawing from is outlined; clicking any box switches that
+// weapon to that grade. A rack with nothing behind it does not fire at all, so
+// the count is not decoration and it says so when it runs low.
+const LOW = 200;
+
+function barClick(v) {
+  const L = barLayout(VIEW_W, VIEW_H);
+  for (const b of L.boxes) {
+    if (v.x < b.r.x || v.x > b.r.x + b.r.w || v.y < b.r.y || v.y > b.r.y + b.r.h) continue;
+    if (myUsing[b.feed] === b.k) return true;
+    if (!(myAmmo[b.k] > 0)) { say(`No ${AMMO[b.k].name} — buy a crate at the dock`, '#e0a53f'); return true; }
+    send({ t: 'ammo', key: b.k });
+    return true;
+  }
+  return false;
+}
+
+// Step to the next grade of one feed that you actually hold. Wraps, and does
+// nothing at all if the locker only has the one.
+function cycleAmmo(feed) {
+  const held = forWeapon(feed).filter(k => myAmmo[k] > 0);
+  if (held.length < 2) return say(`Nothing else to feed the ${feed}s`, '#66748c');
+  const i = held.indexOf(myUsing[feed]);
+  send({ t: 'ammo', key: held[(i + 1) % held.length] });
+}
+
+function drawBar() {
+  const L = barLayout(VIEW_W, VIEW_H);
+  const over = r => hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
+  let tip = null;
+  for (const b of L.boxes) {
+    const a = AMMO[b.k], n = myAmmo[b.k] ?? 0, on = myUsing[b.feed] === b.k;
+    const dry = on && n === 0, low = on && n > 0 && n < LOW * (b.feed === 'rocket' ? 0.25 : 1);
+    const r = b.r;
+    g.fillStyle = n ? 'rgba(6,10,16,0.82)' : 'rgba(6,10,16,0.55)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = dry ? '#ff5c6b' : on ? '#7fd4ff' : over(r) ? '#4a6785' : '#243448';
+    g.lineWidth = on ? 2 : 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+
+    // a round, drawn as what it is: a bolt for cells, a dart for warheads
+    const cx = r.x + r.w / 2, cy = r.y + 20;
+    const col = n ? (b.feed === 'laser' ? '#8fe7ff' : '#cfe9ff') : '#33465e';
+    g.fillStyle = col;
+    if (b.feed === 'laser') g.fillRect(cx - 2, cy - 9, 4, 18);
+    else { g.beginPath(); g.moveTo(cx, cy - 10); g.lineTo(cx + 5, cy + 8);
+           g.lineTo(cx, cy + 4); g.lineTo(cx - 5, cy + 8); g.closePath(); g.fill(); }
+    if (a.tier > 1) {                                       // pips for the grade
+      g.fillStyle = n ? '#ffd479' : '#4a4230';
+      for (let i = 0; i < a.tier - 1; i++) g.fillRect(r.x + 5 + i * 5, r.y + 5, 3, 3);
+    }
+    g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
+    g.fillStyle = dry ? '#ff5c6b' : low ? '#e0a53f' : n ? '#cfe4ff' : '#3d4757';
+    g.fillText(n > 9999 ? `${Math.round(n / 1000)}k` : String(n), cx, r.y + r.h - 8);
+    if (over(r)) tip = { a, n, on, feed: b.feed, r };
+    g.textAlign = 'left';
+  }
+  g.font = '10px ui-monospace, monospace'; g.textAlign = 'center';
+  g.fillStyle = '#3d4757';
+  g.fillText('Q', L.boxes[0].r.x - BAR_HINT, L.r.y + L.r.h - 8);
+  g.fillText('E', L.boxes[forWeapon('laser').length].r.x - BAR_HINT, L.r.y + L.r.h - 8);
+
+  if (tip) {                                                // name and grade, above the box
+    const t = `${tip.a.name}  x${tip.a.mult.toFixed(2)}` + (tip.on ? '  · loaded' : '');
+    const w = g.measureText(t).width + 18;
+    const x = Math.max(6, Math.min(VIEW_W - w - 6, tip.r.x + tip.r.w / 2 - w / 2));
+    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, tip.r.y - 24, w, 20);
+    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, tip.r.y - 23.5, w - 1, 19);
+    g.fillStyle = tip.n ? '#cfe4ff' : '#e0a53f';
+    g.fillText(tip.n ? t : `${tip.a.name} — none held`, x + w / 2, tip.r.y - 10);
+  }
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+}
+const BAR_HINT = 11;
 
 // --- render -------------------------------------------------------------------
 let renderFailed = false;
@@ -1696,6 +1792,7 @@ function drawFrame(now) {
     }
   }
 
+  if (!dead && !sysOpen) drawBar();               // under the panels, over the world
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();

@@ -51,12 +51,15 @@ export function hardpoints(a) {
 
 // Advances this ship's guns. Returns the bolts released this tick — none, one,
 // or a pair once the rack is big enough to double up.
-export function fire(a, b, dt) {
+// `mag` is the magazine feeding this rack, or null for anything that does not
+// carry ammunition — aliens shoot forever, which is their whole advantage.
+export function fire(a, b, dt, mag = null) {
   a.cool = Math.max(0, a.cool - dt);
   a.shotFlash = Math.max(0, a.shotFlash - dt);
 
   const guns = Math.max(1, a.guns ?? 1);
-  const live = b && b.hp > 0 && a.hp > 0 &&
+  const dry = mag ? mag.n <= 0 : false;
+  const live = !dry && b && b.hp > 0 && a.hp > 0 &&
                Math.hypot(b.x - a.x, b.y - a.y) <= a.stats.weaponRange;
 
   if (a.volley > 0) {                              // mid-stream
@@ -69,12 +72,16 @@ export function fire(a, b, dt) {
     a.volley = guns;
   }
 
-  const salvo = Math.min(a.volley, salvoOf(guns));
+  // A rack fires as many barrels as it has rounds for, and stops mid-stream when
+  // the last one goes — you do not get a free half-volley out of an empty bay.
+  const salvo = Math.min(a.volley, salvoOf(guns), mag ? mag.n : Infinity);
+  if (!salvo) { a.volley = 0; return []; }
   a.volley -= salvo;
+  if (mag) mag.n -= salvo;
   a.volleyCool = (1 / a.stats.fireRate) / stepsOf(guns);
   a.shotFlash = SHOT_FLASH;
 
-  const each = (a.stats.damage * boostOf(a.power, 'weapons', a.stats)) / guns;
+  const each = (a.stats.damage * boostOf(a.power, 'weapons', a.stats) * (mag?.mult ?? 1)) / guns;
   const mounts = hardpoints(a);
   const out = [];
   for (let i = 0; i < salvo; i++) {

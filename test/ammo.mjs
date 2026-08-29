@@ -1,0 +1,165 @@
+import { AMMO, AMMO_KEYS, FEEDS, forWeapon, DEFAULT_AMMO, STARTING_AMMO,
+         sanitiseAmmo, sanitiseUsing, magazine, hasRounds, roundPrice, barLayout } from '../shared/ammo.js';
+import { newShip } from '../shared/sim.js';
+import { fire } from '../shared/combat.js';
+import { launch, ROCKET_RATE } from '../shared/rockets.js';
+import { sanitiseFit } from '../shared/gear.js';
+import { slotsOf, resolve, gunsOf, FIRE_RATE } from '../shared/ships.js';
+import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
+import { BOOST } from '../shared/power.js';
+
+const fails = [];
+const check = (name, ok, detail = '') => {
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  — ${detail}` : ''}`);
+  if (!ok) fails.push(name);
+};
+const dt = 1 / 30;
+const fit = o => ({ weapon: [], generator: [], tech: [], ...o });
+const mark = (x, y) => ({ x, y, vx: 0, vy: 0, r: 20, hp: 1e9, shield: 1e9, sinceHit: 0,
+                          shieldHit: 0, stats: { hull: 1e9, shield: 1e9 } });
+
+console.log('\nthe grades');
+for (const f of FEEDS) {
+  const g = forWeapon(f);
+  console.log(`     ${f.padEnd(7)}` + g.map(k =>
+    `${AMMO[k].name} x${AMMO[k].mult.toFixed(2)} @${roundPrice(k).toFixed(2)}cr`).join('   '));
+  check(`${f}s have grades, cheapest first by tier`,
+    g.length >= 2 && g.every((k, i) => i === 0 || AMMO[k].tier > AMMO[g[i - 1]].tier));
+  check(`a better ${f} round hits harder and costs more`,
+    g.every((k, i) => i === 0 || (AMMO[k].mult > AMMO[g[i - 1]].mult
+                               && roundPrice(k) > roundPrice(g[i - 1]))),
+    'no grade is a straight upgrade at the same price');
+  check(`the default ${f} grade is the plain one`, AMMO[DEFAULT_AMMO[f]].mult === 1);
+}
+check('every grade feeds exactly one weapon',
+  AMMO_KEYS.every(k => FEEDS.includes(AMMO[k].for)));
+check('a new pilot is not sent out with an empty magazine',
+  FEEDS.every(f => (STARTING_AMMO[DEFAULT_AMMO[f]] ?? 0) > 0),
+  Object.entries(STARTING_AMMO).map(([k, n]) => `${n} ${k}`).join(', '));
+
+console.log('\nspending it');
+{
+  const rack = newShip(0, 0, 'bulwark', fit({ weapon: Array(4).fill('emitter5') }));
+  rack.heading = 0;
+  const mag = { key: 'cell1', n: 10, mult: 1 };
+  let fired = 0;
+  for (let i = 0; i < 600; i++) fired += fire(rack, mark(400, 0), dt, mag).length;
+  check('a bolt costs a round', fired === 10 && mag.n === 0, '10 rounds, 10 bolts, then nothing');
+
+  const dry = { key: 'cell1', n: 0, mult: 1 };
+  let none = 0;
+  for (let i = 0; i < 300; i++) none += fire(rack, mark(400, 0), dt, dry).length;
+  check('an empty magazine is a dead weapon', none === 0);
+
+  // Aliens carry nothing and are meant to shoot forever.
+  const alien = newShip(0, 0, 'vanguard', fit({ weapon: ['emitter1'] }));
+  alien.heading = 0; alien.isAlien = true;
+  let free = 0;
+  for (let i = 0; i < 300; i++) free += fire(alien, mark(400, 0), dt).length;
+  check('anything with no magazine shoots forever', free > 5, `${free} bolts with no supply passed`);
+
+  const pods = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(3).fill('pod3') })));
+  pods.heading = 0;
+  const heads = { key: 'head1', n: 7, mult: 1 };
+  let up = 0;
+  for (let i = 0; i < 600; i++) up += launch(pods, mark(400, 0), dt, heads).length;
+  check('a rack short of warheads throws what it has', up === 7 && heads.n === 0,
+    '15 rockets rated, 7 in stock');
+  const full = { key: 'head1', n: 999, mult: 1 };
+  const one = launch(pods, mark(400, 0), dt, full);
+  const short = { key: 'head1', n: 3, mult: 1 };
+  pods.rocketCool = 0;
+  const few = launch(pods, mark(400, 0), dt, short);
+  check('and each of them still hits full weight',
+    Math.abs(one[0].dmg - few[0].dmg) < 1e-6,
+    'fewer rockets, not weaker ones');
+}
+
+console.log('\nwhat a grade is worth');
+{
+  const gun = newShip(0, 0, 'hauler', fit({ weapon: ['emitter5'] }));
+  gun.heading = 0;
+  const dmgWith = k => {
+    const s = newShip(0, 0, 'hauler', fit({ weapon: ['emitter5'] }));
+    s.heading = 0;
+    for (let i = 0; i < 90; i++) {
+      const v = fire(s, mark(300, 0), dt, { key: k, n: 999, mult: AMMO[k].mult });
+      if (v.length) return v[0].dmg;
+    }
+    return 0;
+  };
+  const grades = forWeapon('laser');
+  const dmgs = grades.map(dmgWith);
+  console.log('     ' + grades.map((k, i) => `${AMMO[k].name} ${Math.round(dmgs[i])}`).join('   '));
+  check('a better round puts more on the target',
+    dmgs.every((d, i) => i === 0 || d > dmgs[i - 1]));
+  check('and exactly as much more as it claims',
+    grades.every((k, i) => Math.abs(dmgs[i] / dmgs[0] - AMMO[k].mult) < 1e-6));
+
+  // What feeding the good stuff actually costs, so the choice is a real one.
+  const heavy = fit({ weapon: Array(4).fill('emitter5') });
+  const rounds = gunsOf(heavy, Array(6).fill('emitter5')) * FIRE_RATE;
+  const perMin = k => rounds * roundPrice(k) * 60;
+  console.log(`     a fully racked Cruiser burns ${rounds.toFixed(0)} rounds a second, held down:`);
+  for (const k of grades)
+    console.log(`       ${AMMO[k].name.padEnd(16)}${perMin(k).toFixed(0)} cr a minute`);
+  check('the plain grade is cheap enough not to count', perMin(grades[0]) < 250,
+    `${perMin(grades[0]).toFixed(0)} cr a minute, and nobody holds the trigger for a minute`);
+  check('the best grade costs enough to be a decision',
+    perMin(grades.at(-1)) > perMin(grades[0]) * 10,
+    `${perMin(grades.at(-1)).toFixed(0)} cr a minute — you load it for a fight, not for the commute`);
+}
+
+console.log('\nkeeping it');
+{
+  const raw = { cell1: 3.7, cell2: -5, nonsense: 900, head1: '250' };
+  const clean = sanitiseAmmo(raw);
+  check('stock is whole rounds of things that exist',
+    clean.cell1 === 3 && clean.head1 === 250 && !('cell2' in clean) && !('nonsense' in clean),
+    JSON.stringify(clean));
+  check('there is no cap on it', sanitiseAmmo({ cell1: 9e8 }).cell1 === 9e8,
+    'a hold you have to manage is a chore, not a mechanic');
+  check('a selection that no longer exists falls back to the plain grade',
+    sanitiseUsing({ laser: 'nonsense', rocket: 'cell1' }).laser === DEFAULT_AMMO.laser
+    && sanitiseUsing({ rocket: 'cell1' }).rocket === DEFAULT_AMMO.rocket,
+    'and a laser grade cannot be loaded into a launcher');
+  check('a magazine reads the loaded grade',
+    magazine({ cell3: 40 }, { laser: 'cell3' }, 'laser').n === 40
+    && magazine({ cell3: 40 }, { laser: 'cell3' }, 'laser').mult === AMMO.cell3.mult);
+  check('and reads zero for a grade you do not hold',
+    magazine({}, { laser: 'cell3' }, 'laser').n === 0 && !hasRounds({}, {}, 'laser'));
+
+  const acct = newAccount('t', 1, 1000);
+  check('a new account is issued rounds', (acct.ammo[DEFAULT_AMMO.laser] ?? 0) > 0);
+  const p = { co: acct.co, mapId: 'm1', credits: 0, hold: {}, vault: {}, gear: {}, hulls: [], xp: 0,
+              formations: ['line'], ammo: { cell3: 120, head2: 40 }, using: { laser: 'cell3', rocket: 'head2' },
+              ship: newShip(0, 0, 'hauler', fit({ weapon: ['emitter1'] })) };
+  capture(acct, p, 2000);
+  const back = sanitiseAccount(acct, 1, 3000);
+  check('ammunition and both selections survive a round trip',
+    back.ammo.cell3 === 120 && back.ammo.head2 === 40
+    && back.using.laser === 'cell3' && back.using.rocket === 'head2');
+}
+
+console.log('\nthe bar');
+{
+  let off = 0, overlap = 0;
+  for (const [W, H] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 640], [900, 600]]) {
+    const L = barLayout(W, H);
+    if (L.boxes.length !== AMMO_KEYS.length) off++;
+    if (L.r.x < 0 || L.r.x + L.r.w > W || L.r.y < 0 || L.r.y + L.r.h > H) off++;
+    for (let i = 1; i < L.boxes.length; i++)
+      if (L.boxes[i].r.x < L.boxes[i - 1].r.x + L.boxes[i - 1].r.w) overlap++;
+  }
+  check('the bar fits every window and never overlaps itself', off === 0 && overlap === 0,
+    `${AMMO_KEYS.length} boxes, centred`);
+  const L = barLayout(1280, 720);
+  check('lasers sit left of warheads, always in the same place',
+    L.boxes.filter(b => b.feed === 'laser').every(b =>
+      L.boxes.filter(c => c.feed === 'rocket').every(c => b.r.x < c.r.x)),
+    'so a box means the same thing every time you look at it');
+}
+
+console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`
+                               : `PASS — ${AMMO_KEYS.length} grades`}\n`);
+process.exit(fails.length ? 1 : 0);
