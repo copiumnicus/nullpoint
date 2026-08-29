@@ -39,6 +39,29 @@ export const ALIENS = {
     xp: 140,          // and what the kill is worth toward your rank
   },
 
+  // A raider that you mostly cannot see. Its signature is shaped rather than
+  // sized: nose-on it returns almost nothing, from the beam it comes and goes,
+  // and from behind it is just a ship. The catch is that a Bandit engaging you
+  // turns to face you, and facing you is its quietest aspect — so the way to see
+  // one is to get off its nose, which means out-turning something faster than
+  // you. See shared/stealth.js.
+  //
+  // Tougher and quicker than a Drifter and hits harder, but it will not stand and
+  // trade: it breaks off early, and while it runs you can see it perfectly.
+  bandit: {
+    name: 'Bandit', cls: 'Raider', r: 13, colour: '#5fd0ff', stealth: true,
+    attrs: { hull: 800, shield: 400, shieldRegen: 55, shieldDelay: 5,
+             speed: 330, accel: 1500, signature: 2,
+             damage: 95, fireRate: 1.3, weaponRange: 600 },
+    aggro: 520,       // it picks the fight, and from further out than you can see it
+    leash: 1900,
+    patience: 4.0,
+    flee: 0.25,       // runs early, and is plainly visible doing it
+    respawn: 22,
+    bounty: 840,      // 1200 ehp at BOUNTY_RATE
+    xp: 300,
+  },
+
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
   // flee, and carries enough hull that a finished ship cannot delete it before you
   // have read a number off it. Never seeded outside the testing ground.

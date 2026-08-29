@@ -31,6 +31,7 @@ import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
+import { seenAs } from '/shared/stealth.js';
 import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT, QUIET } from '/shared/music.js';
@@ -2056,9 +2057,22 @@ function drawFrame(now) {
   for (const [id, s] of ships) {
     const R = rOf(s), lost = s.vis === STALE, foe = s.co === 'x';
     const lvl = (s.plvl ?? 0) / 100, sys = s.psys ?? 0;
+
+    // A Bandit is only as visible as its aspect allows. Nose-on it is barely
+    // there and mostly not drawn at all; from behind it is an ordinary ship.
+    // The server sends it either way — this is what your eyes can pick out of
+    // the dark, not what the sensors know.
+    const hides = foe && ALIENS[s.hull]?.stealth && me && id !== myId;
+    const veil = hides ? seenAs({ x: s.rx, y: s.ry, heading: s.heading },
+                                { x: me.rx, y: me.ry }, now, id) : null;
+    if (veil && !veil.shown) continue;
+
     g.save();
     g.translate(s.rx, s.ry); g.rotate(s.heading);
-    g.globalAlpha = lost ? 0.35 : 1;               // last known track, no live sensor
+    // One alpha for the whole hull, so nothing further down can reset past the
+    // veil and draw a Bandit back in at full strength.
+    const dim = (lost ? 0.35 : 1) * (veil ? veil.alpha : 1);
+    g.globalAlpha = dim;
 
     if (sys === 1 && lvl > 0.02) {                 // thrusters: a plume out the back
       const len = R * (1.6 + lvl * 5.5);
@@ -2099,11 +2113,11 @@ function drawFrame(now) {
         g.fillStyle = '#eef5ff';                   // muzzle
         g.fillRect(R * 1.25, off - bore / 2 - 0.6, R * 0.4, bore + 1.2);
         if (sys === 2 && lvl > 0.02) {             // weapons: the mounts crackle
-          g.globalAlpha = (lost ? 0.35 : 1) * (0.4 + lvl * 0.6) *
+          g.globalAlpha = dim * (0.4 + lvl * 0.6) *
                           (0.55 + 0.45 * Math.sin(now / 55 + (side > 0 ? 2 : 0)));
           g.fillStyle = SYS_COLOUR[1];
           g.fillRect(-R * 0.25, off - bore / 2 - lvl * 2, R * 1.9 + lvl * 7, bore + lvl * 4);
-          g.globalAlpha = lost ? 0.35 : 1;
+          g.globalAlpha = dim;
         }
       }
     }
@@ -2352,8 +2366,13 @@ function drawFrame(now) {
     const off = driftDepth(s.x, s.y) > 0;          // clamp strays to the frame so they stay findable
     const mx = MM_X + clamp(s.rx, 0, MAP_W) * sx, my = MM_Y + clamp(s.ry, 0, MAP_H) * sy;
     if (s.co === 'x') {                            // hostiles: a pulsing diamond, never a ping ring
+      // A Bandit is as faint on the plot as it is out the window, and drops off
+      // it entirely at the aspects where you cannot see it either.
+      const hid = ALIENS[s.hull]?.stealth && me
+        ? seenAs({ x: s.rx, y: s.ry, heading: s.heading }, { x: me.rx, y: me.ry }, now, id) : null;
+      if (hid && !hid.shown) continue;
       const ph = ((now / 900) + id * 0.31) % 1;
-      g.globalAlpha = s.vis === FRESH ? 0.5 + 0.5 * (1 - ph) : 0.35;
+      g.globalAlpha = (s.vis === FRESH ? 0.5 + 0.5 * (1 - ph) : 0.35) * (hid ? hid.alpha : 1);
       g.fillStyle = ALIENS[s.hull]?.colour ?? '#b06adf';
       g.beginPath(); g.moveTo(mx, my - 3); g.lineTo(mx + 3, my); g.lineTo(mx, my + 3); g.lineTo(mx - 3, my);
       g.closePath(); g.fill();

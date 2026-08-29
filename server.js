@@ -153,12 +153,26 @@ setInterval(persistAll, 15000);   // positions drift without changing anything
 for (const sig of ['SIGINT', 'SIGTERM'])
   process.on(sig, () => { persistAll(); console.log('accounts saved'); process.exit(0); });
 
-// Hostiles live on the home maps for now, seeded per map so a restart replays.
+// Where each hostile lives. Drifters hold the home maps; Bandits are one hop
+// out, so the first thing you meet that you cannot see is also the first reason
+// to leave home. Seeded per map so a restart replays the same field.
 const aliens = new Map();
 let alienId = 1_000_000;
+const seed = (mapId, kind, n) => {
+  const list = aliens.get(mapId) ?? [];
+  for (let i = 0; i < n; i++)
+    list.push(newAlien(kind, alienId++, MAPS[mapId], mapId.charCodeAt(0) * 977 + i * 7919 + kind.length));
+  aliens.set(mapId, list);
+};
 aliens.set(DEV_ID, PEN_SLOTS.map(sl => newAlien(sl.kind, sl.id, MAPS[DEV_ID], sl.id, { x: sl.x, y: sl.y })));
-for (const h of HOMES) aliens.set(h, Array.from({ length: ALIENS_PER_MAP },
-  (_, i) => newAlien('drifter', alienId++, MAPS[h], h.charCodeAt(0) * 977 + i * 7919)));
+for (const h of HOMES) {
+  seed(h, 'drifter', ALIENS_PER_MAP);
+  const co = h[0];
+  for (const mid of [co + '2', co + '3']) {       // one hop out from every dock
+    seed(mid, 'drifter', 3);
+    seed(mid, 'bandit', 3);
+  }
+}
 
 // The hull and formation galleries, resolved once at boot. They never move, take
 // damage or shoot, so there is nothing to step — just rows to hand out.

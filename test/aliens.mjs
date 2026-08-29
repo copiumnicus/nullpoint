@@ -1,4 +1,4 @@
-import { WILD, ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
+import { WILD, ALIENS, ALIENS_PER_MAP, effectiveHp, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
          forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
@@ -310,8 +310,13 @@ check('respawn restores it fully and clears every grudge',
   && dead.target === null && dead.provoked.size === 0 && !inBase(map, dead));
 check('seeding is deterministic',
   JSON.stringify(newAlien('drifter', 1, map, 99).way) === JSON.stringify(newAlien('drifter', 1, map, 99).way));
-check('hostiles are only on home maps for now', ALIENS_PER_MAP > 0 && WILD.length === 1,
+check('there is something to fight and something to fear', WILD.length >= 2,
   `${WILD.join(' ')} in the wild`);
+check('a Drifter is the one you meet first, and the softest',
+  WILD.every(k => k === 'drifter' || effectiveHp(k) > effectiveHp('drifter')),
+  `${effectiveHp('drifter')} ehp against ${WILD.filter(k => k !== 'drifter').map(effectiveHp).join(', ')}`);
+check('only one of them hides', WILD.filter(k => ALIENS[k].stealth).length === 1,
+  'stealth is a thing the Bandit does, not the baseline');
 
 // A posted alien belongs to a slot on the firing range and goes back to it.
 {

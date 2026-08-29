@@ -690,6 +690,25 @@ const dismiss = () => {
     }
   }
 
+  // A Bandit at every aspect. The veil multiplies alphas and skips draws, and
+  // the guard rejects any NaN that falls out of the arithmetic — which is the
+  // failure mode when a hull is not where you thought it was.
+  {
+    dismiss();
+    let drew = 0;
+    for (const deg of [0, 45, 90, 135, 180]) {
+      const r = deg * Math.PI / 180;
+      feed({ t: 's', ships: [
+        packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+                   hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, fix: 0, vis: 2 }),
+        // sitting 400px away, nose swung round so we see it from `deg` off
+        packShip({ id: 1e6 + 5, x: 6400, y: 4000, heading: r, charge: 0, co: 'x', hull: 'bandit',
+                   hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, fix: 0, vis: 1 })] });
+      for (let i = 0; i < 8; i++) { frame(t += 16); frames++; drew++; }
+    }
+    console.log(`bandit: drawn across five aspects over ${drew} frames, veil and all`);
+  }
+
   // A rig out fetching: it leaves formation, flies to the pod and comes back,
   // and the beam leaves the drone rather than the hull. The guard rejects any
   // NaN that falls out of the easing, which is the failure mode here.
