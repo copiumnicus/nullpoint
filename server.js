@@ -24,7 +24,7 @@ import { GAME } from './shared/brand.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
-         POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
+         POD_LIFE, SCOOP_R, SCOOP_TIME, DRONE_SPEED } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
@@ -798,7 +798,7 @@ setInterval(() => {
       if (d <= reach && d < bd) { bd = d; best = c; }
     }
     if (!best) continue;
-    const s2 = beginScoop(p.ship, p.hold, best, reach);   // returns 'full' once there is no room
+    const s2 = beginScoop(p.ship, p.hold, best, reach, DRONE_SPEED);   // 'full' once there is no room
     if (typeof s2 === 'object') p.scoop = s2;
   }
 
@@ -905,7 +905,7 @@ setInterval(() => {
                lv: Object.fromEntries(SYSTEMS.map(sy =>
                  [sy, Math.round(100 * levelOf(V.ship.power, sy, V.ship.stats))])) },
       shieldNow: Math.round(V.ship.shield), shieldMax: Math.round(shieldMax(V.ship)),
-      scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / SCOOP_TIME).toFixed(2) } : undefined,
+      scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / (V.scoop.secs ?? SCOOP_TIME)).toFixed(2) } : undefined,
       want: V.want ?? undefined }));
   }
 }, 1000 / TICK_HZ);

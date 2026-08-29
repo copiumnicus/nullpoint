@@ -39,6 +39,17 @@ export const POD_LIFE   = 120;  // s before a pod disperses
 export const SCOOP_R    = 260;  // px you must be inside to start hauling one in
 export const SCOOP_TIME = 0.9;  // s the tractor takes — you are stationary prey while it runs
 
+// How fast a hauling drone actually moves. It has to fly out and back, so a pull
+// from the far edge of an Ore Tender's reach takes real seconds — a flat time
+// whatever the distance had the drone crossing 2000px/s, five times the fastest
+// hull, which read as teleporting rather than fetching.
+export const DRONE_SPEED = 420; // px/s
+
+// How long a pull takes: the tractor itself, plus the round trip if something
+// has to go and get it. `speed` of 0 is your own arm, which does not travel.
+export const pullTime = (dist, speed = 0) =>
+  SCOOP_TIME + (speed > 0 ? (2 * dist) / speed : 0);
+
 export const CURRENCY = { name: 'credits', short: 'cr' };
 
 // rand must be the caller's seeded generator, so drops stay reproducible.
@@ -70,11 +81,13 @@ export function stow(hold, mat, n, cap) {
 // --- tractor beam -----------------------------------------------------------
 // Kept here rather than inline in the server so it can be tested without a socket.
 // Returns a scoop state, or a string saying why not.
-export function beginScoop(ship, hold, pod, reach = SCOOP_R) {
+export function beginScoop(ship, hold, pod, reach = SCOOP_R, speed = 0) {
   if (!pod) return 'gone';
-  if (Math.hypot(pod.x - ship.x, pod.y - ship.y) > reach) return 'far';
+  const away = Math.hypot(pod.x - ship.x, pod.y - ship.y);
+  if (away > reach) return 'far';
   if (stow({ ...hold }, pod.mat, 1, ship.stats.cargo) === 0) return 'full';
-  return { id: pod.id, t: SCOOP_TIME, reach };
+  const t = pullTime(away, speed);
+  return { id: pod.id, t, secs: t, reach };
 }
 
 // Clicking cargo is an ORDER, not a request. If it is out of reach the ship flies

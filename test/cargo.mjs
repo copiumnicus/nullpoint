@@ -217,6 +217,27 @@ console.log('\ncollector rigs');
     const sc = beginScoop(ship, {}, far, EQUIPMENT[rigs[1]].reach);
     return stepScoop(sc, far, ship, {}, 0.01).running === true;
   })(), 'a beam that cancels the moment it starts is no beam at all');
+  // A drone has to fly out and back. A flat pull time whatever the distance had
+  // the Ore Tender crossing 2000px/s — five times the fastest hull.
+  const { pullTime, DRONE_SPEED, SCOOP_TIME } = await import('../shared/cargo.js');
+  const { HULLS } = await import('../shared/ships.js');
+  const fastest = Math.max(...Object.values(HULLS).map(h => h.attrs.speed));
+  const apparent = k => EQUIPMENT[k].reach / (pullTime(EQUIPMENT[k].reach, DRONE_SPEED) * 0.6);
+  console.log('     ' + rigs.map(k =>
+    `${EQUIPMENT[k].name} ${pullTime(EQUIPMENT[k].reach, DRONE_SPEED).toFixed(1)}s ` +
+    `(${Math.round(apparent(k))}px/s)`).join('   '));
+  check('a hauling drone is slower than the fastest hull',
+    rigs.every(k => apparent(k) < fastest), `the quickest ship does ${fastest}`);
+  check('a longer reach takes longer to use',
+    rigs.every((k, i) => i === 0 ||
+      pullTime(EQUIPMENT[k].reach, DRONE_SPEED) > pullTime(EQUIPMENT[rigs[i - 1]].reach, DRONE_SPEED)),
+    'reach is a trade, not free');
+  check('your own arm still takes no time to fly anywhere',
+    pullTime(260) === SCOOP_TIME, 'it does not travel — it just pulls');
+  check('and the pull carries how long it was given',
+    beginScoop(ship, {}, far, 900, DRONE_SPEED).secs > SCOOP_TIME,
+    'so the progress the client draws is against the right clock');
+
   check('a full hold stops it picking anything up',
     beginScoop({ ...ship, stats: { cargo: 1 } }, { iron: 99 }, { ...far, x: 100 }, 900) === 'full',
     'which is what the FULL tag over the drone is saying');
