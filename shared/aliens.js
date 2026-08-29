@@ -49,17 +49,25 @@ export const ALIENS = {
   // Tougher and quicker than a Drifter and hits harder, but it will not stand and
   // trade: it breaks off early, and while it runs you can see it perfectly.
   bandit: {
-    name: 'Bandit', cls: 'Raider', r: 13, colour: '#5fd0ff', stealth: true,
-    attrs: { hull: 800, shield: 400, shieldRegen: 55, shieldDelay: 5,
-             speed: 330, accel: 1500, signature: 2,
-             damage: 95, fireRate: 1.3, weaponRange: 600 },
+    name: 'Bandit', cls: 'Raider', r: 13, colour: '#5fd0ff', stealth: true, evades: true,
+    // Built to survive a finished ship for a quarter of a minute, and most of
+    // that comes from not being hit rather than from soaking it: it breaks off
+    // the firing line whenever a shot gets close. The hull behind that is real
+    // but it is not the point.
+    // Fast in a straight line and slow to change its mind — a wide-turning
+    // interceptor. That is what makes the jink readable: it commits, and a
+    // patient gunner can lead it. Give it fighter-grade acceleration and
+    // lasers stop landing at all.
+    attrs: { hull: 13000, shield: 5000, shieldRegen: 260, shieldDelay: 5,
+             speed: 400, accel: 500, signature: 2,
+             damage: 150, fireRate: 1.3, weaponRange: 640 },
     aggro: 520,       // it picks the fight, and from further out than you can see it
-    leash: 1900,
+    leash: 2200,
     patience: 4.0,
-    flee: 0.25,       // runs early, and is plainly visible doing it
-    respawn: 22,
-    bounty: 840,      // 1200 ehp at BOUNTY_RATE
-    xp: 300,
+    flee: 0.18,       // runs late for something this slippery, and is plain while it goes
+    respawn: 40,
+    bounty: 12600,    // 18000 ehp at BOUNTY_RATE
+    xp: 2400,
   },
 
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
@@ -86,6 +94,64 @@ export const ALIENS_PER_MAP = 7;
 // What the galaxy proper is allowed to spawn. Range furniture is not in it.
 export const WILD = Object.keys(ALIENS).filter(k => !ALIENS[k].dev);
 const LOSE_INTEREST = 'patience';
+
+// --- evasion ------------------------------------------------------------------
+// Something that cannot be seen and cannot be missed is not a fight, it is a
+// health bar behind a curtain. A Bandit breaks off the firing line when a shot
+// is close, which does two things: most of the volley goes past it, and it has
+// to turn to do it — and turning is what takes its nose off you, which is the
+// only reason you get to see it at all.
+//
+// So the camouflage and the evasion are the same mechanic seen from two sides.
+// It is quiet while it holds still and points at you; the moment it starts
+// working to stay alive, it starts showing you its flank.
+
+export const EVADE_LEAD = 0.9;    // s of flight time it reacts inside
+export const EVADE_RUN  = 160;    // px it commits to — a jink, not a departure
+export const WEAVE_MIN  = 0.5, WEAVE_MAX = 1.0;     // s between reversals
+
+// Which way to break, given what is coming: perpendicular to the nearest
+// threat's travel, on whichever side it is currently weaving.
+//
+// The side has to keep changing. Bolts are aimed where you will be, so a steady
+// break is precisely what the aim already accounts for — holding one direction
+// gets you hit as reliably as holding still. Reversing every third of a second
+// puts it somewhere the last shot did not expect, which is the same reason
+// weaving works for a player.
+export function threatBreak(a, incoming) {
+  let near = null, nearD = Infinity;
+  for (const p of incoming) {
+    const d = Math.hypot(p.x - a.x, p.y - a.y);
+    if (d < nearD) { nearD = d; near = p; }
+  }
+  if (!near) return null;
+  const sp = Math.hypot(near.vx, near.vy) || 1;
+  if (nearD > sp * EVADE_LEAD) return null;         // still far enough to ignore
+  const ux = near.vx / sp, uy = near.vy / sp;       // where the shot is going
+  const side = a.weaveSide ?? 1;
+  return { x: -uy * side, y: ux * side };
+}
+
+// Sets a course away from whatever is closest to hitting it. Returns true while
+// it is breaking, which is the caller's signal to stop pointing its nose at you.
+export function stepEvade(a, incoming, map, dt = 1 / 30) {
+  if (!a.def.evades) return false;
+  // The weave runs whether or not anything is inbound, so a break already has a
+  // direction the moment it is needed.
+  a.weaveSide ??= 1;
+  a.weaveIn = (a.weaveIn ?? 0) - dt;
+  if (a.weaveIn <= 0) {
+    a.weaveSide = -a.weaveSide;
+    a.weaveIn = WEAVE_MIN + (a.rand ? a.rand() : Math.random()) * (WEAVE_MAX - WEAVE_MIN);
+  }
+  const brk = threatBreak(a, incoming);
+  if (!brk) { a.jinking = false; return false; }
+  a.dx = a.dy = null;
+  a.tx = Math.max(600, Math.min(MAP_W - 600, a.x + brk.x * EVADE_RUN));
+  a.ty = Math.max(600, Math.min(MAP_H - 600, a.y + brk.y * EVADE_RUN));
+  a.jinking = true;
+  return true;
+}
 
 // Seeded so a server restart replays identically and tests can assert on roaming.
 export const rng = seed => () => {

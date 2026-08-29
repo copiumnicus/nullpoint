@@ -99,5 +99,76 @@ console.log('\nthe Bandit');
     && Number.isFinite(v.aspect) && Number.isFinite(v.alpha));
 }
 
+console.log('\nthe fight');
+{
+  // A real duel: alien AI, evasion, both weapon systems, bolts and rockets
+  // actually in flight. The whole point of this alien is the shape of this
+  // table, so the table is the test.
+  const { newShip, step, stepVitals, inHaven } = await import('../shared/sim.js');
+  const { fire, stepBolts, faceTarget } = await import('../shared/combat.js');
+  const { launch, stepRockets } = await import('../shared/rockets.js');
+  const { sanitiseFit } = await import('../shared/gear.js');
+  const { slotsOf } = await import('../shared/ships.js');
+  const { MAPS } = await import('../shared/maps.js');
+  const { routeTo, stepPower } = await import('../shared/power.js');
+  const { newAlien, stepAlienAI, stepEvade } = await import('../shared/aliens.js');
+  const dt = 1 / 30, map = MAPS.m1;
+  const fit = o => ({ weapon: [], generator: [], tech: [], ...o });
+
+  const duel = (kind, weapon, evade = true) => {
+    const f = sanitiseFit(slotsOf('vanguard'), fit({ weapon }));
+    const me = newShip(6000, 4000, 'vanguard', f, Array(6).fill('emitter5'), 'wedge');
+    routeTo(me.power, 'weapons');
+    for (let i = 0; i < 120; i++) stepPower(me.power, me.stats, dt);
+    const a = newAlien(kind, 1e6, map, 5, { x: 6500, y: 4000 });
+    if (!evade) a.def = { ...a.def, evades: false };
+    a.target = 1;
+    const mag = { key: 'c', n: 1e9, mult: 1 }, wh = { key: 'h', n: 1e9, mult: 1 };
+    const bolts = [], rocks = [], here = [{ id: 1, ship: me, haven: inHaven(map, me) }];
+    let t = 0, fired = 0, landed = 0, seen = 0, n = 0;
+    while (t < 90 && a.hp > 0) {
+      stepAlienAI(a, map, here, dt);
+      const incoming = [...rocks.filter(r => r.target === a),
+        ...bolts.filter(b => b.target === a).map(b => ({
+          x: b.sx + (b.ax - b.sx) * (1 - b.t / b.ttl), y: b.sy + (b.ay - b.sy) * (1 - b.t / b.ttl),
+          vx: (b.ax - b.sx) / b.ttl, vy: (b.ay - b.sy) / b.ttl }))];
+      const breaking = stepEvade(a, incoming, map, dt);
+      step(a, dt); stepVitals(a, dt, false);
+      if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = Math.atan2(a.vy, a.vx);
+      else faceTarget(a, me);
+      faceTarget(me, a);
+      stepPower(me.power, me.stats, dt);
+      for (const s2 of fire(me, a, dt, mag)) { bolts.push(s2); fired++; }
+      for (const r of launch(me, a, dt, wh)) { rocks.push(r); fired++; }
+      landed += stepBolts(bolts, dt).length + stepRockets(rocks, dt).length;
+      seen += dutyAt(aspectOf(a, me)); n++;
+      t += dt;
+    }
+    return { secs: t, killed: a.hp <= 0, hit: fired ? landed / fired : 0, seen: seen / n };
+  };
+
+  const TOP = Array(3).fill('emitter5'), PODS = Array(3).fill('pod3');
+  const guns = duel('bandit', TOP), pods = duel('bandit', PODS);
+  const still = duel('bandit', TOP, false), soft = duel('drifter', TOP);
+  const row = (l, r) => `     ${l.padEnd(22)}${(r.killed ? r.secs.toFixed(1) + 's' : '90s+').padStart(6)}   ` +
+    `${String(Math.round(r.hit * 100)).padStart(3)}% land   visible ${Math.round(r.seen * 100)}%`;
+  console.log(row('MK-V lasers', guns));
+  console.log(row('Swarm Racks', pods));
+  console.log(row('if it never dodged', still));
+  console.log(row('a Drifter, for scale', soft));
+
+  check('a finished ship cannot delete it', guns.killed && guns.secs > 10 && guns.secs < 30,
+    `${guns.secs.toFixed(0)}s with the best guns in the game`);
+  check('and it is not unkillable either', guns.killed && pods.killed);
+  check('most of that is missing, not soaking', guns.hit < 0.55,
+    `${Math.round(guns.hit * 100)}% of bolts land against ${Math.round(still.hit * 100)}% on something holding still`);
+  check('rockets are the answer to a thing that dodges', pods.secs < guns.secs * 0.8 && pods.hit > guns.hit,
+    `${pods.secs.toFixed(0)}s against ${guns.secs.toFixed(0)}s — they follow it round the corner`);
+  check('dodging is what exposes it', guns.seen > still.seen * 3,
+    `visible ${Math.round(guns.seen * 100)}% of the time while it works, ${Math.round(still.seen * 100)}% when it does not`);
+  check('a Drifter is still a speed bump next to it', soft.secs < 2,
+    `${soft.secs.toFixed(1)}s — the Bandit is a different order of thing`);
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — the Bandit'}\n`);
 process.exit(fails.length ? 1 : 0);

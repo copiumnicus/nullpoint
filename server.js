@@ -4,7 +4,8 @@ import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
-import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
+import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade,
+         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
@@ -168,10 +169,9 @@ aliens.set(DEV_ID, PEN_SLOTS.map(sl => newAlien(sl.kind, sl.id, MAPS[DEV_ID], sl
 for (const h of HOMES) {
   seed(h, 'drifter', ALIENS_PER_MAP);
   const co = h[0];
-  for (const mid of [co + '2', co + '3']) {       // one hop out from every dock
-    seed(mid, 'drifter', 3);
-    seed(mid, 'bandit', 3);
-  }
+  for (const mid of [co + '2', co + '3']) seed(mid, 'drifter', 4);
+  seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
+  seed(co + '4', 'drifter', 3);
 }
 
 // The hull and formation galleries, resolved once at boot. They never move, take
@@ -751,9 +751,22 @@ setInterval(() => {
     for (const a of list) {
       if (a.dead > 0) { a.dead -= dt; if (a.dead <= 0) respawnAlien(a, map); continue; }
       const tgt = stepAlienAI(a, map, here, dt);
+      // Anything in the air with this one's name on it. Rockets first: they are
+      // the shots that will not simply go past on their own.
+      const incoming = [
+        ...(rockets.get(mapId) ?? []).filter(r => r.target === a),
+        ...(bolts.get(mapId) ?? []).filter(b => b.target === a)
+          .map(b => ({ x: b.sx + (b.ax - b.sx) * (1 - b.t / b.ttl),
+                       y: b.sy + (b.ay - b.sy) * (1 - b.t / b.ttl),
+                       vx: (b.ax - b.sx) / b.ttl, vy: (b.ay - b.sy) / b.ttl })),
+      ];
+      const breaking = stepEvade(a, incoming, map, dt);
       step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
       const victim = tgt ? here.find(c => c.id === tgt) : null;
-      faceTarget(a, victim?.ship);
+      // Breaking means turning, and turning is what takes its nose off you. The
+      // camouflage and the evasion are the same mechanic from two sides.
+      if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = Math.atan2(a.vy, a.vx);
+      else faceTarget(a, victim?.ship);
       for (const shot of fire(a, victim?.ship ?? null, dt)) bolts.get(mapId).push(shot);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
       if (a.hp <= 0) killAlien(mapId, a);
