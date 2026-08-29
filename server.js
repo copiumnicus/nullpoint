@@ -4,7 +4,7 @@ import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
-import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade,
+import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
@@ -765,7 +765,7 @@ setInterval(() => {
       const victim = tgt ? here.find(c => c.id === tgt) : null;
       // Breaking means turning, and turning is what takes its nose off you. The
       // camouflage and the evasion are the same mechanic from two sides.
-      if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = Math.atan2(a.vy, a.vx);
+      if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = jinkHeading(a, victim?.ship);
       else faceTarget(a, victim?.ship);
       for (const shot of fire(a, victim?.ship ?? null, dt)) bolts.get(mapId).push(shot);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);

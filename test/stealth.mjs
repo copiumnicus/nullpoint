@@ -41,8 +41,11 @@ check('it gets more solid the further round you get',
   table.every(([, r], i) => i === 0 || r.alpha > table[i - 1][1].alpha));
 check('and it is there more of the time too',
   table.every(([, r], i) => i === 0 || r.seen >= table[i - 1][1].seen - 0.02));
-check('nose-on it is very nearly gone',
-  seenFor(0).seen < 0.1 && seenFor(0).alpha <= MIN_ALPHA + 1e-9,
+// Not zero. A seeker reads these same numbers, and a target it can never see at
+// all is one it can never be fired at rather than one it tracks badly.
+check('nose-on it is a glimpse rather than nothing',
+  seenFor(0).seen > 0.05 && seenFor(0).seen < 0.25
+  && Math.abs(seenFor(0).alpha - MIN_ALPHA) < 1e-9,
   `${(seenFor(0).seen * 100).toFixed(0)}% of the time, at ${MIN_ALPHA} alpha`);
 check('on the beam it comes and goes rather than fading',
   seenFor(90).seen > 0.15 && seenFor(90).seen < 0.7,
@@ -88,15 +91,72 @@ console.log('\nthe Bandit');
     'the counterplay is out-turning it, not out-running it');
   check('it picks the fight from beyond where you could see it anyway',
     b.aggro > 0, `engages at ${b.aggro}`);
-  check('it breaks off early, and is plain to see while it runs',
-    b.flee > ALIENS.drifter.flee,
-    'a fleeing Bandit shows you its back, which is its worst angle');
+  check('it does not run', b.flee === 0,
+    'it is already hard to hit and faster than you — running would just mean ' +
+    'dropping the lock, healing out of reach and coming back');
+  check('unlike a Drifter, which does', ALIENS.drifter.flee > 0);
 
   // seenAs is what the client actually calls.
   const v = seenAs({ x: 0, y: 0, heading: 0 }, { x: 500, y: 0 }, 1000, 2);
   check('seenAs hands back everything the client needs',
     typeof v.aspect === 'number' && typeof v.alpha === 'number' && typeof v.shown === 'boolean'
     && Number.isFinite(v.aspect) && Number.isFinite(v.alpha));
+}
+
+console.log('\nbreaking without giving the game away');
+{
+  const { jinkHeading, JINK_CANT } = await import('../shared/aliens.js');
+  // Breaking is what shows you a Bandit — but facing its own velocity turned it
+  // fully broadside every time it jinked, and the camouflage stopped meaning
+  // anything the moment a fight started, which is when it should matter most.
+  const you = { x: 0, y: 0 };
+  const a = { x: 400, y: 0, vx: 0, vy: 300 };          // sitting east, sliding north
+  const face = Math.atan2(you.y - a.y, you.x - a.x);   // straight at you
+  const travel = Math.atan2(a.vy, a.vx);
+  const h = jinkHeading(a, you);
+  const off = (x, y) => { let d = x - y; while (d > Math.PI) d -= Math.PI * 2;
+                          while (d < -Math.PI) d += Math.PI * 2; return Math.abs(d); };
+  console.log(`     travelling ${Math.round(off(travel, face) * 180 / Math.PI)}° off you, ` +
+              `it points ${Math.round(off(h, face) * 180 / Math.PI)}° off`);
+  check('it crabs rather than turning broadside',
+    off(h, face) > 0.05 && off(h, face) < off(travel, face) - 0.05,
+    'part-way round, so it stays half-hidden while it works');
+  check('the cant is a real fraction of the turn', JINK_CANT > 0 && JINK_CANT < 1);
+  check('with nothing to face it just flies where it is going',
+    Math.abs(jinkHeading(a, null) - travel) < 1e-9);
+  check('and the aspect it presents stays in the interesting middle', (() => {
+    const asp = aspectOf({ x: a.x, y: a.y, heading: h }, you);
+    return asp > 0.1 && asp < 0.85;                    // neither gone nor plain
+  })(), 'visible some of the time, which is the whole idea');
+}
+
+console.log('\nwhat the missile can see');
+{
+  // A seeker has a worse look than the pilot who fired it: small, close in, and
+  // looking from whatever angle it happens to be at. It holds the target
+  // intermittently, steers sloppily while it has it, and coasts when it does not.
+  const { seekerOn, SEEK_WOBBLE } = await import('../shared/rockets.js');
+  const target = { x: 0, y: 0, heading: 0, def: { stealth: true } };
+  const at = (deg, age = 0, seed = 3) => {
+    const r = deg * Math.PI / 180;
+    return seekerOn({ x: Math.cos(r) * 400, y: Math.sin(r) * 400, age, seed }, target);
+  };
+  console.log('     ' + [0, 90, 180].map(d =>
+    `${d}° wobble ${Math.round(at(d).wobble)}px`).join('   '));
+  check('a plain target is tracked perfectly',
+    seekerOn({ x: 100, y: 0, age: 0, seed: 1 }, { x: 0, y: 0, heading: 0 }).locked === true
+    && seekerOn({ x: 100, y: 0, age: 0, seed: 1 }, { x: 0, y: 0, heading: 0 }).wobble === 0,
+    'nothing here touches an ordinary alien');
+  check('the aim wanders more the fainter the return',
+    at(0).wobble > at(90).wobble && at(90).wobble > at(180).wobble);
+  check('and tail-on it does not wander at all', at(180).wobble === 0);
+  check('a seeker loses it and finds it again as it flies', (() => {
+    let held = 0, n = 0;
+    for (let a = 0; a < 3; a += 0.02) { if (at(20, a, 5).locked) held++; n++; }
+    return held > 0 && held < n;                   // neither blind nor perfect
+  })(), 'intermittently, which is what makes a rocket go past something quiet');
+  check('the wobble never exceeds what was declared',
+    [0, 45, 90, 135, 180].every(d => at(d).wobble <= SEEK_WOBBLE + 1e-9));
 }
 
 console.log('\nthe fight');

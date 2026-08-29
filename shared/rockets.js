@@ -17,6 +17,7 @@ import { applyDamage } from './sim.js';
 import { boostOf } from './power.js';
 import { EQUIPMENT, MAX_LAUNCHERS } from './gear.js';
 import { hardpoints } from './combat.js';
+import { aspectOf, alphaAt, dutyAt, shownAt } from './stealth.js';
 
 export { MAX_LAUNCHERS };
 
@@ -45,6 +46,28 @@ export const ARC_TIME     = 0.8;    // s to spool between them
 export const TERMINAL_R   = 400;    // px inside which it stops holding back
 export const TERMINAL_TURN = 14;    // rad/s there: 520/14 = 37px of turn circle
 export const ROCKET_R     = 40;     // proximity fuse, on top of the hull's radius
+
+// --- the seeker ---------------------------------------------------------------
+// A missile has a worse look at a stealth airframe than the pilot who fired it.
+// It is small, it is close in, and it is looking from wherever it happens to be
+// — which against something shaped to be quiet from the front is usually the
+// worst angle there is.
+//
+// So it holds the target intermittently. While it has it, it steers, sloppily,
+// with an error that grows as the return weakens. While it has lost it, it
+// coasts on the last bearing it believed — which is how a missile misses
+// something that was never really there.
+export const SEEK_WOBBLE = 190;    // px of aim error at the faintest return
+
+export function seekerOn(rocket, target) {
+  if (!target?.def?.stealth) return { locked: true, wobble: 0, aspect: 1 };
+  const aspect = aspectOf(target, rocket);        // from the seeker's own seat
+  return {
+    aspect,
+    locked: shownAt(aspect, (rocket.age ?? 0) * 1000, rocket.seed ?? 0),
+    wobble: (1 - alphaAt(aspect)) * SEEK_WOBBLE,
+  };
+}
 
 export const turnRate = (age, dist) => {
   const spool = Math.min(1, (age ?? 0) / ARC_TIME);
@@ -101,6 +124,7 @@ export function launch(a, b, dt, mag = null) {
       x: m.x, y: m.y, heading: h,
       vx: Math.cos(h) * ROCKET_SPEED, vy: Math.sin(h) * ROCKET_SPEED,
       dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, age: 0, w: Math.round(each),
+      seed: (a.rocketSeed = ((a.rocketSeed ?? 0) + 1) % 97) + i,   // each seeker blinks its own way
     });
   }
   return out;
@@ -116,11 +140,23 @@ export function stepRockets(list, dt) {
     const tg = r.target;
     if (r.t <= 0 || !tg || tg.hp <= 0) { list.splice(i, 1); continue; }
 
-    // Steer toward the target with whatever authority it has right now.
+    // Steer toward the target with whatever authority it has right now — and
+    // only while the seeker can actually see it.
     r.age = (r.age ?? 0) + dt;
     const range = Math.hypot(tg.x - r.x, tg.y - r.y);
+    const eye = seekerOn(r, tg);
+    if (!eye.locked) {                              // lost it: fly the last bearing
+      r.x += r.vx * dt;
+      r.y += r.vy * dt;
+      continue;
+    }
+    // Where it thinks the target is. A weak return is an imprecise one, so the
+    // aim point wanders — a rocket can be locked on and still go past.
+    const drift = eye.wobble
+      ? { x: Math.cos(r.age * 2.3 + r.seed) * eye.wobble, y: Math.sin(r.age * 1.9 + r.seed) * eye.wobble }
+      : { x: 0, y: 0 };
     const w = turnRate(r.age, range) * dt;
-    const want = Math.atan2(tg.y - r.y, tg.x - r.x);
+    const want = Math.atan2(tg.y + drift.y - r.y, tg.x + drift.x - r.x);
     let d = want - r.heading;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;

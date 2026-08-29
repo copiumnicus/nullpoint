@@ -58,15 +58,21 @@ export const ALIENS = {
     // interceptor. That is what makes the jink readable: it commits, and a
     // patient gunner can lead it. Give it fighter-grade acceleration and
     // lasers stop landing at all.
-    attrs: { hull: 13000, shield: 5000, shieldRegen: 260, shieldDelay: 5,
+    attrs: { hull: 22000, shield: 8000, shieldRegen: 90, shieldDelay: 5,
              speed: 400, accel: 500, signature: 2,
              damage: 150, fireRate: 1.3, weaponRange: 640 },
     aggro: 520,       // it picks the fight, and from further out than you can see it
     leash: 2200,
     patience: 4.0,
-    flee: 0.18,       // runs late for something this slippery, and is plain while it goes
+    // It does not run. A Drifter flees because fleeing is the only thing that
+    // saves it; a Bandit is already hard to hit and is faster than anything you
+    // fly, so running would just mean out-pacing you, dropping the lock, healing
+    // up out of reach and coming back. That is a treadmill, not a fight — the
+    // first live duel went 100% to 11% and back up to 47% before it died. It
+    // commits now, and what keeps it alive is the dodging.
+    flee: 0,
     respawn: 40,
-    bounty: 12600,    // 18000 ehp at BOUNTY_RATE
+    bounty: 21000,    // 30000 ehp at BOUNTY_RATE
     xp: 2400,
   },
 
@@ -134,6 +140,24 @@ export function threatBreak(a, incoming) {
 
 // Sets a course away from whatever is closest to hitting it. Returns true while
 // it is breaking, which is the caller's signal to stop pointing its nose at you.
+// How far round it turns while breaking. Not all the way: it crabs, holding its
+// nose part-way toward you while it translates sideways. Facing its own velocity
+// showed you its full flank every time it jinked and the camouflage stopped
+// meaning anything the moment a fight started — which is when it should matter
+// most. Canted, it stays half-hidden while it works.
+export const JINK_CANT = 0.5;
+
+// The heading to fly while breaking, given where the thing it is fighting is.
+export function jinkHeading(a, at) {
+  const travel = Math.atan2(a.vy, a.vx);
+  if (!at) return travel;
+  const face = Math.atan2(at.y - a.y, at.x - a.x);
+  let d = travel - face;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return face + d * JINK_CANT;
+}
+
 export function stepEvade(a, incoming, map, dt = 1 / 30) {
   if (!a.def.evades) return false;
   // The weave runs whether or not anything is inbound, so a break already has a

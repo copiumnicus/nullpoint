@@ -15,6 +15,11 @@
 // comes and goes, and the quieter the aspect the more of the time it is gone.
 // Alpha alone reads as fog; alpha plus dropout reads as something you are barely
 // holding on to.
+//
+// The floor is not zero. Head-on you can still just make one out, which matters
+// for more than fairness: a missile seeker reads the same numbers, and a target
+// it can never see at all is one it can never be fired at rather than one it
+// tracks badly.
 
 // Aspect, 0..1. 0 is nose-on — the Bandit is looking straight at you and you can
 // barely see it. 1 is tail-on: you are behind it and it is in plain sight.
@@ -27,8 +32,8 @@ export function aspectOf(alien, viewer) {
 }
 
 // How solid it looks at that aspect, and how much of the time it is there at all.
-export const MIN_ALPHA = 0.16, MAX_ALPHA = 1;
-export const MIN_DUTY  = 0.05;                 // nose-on: a flicker every few seconds
+export const MIN_ALPHA = 0.30, MAX_ALPHA = 1;
+export const MIN_DUTY  = 0.16;                 // nose-on: a glimpse every second or so
 export const BLINK_HZ  = 2.7;                  // how quickly it comes and goes
 
 // Both curves are eased so the interesting part is the beam, not the extremes:
