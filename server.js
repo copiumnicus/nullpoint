@@ -457,6 +457,9 @@ wss.on('connection', (ws, req) => {
       if (!atStation() || !k || P.credits < kitPrice(m.key)) return;
       P.credits -= kitPrice(m.key);
       P.kits[m.key] = (P.kits[m.key] ?? 0) + 1;
+      // Buying a tier you are not carrying loads it. Otherwise the rack keeps
+      // reading zero because it is still pointed at a kit you own none of.
+      if (!(P.kits[P.kit] > 0)) P.kit = m.key;
       receipt(k.name, kitPrice(m.key), `${P.kits[m.key]} aboard`);
       return outfit();
     }

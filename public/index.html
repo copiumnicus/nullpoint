@@ -279,6 +279,8 @@ ws.onmessage = e => {
   if (m.ammo) myAmmo = m.ammo;
   if (m.using) myUsing = { ...DEFAULT_AMMO, ...m.using };
   if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
+  if (m.kits) myKits = m.kits;
+  if (m.kit) myKit = m.kit;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
   if (m.drones) myDrones = m.drones;
@@ -1521,6 +1523,7 @@ function nowPlaying() {
 // leaves the drone that is actually doing the work rather than the hull.
 let rigAt = null;
 
+const PICK_STRIP = 20;                          // the top of a box opens its rack
 let feedOpen = null;                            // which box has its menu up
 let lastBox = { feed: null, t: -Infinity };     // for spotting a double click on one
 
@@ -1575,7 +1578,14 @@ function barClick(v) {
       return true;
     }
     const held = heldGrades(b.feed);
-    if (b.feed === 'repair') {                  // a click spends one, if it may
+    if (b.feed === 'repair') {
+      // The strip along the top opens the rack; the rest of the box spends one.
+      // Repairing is what you want most of the time so it keeps the big target,
+      // but choosing which drone has to be reachable — it was not reachable at all.
+      if (v.y < b.r.y + PICK_STRIP && held.length > 1) {
+        feedOpen = feedOpen === b.feed ? null : b.feed;
+        return true;
+      }
       if (!held.length) { say('No repair drones aboard — they are sold at a dock', '#e0a53f'); return true; }
       const why = repairBlocked();
       if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
@@ -1646,7 +1656,7 @@ function drawRepairBox(b) {
   g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
 
   g.save();                                      // a spanner, near enough
-  g.translate(r.x + r.w / 2, r.y + 24);
+  g.translate(r.x + r.w / 2, r.y + 32);
   g.globalAlpha = n ? (ready || busy ? 1 : 0.4) : 0.25;
   g.strokeStyle = busy ? '#7de08a' : '#cfe9ff'; g.lineWidth = 3; g.lineCap = 'round';
   g.beginPath(); g.moveTo(-5, 6); g.lineTo(4, -4); g.stroke();
@@ -1658,11 +1668,17 @@ function drawRepairBox(b) {
     for (let i = 0; i < k.tier - 1; i++) g.fillRect(r.x + 6 + i * 6, r.y + 6, 4, 4);
   }
   g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
-  g.fillStyle = busy ? '#7de08a' : n ? (ready ? '#e0a53f' : '#5b6b85') : '#3d4757';
-  g.fillText(busy ? `${me.fix}%` : String(n), r.x + r.w / 2, r.y + r.h - 10);
+  g.fillStyle = busy ? '#7de08a' : n ? (ready ? '#e0a53f' : '#5b6b85') : '#e05a5a';
+  g.fillText(busy ? `${me.fix}%` : n ? String(n) : 'NONE', r.x + r.w / 2, r.y + r.h - 10);
   if (KIT_KEYS.filter(kk => myKits[kk] > 0).length > 1) {
-    g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
-    g.fillText('\u25b2', r.x + r.w - 9, r.y + 12);
+    const hot = hover && hover.x > r.x && hover.x < r.x + r.w
+             && hover.y > r.y && hover.y < r.y + PICK_STRIP;
+    g.fillStyle = hot ? 'rgba(122,180,240,0.18)' : 'rgba(255,255,255,0.04)';
+    g.fillRect(r.x + 1, r.y + 1, r.w - 2, PICK_STRIP - 1);
+    g.fillStyle = hot ? '#8ab4e6' : '#4a5568'; g.font = '9px ui-monospace, monospace';
+    g.textAlign = 'center';
+    g.fillText('\u25b2 PICK', r.x + r.w / 2, r.y + 14);
+    g.textAlign = 'left';
   }
   if (over && !feedOpen) {
     const t = busy ? 'repairing…' : why ? why : `${k.name} — +${Math.round(k.heal * 100)}% hull`;
