@@ -798,14 +798,18 @@ setInterval(() => {
     if (p.dead || p.scoop || p.want !== null) continue;
     const reach = collectorReach(p.ship.drones);
     if (!reach) continue;
-    let best = null, bd = Infinity;
-    for (const c of pods.get(p.mapId) ?? []) {
-      const d = Math.hypot(c.x - p.ship.x, c.y - p.ship.y);
-      if (d <= reach && d < bd) { bd = d; best = c; }
+    // Nearest first, but keep going down the list — it fills to the brim rather
+    // than stopping at the closest pod. Metals differ in volume, so three units
+    // of room takes an iridium and refuses an iron sitting right beside it, and
+    // giving up on the first refusal left cargo on the ground with space to spare.
+    const near = (pods.get(p.mapId) ?? [])
+      .map(c => ({ c, d: Math.hypot(c.x - p.ship.x, c.y - p.ship.y) }))
+      .filter(o => o.d <= reach)
+      .sort((a, b) => a.d - b.d);
+    for (const { c } of near) {
+      const s2 = beginScoop(p.ship, p.hold, c, reach, DRONE_SPEED);
+      if (typeof s2 === 'object') { p.scoop = s2; break; }   // anything else: try the next one
     }
-    if (!best) continue;
-    const s2 = beginScoop(p.ship, p.hold, best, reach, DRONE_SPEED);   // 'full' once there is no room
-    if (typeof s2 === 'object') p.scoop = s2;
   }
 
   for (const [, p] of players) {                  // tractor beams

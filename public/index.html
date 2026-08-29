@@ -1983,16 +1983,27 @@ function drawFrame(now) {
   if (scoop && me) {                               // tractor beam
     const pod = pods.find(p => p.id === scoop.id);
     if (pod) {
-      // A rig does the hauling if you have one; otherwise it is your own arm.
-      const from = rigAt ?? { x: me.rx, y: me.ry };
       const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
-      const px = pod.x + (from.x - pod.x) * scoop.p, py = pod.y + (from.y - pod.y) * scoop.p;
-      g.strokeStyle = col; g.globalAlpha = rigAt ? 0.22 : 0.35; g.lineWidth = rigAt ? 6 : 10;
-      g.beginPath(); g.moveTo(from.x, from.y); g.lineTo(pod.x, pod.y); g.stroke();
-      g.globalAlpha = 0.9; g.lineWidth = rigAt ? 1.4 : 2;
-      g.beginPath(); g.moveTo(from.x, from.y); g.lineTo(pod.x, pod.y); g.stroke();
-      g.fillStyle = col; g.globalAlpha = 1;       // the cargo itself, sliding in
-      g.beginPath(); g.arc(px, py, 7 * (1 - scoop.p * 0.6), 0, 7); g.fill();
+      if (rigAt) {
+        // No beam. The drone flying out and back IS the animation — a line
+        // stretched between the two was just clutter drawn over it. It carries
+        // the ore home instead, once it has hold of it.
+        if (scoop.p > 0.55) {
+          g.fillStyle = col;
+          g.beginPath(); g.arc(rigAt.x, rigAt.y, 4.5, 0, 7); g.fill();
+          g.globalAlpha = 0.35;
+          g.beginPath(); g.arc(rigAt.x, rigAt.y, 8, 0, 7); g.fill();
+          g.globalAlpha = 1;
+        }
+      } else {                                     // your own arm: a proper beam
+        const px = pod.x + (me.rx - pod.x) * scoop.p, py = pod.y + (me.ry - pod.y) * scoop.p;
+        g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 10;
+        g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+        g.globalAlpha = 0.9; g.lineWidth = 2;
+        g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+        g.fillStyle = col; g.globalAlpha = 1;      // the cargo itself, sliding in
+        g.beginPath(); g.arc(px, py, 7 * (1 - scoop.p * 0.6), 0, 7); g.fill();
+      }
     }
   }
   rigAt = null;                                    // one frame only

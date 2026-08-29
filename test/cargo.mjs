@@ -196,6 +196,24 @@ console.log('\nwhen the hold is full');
     && !holdFullFor({ iron: 19, iridium: 2 }, 'iridium', 60),
     'no room for another iron, room for one more iridium');
   check('room never goes negative', roomFor({ iron: 99 }, 'iron', 60) === 0);
+
+  // A rig works down the pods by distance rather than giving up on the closest.
+  // With two units left the nearest iron will not fit and the iridium behind it
+  // will, and stopping at the first refusal left cargo on the ground.
+  const ship2 = { x: 0, y: 0, hp: 100, stats: { cargo: 60 } };
+  const tight = { iron: 19, iridium: 1 };          // 58 of 60
+  const field = [{ id: 1, x: 120, y: 0, mat: 'iron', n: 9 },
+                 { id: 2, x: 300, y: 0, mat: 'iridium', n: 2 }];
+  const firstThatFits = (hold2) => {
+    for (const { c } of field.map(c => ({ c, d: Math.hypot(c.x, c.y) })).sort((a, b) => a.d - b.d))
+      if (typeof beginScoop(ship2, hold2, c, 900, 420) === 'object') return c.mat;
+    return null;
+  };
+  check('a rig works past a pod it cannot fit', firstThatFits(tight) === 'iridium',
+    'the nearest is iron, and two units of room will not take one');
+  check('it still fills up on the nearest when that one fits',
+    firstThatFits({ iron: 10 }) === 'iron');
+  check('and stops entirely when nothing fits', firstThatFits({ iron: 20 }) === null);
 }
 
 console.log('\ncollector rigs');
