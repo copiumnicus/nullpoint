@@ -64,11 +64,18 @@ export const servable = (name, list) => list.includes(name) && isTrack(name.spli
 // hold is the buffer, the fade is the manners.
 export const COMBAT_HOLD = 7000;      // ms of quiet before it counts as over
 
+// Escalating is instant; stepping down waits out the hold. Switching targets
+// mid-fight leaves a moment where you are not shooting at anything and something
+// is still shooting at you, and without this the music dips into the chase and
+// back on every retarget.
+const RANK = { [CALM]: 0, [CHASE]: 1, [COMBAT]: 2 };
+
 export function moodFor({ fighting = false, hunted = false } = {}, now = 0,
                         held = { mood: CALM, until: 0 }) {
   const want = fighting ? COMBAT : hunted ? CHASE : null;
-  if (want) return { mood: want, until: now + COMBAT_HOLD };
-  return now < held.until ? held : { mood: CALM, until: 0 };
+  if (!want) return now < held.until ? held : { mood: CALM, until: 0 };
+  const hold = now < held.until && RANK[held.mood] > RANK[want];
+  return { mood: hold ? held.mood : want, until: now + COMBAT_HOLD };
 }
 
 // Picking the next track.

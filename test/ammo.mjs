@@ -317,6 +317,21 @@ console.log('\nthe playlist');
     && step({ fighting: true }, 100) === COMBAT && step({}, COMBAT_HOLD - 1000) === COMBAT,
     `${COMBAT_HOLD / 1000}s of quiet is what ends it`);
   check('and enough quiet does', step({}, 1200) === CALM);
+
+  // Switching targets mid-brawl leaves a moment where you are not shooting at
+  // anything and something is still shooting at you. Without the rank rule the
+  // music dipped into the chase and back on every retarget.
+  hold = { mood: CALM, until: 0 }; clock = 0;
+  check('a retarget mid-fight does not dip into the chase',
+    step({ fighting: true }, 100) === COMBAT
+    && step({ fighting: true, hunted: true }, 500) === COMBAT
+    && step({ hunted: true }, 120) === COMBAT
+    && step({ fighting: true, hunted: true }, 200) === COMBAT,
+    'escalating is instant, stepping down waits out the hold');
+  check('but it still steps down once the fight is actually over',
+    step({}, COMBAT_HOLD + 500) === CALM);
+  check('and being hunted from calm is still a chase',
+    step({ hunted: true }, 100) === CHASE, 'the rule holds one way, not both');
   check('the hold is long enough to cover a reload, short enough to notice',
     COMBAT_HOLD >= 4000 && COMBAT_HOLD <= 15000, `${COMBAT_HOLD / 1000}s`);
   check('a fight starting again re-arms the hold from now',

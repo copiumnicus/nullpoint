@@ -1294,7 +1294,8 @@ function barClick(v) {
       const on = !myArmed[b.feed];
       feedOpen = null;
       send({ t: 'arm', feed: b.feed, on });
-      say(`${b.feed === 'laser' ? 'Guns' : 'Rockets'} ${on ? 'live' : 'safed'}`, on ? '#7de08a' : '#e0a53f');
+      say(`${b.feed === 'laser' ? 'Guns' : 'Rockets'} ${on ? 'firing again' : 'holding fire'}`,
+          on ? '#7de08a' : '#e0a53f');
       return true;
     }
     const held = heldGrades(b.feed);
@@ -1369,15 +1370,18 @@ function drawBar() {
       for (let i = 0; i < a.tier - 1; i++) g.fillRect(r.x + 6 + i * 6, r.y + 6, 4, 4);
     }
     g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
-    g.fillStyle = safed ? '#7a6a52' : dry ? '#ff5c6b' : low ? '#e0a53f' : '#cfe4ff';
-    g.fillText(dry ? 'DRY' : n > 9999 ? `${Math.round(n / 1000)}k` : String(n), r.x + r.w / 2, r.y + r.h - 10);
+    g.fillStyle = safed ? '#e0a53f' : dry ? '#ff5c6b' : low ? '#e0a53f' : '#cfe4ff';
+    g.fillText(safed ? 'HELD' : dry ? 'DRY' : n > 9999 ? `${Math.round(n / 1000)}k` : String(n),
+               r.x + r.w / 2, r.y + r.h - 10);
     g.globalAlpha = 1;
     if (safed) {                                 // struck through: this one is holding fire
-      g.strokeStyle = '#e0a53f'; g.lineWidth = 2.5;
+      g.fillStyle = 'rgba(224,165,63,0.10)'; g.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+      g.strokeStyle = '#e0a53f'; g.lineWidth = 3; g.lineCap = 'round';
       g.beginPath();
-      g.moveTo(r.x + 10, r.y + 10); g.lineTo(r.x + r.w - 10, r.y + r.h - 10);
-      g.moveTo(r.x + r.w - 10, r.y + 10); g.lineTo(r.x + 10, r.y + r.h - 10);
+      g.moveTo(r.x + 13, r.y + 11); g.lineTo(r.x + r.w - 13, r.y + r.h - 21);
+      g.moveTo(r.x + r.w - 13, r.y + 11); g.lineTo(r.x + 13, r.y + r.h - 21);
       g.stroke();
+      g.lineCap = 'butt';
     }
     if (heldGrades(b.feed).length > 1) {         // a hint that there is a choice here
       g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';

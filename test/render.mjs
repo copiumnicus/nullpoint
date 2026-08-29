@@ -666,6 +666,33 @@ const dismiss = () => {
     frame(t += 16); frames++;
     if (sent.some(m => m.t === 'intent')) errs.push('a click on the bar flew the ship');
 
+    // Twice on a box safes that weapon; the server is what actually holds fire,
+    // so the click has to reach it.
+    sent.length = 0;
+    const realNow2 = performance.now;
+    let c2 = realNow2.call(performance);
+    performance.now = () => c2;
+    try {
+      const box = B.boxes.find(b => b.feed === 'rocket');
+      c2 += 5000; click(box.r); evt('pointerup', {}); frame(t += 16); frames++;
+      c2 += 100;  click(box.r); evt('pointerup', {}); frame(t += 16); frames++;
+      const arm = sent.find(m => m.t === 'arm');
+      if (arm?.feed !== 'rocket' || arm.on !== false)
+        errs.push(`double-clicking the rocket box sent ${JSON.stringify(arm)}`);
+      // and the client believes it once the server says so
+      feed({ t: 'fit', hull: 'vanguard', fit: { weapon: [], generator: [], tech: [] },
+             drones: [], gear: {}, formation: 'line', formations: ['line'], hulls: ['vanguard'],
+             credits: 90000, ammo: { cell1: 4000, cell3: 250, head1: 400 },
+             using: { laser: 'cell1', rocket: 'head1' }, armed: { laser: true, rocket: false } });
+      frame(t += 16); frames++;
+      sent.length = 0;
+      c2 += 5000; click(box.r); evt('pointerup', {}); frame(t += 16); frames++;
+      c2 += 100;  click(box.r); evt('pointerup', {}); frame(t += 16); frames++;
+      const back = sent.find(m => m.t === 'arm');
+      if (back?.on !== true) errs.push(`safed, a second double-click sent ${JSON.stringify(back)}`);
+      else console.log('ammo: double-click safes a weapon and double-click brings it back');
+    } finally { performance.now = realNow2; }
+
     sent.length = 0;
     evt('keydown', { key: 'q' });                                  // cycle the laser feed
     frame(t += 16); frames++;
