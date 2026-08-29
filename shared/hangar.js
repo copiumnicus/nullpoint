@@ -17,6 +17,11 @@ import { AMMO_KEYS } from './ammo.js';
 
 export const TABS = [{ key: 'hangar', name: 'HANGAR' }, { key: 'store', name: 'STORE' }];
 
+// Ammunition is sold anywhere; everything else needs the ring. Declared here so
+// the client dims exactly what the server will refuse.
+export const ANYWHERE = ['ammo'];
+export const sellsAt = (page, docked) => docked || ANYWHERE.includes(page);
+
 export const STORE_PAGES = [
   { key: 'ships',     name: 'Ships',       hint: 'hulls and their racks' },
   { key: 'weapon',    name: 'Lasers',      hint: 'emitters — a bolt you can dodge, thrown fast' },

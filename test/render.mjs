@@ -352,7 +352,21 @@ const dismiss = () => {
     sent.length = 0;
     for (const it of S.store) click(it.r);
     frame(t += 16); frames++;
-    if (sent.some(m => m.t === 'buyammo')) errs.push('the store sold ammunition to a ship in open space');
+    // Ammunition is the exception: running dry halfway across a sector is a walk
+    // home, not an interesting problem.
+    if (!sent.some(m => m.t === 'buyammo'))
+      errs.push('a ship in open space could not resupply ammunition');
+
+    // ...and nothing else sells out here.
+    const G2 = bayLayout(innerWidth, innerHeight, { ...state, tab: 'store', page: 'weapon' });
+    click(G2.pages.find(x => x.key === 'weapon').r);
+    frame(t += 16); frames++;
+    sent.length = 0;
+    for (const it of G2.store) click(it.r);
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'buy')) errs.push('the store sold an emitter to a ship in open space');
+    click(S.pages.find(x => x.key === 'ammo').r);
+    frame(t += 16); frames++;
 
     // ...and having walked to Ammunition undocked, the tabs still move.
     sent.length = 0;
@@ -375,7 +389,7 @@ const dismiss = () => {
     frame(t += 16); frames++;
     if (!sent.some(m => m.t === 'buy'))
       errs.push('the panel was still stuck on the tab it had when it left the ring');
-    else console.log('station: tabs and pages move anywhere, buying and fitting need the ring');
+    else console.log('station: tabs move anywhere, ammunition sells anywhere, the rest needs the ring');
   }
 
   // The chooser. A locker holding MK-Is and MK-Vs must not decide for you — it

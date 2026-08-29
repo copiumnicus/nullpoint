@@ -414,8 +414,11 @@ wss.on('connection', (ws, req) => {
       return outfit();
     }
     if (m.t === 'buyammo') {
+      // The one thing you can buy anywhere. Running dry halfway across a sector
+      // with a hold full of ore and no way to shoot back is not an interesting
+      // problem, it is just a walk home.
       const a = AMMO[m.key];
-      if (!atStation() || !a) return;
+      if (!a) return;
       const crates = Math.max(1, Math.min(99, Math.floor(+m.n) || 1));
       const cost = a.price * crates;
       if (P.credits < cost) return;

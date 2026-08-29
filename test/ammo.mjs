@@ -195,6 +195,17 @@ console.log('\nkeeping it');
     && back.using.laser === 'cell3' && back.using.rocket === 'head2');
 }
 
+console.log('\nwhere it is sold');
+{
+  const { sellsAt, ANYWHERE, STORE_PAGES } = await import('../shared/hangar.js');
+  check('ammunition sells anywhere', sellsAt('ammo', false) && sellsAt('ammo', true),
+    'a rack with nothing behind it is a walk home, not a puzzle');
+  check('and nothing else does',
+    STORE_PAGES.filter(p => !ANYWHERE.includes(p.key)).every(p => !sellsAt(p.key, false)),
+    STORE_PAGES.filter(p => !ANYWHERE.includes(p.key)).map(p => p.name).join(', '));
+  check('at the ring everything does', STORE_PAGES.every(p => sellsAt(p.key, true)));
+}
+
 console.log('\nthe bar');
 {
   let off = 0, overlap = 0, menuOff = 0;

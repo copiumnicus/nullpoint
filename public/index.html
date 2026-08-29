@@ -17,7 +17,7 @@ import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
 import { SYSTEMS, BOOST } from '/shared/power.js';
 import { chartLayout } from '/shared/chart.js';
-import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '/shared/hangar.js';
+import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { audioReady, setThrust, laser, rocket, explosion,
@@ -629,7 +629,7 @@ function bayClick(v) {
 
   // Spending and fitting are not free.
   const atRing = docked();
-  const needDock = () => (say('Fly into your base ring to buy or fit', '#e0a53f'), true);
+  const needDock = () => (say('Fly into your base ring — only ammunition is sold out here', '#e0a53f'), true);
 
   if (bayTab === 'hangar') {
     for (const { k, r } of G.hulls) if (inside(r)) {
@@ -662,7 +662,7 @@ function bayClick(v) {
 
   for (const it of G.store) {
     if (!inside(it.r)) continue;
-    if (!atRing) return needDock();
+    if (!sellsAt(bayPage, atRing)) return needDock();
     if (it.kind === 'hull') {
       if (it.owned) return it.k === myHull ? undefined : send({ t: 'hull', key: it.k });
       return credits >= HULLS[it.k].price ? send({ t: 'buyhull', key: it.k })
@@ -782,7 +782,8 @@ function drawBay() {
   g.fillStyle = home ? '#66748c' : '#e0a53f';
   g.fillText(home ? 'docked — every change takes effect at once'
            : MAPS[mapId].dev ? 'fly into the workshop ring to outfit'
-                             : `fly into the ${COMPANIES[myCo].tag}-1 base ring to outfit`, P.x + 236, P.y + 32);
+                             : 'out here you can buy ammunition — the rest needs a dock',
+             P.x + 236, P.y + 32);
 
   // a live stat line, so the effect of a click is visible immediately
   let sx = P.x + 20;
@@ -804,6 +805,7 @@ function drawBay() {
   const SHORT = { damage: 'dmg', hull: 'hull', shield: 'shld', speed: 'spd', accel: 'acc' };
 
   if (G.tab === 'hangar') {
+    g.globalAlpha = home ? 1 : 0.45;               // look all you like; fitting needs the ring
     g.fillStyle = '#5b6b85';
     g.fillText('YOUR SHIPS', P.x + 20, G.top - 10);
     g.fillText(`RACKS  ${fitCount(myFit)}/${SLOTS.reduce((n, s2) => n + slotsOf(myHull)[s2], 0)}`,
@@ -895,8 +897,10 @@ function drawBay() {
                   g.fillText('remove', r.x + r.w - 10, r.y + r.h / 2 + 4); g.textAlign = 'left'; }
     }
 
+    g.globalAlpha = 1;
     g.fillStyle = '#5b6b85';
-    g.fillText('click an empty slot to choose what goes in it · a filled slot to strip it · H or Esc to close',
+    g.fillText(home ? 'click an empty slot to choose what goes in it · a filled slot to strip it · H or Esc to close'
+                    : 'looking only — fitting needs your base ring · ammunition is sold anywhere',
                P.x + 20, P.y + P.h - 18);
     g.font = '12px ui-monospace, monospace';
 
@@ -931,13 +935,16 @@ function drawBay() {
 
   for (const p of G.pages) {
     const on = p.key === G.page, r = p.r;
+    // Dimmed means "not from here" — the page still opens, so you can price
+    // things on the way home.
+    g.globalAlpha = sellsAt(p.key, home) ? 1 : 0.4;
     g.fillStyle = on ? 'rgba(90,150,220,0.16)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
     g.fillRect(r.x, r.y, r.w, r.h);
     g.strokeStyle = on ? '#7fd4ff' : '#2c3d55'; g.lineWidth = on ? 1.6 : 1;
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
     g.fillStyle = on ? '#cfe4ff' : '#8ea3bd'; g.font = '12px ui-monospace, monospace';
     g.fillText(p.name, r.x + 12, r.y + r.h / 2 + 4);
-    g.font = '11px ui-monospace, monospace';
+    g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
   }
 
   for (const it of G.store) {
@@ -958,9 +965,10 @@ function drawBay() {
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
                                       : EQUIPMENT[it.k].blurb;
     const afford = credits >= price;
+    const sells = sellsAt(G.page, home);
     if (over(r)) tip = tipFor(it.kind, it.k, shipCtx());
 
-    g.globalAlpha = it.owned || afford ? 1 : 0.5;
+    g.globalAlpha = (it.owned || afford ? 1 : 0.5) * (sells ? 1 : 0.45);
     g.fillStyle = it.owned ? 'rgba(125,224,138,0.10)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
     g.fillRect(r.x, r.y, r.w, r.h);
     g.strokeStyle = it.owned ? '#2c3d55' : afford ? '#3d5876' : '#2c3d55'; g.lineWidth = 1;
