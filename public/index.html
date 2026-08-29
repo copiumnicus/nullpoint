@@ -30,7 +30,8 @@ import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
-import { poolOf, moodFor, drawNext, CALM, COMBAT } from '/shared/music.js';
+import { poolOf, moodFor, drawNext, resolveMood,
+         CALM, CHASE, COMBAT } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon,
          barLayout, feedMenu } from '/shared/ammo.js';
@@ -613,18 +614,27 @@ function bayClick(v) {
   }
 
   if (!inside(G.panel)) { bayOpen = false; return; }
-  if (!docked()) return say('Fly into your base ring to use the station', '#e0a53f');
 
+  // Looking is free. Tabs and pages work anywhere, so you can price a rack on
+  // the way home and know what to fly back for — it was refusing every click
+  // when you were not docked, which also meant the panel stuck on whichever tab
+  // you happened to be on when you left the ring.
   for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; picking = null; return; }
   for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; return; }
+
+  // Spending and fitting are not free.
+  const atRing = docked();
+  const needDock = () => (say('Fly into your base ring to buy or fit', '#e0a53f'), true);
 
   if (bayTab === 'hangar') {
     for (const { k, r } of G.hulls) if (inside(r)) {
       if (k === myHull) return;
+      if (!atRing) return needDock();
       return send({ t: 'hull', key: k });               // owned only in here; buying is the store's job
     }
     for (const row of G.racks) {
       if (row.header || !inside(row.r)) continue;
+      if (!atRing) return needDock();
       if (row.slot === 'form') {
         if (row.key === myForm) return;
         return send({ t: 'formation', key: row.key });
@@ -647,6 +657,7 @@ function bayClick(v) {
 
   for (const it of G.store) {
     if (!inside(it.r)) continue;
+    if (!atRing) return needDock();
     if (it.kind === 'hull') {
       if (it.owned) return it.k === myHull ? undefined : send({ t: 'hull', key: it.k });
       return credits >= HULLS[it.k].price ? send({ t: 'buyhull', key: it.k })
@@ -1080,25 +1091,25 @@ function drawInventory() {
 // wanting the game running and the game silent at the same time.
 let setOpen = false, dragging = null;
 
-// Is this a fight? You are shooting at something, something is shooting at you,
-// or your shields are still ringing from a hit. How long that verdict is held
-// afterwards is moodFor's problem, in shared/music.js, with the test on it.
-let fightUntil = 0;
+// Two questions, not one. Are you shooting at something — and is something
+// shooting at you? Both at once is a fight; only the second is a chase, which is
+// what crossing a map with a drifter on your tail actually is. How long either
+// verdict is held is moodFor's problem, in shared/music.js, with the tests on it.
+let moodHeld = { mood: CALM, until: 0 };
 
-function inAFight() {
+function fightState() {
   const me = ships.get(myId);
-  if (!me || dead) return false;
-  if (me.tgt) return true;                      // you are engaging something
-  if ((me.flash ?? 0) > 0) return true;         // something just landed on your shields
-  for (const s of ships.values()) if (s.co === 'x' && s.tgt === myId) return true;
-  return false;
+  if (!me || dead) return {};
+  let hunted = (me.flash ?? 0) > 0;             // something just landed on your shields
+  if (!hunted) for (const s of ships.values())
+    if (s.co === 'x' && s.tgt === myId) { hunted = true; break; }
+  return { fighting: !!me.tgt, hunted };
 }
 
 // Every frame. Cheap, and setMood ignores anything that is not a change.
 function stirMusic(now) {
-  const m = moodFor(inAFight(), now, fightUntil);
-  fightUntil = m.until;
-  setMood(m.mood);
+  moodHeld = moodFor(fightState(), now, moodHeld);
+  setMood(resolveMood(moodHeld.mood, hasMood));   // a mood with no folder borrows one
 }
 
 const busOn = key => key === 'master' ? audioOn() : key === 'sfx' ? sfxOnly() : musicOnly();
@@ -1970,7 +1981,8 @@ function drawFrame(now) {
   // the tell that the fight has taken over the deck.
   const tune = nowPlaying();
   if (tune) {
-    const fight = musicMood() === COMBAT;
+    const tense = musicMood() !== CALM ? musicMood().toUpperCase() : null;
+    const fight = !!tense;
     g.font = '11px ui-monospace, monospace'; g.textAlign = 'right';
     const label = tune.length > 30 ? tune.slice(0, 29) + '\u2026' : tune;
     const tw = g.measureText(label).width + (fight ? 52 : 0);
@@ -1978,10 +1990,11 @@ function drawFrame(now) {
     g.beginPath(); g.roundRect(sb.x - 18 - tw, sb.y, tw + 14, sb.h, 5); g.fill();
     if (fight) {
       g.textAlign = 'left'; g.font = '9px ui-monospace, monospace';
-      g.fillStyle = 'rgba(224,90,90,0.18)';
+      const hot = musicMood() === COMBAT;
+      g.fillStyle = hot ? 'rgba(224,90,90,0.18)' : 'rgba(224,165,63,0.18)';
       g.fillRect(sb.x - 12 - tw, sb.y + 9, 44, 13);
-      g.fillStyle = '#e05a5a';
-      g.fillText('COMBAT', sb.x - 8 - tw, sb.y + 19);
+      g.fillStyle = hot ? '#e05a5a' : '#e0a53f';
+      g.fillText(tense, sb.x - 8 - tw, sb.y + 19);
       g.textAlign = 'right';
     }
     g.font = '11px ui-monospace, monospace';

@@ -292,18 +292,21 @@ export function explosion(dist, foe) {
 // With no combat tracks on disk the combat deck simply never exists and the
 // score carries on, which is the right behaviour for a folder you have not filled.
 
-export const CALM = 'calm', COMBAT = 'combat';
-export const FADE_S = 2.2;                       // seconds either deck takes to arrive or leave
+export const CALM = 'calm';                       // the deck everything falls back to
+export const FADE_S = 2.2;                       // seconds any deck takes to arrive or leave
 
-const pools = { [CALM]: [], [COMBAT]: [] };
-const decks = {};                                // mood -> { el, gain, at, level }
+// A deck per mood, created as the sorter turns one up. This module does not know
+// what the moods are or what they mean — that is shared/music.js — it only knows
+// how to run one deck at a time and fade between them.
+const pools = { [CALM]: [] };
+const decks = {};                                // mood -> { el, gain, bag, last, level }
 let musicVol = 0.55, musicWanted = false, onTrack = null, parked = [];
 let mood = CALM, fader = null;
 
 export const MUSIC_VOL_STEP = 0.1;
 export const musicVolume = () => musicVol;
 export const musicMood = () => mood;
-export const musicList = () => [...pools[CALM], ...pools[COMBAT]];
+export const musicList = () => Object.values(pools).flat();
 export const musicParked = () => [...parked];
 export const hasMood = m => pools[m]?.length > 0;
 export const musicTrack = () => decks[mood]?.last ?? null;
@@ -334,10 +337,11 @@ export async function startMusic(sort = () => CALM) {
   } catch { return; }                              // no server, no music, no noise about it
   for (const name of all) {
     const p = sort(name);
-    if (p && pools[p]) pools[p].push(name); else parked.push(name);
+    if (!p) { parked.push(name); continue; }
+    (pools[p] ??= []).push(name);
   }
-  shuffle(pools[CALM]); shuffle(pools[COMBAT]);
-  console.info(`music: ${pools[CALM].length} calm, ${pools[COMBAT].length} combat` +
+  for (const p of Object.values(pools)) shuffle(p);
+  console.info('music: ' + Object.entries(pools).map(([m, l]) => `${l.length} ${m}`).join(', ') +
                (parked.length ? `, ${parked.length} parked` : ''));
   if (pools[CALM].length) { deckFor(CALM); play(CALM); }
 }

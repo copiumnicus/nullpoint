@@ -308,6 +308,46 @@ const dismiss = () => {
   if (kinds.size) console.log(`station: ${rows} hangar rows + ${storeRows} store rows across ` +
     `${STORE_PAGES.length} pages, all hovered and clicked; sent ${[...kinds].join(', ')}`);
 
+  // Away from the ring, looking is free and spending is not. It used to refuse
+  // every click, which also meant the panel stuck on whichever tab you were on
+  // when you left — you could not even walk over to Ammunition to see the price.
+  {
+    feed({ t: 's', docked: false, ships: [packShip({ id: 1, x: 200, y: 200, heading: 0, charge: 0,
+      co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+    frame(t += 16); frames++;
+    const S = bayLayout(innerWidth, innerHeight, { ...state, tab: 'store', page: 'ammo' });
+    click(S.tabs.find(x => x.key === 'store').r);
+    click(S.pages.find(x => x.key === 'ammo').r);
+    frame(t += 16); frames++;
+    sent.length = 0;
+    for (const it of S.store) click(it.r);
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'buyammo')) errs.push('the store sold ammunition to a ship in open space');
+
+    // ...and having walked to Ammunition undocked, the tabs still move.
+    sent.length = 0;
+    click(S.tabs.find(x => x.key === 'hangar').r);
+    frame(t += 16); frames++;
+    const H = bayLayout(innerWidth, innerHeight, { ...state, tab: 'hangar' });
+    click(H.hulls.find(h => h.k === 'hauler').r);
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'hull')) errs.push('a ship in open space swapped hulls');
+    click(H.tabs.find(x => x.key === 'store').r);
+    click(S.pages.find(x => x.key === 'weapon').r);
+    frame(t += 16); frames++;
+    // proof the navigation actually took: the page we just walked to now sells
+    feed({ t: 's', docked: true, ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0,
+      co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+    frame(t += 16); frames++;
+    sent.length = 0;
+    const W = bayLayout(innerWidth, innerHeight, { ...state, tab: 'store', page: 'weapon' });
+    click(W.store[0].r);
+    frame(t += 16); frames++;
+    if (!sent.some(m => m.t === 'buy'))
+      errs.push('the panel was still stuck on the tab it had when it left the ring');
+    else console.log('station: tabs and pages move anywhere, buying and fitting need the ring');
+  }
+
   // The chooser. A locker holding MK-Is and MK-Vs must not decide for you — it
   // used to fit whichever sorted first, which was always the MK-I.
   {

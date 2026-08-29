@@ -302,19 +302,35 @@ console.log('\nthe playlist');
   // Arriving is instant, leaving is not. A lull between passes is not the end of
   // a fight, and music that drops out and comes straight back is worse than music
   // that never changed.
-  const { moodFor, COMBAT_HOLD } = await import('../shared/music.js');
-  let until = 0, clock = 0;
-  const step = (fighting, ms) => { clock += ms; const r = moodFor(fighting, clock, until); until = r.until; return r.mood; };
-  check('quiet is quiet', step(false, 100) === CALM);
-  check('the first shot switches immediately', step(true, 100) === COMBAT);
-  check('a lull between passes does not end it', step(false, 2000) === COMBAT
-    && step(true, 100) === COMBAT && step(false, COMBAT_HOLD - 1000) === COMBAT,
+  const { moodFor, resolveMood, CHASE, COMBAT_HOLD } = await import('../shared/music.js');
+  let hold = { mood: CALM, until: 0 }, clock = 0;
+  const step = (st, ms) => { clock += ms; hold = moodFor(st, clock, hold); return hold.mood; };
+  check('quiet is quiet', step({}, 100) === CALM);
+  check('being shot at while not shooting back is a chase',
+    step({ hunted: true }, 100) === CHASE,
+    'crossing a map with something on you is not the same as a fight');
+  check('and it holds while you run', step({}, 3000) === CHASE);
+  check('turning to fight makes it a fight at once',
+    step({ fighting: true, hunted: true }, 100) === COMBAT,
+    'returning fire is the moment it stops being a chase');
+  check('a lull between passes does not end it', step({}, 2000) === COMBAT
+    && step({ fighting: true }, 100) === COMBAT && step({}, COMBAT_HOLD - 1000) === COMBAT,
     `${COMBAT_HOLD / 1000}s of quiet is what ends it`);
-  check('and enough quiet does', step(false, 1200) === CALM);
+  check('and enough quiet does', step({}, 1200) === CALM);
   check('the hold is long enough to cover a reload, short enough to notice',
     COMBAT_HOLD >= 4000 && COMBAT_HOLD <= 15000, `${COMBAT_HOLD / 1000}s`);
   check('a fight starting again re-arms the hold from now',
-    moodFor(true, 50_000, 0).until === 50_000 + COMBAT_HOLD);
+    moodFor({ fighting: true }, 50_000).until === 50_000 + COMBAT_HOLD);
+
+  // A mood with no folder behind it borrows the nearest one that has music,
+  // so an empty chase/ sounds like a fight rather than like nothing happening.
+  const has = set => m => set.includes(m);
+  check('a chase with no chase music borrows the fight',
+    resolveMood(CHASE, has([CALM, COMBAT])) === COMBAT);
+  check('and with no fight music either, it is just the score',
+    resolveMood(CHASE, has([CALM])) === CALM);
+  check('with the folder filled it plays its own',
+    resolveMood(CHASE, has([CALM, CHASE, COMBAT])) === CHASE);
 
   // Which track comes next. Plain random plays the same piece twice in a row
   // often enough to notice and leaves one unheard for an hour; a bag hands out
@@ -344,7 +360,7 @@ console.log('\nthe playlist');
     fights.every((k, i) => i === 0 || k !== fights[i - 1]), fights.join(' '));
 
   check('every live mood lands on a deck',
-    LIVE_MOODS.every(m => [CALM, COMBAT].includes(poolOf(m === 'all' ? 'loose.mp3' : `${m}/x.mp3`))),
+    LIVE_MOODS.every(m => [CALM, CHASE, COMBAT].includes(poolOf(m === 'all' ? 'loose.mp3' : `${m}/x.mp3`))),
     LIVE_MOODS.join(' '));
 }
 
