@@ -2,7 +2,8 @@ import { EQUIPMENT, sanitiseFit, sanitiseDrones, MAX_LAUNCHERS } from '../shared
 import { HULLS, resolve, slotsOf, gunsOf } from '../shared/ships.js';
 import { newShip, refit } from '../shared/sim.js';
 import { launch, stepRockets, launcherRoom, launchersIn, isLauncher,
-         ROCKET_SPEED, ROCKET_TURN, ROCKET_TTL, ROCKET_RATE, SPREAD } from '../shared/rockets.js';
+         ROCKET_SPEED, ROCKET_TTL, ROCKET_RATE, SPREAD, ROCKET_R,
+         turnRate, TURN_MIN, TURN_MAX, TERMINAL_R, TERMINAL_TURN } from '../shared/rockets.js';
 import { fire } from '../shared/combat.js';
 import { BOOST } from '../shared/power.js';
 
@@ -18,8 +19,8 @@ const rocketsOf = k => EQUIPMENT[k].mods.find(([a]) => a === 'rockets')[2];
 const volleyOf  = k => EQUIPMENT[k].mods.find(([a]) => a === 'rocketVolley')[2];
 
 // A dummy that just sits there, so flight is the only thing under test.
-const mark = (x, y) => ({ x, y, vx: 0, vy: 0, r: 13, hp: 1e9, shield: 0, sinceHit: 0,
-                          stats: { hull: 1e9, shield: 0 }, shieldHit: 0 });
+const mark = (x, y, r = 13) => ({ x, y, vx: 0, vy: 0, r, hp: 1e9, shield: 0, sinceHit: 0,
+                                  stats: { hull: 1e9, shield: 0 }, shieldHit: 0 });
 
 console.log('\nthe rack');
 console.log('     ' + PODS.map(k => `${EQUIPMENT[k].name} ${rocketsOf(k)}x${volleyOf(k) / rocketsOf(k)}`).join('   '));
@@ -114,7 +115,7 @@ console.log('\nthe chase');
   const r1 = flight(mark(600, 0));
   console.log(`     600px dead ahead: hit at ${r1.hit?.toFixed(2)}s, swinging ${r1.swing | 0}px wide of the firing line`);
   check('a rocket thrown wide still comes around and connects', r1.hit !== null);
-  check('and it visibly arcs to get there', r1.swing > 60,
+  check('and it arcs hard to get there', r1.swing > 200,
     `${r1.swing | 0}px off the line at its widest`);
   check('it is slower to arrive than a bolt would be', r1.hit > r1.len / 1000,
     `${r1.hit.toFixed(2)}s against ${(r1.len / 1000).toFixed(2)}s for a bolt`);
@@ -136,8 +137,8 @@ console.log('\nthe chase');
     }
     console.log(`     a five-fan: ${landed}/${n0} landed, widest swing ${widest | 0}px off the line`);
     check('every rocket in a fan comes back and lands', landed === n0);
-    check('and the fan opens properly on the way', widest > 150,
-      'thrown 66 degrees off, so the outer pair take the long way round');
+    check('and the fan opens properly on the way', widest > 400,
+      `thrown ${Math.round(SPREAD * 180 / Math.PI)} degrees off, so the outer pair take the long way round`);
   }
 
   const r2 = flight(mark(-600, 0));
@@ -158,6 +159,46 @@ console.log('\nthe chase');
   }
   check('outrunning a rocket outright works', !hit && air.length === 0,
     `the motor burns out after ${ROCKET_TTL}s`);
+}
+
+console.log('\nnothing sitting still gets away');
+{
+  // A pursuer whose turn circle is wider than its miss distance cannot close on
+  // something inside that circle — it orbits until the motor dies. A flat turn
+  // rate meant better than a third of every volley sailed past a parked target.
+  check('terminal authority beats the fuse', ROCKET_SPEED / TERMINAL_TURN < ROCKET_R + 10,
+    `${Math.round(ROCKET_SPEED / TERMINAL_TURN)}px of turn circle against a ${ROCKET_R}px fuse`);
+  check('and it only applies once the rocket is close', turnRate(0, 1e9) === TURN_MIN
+    && turnRate(9, 1e9) === TURN_MAX && turnRate(0, TERMINAL_R - 1) === TERMINAL_TURN,
+    'far out it holds back, which is what makes the arc');
+
+  const parked = (dist, r) => {
+    const s2 = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [PODS[2]] })));
+    s2.heading = 0;
+    const tgt = mark(dist, 0, r);
+    let air = [];
+    for (let i = 0; i < 300 && !air.length; i++) air = launch(s2, tgt, dt);
+    const n = air.length;
+    let landed = 0, t = 0;
+    while (t < ROCKET_TTL + 0.5 && air.length) { landed += stepRockets(air, dt).length; t += dt; }
+    return { n, landed, t };
+  };
+  let missed = 0, shots = 0, slowest = 0;
+  const line = [];
+  for (const d of [120, 200, 300, 400, 500, 600, 690]) {
+    const r = parked(d, 26);
+    missed += r.n - r.landed; shots += r.n; slowest = Math.max(slowest, r.t);
+    line.push(`${d}px ${r.landed}/${r.n}`);
+  }
+  console.log('     a parked bulkhead: ' + line.join('  '));
+  check('every rocket lands on something that is not moving', missed === 0,
+    `${shots} rockets across seven ranges, none lost`);
+  check('on a small hull too', (() => {
+    let lost = 0;
+    for (const d of [120, 250, 400, 550, 690]) { const r = parked(d, 10); lost += r.n - r.landed; }
+    return lost === 0;
+  })(), 'an Interceptor is r=10 and still cannot be orbited');
+  check('and it does not take all day', slowest < 3.2, `${slowest.toFixed(1)}s at the worst range`);
 }
 
 console.log('\nwhat a rack is worth');

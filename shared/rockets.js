@@ -21,12 +21,36 @@ import { hardpoints } from './combat.js';
 export { MAX_LAUNCHERS };
 
 export const ROCKET_SPEED = 520;    // px/s — half a bolt, so you see them coming
-export const ROCKET_TURN  = 1.6;    // rad/s — slack enough that the arc is a real arc
 export const ROCKET_TTL   = 4.5;    // s of motor, about 2300px of flight
-export const ROCKET_R     = 24;     // proximity fuse, on top of the hull's radius
 export const ROCKET_RATE  = 0.55;   // volleys/s
 export const LAUNCH_FLASH = 0.35;   // s the rails glow after a volley, and how the client hears it
-export const SPREAD       = 1.15;   // rad thrown off the aim line by the outermost rocket
+export const SPREAD       = 1.9;    // rad off the aim line for the outermost rocket — a hard fan
+
+// Steering, and the whole shape of the weapon.
+//
+// Authority spools up: a rocket leaves the rail with almost none, so it keeps
+// going the way it was thrown and sweeps a long way off the firing line, then
+// hardens up and comes back in. That sweep IS the weapon — a rocket that
+// corrects immediately is just a slow bolt.
+//
+// The terminal rule is not cosmetic. A pursuer whose turn circle is wider than
+// its miss distance cannot close on something sitting inside that circle: it
+// orbits until the motor dies. With a flat 1.6 rad/s the circle was 325px and
+// better than a third of every volley sailed around a stationary target and
+// expired. Inside TERMINAL_R the fins get everything they have, which puts the
+// circle at 37px — comfortably under the fuse, so capture is arithmetic.
+export const TURN_MIN     = 0.35;   // rad/s at the rail
+export const TURN_MAX     = 2.6;    // rad/s once the motor is up
+export const ARC_TIME     = 0.8;    // s to spool between them
+export const TERMINAL_R   = 400;    // px inside which it stops holding back
+export const TERMINAL_TURN = 14;    // rad/s there: 520/14 = 37px of turn circle
+export const ROCKET_R     = 40;     // proximity fuse, on top of the hull's radius
+
+export const turnRate = (age, dist) => {
+  const spool = Math.min(1, (age ?? 0) / ARC_TIME);
+  const w = TURN_MIN + (TURN_MAX - TURN_MIN) * spool;
+  return dist < TERMINAL_R ? Math.max(w, TERMINAL_TURN) : w;
+};
 
 export const isLauncher = key => EQUIPMENT[key]?.kind === 'rocket';
 
@@ -69,7 +93,7 @@ export function launch(a, b, dt) {
     out.push({
       x: m.x, y: m.y, heading: h,
       vx: Math.cos(h) * ROCKET_SPEED, vy: Math.sin(h) * ROCKET_SPEED,
-      dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, w: Math.round(each),
+      dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, age: 0, w: Math.round(each),
     });
   }
   return out;
@@ -85,13 +109,15 @@ export function stepRockets(list, dt) {
     const tg = r.target;
     if (r.t <= 0 || !tg || tg.hp <= 0) { list.splice(i, 1); continue; }
 
-    // Steer toward the target, but only so fast — this is what lets a nimble
-    // ship make one overshoot instead of taking it on the nose.
+    // Steer toward the target with whatever authority it has right now.
+    r.age = (r.age ?? 0) + dt;
+    const range = Math.hypot(tg.x - r.x, tg.y - r.y);
+    const w = turnRate(r.age, range) * dt;
     const want = Math.atan2(tg.y - r.y, tg.x - r.x);
     let d = want - r.heading;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
-    r.heading += Math.max(-ROCKET_TURN * dt, Math.min(ROCKET_TURN * dt, d));
+    r.heading += Math.max(-w, Math.min(w, d));
     r.vx = Math.cos(r.heading) * ROCKET_SPEED;
     r.vy = Math.sin(r.heading) * ROCKET_SPEED;
     r.x += r.vx * dt;
