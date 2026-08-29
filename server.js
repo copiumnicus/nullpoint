@@ -7,6 +7,7 @@ import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rocket
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { AMMO, magazine, sanitiseUsing } from './shared/ammo.js';
+import { isTrack, typeOf, servable } from './shared/music.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones, topTier } from './shared/gear.js';
@@ -36,6 +37,25 @@ const FILES = {
 };
 const SHARED_JS = /^\/shared\/[a-z]+\.js$/;   // no traversal, no other directory
 const SFX_TYPE = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4' };
+
+// Whatever is sitting in public/music right now, one subfolder deep. Read fresh
+// each time so a track dropped in during a session shows up on the next reload
+// without restarting the server. What counts as a track is in shared/music.js.
+const MUSIC_DIR = 'public/music';
+function listMusic() {
+  const out = [];
+  const scan = (dir, prefix) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isDirectory() && !prefix && SAFE_DIR.test(e.name)) scan(`${dir}/${e.name}`, `${e.name}/`);
+      else if (e.isFile() && isTrack(e.name)) out.push(prefix + e.name);
+    }
+  };
+  scan(MUSIC_DIR, '');
+  return out.sort();
+}
+const SAFE_DIR = /^[\w][\w -]*$/;
 const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   if (url.startsWith('/sfx/')) {                  // drop-in sound files, if there are any
@@ -46,6 +66,32 @@ const server = http.createServer((req, res) => {
       return res.writeHead(404).end();
     res.writeHead(200, { 'content-type': SFX_TYPE[ext] });
     return res.end(fs.readFileSync(file));
+  }
+  // Music. Drop files into public/music and they become the playlist — the
+  // directory is the manifest, so there is nothing to edit when you add a track.
+  // Subfolders are kept in the name so a mood can be read off them later.
+  if (url === '/music/list') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(listMusic()));
+  }
+  if (url.startsWith('/music/')) {
+    const name = decodeURIComponent(url.slice(7));
+    // It has to be one we actually listed. Membership, not string surgery.
+    if (!servable(name, listMusic())) return res.writeHead(404).end();
+    const type = typeOf(name), file = `${MUSIC_DIR}/${name}`;
+    const size = fs.statSync(file).size;
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+    if (range) {                                  // browsers seek in audio; let them
+      const from = range[1] ? +range[1] : 0;
+      const to = range[2] ? Math.min(+range[2], size - 1) : size - 1;
+      res.writeHead(206, { 'content-type': type, 'accept-ranges': 'bytes',
+                           'content-range': `bytes ${from}-${to}/${size}`,
+                           'content-length': to - from + 1 });
+      return fs.createReadStream(file, { start: from, end: to }).pipe(res);
+    }
+    res.writeHead(200, { 'content-type': type, 'accept-ranges': 'bytes',
+                         'content-length': size });
+    return fs.createReadStream(file).pipe(res);
   }
   if (url === '/healthz') {                       // most hosts want something to poll
     res.writeHead(200, { 'content-type': 'application/json' });

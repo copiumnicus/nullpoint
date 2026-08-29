@@ -1,5 +1,6 @@
 import { AMMO, AMMO_KEYS, FEEDS, forWeapon, DEFAULT_AMMO, STARTING_AMMO,
-         sanitiseAmmo, sanitiseUsing, magazine, hasRounds, roundPrice, barLayout } from '../shared/ammo.js';
+         sanitiseAmmo, sanitiseUsing, magazine, hasRounds, roundPrice,
+         barLayout, feedMenu } from '../shared/ammo.js';
 import { newShip } from '../shared/sim.js';
 import { fire } from '../shared/combat.js';
 import { launch, ROCKET_RATE } from '../shared/rockets.js';
@@ -196,21 +197,54 @@ console.log('\nkeeping it');
 
 console.log('\nthe bar');
 {
-  let off = 0, overlap = 0;
+  let off = 0, overlap = 0, menuOff = 0;
   for (const [W, H] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 640], [900, 600]]) {
     const L = barLayout(W, H);
-    if (L.boxes.length !== AMMO_KEYS.length) off++;
+    if (L.boxes.length !== FEEDS.length) off++;
     if (L.r.x < 0 || L.r.x + L.r.w > W || L.r.y < 0 || L.r.y + L.r.h > H) off++;
     for (let i = 1; i < L.boxes.length; i++)
       if (L.boxes[i].r.x < L.boxes[i - 1].r.x + L.boxes[i - 1].r.w) overlap++;
+    // The chooser opens upward over the world, and must stay on screen with every
+    // grade in the game listed at once.
+    for (const b of L.boxes) {
+      const M = feedMenu(b, forWeapon(b.feed));
+      if (M.box.x < 0 || M.box.y < 0 || M.box.x + M.box.w > W || M.box.y + M.box.h > H) menuOff++;
+      for (const r of M.rows)
+        if (r.r.x < M.box.x || r.r.y < M.box.y
+         || r.r.x + r.r.w > M.box.x + M.box.w || r.r.y + r.r.h > M.box.y + M.box.h) menuOff++;
+    }
   }
-  check('the bar fits every window and never overlaps itself', off === 0 && overlap === 0,
-    `${AMMO_KEYS.length} boxes, centred`);
+  check('one box per weapon, centred, fitting every window', off === 0 && overlap === 0,
+    `${FEEDS.length} boxes instead of ${AMMO_KEYS.length}`);
+  check('and the chooser opens over the world without leaving it', menuOff === 0,
+    'every grade listed, on the smallest window');
   const L = barLayout(1280, 720);
   check('lasers sit left of warheads, always in the same place',
-    L.boxes.filter(b => b.feed === 'laser').every(b =>
-      L.boxes.filter(c => c.feed === 'rocket').every(c => b.r.x < c.r.x)),
+    L.boxes[0].feed === 'laser' && L.boxes[1].feed === 'rocket',
     'so a box means the same thing every time you look at it');
+}
+
+console.log('\nthe playlist');
+{
+  const { isTrack, typeOf, servable, MOOD_OF, AUDIO_TYPE } = await import('../shared/music.js');
+  const good = ['track.mp3', 'Drifting Home.mp3', "O'Neill (reprise).ogg", 'a-b_c.wav', 'x.m4a'];
+  const bad  = ['../server.js', '..%2Fserver.js', '.hidden.mp3', 'no-extension',
+                'notes.txt', 'a/b.mp3', 'x.mp3.exe', '', 'con/../../etc/passwd'];
+  check('ordinary filenames are tracks', good.every(isTrack), good.join('  '));
+  check('nothing else is', bad.every(n => !isTrack(n)),
+    bad.filter(isTrack).join(' ') || 'traversal, dotfiles and non-audio all refused');
+  check('every accepted extension has a content type',
+    good.every(n => AUDIO_TYPE[n.split('.').pop().toLowerCase()] === typeOf(n)));
+
+  // The route serves by membership of the list it just built, so no amount of
+  // encoding gets at a file that is not in the directory.
+  const listed = ['one.mp3', 'ambient/two.mp3'];
+  check('a listed track is servable', listed.every(n => servable(n, listed)));
+  check('an unlisted one is not, however it is spelled',
+    ['../server.js', 'one.mp3/../../server.js', 'ONE.mp3', 'ambient/three.mp3']
+      .every(n => !servable(n, listed)));
+  check('a subfolder is remembered as a mood, for later',
+    MOOD_OF('combat/hard.mp3') === 'combat' && MOOD_OF('loose.mp3') === 'all');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`

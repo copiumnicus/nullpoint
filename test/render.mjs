@@ -5,7 +5,7 @@ import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
-import { AMMO_KEYS, barLayout } from '../shared/ammo.js';
+import { AMMO_KEYS, FEEDS, barLayout, feedMenu } from '../shared/ammo.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -390,20 +390,35 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
            ammo: { cell1: 4000, cell3: 250, head1: 400 }, using: { laser: 'cell1', rocket: 'head1' } });
     frame(t += 16); frames++;
     const B = barLayout(innerWidth, innerHeight);
-    if (B.boxes.length !== AMMO_KEYS.length) errs.push(`the bar has ${B.boxes.length} boxes for ${AMMO_KEYS.length} grades`);
+    if (B.boxes.length !== FEEDS.length) errs.push(`the bar has ${B.boxes.length} boxes for ${FEEDS.length} weapons`);
     if (B.r.x < 0 || B.r.x + B.r.w > innerWidth || B.r.y + B.r.h > innerHeight)
       errs.push('the ammunition bar runs off the screen');
 
+    // Two grades of cells held, so the laser box has something to choose between.
+    const laserBox = B.boxes.find(b => b.feed === 'laser');
     sent.length = 0;
-    click(B.boxes.find(b => b.k === 'cell3').r);                   // a grade we hold
+    click(laserBox.r);                                             // opens the menu, sends nothing yet
+    frame(t += 16); frames++;
+    if (sent.length) errs.push(`clicking the box loaded ${JSON.stringify(sent[0])} instead of offering a choice`);
+
+    const M = feedMenu(laserBox, ['cell1', 'cell3']);
+    if (M.box.y < 0) errs.push('the ammunition menu opened off the top of the screen');
+    for (const row of M.rows) { hoverAt(row.r); frame(t += 16); frames++; }
+    click(M.rows.find(r => r.k === 'cell3').r);
     frame(t += 16); frames++;
     const pick = sent.find(m => m.t === 'ammo');
-    if (pick?.key !== 'cell3') errs.push(`clicking a held grade sent ${JSON.stringify(pick)}`);
+    if (pick?.key !== 'cell3') errs.push(`choosing from the menu sent ${JSON.stringify(pick)}`);
 
+    // ...and the menu is gone, so the same click now falls through to the world
     sent.length = 0;
-    click(B.boxes.find(b => b.k === 'head3').r);                   // one we hold none of
+    click(M.rows[0].r); frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'ammo')) errs.push('the ammunition menu stayed open after a choice');
+
+    // Only one grade of warheads held: no menu, it just loads.
+    sent.length = 0;
+    click(B.boxes.find(b => b.feed === 'rocket').r);
     frame(t += 16); frames++;
-    if (sent.some(m => m.t === 'ammo')) errs.push('the bar loaded a grade with no rounds behind it');
+    if (sent.some(m => m.t === 'intent')) errs.push('a click on the bar flew the ship');
 
     sent.length = 0;
     evt('keydown', { key: 'q' });                                  // cycle the laser feed
@@ -413,11 +428,7 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
     evt('keydown', { key: 'e' });                                  // only one warhead grade held
     frame(t += 16); frames++;
     if (sent.some(m => m.t === 'ammo')) errs.push('E switched warheads with nothing else to switch to');
-
-    // clicking a box must not also order the ship somewhere
-    if (sent.some(m => m.t === 'intent')) errs.push('a click on the bar flew the ship');
-    for (const b of B.boxes) { hoverAt(b.r); frame(t += 16); frames++; }
-    console.log(`ammo: ${B.boxes.length} boxes, loaded pair outlined, empty grades refuse to load`);
+    console.log('ammo: one box a weapon, a menu above it to choose, gone once you have');
   }
 
   // A rocket volley is heard once, on the frame the rails light, and never again

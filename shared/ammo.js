@@ -72,24 +72,34 @@ export function magazine(stock, using, feed) {
 // True if this pilot could fire that weapon at all right now.
 export const hasRounds = (stock, using, feed) => magazine(stock, using, feed).n > 0;
 
-// The bar along the bottom of the screen. One box per grade, lasers then rockets,
-// in the order they are declared — fixed, so a box is always the same thing and
-// muscle memory works. The two in use are the ones the weapons draw from.
-export const BAR_BOX = 54, BAR_GAP = 6, BAR_SPLIT = 18;
+// The bar along the bottom of the screen: one box per weapon, not one per grade.
+// Six boxes said everything at once and took a strip of screen to do it. Two say
+// what is loaded, and the choosing happens in a menu that opens over the world
+// and closes again the moment you have picked.
+export const BAR_BOX = 64, BAR_GAP = 12;
 
 export function barLayout(VIEW_W, VIEW_H) {
-  const feeds = FEEDS.map(f => forWeapon(f));
-  const n = feeds.reduce((t, g) => t + g.length, 0);
-  const w = n * BAR_BOX + (n - feeds.length) * BAR_GAP + (feeds.length - 1) * BAR_SPLIT;
-  const x0 = Math.round((VIEW_W - w) / 2), y = VIEW_H - BAR_BOX - 14;
-  const boxes = [];
-  let x = x0;
-  feeds.forEach((grades, fi) => {
-    grades.forEach((k, i) => {
-      boxes.push({ k, feed: FEEDS[fi], r: { x, y, w: BAR_BOX, h: BAR_BOX } });
-      x += BAR_BOX + (i === grades.length - 1 ? 0 : BAR_GAP);
-    });
-    x += BAR_SPLIT;
-  });
-  return { boxes, r: { x: x0, y, w, h: BAR_BOX } };
+  const w = FEEDS.length * BAR_BOX + (FEEDS.length - 1) * BAR_GAP;
+  const x0 = Math.round((VIEW_W - w) / 2), y = Math.round(VIEW_H - BAR_BOX - 14);
+  return {
+    r: { x: x0, y, w, h: BAR_BOX },
+    boxes: FEEDS.map((feed, i) => ({
+      feed, r: { x: x0 + i * (BAR_BOX + BAR_GAP), y, w: BAR_BOX, h: BAR_BOX },
+    })),
+  };
+}
+
+// The chooser that opens above a box. Grades run bottom-up so the one nearest
+// the box is the first in the list, and it never runs off the top.
+export const MENU_ROW = 30, MENU_W = 190;
+export function feedMenu(box, grades) {
+  const h = 8 + grades.length * MENU_ROW;
+  const x = box.r.x + box.r.w / 2 - MENU_W / 2;
+  const y = box.r.y - h - 8;
+  return {
+    box: { x, y, w: MENU_W, h },
+    rows: grades.map((k, i) => ({
+      k, r: { x: x + 5, y: y + 4 + i * MENU_ROW, w: MENU_W - 10, h: MENU_ROW - 4 },
+    })),
+  };
 }

@@ -275,5 +275,79 @@ export function explosion(dist, foe) {
   sub.start(t); sub.stop(t + 1.25);
 }
 
-export function toggleAudio() { on = !on; if (!on) setThrust(0); return on; }
+// --- music --------------------------------------------------------------------
+// Whatever is sitting in public/music, shuffled and played through on a loop.
+// The directory is the manifest, so adding a track is copying a file in.
+//
+// It routes to its own gain straight at the output rather than through the
+// saturation the effects go through — that curve is there to put grit on a
+// laser, and it would put the same grit on a chord.
+
+let musicEl = null, musicGain = null, playlist = [], atTrack = -1, musicVol = 0.55;
+let musicWanted = false, onTrack = null;
+
+export const MUSIC_VOL_STEP = 0.1;
+export const musicTrack = () => (atTrack >= 0 ? playlist[atTrack] ?? null : null);
+export const musicVolume = () => musicVol;
+export const musicList = () => [...playlist];
+
+// Called whenever the current track changes, so the HUD can name it.
+export const onMusicChange = fn => { onTrack = fn; };
+
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) {
+  const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+export async function startMusic() {
+  musicWanted = true;
+  if (playlist.length || typeof fetch !== 'function' || typeof Audio !== 'function') return;
+  try {
+    const r = await fetch('/music/list');
+    if (!r.ok) return;
+    playlist = shuffle(await r.json());
+  } catch { return; }                              // no server, no music, no noise about it
+  if (playlist.length) nextTrack();
+}
+
+export function nextTrack(step = 1) {
+  if (!playlist.length || typeof Audio !== 'function') return;
+  atTrack = ((atTrack + step) % playlist.length + playlist.length) % playlist.length;
+  const src = '/music/' + encodeURIComponent(playlist[atTrack]).replace(/%2F/gi, '/');
+  if (!musicEl) {
+    musicEl = new Audio();
+    musicEl.crossOrigin = 'anonymous';
+    musicEl.addEventListener('ended', () => nextTrack());
+    // A track that will not decode should not stall the playlist behind it.
+    musicEl.addEventListener('error', () => { if (playlist.length > 1) nextTrack(); });
+  }
+  musicEl.src = src;
+  applyMusicGain();
+  const go = musicEl.play();
+  if (go?.catch) go.catch(() => {});              // autoplay refused: the next gesture retries
+  if (onTrack) onTrack(playlist[atTrack]);
+}
+
+// The graph is only available once a context exists, and a context only exists
+// after a gesture. Until then the element's own volume carries the setting.
+function applyMusicGain() {
+  if (!musicEl) return;
+  const want = on && musicWanted ? musicVol : 0;
+  if (ctx && !musicGain && typeof ctx.createMediaElementSource === 'function') {
+    try {
+      musicGain = ctx.createGain();
+      ctx.createMediaElementSource(musicEl).connect(musicGain);
+      musicGain.connect(ctx.destination);          // past the saturation, on purpose
+      musicEl.volume = 1;
+    } catch { musicGain = null; }                  // some browsers refuse; fall back to el.volume
+  }
+  if (musicGain) musicGain.gain.value = want;
+  else musicEl.volume = want;
+}
+
+export function setMusicVolume(v) {
+  musicVol = Math.max(0, Math.min(1, +v.toFixed(2)));
+  applyMusicGain();
+  return musicVol;
+}
+
+export function toggleAudio() { on = !on; if (!on) setThrust(0); applyMusicGain(); return on; }
 export const audioOn = () => on;

@@ -21,3 +21,7 @@ public/sfx/*
 
 # persisted accounts
 data/
+
+# your own music, not the repo's
+public/music/*
+!public/music/README.md

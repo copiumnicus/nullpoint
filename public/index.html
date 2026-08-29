@@ -20,13 +20,16 @@ import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
-import { audioReady, setThrust, laser, rocket, explosion, toggleAudio, audioOn } from '/audio.js';
+import { audioReady, setThrust, laser, rocket, explosion, toggleAudio, audioOn,
+         startMusic, nextTrack, setMusicVolume, musicVolume, musicTrack, onMusicChange,
+         MUSIC_VOL_STEP } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
-import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon, barLayout } from '/shared/ammo.js';
+import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon,
+         barLayout, feedMenu } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
@@ -105,6 +108,10 @@ const stir = () => { lastInput = performance.now(); };
 const heardBooms = new Set();
 const respawnBtn = () => ({ x: VIEW_W / 2 - 130, y: VIEW_H * 0.6, w: 260, h: 52 });
 const say = (text, colour) => notice = { text, colour, at: performance.now() };
+
+// Name a track as it starts, then get out of the way — the folder it came from
+// is dropped, and so is the extension, so a filename reads as a title.
+onMusicChange(name => say('\u266a  ' + name.split('/').pop().replace(/\.[a-z0-9]+$/i, ''), '#8ab4e6'));
 const cam = { x: 0, y: 0 };
 
 // --- net ---------------------------------------------------------------------
@@ -263,6 +270,7 @@ function nearestHostile() {
 }
 addEventListener('keydown', e => {
   audioReady();                                   // browsers want a gesture first
+  startMusic();
   stir();
 
   if (chatOpen) {                                 // the line owns the keyboard
@@ -289,6 +297,11 @@ addEventListener('keydown', e => {
                    bayOpen = !bayOpen; sysOpen = false; invOpen = false; }
   if (k === '1' || k === '2' || k === '3') send({ t: 'power', sys: SYSTEMS[+k - 1] });
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
+  if (k === 'n') { nextTrack(); }
+  if (e.key === '[' || e.key === ']') {
+    const v = setMusicVolume(musicVolume() + (e.key === ']' ? MUSIC_VOL_STEP : -MUSIC_VOL_STEP));
+    say(`Music ${Math.round(v * 100)}%`, '#8ab4e6');
+  }
   if (k === 'q') cycleAmmo('laser');
   if (k === 'e') cycleAmmo('rocket');
   if (k === 'x') send({ t: 'target', id: 0 });     // break off
@@ -318,12 +331,14 @@ addEventListener('keydown', e => {
     say('Nothing in reach', '#66748c');
     return;
   }
-  if (e.key === 'Escape') { if (picking) { picking = null; return; }
+  if (e.key === 'Escape') { if (feedOpen) { feedOpen = null; return; }
+                           if (picking) { picking = null; return; }
                            sysOpen = false; bayOpen = false; invOpen = false; }
 });
 
 c.addEventListener('pointerdown', e => {
   audioReady();
+  startMusic();
   stir();
   if (signedOff) { location.reload(); return; }
   const v = toView(e);
@@ -1026,81 +1041,129 @@ function drawInventory() {
 }
 
 // --- ammunition bar -----------------------------------------------------------
-// Bottom centre, one box per grade, lasers on the left and warheads on the right.
-// The box a weapon is drawing from is outlined; clicking any box switches that
-// weapon to that grade. A rack with nothing behind it does not fire at all, so
-// the count is not decoration and it says so when it runs low.
-const LOW = 200;
+// Two boxes, bottom centre: what the guns are loaded with and what the racks
+// are. Clicking one opens a short menu above it of the grades you actually hold;
+// pick one and the menu goes away and the box changes. Six boxes said all of it
+// at once and cost a strip of screen to do it.
+//
+// A weapon with nothing behind it does not fire, so the count is not decoration
+// and the box says so before you find out the hard way.
+let feedOpen = null;                            // which box has its menu up
+
+const heldGrades = feed => forWeapon(feed).filter(k => (myAmmo[k] ?? 0) > 0);
 
 function barClick(v) {
   const L = barLayout(VIEW_W, VIEW_H);
+  const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
+
+  if (feedOpen) {                               // the menu covers the world, so it goes first
+    const box = L.boxes.find(b => b.feed === feedOpen);
+    const M = feedMenu(box, heldGrades(feedOpen));
+    for (const row of M.rows) if (inside(row.r)) {
+      if (row.k !== myUsing[feedOpen]) send({ t: 'ammo', key: row.k });
+      feedOpen = null;
+      return true;
+    }
+    feedOpen = null;
+    if (inside(M.box)) return true;
+  }
   for (const b of L.boxes) {
-    if (v.x < b.r.x || v.x > b.r.x + b.r.w || v.y < b.r.y || v.y > b.r.y + b.r.h) continue;
-    if (myUsing[b.feed] === b.k) return true;
-    if (!(myAmmo[b.k] > 0)) { say(`No ${AMMO[b.k].name} — buy a crate at the dock`, '#e0a53f'); return true; }
-    send({ t: 'ammo', key: b.k });
+    if (!inside(b.r)) continue;
+    const held = heldGrades(b.feed);
+    if (!held.length) { say(`No ${b.feed === 'laser' ? 'cells' : 'warheads'} — buy a crate at the dock`, '#e0a53f'); return true; }
+    if (held.length === 1) {                    // nothing to choose between
+      if (held[0] !== myUsing[b.feed]) send({ t: 'ammo', key: held[0] });
+      return true;
+    }
+    feedOpen = feedOpen === b.feed ? null : b.feed;
     return true;
   }
   return false;
 }
 
-// Step to the next grade of one feed that you actually hold. Wraps, and does
-// nothing at all if the locker only has the one.
+// Step to the next grade of one feed that you actually hold.
 function cycleAmmo(feed) {
-  const held = forWeapon(feed).filter(k => myAmmo[k] > 0);
+  const held = heldGrades(feed);
   if (held.length < 2) return say(`Nothing else to feed the ${feed}s`, '#66748c');
   const i = held.indexOf(myUsing[feed]);
   send({ t: 'ammo', key: held[(i + 1) % held.length] });
+  feedOpen = null;
+}
+
+// A round drawn as what it is: a bolt for cells, a dart for warheads.
+function roundIcon(feed, cx, cy, col, k = 1) {
+  g.fillStyle = col;
+  if (feed === 'laser') g.fillRect(cx - 2 * k, cy - 9 * k, 4 * k, 18 * k);
+  else { g.beginPath(); g.moveTo(cx, cy - 10 * k); g.lineTo(cx + 5 * k, cy + 8 * k);
+         g.lineTo(cx, cy + 4 * k); g.lineTo(cx - 5 * k, cy + 8 * k); g.closePath(); g.fill(); }
 }
 
 function drawBar() {
   const L = barLayout(VIEW_W, VIEW_H);
   const over = r => hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
-  let tip = null;
+
   for (const b of L.boxes) {
-    const a = AMMO[b.k], n = myAmmo[b.k] ?? 0, on = myUsing[b.feed] === b.k;
-    const dry = on && n === 0, low = on && n > 0 && n < LOW * (b.feed === 'rocket' ? 0.25 : 1);
-    const r = b.r;
-    g.fillStyle = n ? 'rgba(6,10,16,0.82)' : 'rgba(6,10,16,0.55)';
-    g.fillRect(r.x, r.y, r.w, r.h);
-    g.strokeStyle = dry ? '#ff5c6b' : on ? '#7fd4ff' : over(r) ? '#4a6785' : '#243448';
-    g.lineWidth = on ? 2 : 1;
+    const key = myUsing[b.feed], a = AMMO[key], n = myAmmo[key] ?? 0;
+    const r = b.r, dry = n === 0;
+    const low = !dry && n < (b.feed === 'rocket' ? 60 : 300);
+    g.fillStyle = 'rgba(6,10,16,0.82)'; g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = dry ? '#ff5c6b' : feedOpen === b.feed ? '#7fd4ff' : over(r) ? '#4a6785' : '#243448';
+    g.lineWidth = dry || feedOpen === b.feed ? 2 : 1;
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
 
-    // a round, drawn as what it is: a bolt for cells, a dart for warheads
-    const cx = r.x + r.w / 2, cy = r.y + 20;
-    const col = n ? (b.feed === 'laser' ? '#8fe7ff' : '#cfe9ff') : '#33465e';
-    g.fillStyle = col;
-    if (b.feed === 'laser') g.fillRect(cx - 2, cy - 9, 4, 18);
-    else { g.beginPath(); g.moveTo(cx, cy - 10); g.lineTo(cx + 5, cy + 8);
-           g.lineTo(cx, cy + 4); g.lineTo(cx - 5, cy + 8); g.closePath(); g.fill(); }
-    if (a.tier > 1) {                                       // pips for the grade
-      g.fillStyle = n ? '#ffd479' : '#4a4230';
-      for (let i = 0; i < a.tier - 1; i++) g.fillRect(r.x + 5 + i * 5, r.y + 5, 3, 3);
+    roundIcon(b.feed, r.x + r.w / 2, r.y + 24, dry ? '#5a2733' : b.feed === 'laser' ? '#8fe7ff' : '#cfe9ff');
+    if (a.tier > 1) {                            // pips for the grade, top-left
+      g.fillStyle = dry ? '#4a4230' : '#ffd479';
+      for (let i = 0; i < a.tier - 1; i++) g.fillRect(r.x + 6 + i * 6, r.y + 6, 4, 4);
     }
-    g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
-    g.fillStyle = dry ? '#ff5c6b' : low ? '#e0a53f' : n ? '#cfe4ff' : '#3d4757';
-    g.fillText(n > 9999 ? `${Math.round(n / 1000)}k` : String(n), cx, r.y + r.h - 8);
-    if (over(r)) tip = { a, n, on, feed: b.feed, r };
+    g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
+    g.fillStyle = dry ? '#ff5c6b' : low ? '#e0a53f' : '#cfe4ff';
+    g.fillText(dry ? 'DRY' : n > 9999 ? `${Math.round(n / 1000)}k` : String(n), r.x + r.w / 2, r.y + r.h - 10);
+    if (heldGrades(b.feed).length > 1) {         // a hint that there is a choice here
+      g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
+      g.fillText('▲', r.x + r.w - 9, r.y + 12);
+    }
+    if (over(r) && !feedOpen) {                  // name of what is loaded
+      const t = `${a.name}  x${a.mult.toFixed(2)}`;
+      g.font = '11px ui-monospace, monospace';
+      const w = g.measureText(t).width + 18;
+      const x = Math.max(6, Math.min(VIEW_W - w - 6, r.x + r.w / 2 - w / 2));
+      g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - 24, w, 20);
+      g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - 23.5, w - 1, 19);
+      g.fillStyle = '#cfe4ff'; g.fillText(t, x + w / 2, r.y - 10);
+    }
     g.textAlign = 'left';
   }
-  g.font = '10px ui-monospace, monospace'; g.textAlign = 'center';
-  g.fillStyle = '#3d4757';
-  g.fillText('Q', L.boxes[0].r.x - BAR_HINT, L.r.y + L.r.h - 8);
-  g.fillText('E', L.boxes[forWeapon('laser').length].r.x - BAR_HINT, L.r.y + L.r.h - 8);
+  g.font = '10px ui-monospace, monospace'; g.textAlign = 'center'; g.fillStyle = '#2f3f55';
+  g.fillText('Q', L.boxes[0].r.x - 9, L.r.y + L.r.h - 10);
+  g.fillText('E', L.boxes[1].r.x - 9, L.r.y + L.r.h - 10);
+  g.textAlign = 'left';
 
-  if (tip) {                                                // name and grade, above the box
-    const t = `${tip.a.name}  x${tip.a.mult.toFixed(2)}` + (tip.on ? '  · loaded' : '');
-    const w = g.measureText(t).width + 18;
-    const x = Math.max(6, Math.min(VIEW_W - w - 6, tip.r.x + tip.r.w / 2 - w / 2));
-    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, tip.r.y - 24, w, 20);
-    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, tip.r.y - 23.5, w - 1, 19);
-    g.fillStyle = tip.n ? '#cfe4ff' : '#e0a53f';
-    g.fillText(tip.n ? t : `${tip.a.name} — none held`, x + w / 2, tip.r.y - 10);
+  if (feedOpen) {
+    const box = L.boxes.find(b => b.feed === feedOpen);
+    const held = heldGrades(feedOpen);
+    const M = feedMenu(box, held);
+    g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(M.box.x, M.box.y, M.box.w, M.box.h);
+    g.strokeStyle = '#5a86b8'; g.lineWidth = 1.4;
+    g.strokeRect(M.box.x + .5, M.box.y + .5, M.box.w - 1, M.box.h - 1);
+    for (const row of M.rows) {
+      const a = AMMO[row.k], on = myUsing[feedOpen] === row.k, hot = over(row.r);
+      g.fillStyle = on ? 'rgba(125,224,138,0.14)' : hot ? 'rgba(122,180,240,0.16)' : 'rgba(255,255,255,0.02)';
+      g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+      roundIcon(feedOpen, row.r.x + 14, row.r.y + row.r.h / 2, on ? '#7de08a' : '#8fa8c4', 0.6);
+      g.font = '11px ui-monospace, monospace';
+      g.fillStyle = on ? '#cfe4ff' : '#a8bcd4';
+      g.fillText(a.name, row.r.x + 28, row.r.y + row.r.h / 2 - 1);
+      g.font = '9px ui-monospace, monospace'; g.fillStyle = '#66748c';
+      g.fillText(`x${a.mult.toFixed(2)}`, row.r.x + 28, row.r.y + row.r.h / 2 + 10);
+      g.textAlign = 'right';
+      g.fillStyle = on ? '#7de08a' : '#8ea3bd'; g.font = '11px ui-monospace, monospace';
+      g.fillText(String(myAmmo[row.k] ?? 0), row.r.x + row.r.w - 10, row.r.y + row.r.h / 2 + 3);
+      g.textAlign = 'left';
+    }
+    g.font = '12px ui-monospace, monospace';
   }
-  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
-const BAR_HINT = 11;
 
 // --- render -------------------------------------------------------------------
 let renderFailed = false;
