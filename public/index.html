@@ -32,7 +32,7 @@ import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
-         CALM, CHASE, COMBAT } from '/shared/music.js';
+         CALM, CHASE, COMBAT, QUIET } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
@@ -1303,7 +1303,7 @@ let setOpen = false, dragging = null;
 // shooting at you? Both at once is a fight; only the second is a chase, which is
 // what crossing a map with a drifter on your tail actually is. How long either
 // verdict is held is moodFor's problem, in shared/music.js, with the tests on it.
-let moodHeld = { mood: CALM, until: 0 };
+let moodHeld = { mood: CALM, until: 0, calmAt: 0 };
 
 function fightState() {
   const me = ships.get(myId);
@@ -2388,7 +2388,7 @@ function drawFrame(now) {
   // the tell that the fight has taken over the deck.
   const tune = nowPlaying();
   if (tune) {
-    const tense = musicMood() !== CALM ? musicMood().toUpperCase() : null;
+    const tense = musicMood() !== CALM && musicMood() !== QUIET ? musicMood().toUpperCase() : null;
     const fight = !!tense;
     g.font = '11px ui-monospace, monospace'; g.textAlign = 'right';
     const label = tune.length > 30 ? tune.slice(0, 29) + '\u2026' : tune;

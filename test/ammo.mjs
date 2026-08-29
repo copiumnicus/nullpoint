@@ -368,7 +368,17 @@ console.log('\nthe playlist');
   check('a lull between passes does not end it', step({}, 2000) === COMBAT
     && step({ fighting: true }, 100) === COMBAT && step({}, COMBAT_HOLD - 1000) === COMBAT,
     `${COMBAT_HOLD / 1000}s of quiet is what ends it`);
-  check('and enough quiet does', step({}, 1200) === CALM);
+  // Enough quiet ends the fight, but the score does not come straight back —
+  // there is a stretch of silence first, and only on the way down.
+  const { QUIET, COOLDOWN } = await import('../shared/music.js');
+  check('and enough quiet ends it', step({}, 1200) === QUIET);
+  check('but the score does not come straight back', step({}, COOLDOWN - 2000) === QUIET,
+    `${COOLDOWN / 1000}s of silence gives another pass a chance to start`);
+  check('and after the silence it does', step({}, 3000) === CALM);
+  check('a fight during the silence is still instant',
+    (() => { let h2 = { mood: QUIET, until: 0, calmAt: 9e9 };
+             return moodFor({ fighting: true }, 1000, h2).mood === COMBAT; })(),
+    'the wait is only on the cooldown path');
 
   // Switching targets mid-brawl leaves a moment where you are not shooting at
   // anything and something is still shooting at you. Without the rank rule the
@@ -381,8 +391,8 @@ console.log('\nthe playlist');
     && step({ fighting: true, hunted: true }, 200) === COMBAT,
     'escalating is instant, stepping down waits out the hold');
   check('but it still steps down once the fight is actually over',
-    step({}, COMBAT_HOLD + 500) === CALM);
-  check('and being hunted from calm is still a chase',
+    step({}, COMBAT_HOLD + 500) === QUIET, 'into the silence, then the score');
+  check('and being hunted from silence is still a chase',
     step({ hunted: true }, 100) === CHASE, 'the rule holds one way, not both');
   check('the hold is long enough to cover a reload, short enough to notice',
     COMBAT_HOLD >= 4000 && COMBAT_HOLD <= 15000, `${COMBAT_HOLD / 1000}s`);

@@ -33,6 +33,13 @@ export const parkedMoods = list =>
 // to; combat/ is the one that comes up when something is shooting at you.
 // Anything else is parked and belongs on neither.
 export const CALM = 'calm', CHASE = 'chase', COMBAT = 'combat';
+
+// Not a folder — a deliberate gap. After a fight the score does not come
+// straight back; there is a stretch of nothing first, which gives another pass a
+// chance to start before anything changes and keeps the soundtrack from flapping
+// in and out of combat over a two minute patrol.
+export const QUIET = 'quiet';
+export const COOLDOWN = 30_000;      // ms of silence between a fight and the score
 export function poolOf(name) {
   const m = MOOD_OF(name);
   if (m === COMBAT || m === CHASE) return m;
@@ -42,8 +49,11 @@ export function poolOf(name) {
 // What to play when the folder for a mood is empty. Being hunted with nothing to
 // play for it should not sound like nothing is happening, so it borrows the
 // fight; a fight with no music of its own falls back to the score.
-export const FALLBACK = { [CHASE]: [CHASE, COMBAT, CALM], [COMBAT]: [COMBAT, CALM], [CALM]: [CALM] };
-export const resolveMood = (want, has) => (FALLBACK[want] ?? [CALM]).find(m => has(m)) ?? CALM;
+export const FALLBACK = { [CHASE]: [CHASE, COMBAT, CALM], [COMBAT]: [COMBAT, CALM],
+                          [CALM]: [CALM], [QUIET]: [QUIET] };
+// Silence never falls back to anything: it is the point, not an absence.
+export const resolveMood = (want, has) =>
+  want === QUIET ? QUIET : ((FALLBACK[want] ?? [CALM]).find(m => has(m)) ?? CALM);
 
 // A name is servable only if it is one we actually listed. Membership, not string
 // surgery: no amount of encoding gets you a file that is not in the directory.
@@ -68,14 +78,21 @@ export const COMBAT_HOLD = 7000;      // ms of quiet before it counts as over
 // mid-fight leaves a moment where you are not shooting at anything and something
 // is still shooting at you, and without this the music dips into the chase and
 // back on every retarget.
-const RANK = { [CALM]: 0, [CHASE]: 1, [COMBAT]: 2 };
+const RANK = { [CALM]: 0, [QUIET]: 0, [CHASE]: 1, [COMBAT]: 2 };
 
 export function moodFor({ fighting = false, hunted = false } = {}, now = 0,
-                        held = { mood: CALM, until: 0 }) {
+                        held = { mood: CALM, until: 0, calmAt: 0 }) {
   const want = fighting ? COMBAT : hunted ? CHASE : null;
-  if (!want) return now < held.until ? held : { mood: CALM, until: 0 };
-  const hold = now < held.until && RANK[held.mood] > RANK[want];
-  return { mood: hold ? held.mood : want, until: now + COMBAT_HOLD };
+  if (want) {
+    const hold = now < held.until && RANK[held.mood] > RANK[want];
+    return { mood: hold ? held.mood : want, until: now + COMBAT_HOLD, calmAt: 0 };
+  }
+  if (now < held.until) return held;                    // the fight is still warm
+  // It is over. Silence for a while before the score comes back — and only on
+  // the way down; a fight starting again is still instant.
+  const calmAt = held.calmAt || (RANK[held.mood] > 0 ? now + COOLDOWN : 0);
+  if (calmAt && now < calmAt) return { mood: QUIET, until: 0, calmAt };
+  return { mood: CALM, until: 0, calmAt: 0 };
 }
 
 // Picking the next track.

@@ -389,9 +389,12 @@ export function nextTrack() { play(mood); }
 // paused. Coming back to the same combat piece from thirty seconds in, every
 // fight, is the thing that makes a soundtrack feel small.
 export function setMood(m) {
-  if (m === mood || !pools[m]?.length) return mood;
+  if (m === mood) return mood;
   mood = m;
-  play(m);
+  // A mood with no deck behind it is silence: every deck fades out and stays
+  // out. The caller decides whether that is what it wants — resolveMood sends
+  // real moods to a deck that exists, and sends the quiet stretch here.
+  if (pools[m]?.length) play(m);
   ramp();
   return mood;
 }
