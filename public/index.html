@@ -8,7 +8,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, driftDepth, driftDps,
+import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice } from '/shared/gear.js';
@@ -218,8 +218,8 @@ const toView = e => {
 const toWorld = v => ({ x: v.x / zoom + cam.x, y: v.y / zoom + cam.y });
 
 const docked = () => {
-  const me = ships.get(myId), map = MAPS[mapId];
-  return !!me && map.owner === myCo && inBase(map, { x: me.x, y: me.y });
+  const me = ships.get(myId);
+  return !!me && canDock(MAPS[mapId], myCo, { x: me.x, y: me.y });
 };
 
 // Nearest hostile to a world point, within a forgiving radius. Demanding a direct
@@ -701,7 +701,8 @@ function drawBay() {
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = home ? '#66748c' : '#e0a53f';
   g.fillText(home ? 'docked — every change takes effect at once'
-                  : `fly into the ${COMPANIES[myCo].tag}-1 base ring to outfit`, P.x + 236, P.y + 32);
+           : MAPS[mapId].dev ? 'fly into the workshop ring to outfit'
+                             : `fly into the ${COMPANIES[myCo].tag}-1 base ring to outfit`, P.x + 236, P.y + 32);
 
   // a live stat line, so the effect of a click is visible immediately
   let sx = P.x + 20;

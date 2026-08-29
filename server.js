@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
@@ -226,8 +226,7 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
 
     // --- station: everything below needs you sitting in your own base ring ---
-    const M = () => MAPS[P.mapId];
-    const atStation = () => (M().owner === P.co || M().dev) && inBase(M(), ship);
+    const atStation = () => canDock(MAPS[P.mapId], P.co, ship);
 
     if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
 
@@ -506,7 +505,7 @@ setInterval(() => {
     step(p.ship, dt);
     stepDrift(p.ship, dt);
     const map = MAPS[p.mapId];
-    p.docked = (map.owner === p.co || map.dev) && inBase(map, p.ship);
+    p.docked = canDock(map, p.co, p.ship);
     stepVitals(p.ship, dt, p.docked);
 
 

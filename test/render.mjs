@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
+import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -340,6 +341,42 @@ const hoverAt = r => evt('pointermove', { clientX: r.x + r.w / 2, clientY: r.y +
     click(L.hulls.find(h => h.k === 'hauler').r);
     frame(t += 16); frames++;
     if (!sent.some(m => m.t === 'hull')) errs.push('Escape closed the whole station instead of just the chooser');
+  }
+
+  // Standing on the workshop ring, the store has to actually sell. The client
+  // used to decide for itself whether you were docked, using a rule that had no
+  // idea the workshop existed, so every click bounced off "fly into your base
+  // ring" while the server would happily have taken the money.
+  {
+    const at = (x, y) => feed({ t: 's', docked: true, ships: [packShip({
+      id: 1, x, y, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+      hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+    feed({ t: 'map', map: DEV_ID });
+    at(DEV_BASE.x, DEV_BASE.y);
+    feed({ t: 'fit', hull: 'vanguard', fit: { weapon: [], generator: [], tech: [] },
+           drones: [], gear: {}, formation: 'line', formations: ['line'],
+           hulls: ['vanguard'], credits: 900000 });
+    frame(t += 16); frames++;
+    const L = bayLayout(innerWidth, innerHeight, { hull: 'vanguard', drones: 0, tab: 'store',
+                                                   page: 'weapon', hulls: ['vanguard'], formations: ['line'] });
+    click(L.tabs.find(x => x.key === 'store').r); frame(t += 16); frames++;
+    click(L.pages.find(x => x.key === 'weapon').r); frame(t += 16); frames++;
+    sent.length = 0;
+    for (const it of L.store) click(it.r);
+    frame(t += 16); frames++;
+    const bought = sent.filter(m => m.t === 'buy');
+    if (!bought.length) errs.push('the workshop dock would not sell anything');
+    else console.log(`workshop: the store sells on the dev ring — ${bought.length} buys sent`);
+
+    // ...and standing outside the ring it still refuses, wherever you are
+    at(DEV_BASE.x + DEV_BASE.r + 400, DEV_BASE.y);
+    frame(t += 16); frames++;
+    sent.length = 0;
+    for (const it of L.store) click(it.r);
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'buy')) errs.push('the store sold to someone drifting outside the ring');
+    feed({ t: 'map', map: 'm1' });
+    at(6000, 4000); frame(t += 16); frames++;
   }
 
   // A rocket volley is heard once, on the frame the rails light, and never again

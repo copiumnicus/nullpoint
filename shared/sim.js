@@ -126,6 +126,12 @@ export function inBase(map, s) {
   return !!map.base && Math.hypot(map.base.x - s.x, map.base.y - s.y) < map.base.r;
 }
 
+// Whether this pilot may use the station here — repair, refit, and the store.
+// One definition, because the client and the server each keeping their own is
+// exactly how the workshop ended up refusing to sell anything: the server was
+// happy to take the money and the client would not draw the counter.
+export const canDock = (map, co, s) => (map.owner === co || !!map.dev) && inBase(map, s);
+
 // Base rings and portal mouths are both sanctuary. An alien will not start a fight
 // with anyone standing in one — but provocation overrides it, and that check lives
 // in the alien's own logic, not here.

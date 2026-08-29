@@ -1,4 +1,4 @@
-import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME } from '../shared/sim.js';
+import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME, canDock } from '../shared/sim.js';
 import { MAPS, GALAXY, HOMES, COMPANIES, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { chartLayout } from '../shared/chart.js';
 
@@ -61,6 +61,21 @@ console.log('\nthe testing ground');
     `r=${DEV_BASE.r} against ${MAPS.m1.base.r} at a real base`);
   check('the map defines the dock once', MAPS[DEV_ID].base === DEV_BASE,
     'devmap reads it rather than repeating it');
+
+  // The client and the server used to answer this separately, and disagreed:
+  // the server took your money and the client refused to draw the counter.
+  const on = (map, co, x, y) => canDock(map, co, { x, y });
+  check('the workshop ring serves every company',
+    ['m', 'h', 'k'].every(co => on(MAPS[DEV_ID], co, DEV_BASE.x, DEV_BASE.y)),
+    'it belongs to whoever is standing in it');
+  check('and only inside the ring',
+    !on(MAPS[DEV_ID], 'm', DEV_BASE.x + DEV_BASE.r + 10, DEV_BASE.y));
+  check('a real base still only serves its owner',
+    on(MAPS.m1, 'm', MAPS.m1.base.x, MAPS.m1.base.y)
+    && !on(MAPS.m1, 'h', MAPS.m1.base.x, MAPS.m1.base.y),
+    'the workshop is the exception, not a hole in the rule');
+  check('and open space is nobody\'s station',
+    GALAXY.every(id => !MAPS[id].base || !on(MAPS[id], MAPS[id].owner, 100, 100)));
   // Arranged around the ring rather than strung out in one direction.
   const bearings = [...PROPS, ...PEN_SLOTS].map(o =>
     Math.round(Math.atan2(o.y - DEV_BASE.y, o.x - DEV_BASE.x) * 2 / Math.PI));
