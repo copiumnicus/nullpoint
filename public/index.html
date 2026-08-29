@@ -24,16 +24,16 @@ import { audioReady, setThrust, laser, rocket, explosion,
          toggleAudio, toggleSfx, toggleMusic, audioOn, sfxOnly, musicOnly,
          setSfxVolume, sfxVolume, setMusicVolume, musicVolume,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
-         setMood, musicMood, hasMood, setPicker } from '/audio.js';
+         setMood, musicMood, hasMood, setPicker, setLeveller } from '/audio.js';
 import { ALLY, FRESH, STALE } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
-import { poolOf, moodFor, drawNext, resolveMood,
+import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
-import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, magazine, forWeapon,
+import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
          barLayout, feedMenu } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
@@ -80,7 +80,7 @@ let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
 let myForm = 'line', myForms = ['line'];
-let myAmmo = {}, myUsing = { ...DEFAULT_AMMO };
+let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -155,6 +155,7 @@ ws.onmessage = e => {
     myDrones = m.drones ?? []; myXp = m.xp ?? 0; amAdmin = !!m.admin;
     myForm = m.formation ?? 'line'; myForms = m.formations ?? ['line'];
     myAmmo = m.ammo ?? {}; myUsing = { ...DEFAULT_AMMO, ...(m.using ?? {}) };
+    myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
     myName = m.name ?? '';
     if (m.token) { try { localStorage.setItem(TOKEN_KEY, m.token); } catch {} }
     return;
@@ -172,6 +173,7 @@ ws.onmessage = e => {
     myDrones = m.drones ?? myDrones;
     myForm = m.formation ?? myForm; myForms = m.formations ?? myForms;
     myAmmo = m.ammo ?? myAmmo; myUsing = m.using ? { ...DEFAULT_AMMO, ...m.using } : myUsing;
+    if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
@@ -213,6 +215,7 @@ ws.onmessage = e => {
   myGear = m.gear ?? myGear;
   if (m.ammo) myAmmo = m.ammo;
   if (m.using) myUsing = { ...DEFAULT_AMMO, ...m.using };
+  if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
   if (m.drones) myDrones = m.drones;
@@ -297,6 +300,7 @@ function nearestHostile() {
 addEventListener('keydown', e => {
   audioReady();                                   // browsers want a gesture first
   setPicker(drawNext);
+  setLeveller(levelStep);
   startMusic(poolOf);
   stir();
 
@@ -372,6 +376,7 @@ addEventListener('keydown', e => {
 c.addEventListener('pointerdown', e => {
   audioReady();
   setPicker(drawNext);
+  setLeveller(levelStep);
   startMusic(poolOf);
   stir();
   if (signedOff) { location.reload(); return; }
@@ -1258,6 +1263,7 @@ function nowPlaying() {
 // A weapon with nothing behind it does not fire, so the count is not decoration
 // and the box says so before you find out the hard way.
 let feedOpen = null;                            // which box has its menu up
+let lastBox = { feed: null, t: -Infinity };     // for spotting a double click on one
 
 const heldGrades = feed => forWeapon(feed).filter(k => (myAmmo[k] ?? 0) > 0);
 
@@ -1278,6 +1284,19 @@ function barClick(v) {
   }
   for (const b of L.boxes) {
     if (!inside(b.r)) continue;
+    // Twice on the same box safes the weapon, or brings it back. Once opens the
+    // menu — so the first click of a double opens it and the second puts it away
+    // again on its way to the switch, which reads fine.
+    const now4 = performance.now();
+    const twice = lastBox.feed === b.feed && now4 - lastBox.t < DOUBLE_TAP;
+    lastBox = { feed: b.feed, t: twice ? -Infinity : now4 };
+    if (twice) {
+      const on = !myArmed[b.feed];
+      feedOpen = null;
+      send({ t: 'arm', feed: b.feed, on });
+      say(`${b.feed === 'laser' ? 'Guns' : 'Rockets'} ${on ? 'live' : 'safed'}`, on ? '#7de08a' : '#e0a53f');
+      return true;
+    }
     const held = heldGrades(b.feed);
     if (!held.length) { say(`No ${b.feed === 'laser' ? 'cells' : 'warheads'} — buy a crate at the dock`, '#e0a53f'); return true; }
     if (held.length === 1) {                    // nothing to choose between
@@ -1335,21 +1354,31 @@ function drawBar() {
 
   for (const b of L.boxes) {
     const key = myUsing[b.feed], a = AMMO[key], n = myAmmo[key] ?? 0;
-    const r = b.r, dry = n === 0;
-    const low = !dry && n < (b.feed === 'rocket' ? 60 : 300);
+    const r = b.r, safed = !myArmed[b.feed], dry = !safed && n === 0;
+    const low = !dry && !safed && n < (b.feed === 'rocket' ? 60 : 300);
     g.fillStyle = 'rgba(6,10,16,0.82)'; g.fillRect(r.x, r.y, r.w, r.h);
-    g.strokeStyle = dry ? '#ff5c6b' : feedOpen === b.feed ? '#7fd4ff' : over(r) ? '#4a6785' : '#243448';
+    g.strokeStyle = safed ? '#6a5340' : dry ? '#ff5c6b' : feedOpen === b.feed ? '#7fd4ff'
+                  : over(r) ? '#4a6785' : '#243448';
     g.lineWidth = dry || feedOpen === b.feed ? 2 : 1;
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
 
+    g.globalAlpha = safed ? 0.35 : 1;
     roundIcon(b.feed, r.x + r.w / 2, r.y + 24, dry ? '#5a2733' : b.feed === 'laser' ? '#8fe7ff' : '#cfe9ff');
     if (a.tier > 1) {                            // pips for the grade, top-left
       g.fillStyle = dry ? '#4a4230' : '#ffd479';
       for (let i = 0; i < a.tier - 1; i++) g.fillRect(r.x + 6 + i * 6, r.y + 6, 4, 4);
     }
     g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
-    g.fillStyle = dry ? '#ff5c6b' : low ? '#e0a53f' : '#cfe4ff';
+    g.fillStyle = safed ? '#7a6a52' : dry ? '#ff5c6b' : low ? '#e0a53f' : '#cfe4ff';
     g.fillText(dry ? 'DRY' : n > 9999 ? `${Math.round(n / 1000)}k` : String(n), r.x + r.w / 2, r.y + r.h - 10);
+    g.globalAlpha = 1;
+    if (safed) {                                 // struck through: this one is holding fire
+      g.strokeStyle = '#e0a53f'; g.lineWidth = 2.5;
+      g.beginPath();
+      g.moveTo(r.x + 10, r.y + 10); g.lineTo(r.x + r.w - 10, r.y + r.h - 10);
+      g.moveTo(r.x + r.w - 10, r.y + 10); g.lineTo(r.x + 10, r.y + r.h - 10);
+      g.stroke();
+    }
     if (heldGrades(b.feed).length > 1) {         // a hint that there is a choice here
       g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
       g.fillText('▲', r.x + r.w - 9, r.y + 12);

@@ -7,7 +7,8 @@
 import { DEFAULT_HULL, sanitiseFit, slotsOf, HULLS } from './ships.js';
 import { EQUIPMENT, emptyFit, sanitiseDrones } from './gear.js';
 import { FORMATIONS, DEFAULT_FORMATION } from './formation.js';
-import { sanitiseAmmo, sanitiseUsing, DEFAULT_AMMO, STARTING_AMMO } from './ammo.js';
+import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
+         DEFAULT_AMMO, STARTING_AMMO } from './ammo.js';
 import { MAPS, COMPANIES } from './maps.js';
 import { MATERIALS } from './cargo.js';
 
@@ -30,7 +31,7 @@ export function newAccount(token, seq, now) {
     hull: DEFAULT_HULL, fit: { ...emptyFit(), weapon: ['emitter1'] }, gear: {},
     hulls: [DEFAULT_HULL],                        // the ships you own, not just the one you fly
     formation: DEFAULT_FORMATION, formations: [DEFAULT_FORMATION],
-    ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO },
+    ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     credits: 0, xp: 0, drones: [], vault: {}, hold: {}, admin: false,
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
@@ -61,7 +62,7 @@ export function sanitiseAccount(a, seq, now) {
     xp: Number.isFinite(a?.xp) ? Math.max(0, Math.floor(a.xp)) : 0,
     admin: a?.admin === true,
     formations: forms, formation: forms.includes(a?.formation) ? a.formation : DEFAULT_FORMATION,
-    ammo: sanitiseAmmo(a?.ammo), using: sanitiseUsing(a?.using),
+    ammo: sanitiseAmmo(a?.ammo), using: sanitiseUsing(a?.using), armed: sanitiseArmed(a?.armed),
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,
@@ -83,6 +84,7 @@ export function capture(account, p, now) {
   account.formations = [...p.formations];
   account.ammo = { ...p.ammo };
   account.using = { ...p.using };
+  account.armed = { ...p.armed };
   account.xp = p.xp;
   account.credits = p.credits;
   account.vault = { ...p.vault };

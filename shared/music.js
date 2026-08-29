@@ -95,3 +95,24 @@ export function drawNext(bag, pool, last = null, rand = Math.random) {
   }
   return { pick: next[0], bag: next.slice(1) };
 }
+
+// Levelling.
+//
+// Tracks written at different times are mastered at different loudnesses, and a
+// playlist that jumps 6dB between pieces is one you keep reaching for the volume
+// during. There is no loudness tag to read and the files are streamed rather
+// than decoded, so the level is measured off the output and corrected toward a
+// target — slowly, because anything quick enough to react to a passage would
+// breathe on the music.
+export const TARGET_RMS = 0.09;      // about -21 dBFS, a background level
+export const GAIN_MIN = 0.3, GAIN_MAX = 3.2;
+export const SETTLE = 0.18;          // fraction of the way per measurement
+export const FLOOR_RMS = 0.004;      // below this it is a quiet passage, not a level
+
+// One step toward the right gain for a track, given what the meter just read.
+// Returns the gain unchanged when the reading says nothing.
+export function levelStep(rms, gain = 1) {
+  if (!(rms > FLOOR_RMS)) return gain;
+  const fit = Math.max(GAIN_MIN, Math.min(GAIN_MAX, TARGET_RMS / rms));
+  return gain + (fit - gain) * SETTLE;
+}

@@ -41,6 +41,16 @@ export const STARTING_AMMO = { cell1: 4000, head1: 400 };
 
 export const roundPrice = key => AMMO[key].price / AMMO[key].pack;
 
+// A safed weapon holds its fire. Useful for saving the expensive warheads while
+// you clear trash with the guns, and for not spraying rockets at something you
+// only meant to scratch.
+export const ARMED_ALL = Object.fromEntries(FEEDS.map(f => [f, true]));
+export function sanitiseArmed(raw) {
+  const out = {};
+  for (const f of FEEDS) out[f] = raw?.[f] !== false;   // armed unless explicitly safed
+  return out;
+}
+
 // Whatever reaches us from a client or a save file: real keys, whole numbers,
 // never negative. Deliberately not capped — see the header.
 export function sanitiseAmmo(raw) {

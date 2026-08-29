@@ -359,6 +359,25 @@ console.log('\nthe playlist');
   check('eight fights do not open on the same track twice running',
     fights.every((k, i) => i === 0 || k !== fights[i - 1]), fights.join(' '));
 
+  // Levelling. Nothing to read a loudness tag from and nothing decoded, so the
+  // level is measured off the output and walked toward a target.
+  const { levelStep, TARGET_RMS, GAIN_MIN, GAIN_MAX, FLOOR_RMS } = await import('../shared/music.js');
+  const settle = rms => { let g = 1; for (let i = 0; i < 60; i++) g = levelStep(rms, g); return g; };
+  const quietTrack = settle(TARGET_RMS / 2), loudTrack = settle(TARGET_RMS * 2);
+  console.log(`     a track half the target level settles at x${quietTrack.toFixed(2)}, ` +
+              `one at twice it x${loudTrack.toFixed(2)}`);
+  check('a quiet track is brought up and a loud one down',
+    quietTrack > 1.5 && loudTrack < 0.7);
+  check('and one already at the target is left alone',
+    Math.abs(settle(TARGET_RMS) - 1) < 0.01);
+  check('it moves slowly rather than jumping', Math.abs(levelStep(TARGET_RMS / 3, 1) - 1) < 0.5,
+    'a correction fast enough to follow a passage would breathe on the music');
+  check('nothing is rescued or crushed past its limits',
+    settle(1e-3) <= GAIN_MAX + 1e-9 && settle(10) >= GAIN_MIN - 1e-9,
+    `${GAIN_MIN} to ${GAIN_MAX}`);
+  check('a silent passage says nothing about the track',
+    levelStep(FLOOR_RMS / 2, 1.7) === 1.7 && levelStep(0, 1.7) === 1.7);
+
   check('every live mood lands on a deck',
     LIVE_MOODS.every(m => [CALM, CHASE, COMBAT].includes(poolOf(m === 'all' ? 'loose.mp3' : `${m}/x.mp3`))),
     LIVE_MOODS.join(' '));

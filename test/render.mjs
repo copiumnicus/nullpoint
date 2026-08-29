@@ -7,7 +7,8 @@ import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.j
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
 import { AMMO_KEYS, FEEDS, barLayout, feedMenu } from '../shared/ammo.js';
 import { settingsLayout } from '../shared/settings.js';
-import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume } from '../public/audio.js';
+import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
+         musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
@@ -108,9 +109,38 @@ globalThis.AudioContext = class {
   createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
   createOscillator() { audio.osc++; return anode(); }
   createConvolver() { return anode(); }
+  createDynamicsCompressor() { return { threshold: param('t'), knee: param('k'), ratio: param('r'),
+                                        attack: param('a'), release: param('rl'), connect() {} }; }
+  createAnalyser() {
+    return { fftSize: 2048, connect() {},
+      // a steady tone at a known level, so the levelling has something to converge on
+      getFloatTimeDomainData(buf) { for (let i = 0; i < buf.length; i++) buf[i] = 0.03 * Math.sin(i / 9); } };
+  }
+  createMediaElementSource() { return { connect() {} }; }
   createDelay() { return { delayTime: param('delay'), connect() {} }; }
   createWaveShaper() { return { curve: null, connect() {} }; }
 };
+
+// Music was a third of a file with nothing driving it. These are enough of the
+// browser for the whole path to run: sorting onto decks, drawing from the bag,
+// switching mood, fading, and the levelling that measures its way to a gain.
+const TRACKS = ['Silent Orbit.mp3', 'ambient/long-dark.mp3', 'ambient/drift.mp3',
+                'combat/hard-burn.mp3', 'combat/cold-pulse.mp3',
+                'chase/long-way-home.mp3', 'boss/iron-pulse.mp3'];
+const played = [];
+globalThis.Audio = class {
+  constructor() { this.paused = true; this._src = ''; this.volume = 1; this.crossOrigin = ''; }
+  set src(v) { this._src = v; played.push(decodeURIComponent(v.replace('/music/', ''))); }
+  get src() { return this._src; }
+  addEventListener(type, fn) { (this._on ??= {})[type] = fn; }
+  play() { this.paused = false; return Promise.resolve(); }
+  pause() { this.paused = true; }
+};
+globalThis.fetch = url => Promise.resolve({
+  ok: String(url).endsWith('/music/list'),
+  json: async () => TRACKS,
+  arrayBuffer: async () => new ArrayBuffer(0),
+});
 
 const errs = [];
 console.error = (...a) => errs.push(a.join(' '));
@@ -535,6 +565,65 @@ const dismiss = () => {
         errs.push('two slow TABs were read as a double tap');
       else console.log('target: TAB engages, TAB TAB breaks off, slow taps re-engage');
     } finally { performance.now = perf; }
+  }
+
+  // The whole music path, end to end: sorted onto decks, drawn from the bag,
+  // switched by what the fight is doing, and levelled toward a target.
+  {
+    dismiss();
+    setMusicVolume(0.6);                                     // the fader test left it at zero
+    await new Promise(r => setTimeout(r, 30));               // startMusic awaits its fetch
+    // The mood is held for seconds of real time and the harness runs in
+    // milliseconds of it, so the clock is driven by hand here too.
+    const realNow = performance.now;
+    let clk = realNow.call(performance);          // anchored to the real clock: jumping the
+    performance.now = () => clk;                  // idle limit signs the pilot out mid-test
+    // Two clocks matter here: the mood hold is measured against the rAF timestamp
+    // the frame is handed, the idle timeout against performance.now. Advance both.
+    const beat = ms => { clk += ms; frame(t += ms); frames++; };
+    beat(20_000);                                            // long past any earlier fight
+    const list = musicList();
+    if (list.length !== TRACKS.length - 1)
+      errs.push(`sorted ${list.length} of ${TRACKS.length} tracks onto decks, boss/ aside`);
+    if (musicParked().length !== 1) errs.push('boss/ did not stay parked');
+    for (const m of ['calm', 'chase', 'combat'])
+      if (!hasMood(m)) errs.push(`no ${m} deck was built`);
+
+    // Nothing shooting: the score.
+    const quiet = () => feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0,
+      charge: 0, co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+    quiet(); beat(20_000);
+    if (musicMood() !== 'calm') errs.push(`an empty sector is playing ${musicMood()}`);
+
+    // Something locks on and you do not fire back: a chase.
+    feed({ t: 's', ships: [
+      packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+                 hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 }),
+      packShip({ id: 1e6, x: 6200, y: 4100, heading: 0, charge: 0, co: 'x', hull: 'drifter',
+                 hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1 })] });
+    beat(100);
+    if (musicMood() !== 'chase') errs.push(`being hunted is playing ${musicMood()}`);
+
+    // You fire back: a fight.
+    feed({ t: 's', ships: [
+      packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+                 hp: 100, sh: 100, flash: 0, tgt: 1e6, shot: 90, rk: 0, vis: 2 }),
+      packShip({ id: 1e6, x: 6200, y: 4100, heading: 0, charge: 0, co: 'x', hull: 'drifter',
+                 hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1 })] });
+    beat(100);
+    if (musicMood() !== 'combat') errs.push(`shooting back is playing ${musicMood()}`);
+
+    // Each deck drew from its own folder, and never the same track twice running.
+    const bad = played.filter((n, i) => i && n === played[i - 1]);
+    if (bad.length) errs.push(`the bag handed out ${bad[0]} twice in a row`);
+    if (played.some(n => n.startsWith('boss/'))) errs.push('a parked track was played');
+
+    // Levelling itself is levelStep() in shared/music.js with its own tests — the
+    // measuring rig around it needs a real AudioContext to say anything, and a
+    // stub that always reads the same tone would only be testing the stub.
+    console.log('music: 3 decks, bag draws, mood follows the fight');
+    quiet(); beat(20_000);
+    performance.now = realNow;
   }
 
   // The ammunition bar. Every box is clickable, the two loaded grades are the

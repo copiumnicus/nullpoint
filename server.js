@@ -6,7 +6,7 @@ import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
-import { AMMO, magazine, sanitiseUsing } from './shared/ammo.js';
+import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
@@ -252,12 +252,13 @@ wss.on('connection', (ws, req) => {
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
                     gear: { ...acct.gear }, hulls: [...acct.hulls], xp: acct.xp,
                     formations: [...acct.formations],
-                    ammo: { ...acct.ammo }, using: { ...acct.using },
+                    ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     scoop: null, want: null, dead: false });
   const outfit = () => (touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
                                                 drones: ship.drones, formation: ship.formation,
                                                 formations: players.get(id).formations,
                                                 ammo: players.get(id).ammo, using: players.get(id).using,
+                                                armed: players.get(id).armed,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
   ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
@@ -265,7 +266,7 @@ wss.on('connection', (ws, req) => {
                            gear: acct.gear, hulls: acct.hulls, credits: acct.credits,
                            drones: acct.drones, xp: acct.xp, admin: isAdmin(acct),
                            formation: acct.formation, formations: acct.formations,
-                           ammo: acct.ammo, using: acct.using }));
+                           ammo: acct.ammo, using: acct.using, armed: acct.armed }));
   console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
               `${returning ? 'back in' : 'new, at'} ${MAPS[acct.mapId].name} (${players.size} online)`);
 
@@ -393,6 +394,12 @@ wss.on('connection', (ws, req) => {
       const moved = reseat(slotsOf(m.key), ship.fit, P.gear);      // whatever will not fit comes off
       P.gear = moved.gear;
       refit(ship, m.key, moved.fit, ship.drones);                  // the escort follows you across
+      return outfit();
+    }
+    if (m.t === 'arm') {                          // safe a weapon, or bring it back
+      if (!FEEDS.includes(m.feed)) return;
+      P.armed = sanitiseArmed({ ...P.armed, [m.feed]: !!m.on });
+      touch(P);
       return outfit();
     }
     if (m.t === 'ammo') {                         // which grade feeds which weapon
@@ -642,8 +649,10 @@ setInterval(() => {
     // cannot outrun their own ammunition by holding the trigger.
     const bolts0 = magazine(p.ammo, p.using, 'laser');
     const heads0 = magazine(p.ammo, p.using, 'rocket');
-    const volley = fire(p.ship, foe, dt, bolts0);
-    const salvo = launch(p.ship, foe, dt, heads0);
+    // A safed weapon still runs its cooldown against no target, so bringing it
+    // back does not hand you a free instant volley.
+    const volley = p.armed.laser  ? fire(p.ship, foe, dt, bolts0)   : (fire(p.ship, null, dt, bolts0), []);
+    const salvo  = p.armed.rocket ? launch(p.ship, foe, dt, heads0) : (launch(p.ship, null, dt, heads0), []);
     for (const m0 of [bolts0, heads0]) {
       if (m0.n === (p.ammo[m0.key] ?? 0)) continue;
       if (m0.n > 0) p.ammo[m0.key] = m0.n; else delete p.ammo[m0.key];
@@ -763,7 +772,7 @@ setInterval(() => {
       hits: numbers.map(h => packHit(h, h.by === vid)),
       pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
-      ammo: V.ammo, using: V.using,
+      ammo: V.ammo, using: V.using, armed: V.armed,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
       // effective levels as whole percent, so the readout cannot jitter between
       // 29 and 30 from a float that is a hair under one

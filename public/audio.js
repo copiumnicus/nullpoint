@@ -310,6 +310,7 @@ export const musicList = () => Object.values(pools).flat();
 export const musicParked = () => [...parked];
 export const hasMood = m => pools[m]?.length > 0;
 export const musicTrack = () => decks[mood]?.last ?? null;
+export const trackLevels = () => ({ ...loadLevels() });
 
 // Called whenever the audible track changes, so the HUD can name it.
 export const onMusicChange = fn => { onTrack = fn; };
@@ -326,9 +327,14 @@ export const setPicker = fn => { choose = fn; };
 
 // `sort` says which deck a filename belongs on, or null to leave it parked. It is
 // passed in rather than imported because this module depends on nothing.
+let started = false;
 export async function startMusic(sort = () => CALM) {
   musicWanted = true;
-  if (musicList().length || typeof fetch !== 'function' || typeof Audio !== 'function') return;
+  // Set before the await, not after. Every gesture calls this, and the fetch
+  // takes long enough that a handful of clicks would each get past a check on
+  // the playlist and sort the whole folder onto the decks again.
+  if (started || typeof fetch !== 'function' || typeof Audio !== 'function') return;
+  started = true;
   let all = [];
   try {
     const r = await fetch('/music/list');
@@ -353,7 +359,8 @@ function deckFor(m) {
   el.addEventListener('ended', () => play(m));
   // A track that will not decode should not stall the deck behind it.
   el.addEventListener('error', () => { if (pools[m].length > 1) play(m); });
-  decks[m] = { el, gain: null, bag: [], last: null, level: m === mood ? 1 : 0 };
+  decks[m] = { el, gain: null, trim: null, meter: null, want: 1,
+               bag: [], last: null, level: m === mood ? 1 : 0 };
   return decks[m];
 }
 
@@ -363,6 +370,8 @@ function play(m) {
   const { pick, bag } = choose(d.bag, pools[m], d.last);
   if (!pick) return;
   d.bag = bag; d.last = pick;
+  d.want = loadLevels()[pick] ?? 1;              // start where it settled last time
+  if (d.trim) d.trim.gain.value = d.want;
   d.el.src = '/music/' + encodeURIComponent(pick).replace(/%2F/gi, '/');
   wire(d);
   const go = d.el.play();
@@ -410,16 +419,102 @@ function ramp() {
 
 const musicLevel = () => (on && musicOn && musicWanted ? musicVol : 0);
 
+// --- levelling ----------------------------------------------------------------
+// Tracks written at different times are mastered at different loudnesses, and a
+// playlist that jumps 6dB between pieces is a playlist you keep reaching for the
+// volume during.
+//
+// There is no loudness tag to read and the files are streamed rather than
+// decoded, so the level is measured off the output instead: RMS over a couple of
+// seconds, then a slow pull toward a target. Slow on purpose — anything quick
+// enough to react to a passage would breathe on the music. What it learns is
+// remembered per track, so the second time a piece comes up it starts at the
+// right level rather than settling into it again.
+//
+// A limiter sits after all of it to catch whatever the measurement misses.
+
+const MEASURE_MS = 400;                          // how often the meter is read
+const LEVELS_KEY = 'nullpoint.levels';
+
+// How far to move the gain given a reading. Passed in, like the mood rules and
+// the picker, because this module depends on nothing.
+let step = (rms, gain) => gain;
+export const setLeveller = fn => { step = fn; };
+
+let limiter = null, levels = null, meterTimer = null;
+
+const loadLevels = () => {
+  if (levels) return levels;
+  levels = {};
+  try { Object.assign(levels, JSON.parse(localStorage.getItem(LEVELS_KEY) ?? '{}')); } catch {}
+  return levels;
+};
+const rememberLevel = (name, gain) => {
+  loadLevels()[name] = Math.round(gain * 1000) / 1000;
+  try { localStorage.setItem(LEVELS_KEY, JSON.stringify(levels)); } catch {}
+};
+
+// What every deck feeds into. Built once, and only if the browser has the parts.
+function musicOut() {
+  if (limiter || !ctx) return limiter;
+  if (typeof ctx.createDynamicsCompressor !== 'function') return null;
+  limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -6;                  // only the peaks the measurement missed
+  limiter.knee.value = 6;
+  limiter.ratio.value = 12;
+  limiter.attack.value = 0.004;
+  limiter.release.value = 0.25;
+  limiter.connect(ctx.destination);              // past the saturation, on purpose
+  return limiter;
+}
+
 // The graph is only available once a context exists, and a context only exists
 // after a gesture. Until then the element's own volume carries the setting.
 function wire(d) {
   if (d.gain || !ctx || typeof ctx.createMediaElementSource !== 'function') return;
   try {
-    d.gain = ctx.createGain();
-    ctx.createMediaElementSource(d.el).connect(d.gain);
-    d.gain.connect(ctx.destination);               // past the saturation, on purpose
+    d.gain = ctx.createGain();                   // the fade
+    d.trim = ctx.createGain();                   // what levelling learned
+    d.trim.gain.value = d.want ?? 1;
+    ctx.createMediaElementSource(d.el).connect(d.trim);
+    d.trim.connect(d.gain);
+    const out = musicOut();
+    if (out) d.gain.connect(out); else d.gain.connect(ctx.destination);
+    if (typeof ctx.createAnalyser === 'function') {
+      d.meter = ctx.createAnalyser();
+      d.meter.fftSize = 2048;
+      d.buf = new Float32Array(d.meter.fftSize);
+      d.gain.connect(d.meter);                   // after the fade, so a faded deck reads quiet
+    }
     d.el.volume = 1;
-  } catch { d.gain = null; }                       // some browsers refuse; fall back to el.volume
+    startMeter();
+  } catch { d.gain = null; }                     // some browsers refuse; fall back to el.volume
+}
+
+// One timer for every deck. Only the audible one is measured — a deck fading out
+// is not a fair sample of anything.
+function startMeter() {
+  if (meterTimer || typeof setInterval !== 'function') return;
+  meterTimer = setInterval(() => {
+    const d = decks[mood];
+    if (!d?.meter || !d.last || d.el.paused) return;
+    // Only measure a deck that has finished arriving. `level` runs to whatever
+    // the music fader is set to, not to 1 — comparing it against 1 meant the
+    // meter never ran at any volume below full.
+    const want = musicLevel();
+    if (want <= 0.02 || d.level < want * 0.95) return;
+    let sum = 0;
+    if (typeof d.meter.getFloatTimeDomainData === 'function') {
+      d.meter.getFloatTimeDomainData(d.buf);
+      for (let i = 0; i < d.buf.length; i++) sum += d.buf[i] * d.buf[i];
+    } else return;
+    const rms = Math.sqrt(sum / d.buf.length) / want;   // back out the fader
+    const next = step(rms, d.want ?? 1);
+    if (next === d.want) return;
+    d.want = next;
+    if (d.trim) d.trim.gain.value = d.want;
+    rememberLevel(d.last, d.want);
+  }, MEASURE_MS);
 }
 
 function setGain(d) {
