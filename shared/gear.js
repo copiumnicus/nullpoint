@@ -39,18 +39,22 @@ export const EQUIPMENT = {
               blurb: 'About as much as a hardpoint will carry.', mods: [['damage', 'add', 400]] },
 
   // Launchers — the other thing a weapon slot will take. Three to a ship, never on
-  // a drone, and the tiers differ in how many rockets leave at once rather than in
-  // how hard each one hits. Damage is declared for the whole volley so two racks
-  // of the same model land the same rocket twice.
-  pod1: { name: 'Sparrow Pod', slot: 'weapon', kind: 'rocket', tier: 1, price:  4000,
+  // a drone. Each rack shadows a rung of the emitter ladder and beats it: about a
+  // fifth more damage out of the same slot, for about a sixth more money. That
+  // premium is what pays for the three real costs — the cap of three however many
+  // slots the hull has, no drone ever carrying one, and a second or two in the air
+  // before any of it lands. Without it there was no reason to fit one at all.
+  // Damage is declared for the whole volley, so two racks of the same model land
+  // the same rocket twice rather than one twice as hard.
+  pod1: { name: 'Sparrow Pod', slot: 'weapon', kind: 'rocket', tier: 1, price:  3200,
           blurb: 'One rocket. It will find you.',
-          mods: [['rockets', 'add', 1], ['rocketVolley', 'add', 150]] },
-  pod2: { name: 'Triad Rack',  slot: 'weapon', kind: 'rocket', tier: 2, price: 12000,
+          mods: [['rockets', 'add', 1], ['rocketVolley', 'add', 120]] },
+  pod2: { name: 'Triad Rack',  slot: 'weapon', kind: 'rocket', tier: 2, price: 19000,
           blurb: 'Three, thrown wide and closing.',
-          mods: [['rockets', 'add', 3], ['rocketVolley', 'add', 450]] },
-  pod3: { name: 'Swarm Rack',  slot: 'weapon', kind: 'rocket', tier: 3, price: 26000,
+          mods: [['rockets', 'add', 3], ['rocketVolley', 'add', 576]] },
+  pod3: { name: 'Swarm Rack',  slot: 'weapon', kind: 'rocket', tier: 3, price: 40000,
           blurb: 'Five. Turning away only buys you a second.',
-          mods: [['rockets', 'add', 5], ['rocketVolley', 'add', 750]] },
+          mods: [['rockets', 'add', 5], ['rocketVolley', 'add', 1050]] },
 
   // generators — reactor gear. Capacitor, recharge and the free trickle.
   cellA: { name: 'A-Cell Generator', slot: 'generator', tier: 1, price:  1200,

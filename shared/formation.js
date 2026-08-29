@@ -19,7 +19,8 @@ export const FORMATIONS = {
   wedge: {
     name: 'Attack Wedge', price: 9000,
     blurb: 'Pushed forward and out. Guns further from the hull, and less of it.',
-    mods: [['damage', 'mul', 0.12], ['hull', 'mul', -0.08]],
+    // Both weapon systems, or the Wedge quietly reads as "fit lasers".
+    mods: [['damage', 'mul', 0.12], ['rocketVolley', 'mul', 0.12], ['hull', 'mul', -0.08]],
   },
   shell: {
     name: 'Defensive Shell', price: 9000,

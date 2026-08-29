@@ -5,6 +5,7 @@ import { launch, stepRockets, launcherRoom, launchersIn, isLauncher,
          ROCKET_SPEED, ROCKET_TTL, ROCKET_RATE, SPREAD, ROCKET_R,
          turnRate, TURN_MIN, TURN_MAX, TERMINAL_R, TERMINAL_TURN } from '../shared/rockets.js';
 import { fire } from '../shared/combat.js';
+import { FIRE_RATE } from '../shared/ships.js';
 import { BOOST } from '../shared/power.js';
 
 const fails = [];
@@ -26,9 +27,10 @@ console.log('\nthe rack');
 console.log('     ' + PODS.map(k => `${EQUIPMENT[k].name} ${rocketsOf(k)}x${volleyOf(k) / rocketsOf(k)}`).join('   '));
 check('the ladder is one, three and five rockets',
   PODS.map(rocketsOf).join() === '1,3,5', 'a better launcher throws more, not harder');
-check('every rocket in the ladder hits for the same',
-  new Set(PODS.map(k => volleyOf(k) / rocketsOf(k))).size === 1,
-  `${volleyOf(PODS[0])} each, whatever throws it`);
+check('a better rack throws more rockets AND heavier ones',
+  PODS.every((k, i) => i === 0 || (rocketsOf(k) > rocketsOf(PODS[i - 1])
+                                && volleyOf(k) / rocketsOf(k) > volleyOf(PODS[i - 1]) / rocketsOf(PODS[i - 1]))),
+  PODS.map(k => `${rocketsOf(k)}x${Math.round(volleyOf(k) / rocketsOf(k))}`).join('  '));
 check('and each rung costs more', PODS.every((k, i) => i === 0 || EQUIPMENT[k].price > EQUIPMENT[PODS[i - 1]].price));
 check('two racks of a model land that rocket twice, not one twice as hard', (() => {
   const one = resolve('bulwark', fit({ weapon: [PODS[2]] }));
@@ -212,15 +214,46 @@ console.log('\nwhat a rack is worth');
   const gunSlots = (guns.damage - bare.damage) * (1 + BOOST) * guns.fireRate;
   const podSlots = pods.rocketVolley * (1 + BOOST) * ROCKET_RATE;
   const share = podSlots / gunSlots;
+  const WEDGE = 1.12;
   console.log(`     three MK-V in the rack:  ${Math.round(gunSlots)} dps, every bolt dodgeable at range`);
   console.log(`     three Swarm Racks:       ${Math.round(podSlots)} dps, ` +
               `${Math.round(pods.rockets)} rockets a volley that follow you`);
-  check('rockets buy delivery with damage', share < 0.85,
+  // A launcher costs you a slot you cannot get back — three to a ship, none on a
+  // drone — so out of that slot it has to beat the gun it replaced. It did not,
+  // and there was no reason to fit one.
+  check('the best rack out-damages the best gun, slot for slot', share > 1,
     `${Math.round(100 * share)}% of what the same slots do as guns`);
-  check('but not so much that they are a trap', share > 0.6, 'worth the slots it costs');
-  check('and they cost less to fill those slots with',
-    EQUIPMENT[POD].price < EQUIPMENT[TOP].price,
-    `${EQUIPMENT[POD].price} against ${EQUIPMENT[TOP].price} — the cheap way to make damage land`);
+  check('but not so far that guns stop mattering', share < 1.4,
+    'the cap of three is what keeps it honest');
+  check('and it costs more to fill those slots with',
+    EQUIPMENT[POD].price > EQUIPMENT[TOP].price,
+    `${EQUIPMENT[POD].price} against ${EQUIPMENT[TOP].price}`);
+
+  // Every rung, not just the top one: a rack has to beat the emitter in its own
+  // price band, or the middle of the ladder is a trap.
+  const LASERS = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'laser');
+  const laserDps = k => EQUIPMENT[k].mods.find(([a]) => a === 'damage')[2] * WEDGE * (1 + BOOST) * FIRE_RATE;
+  const podDpsOf = k => volleyOf(k) * WEDGE * (1 + BOOST) * ROCKET_RATE;
+  let allBeat = true;
+  for (const k of PODS) {
+    // the emitter you would otherwise have spent that money on
+    const rival = LASERS.reduce((best, l) =>
+      Math.abs(EQUIPMENT[l].price - EQUIPMENT[k].price) < Math.abs(EQUIPMENT[best].price - EQUIPMENT[k].price) ? l : best);
+    const edge = podDpsOf(k) / laserDps(rival);
+    console.log(`     ${EQUIPMENT[k].name.padEnd(13)}${Math.round(podDpsOf(k)).toString().padStart(4)} dps  vs  ` +
+                `${EQUIPMENT[rival].name.padEnd(15)}${Math.round(laserDps(rival)).toString().padStart(4)} dps   ` +
+                `+${Math.round(100 * (edge - 1))}% for +${Math.round(100 * (EQUIPMENT[k].price / EQUIPMENT[rival].price - 1))}% cost`);
+    if (edge <= 1.05 || edge > 1.4) allBeat = false;
+  }
+  check('every rack beats the gun in its own price band', allBeat,
+    'no rung of the launcher ladder is a downgrade');
+
+  // The Wedge used to lift bolts only, which quietly made it a lasers-only perk.
+  const escort = Array(3).fill('emitter5');        // a formation pays nothing without one
+  const wedged = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [POD, POD, POD] })), escort, 'wedge');
+  const plain  = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [POD, POD, POD] })), escort, 'line');
+  check('the Attack Wedge lifts rockets too', wedged.rocketVolley > plain.rocketVolley,
+    'otherwise it reads as "fit lasers"');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`
