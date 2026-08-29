@@ -27,9 +27,14 @@ export function diffLines(before, after) {
   });
 }
 
+// Where this item would actually go. Most things join a rack; a collector rig
+// only ever rides a drone, so previewing it in a rack would price a fit that
+// cannot exist.
+const onADrone = item => EQUIPMENT[item]?.slot === 'drone';
 const withItem = (fit, item) => {
   const next = { weapon: [...fit.weapon], generator: [...fit.generator], tech: [...fit.tech] };
-  next[EQUIPMENT[item].slot] = [...next[EQUIPMENT[item].slot], item];
+  const slot = EQUIPMENT[item]?.slot;
+  if (next[slot]) next[slot] = [...next[slot], item];
   return next;
 };
 
@@ -44,13 +49,18 @@ export function tipFor(kind, key, ctx) {
     const room = (slotsOf(hull)?.[e.slot] ?? 0) - (fit[e.slot]?.length ?? 0);
     const dupe = e.slot === 'tech' && (fit.tech ?? []).concat(drones).includes(key);
     const capped = e.kind === 'rocket' && launcherRoom(fit) <= 0;
+    const bays = drones.filter(d => d === null).length;
     return {
       title: e.name, price: e.price, blurb: e.blurb,
-      sub: `${e.slot} slot`,
-      lines: capped ? [] : diffLines(now, resolve(hull, withItem(fit, key), drones, formation)),
+      sub: onADrone(key) ? 'drone bay only' : `${e.slot} slot`,
+      lines: capped ? []
+           : onADrone(key) ? diffLines(now, resolve(hull, fit, [...drones, key], formation))
+           : diffLines(now, resolve(hull, withItem(fit, key), drones, formation)),
       note: dupe ? 'already fitted — one of each technology'
           : capped ? `${MAX_LAUNCHERS} launchers is the limit — strip one first`
           : e.kind === 'rocket' ? `${launcherRoom(fit)} of ${MAX_LAUNCHERS} launcher slots left · never rides a drone`
+          : onADrone(key) ? (bays ? `rides a drone — ${bays} empty bay${bays === 1 ? '' : 's'}`
+                                  : 'rides a drone — every bay is full')
           : room > 0 ? `${room} ${e.slot} slot${room === 1 ? '' : 's'} free`
           : 'rack is full — put it on a drone, or strip a slot first',
       owned: ctx.gear?.[key] ?? 0,

@@ -11,7 +11,8 @@ import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
-import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice } from '/shared/gear.js';
+import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
+         isCollector, collectorReach } from '/shared/gear.js';
 import { levelFor, progress } from '/shared/level.js';
 import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
@@ -2002,17 +2003,36 @@ function drawFrame(now) {
     if (nD) {
       const layout = formSlots(FORMATION_KEYS[s.form ?? 0] ?? 'line', nD);
       const c0 = Math.cos(s.heading), s0 = Math.sin(s.heading), dr = Math.max(5, R * 0.52);
+      const mine2 = id === myId;
+      const stuffed = mine2 && holdVol(hold) >= cargoCap;
       layout.forEach((pt, d) => {
         const dx = s.rx + (c0 * pt.fwd - s0 * pt.lat) * R;
         const dy = s.ry + (s0 * pt.fwd + c0 * pt.lat) * R;
         const armed = ((s.dmask ?? 0) >> d) & 1;
+        // Only your own bays are on the wire by name, so only your own rigs get
+        // drawn as rigs. Somebody else's escort is just an escort.
+        const rig = mine2 && isCollector(myDrones[d]);
         g.save(); g.translate(dx, dy); g.rotate(s.heading);
         g.globalAlpha = lost ? 0.3 : 0.95;
         g.fillStyle = '#0a0f16'; g.fillRect(-dr - 1, -dr - 1, dr * 2 + 2, dr * 2 + 2);
-        g.fillStyle = colOf(s); g.fillRect(-dr, -dr, dr * 2, dr * 2);
+        g.fillStyle = rig ? (stuffed ? '#8a7550' : '#c2a24f') : colOf(s);
+        g.fillRect(-dr, -dr, dr * 2, dr * 2);
         if (armed) { g.fillStyle = '#c2cede'; g.fillRect(dr * 0.4, -1.3, dr * 1.5, 2.6); }
+        if (rig) {                                 // an open cradle, facing out
+          g.strokeStyle = stuffed ? '#6b5a3a' : '#ffd479'; g.lineWidth = 1.6;
+          g.beginPath();
+          g.moveTo(dr * 0.3, -dr * 1.15); g.lineTo(dr * 1.25, -dr * 0.75);
+          g.moveTo(dr * 0.3, dr * 1.15);  g.lineTo(dr * 1.25, dr * 0.75);
+          g.stroke();
+        }
         g.fillStyle = '#0a0f16'; g.fillRect(-dr * 0.35, -dr * 0.35, dr * 0.7, dr * 0.7);
         g.globalAlpha = 1; g.restore();
+        if (rig && stuffed) {                      // it has stopped, and says so
+          g.textAlign = 'center'; g.font = '9px ui-monospace, monospace';
+          g.fillStyle = 'rgba(6,10,16,0.85)'; g.fillRect(dx - 15, dy - dr - 15, 30, 12);
+          g.fillStyle = '#e0a53f'; g.fillText('FULL', dx, dy - dr - 6);
+          g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+        }
       });
     }
 

@@ -80,6 +80,21 @@ export const EQUIPMENT = {
            mods: [['capacitor', 'add', 42], ['recharge', 'add', 2.5], ['sustain', 'add', 0.08],
                   ['shield', 'add', 1400], ['speed', 'add', -30]] },
 
+  // Collector rigs — the only modules that go on a drone and nowhere else. A bay
+  // carrying one stops being a gun and starts being a hold: the drone reaches out
+  // and pulls in anything worth having, by itself, while you keep flying.
+  //
+  // They are why you would ever put something other than an emitter on a drone.
+  collect1: { name: 'Scavenger Rig', slot: 'drone', kind: 'collector', tier: 1, price:  5200, reach: 520,
+              blurb: 'Pulls in what it can reach, without being asked.',
+              mods: [['cargo', 'add', 40]] },
+  collect2: { name: 'Harvester Rig', slot: 'drone', kind: 'collector', tier: 2, price: 12000, reach: 780,
+              blurb: 'Further out, and room for what it brings back.',
+              mods: [['cargo', 'add', 90]] },
+  collect3: { name: 'Ore Tender',    slot: 'drone', kind: 'collector', tier: 3, price: 26000, reach: 1100,
+              blurb: 'Clears a wreck field on its own.',
+              mods: [['cargo', 'add', 180]] },
+
   // technologies — one of each, and every one costs you something
   plating:  { name: 'Composite Plating', slot: 'tech', price: 2600,
               blurb: 'A third more hull, and slower with it.',
@@ -94,6 +109,12 @@ export const EQUIPMENT = {
               blurb: 'A far bigger capacitor, and slower shields.',
               mods: [['capacitor', 'mul', 0.55], ['shieldRegen', 'mul', -0.22]] },
 };
+
+// How far the best collector aboard can reach, or 0 if none is fitted. Only the
+// best counts — two rigs do not pull twice as far.
+export const isCollector = k => EQUIPMENT[k]?.kind === 'collector';
+export const collectorReach = (drones = []) =>
+  drones.reduce((r, k) => Math.max(r, isCollector(k) ? EQUIPMENT[k].reach : 0), 0);
 
 export const priceOf = key => EQUIPMENT[key]?.price ?? Infinity;
 

@@ -39,7 +39,11 @@ export const STORE_PAGES = [
 export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}) {
   switch (page) {
     case 'ships':  return Object.keys(HULLS).map(k => ({ kind: 'hull', k, owned: hulls.includes(k) }));
-    case 'drones': return drones < MAX_DRONES ? [{ kind: 'drone', k: 'drone', owned: false }] : [];
+    case 'drones': return [
+      ...(drones < MAX_DRONES ? [{ kind: 'drone', k: 'drone', owned: false }] : []),
+      ...Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'collector')
+        .map(k => ({ kind: 'item', k, owned: false })),
+    ];
     case 'forms':  return FORMATION_KEYS.map(k => ({ kind: 'form', k, owned: formations.includes(k) }));
     // Both weapon pages draw from the same slot, split by what the thing does.
     case 'weapon': return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'laser')

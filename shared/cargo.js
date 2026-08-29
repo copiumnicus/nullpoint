@@ -70,11 +70,11 @@ export function stow(hold, mat, n, cap) {
 // --- tractor beam -----------------------------------------------------------
 // Kept here rather than inline in the server so it can be tested without a socket.
 // Returns a scoop state, or a string saying why not.
-export function beginScoop(ship, hold, pod) {
+export function beginScoop(ship, hold, pod, reach = SCOOP_R) {
   if (!pod) return 'gone';
-  if (Math.hypot(pod.x - ship.x, pod.y - ship.y) > SCOOP_R) return 'far';
+  if (Math.hypot(pod.x - ship.x, pod.y - ship.y) > reach) return 'far';
   if (stow({ ...hold }, pod.mat, 1, ship.stats.cargo) === 0) return 'full';
-  return { id: pod.id, t: SCOOP_TIME };
+  return { id: pod.id, t: SCOOP_TIME, reach };
 }
 
 // Clicking cargo is an ORDER, not a request. If it is out of reach the ship flies
@@ -91,7 +91,7 @@ export function approachPod(ship, hold, pod) {
 // Advances a beam. Drifting out of reach or dying cancels it and the cargo stays put.
 export function stepScoop(scoop, pod, ship, hold, dt) {
   if (!scoop) return { running: false, took: 0 };
-  if (!pod || ship.hp <= 0 || Math.hypot(pod.x - ship.x, pod.y - ship.y) > SCOOP_R)
+  if (!pod || ship.hp <= 0 || Math.hypot(pod.x - ship.x, pod.y - ship.y) > (scoop.reach ?? SCOOP_R))
     return { running: false, took: 0, cancelled: true };
   scoop.t -= dt;
   if (scoop.t > 0) return { running: true, took: 0 };

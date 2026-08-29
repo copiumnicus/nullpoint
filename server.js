@@ -11,7 +11,7 @@ import { isTrack, typeOf, servable } from './shared/music.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
-         MAX_DRONES, dronePrice, sanitiseDrones, topTier } from './shared/gear.js';
+         MAX_DRONES, dronePrice, sanitiseDrones, topTier, collectorReach } from './shared/gear.js';
 import { levelFor } from './shared/level.js';
 import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
@@ -744,6 +744,22 @@ setInterval(() => {
     if (step2.fly) { p.ship.tx = step2.fly.x; p.ship.ty = step2.fly.y; p.ship.dx = p.ship.dy = null; }
     else if (step2.scoop) { p.scoop = step2.scoop; p.want = null; p.ship.tx = p.ship.ty = null; }
     else p.want = null;
+  }
+
+  // Collector rigs pull anything in reach without being asked. Your own order
+  // still wins — a rig is not allowed to hijack a beam you started.
+  for (const [, p] of players) {
+    if (p.dead || p.scoop || p.want !== null) continue;
+    const reach = collectorReach(p.ship.drones);
+    if (!reach) continue;
+    let best = null, bd = Infinity;
+    for (const c of pods.get(p.mapId) ?? []) {
+      const d = Math.hypot(c.x - p.ship.x, c.y - p.ship.y);
+      if (d <= reach && d < bd) { bd = d; best = c; }
+    }
+    if (!best) continue;
+    const s2 = beginScoop(p.ship, p.hold, best, reach);   // returns 'full' once there is no room
+    if (typeof s2 === 'object') p.scoop = s2;
   }
 
   for (const [, p] of players) {                  // tractor beams

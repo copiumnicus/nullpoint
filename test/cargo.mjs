@@ -178,5 +178,49 @@ check('a kill is worth more than its own drop, but not by much', (() => {
   return ALIENS.drifter.bounty > avg && ALIENS.drifter.bounty < avg * 6;
 })(), 'so cargo is worth hauling, and killing is worth doing');
 
+console.log('\ncollector rigs');
+{
+  const { EQUIPMENT, isCollector, collectorReach } = await import('../shared/gear.js');
+  const { resolve, slotsOf } = await import('../shared/ships.js');
+  const { beginScoop, stepScoop, SCOOP_R } = await import('../shared/cargo.js');
+  const { sanitiseFit, sanitiseDrones } = await import('../shared/gear.js');
+  const fit = o => ({ weapon: [], generator: [], tech: [], ...o });
+  const rigs = Object.keys(EQUIPMENT).filter(isCollector);
+
+  console.log('     ' + rigs.map(k => `${EQUIPMENT[k].name} ${EQUIPMENT[k].reach}px +${EQUIPMENT[k].mods[0][2]}`).join('   '));
+  check('a better rig reaches further and carries more',
+    rigs.every((k, i) => i === 0 || (EQUIPMENT[k].reach > EQUIPMENT[rigs[i - 1]].reach
+      && EQUIPMENT[k].mods[0][2] > EQUIPMENT[rigs[i - 1]].mods[0][2]
+      && EQUIPMENT[k].price > EQUIPMENT[rigs[i - 1]].price)));
+  check('every rig out-reaches your own arm',
+    rigs.every(k => EQUIPMENT[k].reach > SCOOP_R), `an arm is ${SCOOP_R}px`);
+
+  check('a rig only goes on a drone', rigs.every(k =>
+    sanitiseFit(slotsOf('bulwark'), fit({ weapon: [k], generator: [k], tech: [k] }))
+      .weapon.length === 0));
+  check('and a drone will take one', sanitiseDrones([rigs[0]], {}).join() === rigs[0]);
+  check('a bay carrying one is not a gun',
+    resolve('bulwark', fit(), [rigs[2]]).damage === resolve('bulwark', fit(), []).damage);
+  check('two rigs carry twice but do not reach twice',
+    resolve('bulwark', fit(), [rigs[0], rigs[0]]).cargo
+      === resolve('bulwark', fit(), []).cargo + EQUIPMENT[rigs[0]].mods[0][2] * 2
+    && collectorReach([rigs[0], rigs[0]]) === EQUIPMENT[rigs[0]].reach,
+    'the best one reaches, and only the best');
+  check('no rig, no reach', collectorReach(['emitter1', null]) === 0);
+
+  // The tractor takes a reach now, so a rig can pull what an arm cannot.
+  const ship = { x: 0, y: 0, hp: 100, stats: { cargo: 500 } };
+  const far = { id: 1, x: 700, y: 0, mat: 'iron', n: 3 };
+  check('an arm cannot reach across the field', beginScoop(ship, {}, far) === 'far');
+  check('a Harvester can', typeof beginScoop(ship, {}, far, EQUIPMENT[rigs[1]].reach) === 'object');
+  check('and the pull holds at that range', (() => {
+    const sc = beginScoop(ship, {}, far, EQUIPMENT[rigs[1]].reach);
+    return stepScoop(sc, far, ship, {}, 0.01).running === true;
+  })(), 'a beam that cancels the moment it starts is no beam at all');
+  check('a full hold stops it picking anything up',
+    beginScoop({ ...ship, stats: { cargo: 1 } }, { iron: 99 }, { ...far, x: 100 }, 900) === 'full',
+    'which is what the FULL tag over the drone is saying');
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
 process.exit(fails.length ? 1 : 0);
