@@ -16,7 +16,7 @@ export const SLOTS = ['weapon', 'generator', 'tech'];
 
 // Drones fly escort and carry one item each, of any kind. They are the only way
 // past a hull's own rack, and they cost more the more you already have.
-export const MAX_DRONES = 6;
+export const MAX_DRONES = 12;
 export const MAX_LAUNCHERS = 3;
 export const dronePrice = owned => 3000 + owned * 2600;
 

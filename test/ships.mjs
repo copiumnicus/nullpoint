@@ -1,5 +1,5 @@
 import { ATTRS, HULLS, DEFAULT_HULL, resolve, sanitiseFit, slotsOf, FIRE_RATE } from '../shared/ships.js';
-import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat, topTier } from '../shared/gear.js';
+import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat, topTier, MAX_DRONES } from '../shared/gear.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
@@ -190,7 +190,7 @@ console.log('\nstation layout');
   const ALL_HULLS = Object.keys(HULLS), ALL_FORMS = FORMATION_KEYS;
   const sizes = [[1920,1080],[1600,900],[1440,900],[1280,800],[1100,700],[1024,640]];
   const states = [];
-  for (const drones of [0, 3, 6])
+  for (const drones of [0, 3, 6, MAX_DRONES])            // a full bay is the tightest panel
     for (const hull of ALL_HULLS)
       states.push({ hull, drones, hulls: ALL_HULLS, formations: ALL_FORMS });
   states.push({ hull: DEFAULT_HULL, drones: 0, hulls: [], formations: ['line'] });  // a brand new pilot

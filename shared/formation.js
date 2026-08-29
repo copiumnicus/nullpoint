@@ -53,29 +53,38 @@ export const HULL_R  = 1.75;
 export function slots(kind, n) {
   const out = [];
   for (let i = 0; i < n; i++) {
-    const half = (n - 1) / 2, off = i - half;
     switch (kind) {
-      case 'wedge': {                               // an arrowhead, opening forward
-        // Odd counts get a point; the rest pair off down two arms. Ranks step
-        // back 1.7 and out 2.3, which keeps neighbours a clear drone-width apart.
+      case 'wedge': {                             // an arrowhead, opening forward
+        // Odd counts get a point; the rest pair off down two arms. An arm holds
+        // three, then a second arrowhead forms behind the first — a single arm
+        // long enough for twelve would put the outermost pair off the screen.
         const odd = n % 2, j = i - odd;
         if (odd && i === 0) { out.push({ fwd: 3.8, lat: 0 }); break; }
-        const rank = Math.floor(j / 2), side = j % 2 ? 1 : -1;
-        out.push({ fwd: 1.9 - rank * 1.7, lat: side * (3.2 + rank * 2.3) });
+        const pair = Math.floor(j / 2), side = j % 2 ? 1 : -1;
+        const arm = pair % 3, layer = Math.floor(pair / 3);
+        out.push({ fwd: 1.9 - arm * 1.6 - layer * 2.6, lat: side * (3.2 + arm * 2.3) });
         break;
       }
-      case 'shell': {                               // an even ring, well off the hull
+      case 'shell': {                             // an even ring, well off the hull
         const a = (i / n) * Math.PI * 2 + Math.PI / 2;
         out.push({ fwd: Math.cos(a) * 5.2, lat: Math.sin(a) * 5.2 });
         break;
       }
-      case 'slipstream':                            // two tight columns in the wake
-        // Paired rather than strung out single file: a six-drone tail would put
-        // the last one 13R astern, firing from somewhere off the back of the screen.
-        out.push({ fwd: -3.6 - Math.floor(i / 2) * 2.4, lat: (i % 2 ? 2.0 : -2.0) });
+      case 'slipstream': {                        // columns in the wake
+        // Two columns up to four drones, four beyond that. Twelve in two columns
+        // is a six-deep tail, and the back of it is a long way from the fight.
+        const cols = n > 4 ? 4 : 2;
+        const col = i % cols, row = Math.floor(i / cols);
+        out.push({ fwd: -3.6 - row * 2.4, lat: (col - (cols - 1) / 2) * 2.2 });
         break;
-      default:                                      // line astern, spread wide
-        out.push({ fwd: -3.6 - Math.abs(off) * 0.9, lat: off * 2.8 });
+      }
+      default: {                                  // line astern, spread wide
+        // Ranks of four. One rank of twelve is fifteen radii of wingtip.
+        const cols = Math.min(4, n);
+        const col = i % cols, row = Math.floor(i / cols);
+        out.push({ fwd: -3.6 - row * 2.4 - Math.abs(col - (cols - 1) / 2) * 0.5,
+                   lat: (col - (cols - 1) / 2) * 2.8 });
+      }
     }
   }
   return out;

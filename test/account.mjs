@@ -108,7 +108,9 @@ console.log('\nrank and escort');
   const withEscort = sanitiseAccount({
     token: 'z', hull: 'vanguard', hulls: ['hauler', 'vanguard'],
     fit: { weapon: ['emitter1'], generator: [], tech: ['plating'] },
-    drones: ['emitter1', 'plating', 'nonsense', null, 'cellA', 'damper', 'emitter2', 'emitter3'],
+    // more than the bay limit, so the cap is actually under test
+    drones: [...Array(MAX_DRONES + 4)].map((_, i) =>
+      ['emitter1', 'plating', 'nonsense', null, 'cellA', 'damper', 'emitter2', 'emitter3'][i % 8]),
     xp: -20,
   }, 2, 1);
   check('negative experience becomes zero', withEscort.xp === 0);
