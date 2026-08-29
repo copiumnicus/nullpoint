@@ -15,7 +15,7 @@ const bfs = (a, b) => { const q = [[a, [a]]], seen = new Set([a]);
 
 console.log('\nthe testing ground');
 {
-  const { DEV_ID, PROPS, PEN, PEN_SLOTS, DEV_BASE, LABELS, propFit } = await import('../shared/devmap.js');
+  const { DEV_ID, PROPS, PEN, PEN_SLOTS, DEV_BASE, LABELS, propFit, REACH } = await import('../shared/devmap.js');
   const { ALIENS } = await import('../shared/aliens.js');
   const { HULLS, slotsOf } = await import('../shared/ships.js');
   const { FORMATION_KEYS } = await import('../shared/formation.js');
@@ -44,6 +44,28 @@ console.log('\nthe testing ground');
 
   check('everything on the map is on the map', PROPS.every(inMap) && PEN_SLOTS.every(inMap)
     && LABELS.every(inMap) && inMap(DEV_BASE));
+
+  // The point of the room is that you can see the next thing from where you are.
+  // The first cut put the firing line 5700px east, past radar, and you undocked
+  // into an empty room wondering where the aliens were.
+  const { resolve } = await import('../shared/ships.js');
+  const { DEFAULT_HULL } = await import('../shared/ships.js');
+  const eye = resolve(DEFAULT_HULL).radar, walk = resolve(DEFAULT_HULL).speed;
+  console.log(`     furthest thing ${Math.round(REACH)}px from the ring — ` +
+              `${(REACH / walk).toFixed(1)}s in a starter hull, radar reaches ${eye}px`);
+  check('the whole room is inside a starter hull\'s radar', REACH < eye,
+    'nothing has to be gone looking for');
+  check('and nothing is more than a few seconds out', REACH / walk < 6,
+    `${(REACH / walk).toFixed(1)}s at ${walk}px/s`);
+  check('the dock is small enough to see past', DEV_BASE.r < 400,
+    `r=${DEV_BASE.r} against ${MAPS.m1.base.r} at a real base`);
+  check('the map defines the dock once', MAPS[DEV_ID].base === DEV_BASE,
+    'devmap reads it rather than repeating it');
+  // Arranged around the ring rather than strung out in one direction.
+  const bearings = [...PROPS, ...PEN_SLOTS].map(o =>
+    Math.round(Math.atan2(o.y - DEV_BASE.y, o.x - DEV_BASE.x) * 2 / Math.PI));
+  check('the room is laid out around the dock, not off to one side',
+    new Set(bearings).size >= 3, 'north, south and east of the ring');
   check('the firing line is inside its own box',
     PEN_SLOTS.every(sl => sl.x > PEN.x && sl.x < PEN.x + PEN.w && sl.y > PEN.y && sl.y < PEN.y + PEN.h));
   check('nothing is parked inside the dock', PROPS.every(p2 =>

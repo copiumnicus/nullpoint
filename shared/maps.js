@@ -148,10 +148,12 @@ for (const m of Object.values(MAPS)) {
 // The testing ground. Declared after the portal matcher because it has no
 // portals to match, and flagged so the chart, the seeder and the star map all
 // skip it — it is a workshop, not a place in the galaxy.
+// A small dock, dead centre, with everything arranged around it — you should be
+// able to see the next thing from wherever you are standing.
 MAPS.dev = {
   sx: 0, sy: 0, name: 'DEV · God Room', theme: 'God Room', tint: '#7de08a',
   neb: nebFor('#7de08a', 0), portals: [], dev: true,
-  base: { x: 1500, y: 4000, r: 700 },
+  base: { x: MAP_W / 2, y: MAP_H / 2, r: 320 },
 };
 
 export const HOMES = Object.keys(COMPANIES).map(co => co + '1');
