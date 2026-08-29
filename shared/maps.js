@@ -145,4 +145,15 @@ for (const m of Object.values(MAPS)) {
   m.portals = best.map((d, i) => ({ ...slots[i], to: dests[d] }));
 }
 
+// The testing ground. Declared after the portal matcher because it has no
+// portals to match, and flagged so the chart, the seeder and the star map all
+// skip it — it is a workshop, not a place in the galaxy.
+MAPS.dev = {
+  sx: 0, sy: 0, name: 'DEV · God Room', theme: 'God Room', tint: '#7de08a',
+  neb: nebFor('#7de08a', 0), portals: [], dev: true,
+  base: { x: 1500, y: 4000, r: 700 },
+};
+
 export const HOMES = Object.keys(COMPANIES).map(co => co + '1');
+// Everywhere a pilot can actually fly to on their own.
+export const GALAXY = Object.keys(MAPS).filter(id => !MAPS[id].dev);

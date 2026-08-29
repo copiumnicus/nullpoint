@@ -4,15 +4,16 @@ import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
-import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP } from './shared/aliens.js';
+import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
+import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
-         MAX_DRONES, dronePrice, sanitiseDrones } from './shared/gear.js';
+         MAX_DRONES, dronePrice, sanitiseDrones, topTier } from './shared/gear.js';
 import { levelFor } from './shared/level.js';
 import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
-import { stepContacts } from './shared/radar.js';
+import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -20,7 +21,7 @@ import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME } from './shared/cargo.js';
-import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
+import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
 
@@ -101,8 +102,20 @@ for (const sig of ['SIGINT', 'SIGTERM'])
 // Hostiles live on the home maps for now, seeded per map so a restart replays.
 const aliens = new Map();
 let alienId = 1_000_000;
+aliens.set(DEV_ID, PEN_SLOTS.map(sl => newAlien(sl.kind, sl.id, MAPS[DEV_ID], sl.id, { x: sl.x, y: sl.y })));
 for (const h of HOMES) aliens.set(h, Array.from({ length: ALIENS_PER_MAP },
   (_, i) => newAlien('drifter', alienId++, MAPS[h], h.charCodeAt(0) * 977 + i * 7919)));
+
+// The hull and formation galleries, resolved once at boot. They never move, take
+// damage or shoot, so there is nothing to step — just rows to hand out.
+const PROP_ROWS = PROPS.map(p2 => {
+  const s2 = newShip(p2.x, p2.y, p2.hull, propFit(p2.hull), Array(MAX_DRONES).fill(topTier('weapon')), p2.formation);
+  return { id: p2.id, x: p2.x, y: p2.y, heading: 0, charge: 0, co: p2.co, hull: p2.hull,
+           hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0,
+           guns: s2.guns, lvl: 0, drones: s2.drones.length,
+           form: Math.max(0, FORMATION_KEYS.indexOf(p2.formation)),
+           dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY };
+});
 
 const bolts  = new Map();    // mapId -> bolts in flight
 const rockets = new Map();   // mapId -> rockets in flight
@@ -179,6 +192,13 @@ wss.on('connection', (ws, req) => {
     players.delete(pid);
   }
 
+  // The workshop has no portals, so anyone who ends up there without the rights
+  // to type /dev would be stuck in it. Log them in at their own dock instead.
+  if (MAPS[acct.mapId]?.dev && !isAdmin(acct)) {
+    acct.mapId = acct.co + '1';
+    acct.x = MAPS[acct.mapId].base.x; acct.y = MAPS[acct.mapId].base.y;
+  }
+
   const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation);
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
@@ -206,7 +226,8 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
 
     // --- station: everything below needs you sitting in your own base ring ---
-    const atStation = () => MAPS[P.mapId].owner === P.co && inBase(MAPS[P.mapId], ship);
+    const M = () => MAPS[P.mapId];
+    const atStation = () => (M().owner === P.co || M().dev) && inBase(M(), ship);
 
     if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
 
@@ -268,8 +289,23 @@ wss.on('connection', (ws, req) => {
           touch(P);
           return tell(`hangar: ${MATERIALS[a1].name} x${P.vault[a1]}`);
         }
+        // Straight to the workshop, and straight back to wherever you were. Two
+        // presses of the same key, because that is how it gets used.
+        case 'dev': {
+          const to = P.mapId === DEV_ID ? (P.devReturn ?? P.co + '1') : DEV_ID;
+          if (P.mapId !== DEV_ID) P.devReturn = P.mapId;
+          const b = MAPS[to].base;
+          P.mapId = to; P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
+          const at = b ? { x: b.x, y: b.y } : arrivalFor(P.mapId, MAPS[to]);
+          Object.assign(ship, { x: at.x, y: at.y, vx: 0, vy: 0, tx: null, ty: null,
+                                dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: JUMP_CD });
+          touch(P);
+          ws.send(JSON.stringify({ t: 'map', map: to }));
+          return tell(to === DEV_ID ? 'testing ground — /dev again to go back'
+                                    : `back in ${MAPS[to].name}`);
+        }
         case 'tp': {
-          if (!MAPS[a1]) return tell('sectors: ' + Object.keys(MAPS).join(' '));
+          if (!MAPS[a1]) return tell('sectors: ' + GALAXY.join(' ') + ' (and dev)');
           const at = arrivalFor(P.mapId, MAPS[a1]);
           P.mapId = a1; P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
           Object.assign(ship, { x: at.x, y: at.y, vx: 0, vy: 0, tx: null, ty: null,
@@ -470,7 +506,7 @@ setInterval(() => {
     step(p.ship, dt);
     stepDrift(p.ship, dt);
     const map = MAPS[p.mapId];
-    p.docked = map.owner === p.co && inBase(map, p.ship);
+    p.docked = (map.owner === p.co || map.dev) && inBase(map, p.ship);
     stepVitals(p.ship, dt, p.docked);
 
 
@@ -624,6 +660,9 @@ setInterval(() => {
     const seen = stepContacts(V, byMap.get(V.mapId) ?? [], dt);
     const ships = [];
     for (const [tid, vis] of seen) ships.push(packShip({ ...row.get(tid), vis }));
+    // The gallery. Static, unshootable, and only rendered for whoever is actually
+    // in the workshop — they are scenery, not simulation.
+    if (V.mapId === DEV_ID) for (const row2 of PROP_ROWS) ships.push(packShip(row2));
     const reach = V.ship.stats.radar;              // you see the shooting you could see
     const shown = (bolts.get(V.mapId) ?? []).filter(b =>
       Math.hypot(b.sx - V.ship.x, b.sy - V.ship.y) <= reach ||

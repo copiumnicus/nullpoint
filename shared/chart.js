@@ -8,7 +8,7 @@ const horiz = d => d === 'e' || d === 'w';
 const owner = (a, b) => MAPS[a].owner && MAPS[a].owner === MAPS[b].owner ? MAPS[a].owner : null;
 
 export function chartLayout(VIEW_W, VIEW_H) {
-  const ids = Object.keys(MAPS);
+  const ids = Object.keys(MAPS).filter(id => !MAPS[id].dev);   // the workshop is not on the map
   const xs = ids.map(i => MAPS[i].sx), ys = ids.map(i => MAPS[i].sy);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   const S = Math.max(46, Math.min((VIEW_W - 130) / (x1 - x0 + 1.0), (VIEW_H - 168) / (y1 - y0 + 0.95)));

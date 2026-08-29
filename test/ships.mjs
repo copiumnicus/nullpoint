@@ -4,7 +4,7 @@ const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
          DOCK_HULL_RATE, DOCK_INTERRUPT, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
-import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
+import { MAPS, GALAXY, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { BOOST } from '../shared/power.js';
 import { FORMATIONS, FORMATION_KEYS, DEFAULT_FORMATION, slots as formSlots, droneAt,
          DRONE_R, HULL_R } from '../shared/formation.js';
@@ -145,10 +145,13 @@ check('refit rebuilds stats, size and vitals',
   && swapped.hp === swapped.stats.hull && swapped.shield === swapped.stats.shield);
 
 console.log('\nbase zone');
-const homes = Object.entries(MAPS).filter(([, m]) => m.base).map(([k]) => k);
+const homes = GALAXY.filter(id => MAPS[id].base);
 check('every home map has a base, and only home maps do',
   homes.length === 3 && homes.every(h => MAPS[h].home)
-  && Object.values(MAPS).every(m => !m.base || m.home), homes.join(', '));
+  && GALAXY.every(id => !MAPS[id].base || MAPS[id].home), homes.join(', '));
+check('the testing ground is not in the galaxy at all',
+  !GALAXY.includes('dev') && MAPS.dev.dev && MAPS.dev.portals.length === 0 && !MAPS.dev.owner,
+  'no portals lead to it, it owns nothing, and nothing spawns there');
 check('the zone sits inside the map and clear of portals', homes.every(h => {
   const b = MAPS[h].base;
   return b.x - b.r > 0 && b.y - b.r > 0 && b.x + b.r < MAP_W && b.y + b.r < MAP_H

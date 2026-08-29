@@ -1,7 +1,7 @@
 import { MATERIALS, DROPS, rollDrop, stow, unload, holdVol, holdValue, volOf,
          POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY } from '../shared/cargo.js';
 import { beginScoop, stepScoop, approachPod, load } from '../shared/cargo.js';
-import { ALIENS } from '../shared/aliens.js';
+import { WILD, ALIENS } from '../shared/aliens.js';
 import { newShip } from '../shared/sim.js';
 import { HULLS, ATTRS, resolve } from '../shared/ships.js';
 import { rng } from '../shared/aliens.js';
@@ -168,8 +168,11 @@ check('a stack transfer moves the whole stack', (() => {
   unload(h3, v4, 7 * 99);                          // how the server bills a 'stash'
   return v4.iron === 7 && v4.platinum === 2 && holdVol(h3) === 0;
 })());
-check('every alien pays a bounty', Object.values(ALIENS).every(a => a.bounty > 0),
-  `Drifter ${ALIENS.drifter.bounty} ${CURRENCY.short}`);
+check('every alien in the galaxy pays a bounty', WILD.every(k => ALIENS[k].bounty > 0),
+  `${WILD.length} of them, Drifter ${ALIENS.drifter.bounty} ${CURRENCY.short}`);
+check('range furniture pays nothing, and is not in the galaxy',
+  Object.keys(ALIENS).filter(k => ALIENS[k].dev).every(k => !WILD.includes(k) && !ALIENS[k].bounty),
+  'shooting a practice target is not a living');
 check('a kill is worth more than its own drop, but not by much', (() => {
   const avg = DROPS.drifter.reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
   return ALIENS.drifter.bounty > avg && ALIENS.drifter.bounty < avg * 6;

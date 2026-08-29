@@ -26,6 +26,7 @@ import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit
 import { MATERIALS, holdVol, holdValue, SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
 import { boltWidth } from '/shared/combat.js';
+import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
@@ -1064,8 +1065,36 @@ function drawFrame(now) {
   // No boundary drawn in the world. Sliding off the minimap is the tell, and the
   // shear vignette takes over from there.
 
+  // Workshop signage: a marked-out firing line and a label over each area, so the
+  // room explains itself instead of needing a diagram beside it.
+  if (map.dev) {
+    g.save();
+    g.strokeStyle = 'rgba(125,224,138,0.30)'; g.lineWidth = 2; g.setLineDash([14, 10]);
+    g.strokeRect(PEN.x, PEN.y, PEN.w, PEN.h);
+    g.setLineDash([]);
+    g.strokeStyle = 'rgba(125,224,138,0.13)'; g.lineWidth = 1;
+    for (const sl of PEN_SLOTS) {                                    // a mark under each post
+      g.beginPath(); g.moveTo(PEN.x + 14, sl.y); g.lineTo(PEN.x + PEN.w - 14, sl.y); g.stroke();
+    }
+    g.textAlign = 'left';
+    for (const L of DEV_LABELS) {
+      g.fillStyle = 'rgba(125,224,138,0.85)'; g.font = 'bold 20px ui-monospace, monospace';
+      g.fillText(L.text, L.x, L.y);
+      g.fillStyle = 'rgba(125,224,138,0.42)'; g.font = '13px ui-monospace, monospace';
+      g.fillText(L.sub, L.x, L.y + 18);
+    }
+    // and a nameplate under every mannequin, since that is the point of them
+    g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
+    for (const pr of PROPS) {
+      g.fillStyle = 'rgba(207,228,255,0.55)';
+      g.fillText(pr.label, pr.x, pr.y + 210);
+    }
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    g.restore();
+  }
+
   if (map.base) {
-    const b = map.base, col = COMPANIES[map.owner].color, mine = map.owner === myCo;
+    const b = map.base, col = COMPANIES[map.owner ?? myCo].color, mine = (map.owner ?? myCo) === myCo;
     const grd = g.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
     grd.addColorStop(0, col + '2e'); grd.addColorStop(0.65, col + '12'); grd.addColorStop(1, 'transparent');
     g.fillStyle = grd; g.fillRect(b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
@@ -1098,7 +1127,7 @@ function drawFrame(now) {
     g.restore();
 
     g.fillStyle = col; g.textAlign = 'center'; g.font = '14px ui-monospace, monospace';
-    g.fillText(`${COMPANIES[map.owner].tag} BASE`, b.x, b.y - b.r - 18);
+    g.fillText(map.dev ? 'WORKSHOP DOCK' : `${COMPANIES[map.owner ?? myCo].tag} BASE`, b.x, b.y - b.r - 18);
     g.font = '12px ui-monospace, monospace'; g.textAlign = 'left';
   }
 
@@ -1423,7 +1452,7 @@ function drawFrame(now) {
   g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(MM_X, MM_Y, MM_W, MM_H);
   g.strokeStyle = map.tint + '99'; g.lineWidth = 1; g.strokeRect(MM_X + .5, MM_Y + .5, MM_W - 1, MM_H - 1);
   if (map.base) {
-    const b = map.base, col = COMPANIES[map.owner].color;
+    const b = map.base, col = COMPANIES[map.owner ?? myCo].color;
     g.strokeStyle = col + 'cc'; g.lineWidth = 1;
     g.beginPath(); g.arc(MM_X + b.x * sx, MM_Y + b.y * sy, b.r * sx, 0, 7); g.stroke();
     g.fillStyle = col; g.fillRect(MM_X + b.x * sx - 2, MM_Y + b.y * sy - 2, 4, 4);
@@ -1558,8 +1587,8 @@ function drawFrame(now) {
 
   // --- hud ---
   g.fillStyle = map.tint; g.fillText(map.name, 16, 24);
-  const terr = map.owner ? `${COMPANIES[map.owner].tag} TERRITORY` : 'CONTESTED';
-  g.fillStyle = map.owner ? COMPANIES[map.owner].color : '#e05a5a';
+  const terr = map.dev ? 'TESTING GROUND' : map.owner ? `${COMPANIES[map.owner].tag} TERRITORY` : 'CONTESTED';
+  g.fillStyle = map.dev ? '#7de08a' : map.owner ? COMPANIES[map.owner].color : '#e05a5a';
   g.fillText(terr, 20 + g.measureText(map.name).width, 24);
   g.fillStyle = '#5b6b85';
   g.fillText(`${myName || '…'} · ${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls}` +

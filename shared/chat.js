@@ -19,6 +19,7 @@ export const COMMANDS = {
   ore:   { admin: true,  args: '<metal> [count]', help: 'put ore in the company hangar' },
   tp:    { admin: true,  args: '<map>',           help: 'jump straight to a sector' },
   heal:  { admin: true,  args: '',                help: 'full hull, shields and capacitor' },
+  dev:   { admin: true,  args: '',                help: 'the testing ground, and back again' },
 };
 
 export const parse = line => {

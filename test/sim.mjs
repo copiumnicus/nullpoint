@@ -1,5 +1,5 @@
 import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME } from '../shared/sim.js';
-import { MAPS, HOMES, COMPANIES, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
+import { MAPS, GALAXY, HOMES, COMPANIES, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { chartLayout } from '../shared/chart.js';
 
 const fails = [];
@@ -7,15 +7,60 @@ const check = (name, ok, detail = '') => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  — ${detail}` : ''}`);
   if (!ok) fails.push(name);
 };
-const ids = Object.keys(MAPS), dt = 1 / 30;
+const ids = GALAXY, dt = 1 / 30;   // the testing ground is deliberately unreachable
 const adj = id => MAPS[id].portals.map(p => p.to);
 const bfs = (a, b) => { const q = [[a, [a]]], seen = new Set([a]);
   while (q.length) { const [n, path] = q.shift(); if (n === b) return path;
     for (const t of adj(n)) if (!seen.has(t)) { seen.add(t); q.push([t, [...path, t]]); } } return null; };
 
+console.log('\nthe testing ground');
+{
+  const { DEV_ID, PROPS, PEN, PEN_SLOTS, DEV_BASE, LABELS, propFit } = await import('../shared/devmap.js');
+  const { ALIENS } = await import('../shared/aliens.js');
+  const { HULLS, slotsOf } = await import('../shared/ships.js');
+  const { FORMATION_KEYS } = await import('../shared/formation.js');
+  const { COMMANDS } = await import('../shared/chat.js');
+  const m = MAPS[DEV_ID];
+  const inMap = o => o.x > 300 && o.y > 300 && o.x < MAP_W - 300 && o.y < MAP_H - 300;
+
+  check('only an admin can reach it', COMMANDS.dev?.admin === true && m.portals.length === 0,
+    'no portals, and /dev is gated');
+  check('it is not on the chart or in the galaxy', m.dev === true && !GALAXY.includes(DEV_ID));
+
+  check('every hull is on show, with a full escort', (() => {
+    const shown = new Set(PROPS.map(p2 => p2.hull));
+    return Object.keys(HULLS).every(h => shown.has(h));
+  })(), `${Object.keys(HULLS).length} hulls`);
+  check('and every formation is flying somewhere', (() => {
+    const shown = new Set(PROPS.map(p2 => p2.formation));
+    return FORMATION_KEYS.every(f => shown.has(f));
+  })(), `${FORMATION_KEYS.length} formations`);
+  check('a mannequin carries a full rack of the best gun',
+    Object.keys(HULLS).every(h => propFit(h).weapon.length === slotsOf(h).weapon),
+    'so the gallery shows the top of the ladder, not a stub');
+  check('every hostile type is on the firing line',
+    Object.keys(ALIENS).every(k => PEN_SLOTS.some(sl => sl.kind === k)),
+    PEN_SLOTS.map(sl => sl.kind).join(' '));
+
+  check('everything on the map is on the map', PROPS.every(inMap) && PEN_SLOTS.every(inMap)
+    && LABELS.every(inMap) && inMap(DEV_BASE));
+  check('the firing line is inside its own box',
+    PEN_SLOTS.every(sl => sl.x > PEN.x && sl.x < PEN.x + PEN.w && sl.y > PEN.y && sl.y < PEN.y + PEN.h));
+  check('nothing is parked inside the dock', PROPS.every(p2 =>
+    Math.hypot(p2.x - DEV_BASE.x, p2.y - DEV_BASE.y) > DEV_BASE.r + 200)
+    && PEN.x > DEV_BASE.x + DEV_BASE.r);
+  // Mannequins are drawn with their escort around them, so they need room.
+  check('mannequins do not overlap each other', PROPS.every((a, i) =>
+    PROPS.every((b, j) => i === j || Math.hypot(a.x - b.x, a.y - b.y) > 420)),
+    'each one flies six drones');
+  check('hostiles are spaced enough to pull one at a time', PEN_SLOTS.every((a, i) =>
+    PEN_SLOTS.every((b, j) => i === j || Math.hypot(a.x - b.x, a.y - b.y) > ALIENS[a.kind].aggro)),
+    'further apart than they can see');
+}
+
 console.log('\ntopology');
 let oneway = 0; const links = new Set();
-for (const [id, m] of Object.entries(MAPS)) for (const p of m.portals) {
+for (const id of ids) for (const p of MAPS[id].portals) {
   if (!MAPS[p.to].portals.some(q => q.to === id)) oneway++;
   links.add([id, p.to].sort().join('|'));
 }
@@ -24,9 +69,9 @@ const reach = (() => { const q = ['m1'], s = new Set(q);
 check('all maps reachable', reach === ids.length, `${reach}/${ids.length}`);
 check('every link is two-way', oneway === 0, `${links.size} links`);
 check('portal counts stay in {2,3,4}',
-  Object.values(MAPS).every(m => m.portals.length >= 2 && m.portals.length <= 4));
+  ids.every(id => MAPS[id].portals.length >= 2 && MAPS[id].portals.length <= 4));
 check('portals land inside map bounds',
-  Object.values(MAPS).every(m => m.portals.every(p =>
+  ids.every(id => MAPS[id].portals.every(p =>
     p.x > PORTAL_R && p.x < MAP_W - PORTAL_R && p.y > PORTAL_R && p.y < MAP_H - PORTAL_R)));
 
 console.log('\nsymmetry');

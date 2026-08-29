@@ -36,9 +36,22 @@ export const ALIENS = {
     bounty: 140,      // credits your company pays for the kill
     xp: 140,          // and what the kill is worth toward your rank
   },
+
+  // Range furniture, not a hostile. It has no weapon, does not chase and does not
+  // flee, and carries enough hull that a finished ship cannot delete it before you
+  // have read a number off it. Never seeded outside the testing ground.
+  bulkhead: {
+    name: 'Bulkhead Target', cls: 'Hulk', r: 26, colour: '#7f8ea3', dev: true,
+    attrs: { hull: 400000, shield: 40000, shieldRegen: 0, shieldDelay: 9e9,
+             speed: 40, accel: 100, signature: 6,
+             damage: 0, fireRate: 0.1, weaponRange: 0 },
+    aggro: 0, leash: 0, patience: 1, flee: 0, respawn: 3, bounty: 0, xp: 0,
+  },
 };
 
 export const ALIENS_PER_MAP = 7;
+// What the galaxy proper is allowed to spawn. Range furniture is not in it.
+export const WILD = Object.keys(ALIENS).filter(k => !ALIENS[k].dev);
 const LOSE_INTEREST = 'patience';
 
 // Seeded so a server restart replays identically and tests can assert on roaming.
@@ -65,14 +78,16 @@ export function roamPoint(map, rand) {
   return { x: 1200, y: 1200 };
 }
 
-export function newAlien(kind, id, map, seed) {
+// A post pins an alien to a slot: it spawns there, returns there when idle, and
+// respawns there. That is what turns a scatter of hostiles into a firing line.
+export function newAlien(kind, id, map, seed, post = null) {
   const def = ALIENS[kind];
   const rand = rng(seed);
-  const at = roamPoint(map, rand);
+  const at = post ?? roamPoint(map, rand);
   const a = newBody(at.x, at.y, alienStats(kind), def.r);
   return Object.assign(a, {
-    id, kind, def, rand, isAlien: true,
-    target: null, provoked: new Set(), lost: 0, dead: 0, way: roamPoint(map, rand),
+    id, kind, def, rand, isAlien: true, post,
+    target: null, provoked: new Set(), lost: 0, dead: 0, way: post ?? roamPoint(map, rand),
   });
 }
 
@@ -98,12 +113,12 @@ export function stepAlienRepair(a, dt) {
 }
 
 export function respawnAlien(a, map) {
-  const at = roamPoint(map, a.rand);
+  const at = a.post ?? roamPoint(map, a.rand);
   a.x = at.x; a.y = at.y; a.vx = a.vy = 0;
   a.hp = a.stats.hull; a.shield = a.stats.shield;
   a.sinceHit = 1e9; a.shieldHit = 0; a.cool = 0; a.shotFlash = 0;
   a.target = null; a.provoked.clear(); a.lost = 0; a.dead = 0;
-  a.way = roamPoint(map, a.rand);
+  a.way = a.post ?? roamPoint(map, a.rand);
   a.tx = a.ty = a.dx = a.dy = null;
 }
 
@@ -156,9 +171,17 @@ export function stepAlienAI(a, map, contenders, dt) {
     return t.id;
   }
 
-  // Idle: drift between waypoints. Picking waypoints outside the base is not
-  // enough — the straight line between two of them will cut straight through the
-  // ring — so the course itself is checked and steered around.
+  // Idle. One with a post walks back to it and holds there, so a firing line
+  // stays a firing line. Everything else drifts between waypoints — and picking
+  // waypoints outside the base is not enough, since the straight line between two
+  // of them will cut through the ring, so the course itself is steered around.
+  if (a.post) {
+    a.dx = a.dy = null;
+    const off = Math.hypot(a.post.x - a.x, a.post.y - a.y);
+    a.tx = off < 40 ? null : a.post.x;
+    a.ty = off < 40 ? null : a.post.y;
+    return null;
+  }
   if (Math.hypot(a.way.x - a.x, a.way.y - a.y) < 220) a.way = roamPoint(map, a.rand);
   a.dx = a.dy = null;
   const aim = skirtBase(a, a.way, map);

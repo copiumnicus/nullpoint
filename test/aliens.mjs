@@ -1,4 +1,4 @@
-import { ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
+import { WILD, ALIENS, ALIENS_PER_MAP, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
          forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
@@ -310,7 +310,25 @@ check('respawn restores it fully and clears every grudge',
   && dead.target === null && dead.provoked.size === 0 && !inBase(map, dead));
 check('seeding is deterministic',
   JSON.stringify(newAlien('drifter', 1, map, 99).way) === JSON.stringify(newAlien('drifter', 1, map, 99).way));
-check('hostiles are only on home maps for now', ALIENS_PER_MAP > 0 && Object.keys(ALIENS).length === 1);
+check('hostiles are only on home maps for now', ALIENS_PER_MAP > 0 && WILD.length === 1,
+  `${WILD.join(' ')} in the wild`);
+
+// A posted alien belongs to a slot on the firing range and goes back to it.
+{
+  const post = { x: 7000, y: 3000 };
+  const held = newAlien('drifter', 5, map, 7, post);
+  check('a posted alien starts on its post', held.x === post.x && held.y === post.y);
+  held.x = post.x + 1400; held.y = post.y + 900;
+  for (let i = 0; i < 30 * 40; i++) { stepAlienAI(held, map, [], dt); step(held, dt); }
+  check('and walks back to it when left alone',
+    Math.hypot(held.x - post.x, held.y - post.y) < 60,
+    `${Math.hypot(held.x - post.x, held.y - post.y) | 0}px off station after 40s`);
+  held.x = post.x + 3000;
+  respawnAlien(held, map);
+  check('and respawns on it, not somewhere random', held.x === post.x && held.y === post.y);
+  const loose = newAlien('drifter', 6, map, 7);
+  check('an unposted one still roams', loose.post === null && JSON.stringify(loose.way) !== JSON.stringify(post));
+}
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(ALIENS).length} hostile, ${ALIENS_PER_MAP}/map`}\n`);
 process.exit(fails.length ? 1 : 0);
