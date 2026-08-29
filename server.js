@@ -259,6 +259,12 @@ wss.on('connection', (ws, req) => {
                     formations: [...acct.formations],
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     scoop: null, want: null, dead: false });
+  // Every purchase says so. Watching a number tick down is not a receipt, and a
+  // refused click and a successful one looked identical from the outside.
+  const receipt = (what, cost, note = '') => {
+    if (ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ t: 'bought', what, cost, note, credits: players.get(id).credits }));
+  };
   const outfit = () => (touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
                                                 drones: ship.drones, formation: ship.formation,
                                                 formations: players.get(id).formations,
@@ -392,6 +398,7 @@ wss.on('connection', (ws, req) => {
       P.credits -= hullPrice(m.key);
       P.hulls.push(m.key);
       refit(ship, m.key, ship.fit, ship.drones, ship.formation);   // bought, and flown at once
+      receipt(HULLS[m.key].name, hullPrice(m.key), 'now flying it');
       return outfit();
     }
     if (m.t === 'hull') {
@@ -424,6 +431,7 @@ wss.on('connection', (ws, req) => {
       if (P.credits < cost) return;
       P.credits -= cost;
       P.ammo[m.key] = (P.ammo[m.key] ?? 0) + a.pack * crates;   // no cap, on purpose
+      receipt(a.name, cost, `${a.pack * crates} rounds · ${P.ammo[m.key]} held`);
       return outfit();
     }
     if (m.t === 'buyformation') {
@@ -431,6 +439,7 @@ wss.on('connection', (ws, req) => {
       if (P.credits < formationPrice(m.key)) return;
       P.credits -= formationPrice(m.key);
       P.formations.push(m.key);
+      receipt(FORMATIONS[m.key].name, formationPrice(m.key), 'flying it now');
       refit(ship, ship.hull, ship.fit, ship.drones, m.key);      // bought, and flown at once
       return outfit();
     }
@@ -445,6 +454,7 @@ wss.on('connection', (ws, req) => {
       if (P.credits < cost) return;
       P.credits -= cost;
       refit(ship, ship.hull, ship.fit, [...ship.drones, null]);
+      receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length}/${MAX_DRONES} bays`);
       return outfit();
     }
     if (m.t === 'dronefit') {
@@ -472,6 +482,7 @@ wss.on('connection', (ws, req) => {
       if (!atStation() || !item || P.credits < item.price) return;
       P.credits -= item.price;
       P.gear[m.item] = (P.gear[m.item] ?? 0) + 1;
+      receipt(item.name, item.price, 'in your locker');
       return outfit();
     }
     if (m.t === 'install') {
@@ -503,6 +514,7 @@ wss.on('connection', (ws, req) => {
       P.vault[m.mat] -= n;
       if (P.vault[m.mat] <= 0) delete P.vault[m.mat];
       P.credits += n * MATERIALS[m.mat].value;
+      receipt(MATERIALS[m.mat].name, -n * MATERIALS[m.mat].value, `${n} sold`);
       return outfit();
     }
 

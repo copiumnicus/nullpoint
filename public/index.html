@@ -114,6 +114,44 @@ const heardBooms = new Set();
 const respawnBtn = () => ({ x: VIEW_W / 2 - 130, y: VIEW_H * 0.6, w: 260, h: 52 });
 const say = (text, colour) => notice = { text, colour, at: performance.now() };
 
+// Receipts, stacked down the right edge. A number ticking down in the corner of
+// a panel is not a receipt — a refused click and a successful one looked
+// identical from the outside, which is how buying outside the ring felt broken
+// even when it was working.
+const TOAST_LIFE = 4200, TOAST_FADE = 700, TOAST_H = 46, TOAST_W = 260, TOAST_KEEP = 5;
+let toasts = [];
+const toast = (what, cost, note) => {
+  toasts.unshift({ what, cost, note, at: performance.now() });
+  toasts = toasts.slice(0, TOAST_KEEP);
+};
+
+function drawToasts(now) {
+  toasts = toasts.filter(t => now - t.at < TOAST_LIFE);
+  toasts.forEach((t, i) => {
+    const age = now - t.at;
+    const fade = Math.min(1, age / 140) * Math.min(1, (TOAST_LIFE - age) / TOAST_FADE);
+    const slide = (1 - Math.min(1, age / 180)) * 26;          // arrives from off the edge
+    const x = VIEW_W - TOAST_W - 16 + slide, y = 92 + i * (TOAST_H + 8);
+    const earned = t.cost < 0, sum = Math.abs(t.cost);
+    g.globalAlpha = fade;
+    g.fillStyle = 'rgba(6,10,16,0.93)'; g.fillRect(x, y, TOAST_W, TOAST_H);
+    g.strokeStyle = earned ? '#7de08a' : '#ffd479'; g.lineWidth = 1;
+    g.strokeRect(x + .5, y + .5, TOAST_W - 1, TOAST_H - 1);
+    g.fillStyle = earned ? '#7de08a' : '#ffd479'; g.fillRect(x, y, 3, TOAST_H);
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace'; g.fillStyle = '#cfe4ff';
+    g.fillText(t.what.length > 24 ? t.what.slice(0, 23) + '\u2026' : t.what, x + 14, y + 20);
+    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#66748c';
+    g.fillText(t.note ?? '', x + 14, y + 35);
+    g.textAlign = 'right'; g.font = '13px ui-monospace, monospace';
+    g.fillStyle = earned ? '#7de08a' : '#ffd479';
+    g.fillText(`${earned ? '+' : '\u2212'}${sum} ${CURRENCY.short}`, x + TOAST_W - 12, y + 22);
+    g.font = '9px ui-monospace, monospace'; g.fillStyle = '#4a5568';
+    g.fillText(`${credits} held`, x + TOAST_W - 12, y + 35);
+    g.textAlign = 'left'; g.globalAlpha = 1;
+  });
+  g.font = '12px ui-monospace, monospace';
+}
+
 // What SPACE would do right now. The prompt at the bottom of the screen and the
 // key itself both read this, so the screen can never offer something the key
 // will not do — and stowing no longer needs the hold open to reach it.
@@ -175,6 +213,11 @@ ws.onmessage = e => {
     myAmmo = m.ammo ?? myAmmo; myUsing = m.using ? { ...DEFAULT_AMMO, ...m.using } : myUsing;
     if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
     if (typeof m.credits === 'number') credits = m.credits;
+    return;
+  }
+  if (m.t === 'bought') {
+    if (typeof m.credits === 'number') credits = m.credits;
+    toast(m.what, m.cost, m.note);
     return;
   }
   if (m.t === 'award') {
@@ -2155,6 +2198,7 @@ function drawFrame(now) {
   }
 
   stirMusic(now);
+  if (!dead) drawToasts(now);
   if (!dead && !sysOpen && !setOpen) { drawBar(); drawSpacePrompt(); }   // under the panels, over the world
   if (setOpen) drawSettings();
   if (sysOpen) drawSystem(me);
