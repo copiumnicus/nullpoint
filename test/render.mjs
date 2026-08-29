@@ -72,7 +72,7 @@ const canvas = {
   setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight }),
 };
 globalThis.innerWidth = 1600; globalThis.innerHeight = 900; globalThis.devicePixelRatio = 2;
-globalThis.location = { host: 'localhost:3000', protocol: 'http:' };
+globalThis.location = { host: 'localhost:3000', protocol: 'http:', reload() {} };
 // seeded under the OLD key, to prove the rename migration runs
 const store = new Map([['aphelion.token', 'legacy-token']]);
 globalThis.localStorage = {
@@ -87,7 +87,7 @@ let raf = null;
 globalThis.requestAnimationFrame = cb => { raf = cb; };
 const socks = [];
 const sent = [];
-globalThis.WebSocket = class { constructor() { this.readyState = 1; socks.push(this); } send(d) { sent.push(JSON.parse(d)); } close() {} };
+globalThis.WebSocket = class { constructor() { this.readyState = 1; socks.push(this); } send(d) { sent.push(JSON.parse(d)); } close() { this.readyState = 3; } };
 
 // A recording AudioContext. setTargetAtTime is used only by the thruster and
 // oscillators only by the guns, so counting them tells us exactly what fired.
@@ -579,6 +579,55 @@ const dismiss = () => {
         errs.push('two slow TABs were read as a double tap');
       else console.log('target: TAB engages, TAB TAB breaks off, slow taps re-engage');
     } finally { performance.now = perf; }
+  }
+
+  // Signing out is a stand-down, not a switch: ten seconds, cancelled by a fight
+  // or by changing your mind. Putting your ship on the floor of a sector with a
+  // drifter on it should take more than one misclick.
+  {
+    dismiss();
+    const realNow3 = performance.now;
+    let c3 = realNow3.call(performance);
+    performance.now = () => c3;
+    const tick = ms => { c3 += ms; frame(t += ms); frames++; };
+    const alone = () => feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0,
+      charge: 0, co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+    const hunted = () => feed({ t: 's', ships: [
+      packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+                 hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 }),
+      packShip({ id: 1e6, x: 6200, y: 4100, heading: 0, charge: 0, co: 'x', hull: 'drifter',
+                 hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1 })] });
+    const S = () => settingsLayout(innerWidth, innerHeight);
+    const hitSignOut = () => {
+      evt('keydown', { key: 'Escape' }); tick(20);           // nothing open: opens the menu
+      const a = S().actions.find(x => x.key === 'signout');
+      click(a.r); evt('pointerup', {}); tick(20);
+    };
+    try {
+      // Under fire it refuses outright.
+      hunted(); tick(20);
+      hitSignOut();
+      tick(11_000);
+      if (socks[0].readyState !== 1) errs.push('signing out under fire put the ship down anyway');
+
+      // Alone it counts down, and a click changes your mind.
+      alone(); tick(20_000);                                  // let the mood hold lapse
+      hitSignOut();
+      tick(3000);
+      dismiss();                                              // click: staying
+      tick(12_000);
+      if (socks[0].readyState !== 1) errs.push('a click during the countdown did not cancel it');
+
+      // The countdown actually completing is signOut() itself, which the idle
+      // block at the end of this file already covers — running it here would
+      // put the client down and every test after it with it.
+      console.log('signout: refused under fire, counts down otherwise, cancelled by a click');
+    } finally {
+      // A countdown left running swallows every click for the rest of the file.
+      dismiss(); frame(t += 16); frames++;
+      dismiss(); frame(t += 16); frames++;
+      performance.now = realNow3;
+    }
   }
 
   // A receipt for every purchase. A refused click and a successful one looked

@@ -531,6 +531,19 @@ function applyMusicGain() {
   }
 }
 
+// Stop everything and forget where it was. Signing out should leave silence,
+// not a score playing over a dead screen.
+export function stopMusic() {
+  musicWanted = false;
+  if (fader) { clearInterval(fader); fader = null; }
+  if (meterTimer) { clearInterval(meterTimer); meterTimer = null; }
+  for (const d of Object.values(decks)) {
+    d.level = 0;
+    try { d.el.pause(); } catch {}
+    if (d.gain) d.gain.gain.value = 0; else d.el.volume = 0;
+  }
+}
+
 export function setMusicVolume(v) {
   musicVol = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
   applyMusicGain();
