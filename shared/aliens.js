@@ -33,7 +33,9 @@ export const ALIENS = {
     patience: 3.0,    // s outside leash before it gives up and forgets you
     flee: 0.10,       // turns and runs at this fraction of hull
     respawn: 14,      // s
-    bounty: 140,      // credits your company pays for the kill
+    // 455 — see BOUNTY_RATE. At 140 a Kestrel was 129 kills away and a finished
+    // ship 2664, which is the grind this game exists not to have.
+    bounty: 455,      // credits your company pays for the kill
     xp: 140,          // and what the kill is worth toward your rank
   },
 
@@ -48,6 +50,14 @@ export const ALIENS = {
     aggro: 0, leash: 0, patience: 1, flee: 0, respawn: 3, bounty: 0, xp: 0,
   },
 };
+
+// What a kill pays, as a fraction of what it took to kill. Deriving it means a
+// tougher thing further out pays proportionally more without anyone remembering
+// to tune it, and it keeps the one number that matters honest: the credits a
+// fight returns against the ammunition it burns.
+export const BOUNTY_RATE = 0.70;
+export const effectiveHp = kind => ALIENS[kind].attrs.hull + ALIENS[kind].attrs.shield;
+export const bountyFor = kind => Math.round(effectiveHp(kind) * BOUNTY_RATE);
 
 export const ALIENS_PER_MAP = 7;
 // What the galaxy proper is allowed to spawn. Range furniture is not in it.

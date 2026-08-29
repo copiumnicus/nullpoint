@@ -23,13 +23,15 @@ export const MATERIALS = {
 
 // Weights must sum to 1. A test enforces that, and that rarer never beats commoner.
 export const DROPS = {
+  // Quantities carry the weight rather than rarities: the shape of what a husk
+  // is made of should not change just because the payroll did.
   drifter: [
-    { mat: 'iron',     p: 0.44, min: 1, max: 4 },
-    { mat: 'nickel',   p: 0.26, min: 1, max: 3 },
-    { mat: 'cobalt',   p: 0.16, min: 1, max: 2 },
-    { mat: 'rhodium',  p: 0.09, min: 1, max: 2 },
-    { mat: 'platinum', p: 0.04, min: 1, max: 1 },
-    { mat: 'iridium',  p: 0.01, min: 1, max: 1 },
+    { mat: 'iron',     p: 0.44, min: 3, max: 9 },
+    { mat: 'nickel',   p: 0.26, min: 2, max: 7 },
+    { mat: 'cobalt',   p: 0.16, min: 2, max: 5 },
+    { mat: 'rhodium',  p: 0.09, min: 1, max: 4 },
+    { mat: 'platinum', p: 0.04, min: 1, max: 3 },
+    { mat: 'iridium',  p: 0.01, min: 1, max: 2 },
   ],
 };
 

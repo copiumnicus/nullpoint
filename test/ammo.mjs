@@ -6,6 +6,7 @@ import { launch, ROCKET_RATE } from '../shared/rockets.js';
 import { sanitiseFit } from '../shared/gear.js';
 import { slotsOf, resolve, gunsOf, FIRE_RATE } from '../shared/ships.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
+import { ALIENS, WILD, effectiveHp, bountyFor, BOUNTY_RATE } from '../shared/aliens.js';
 import { BOOST } from '../shared/power.js';
 
 const fails = [];
@@ -108,6 +109,58 @@ console.log('\nwhat a grade is worth');
   check('the best grade costs enough to be a decision',
     perMin(grades.at(-1)) > perMin(grades[0]) * 10,
     `${perMin(grades.at(-1)).toFixed(0)} cr a minute — you load it for a fight, not for the commute`);
+}
+
+console.log('\npaying for itself');
+{
+  // The rule the whole economy hangs on: a fight has to return more than it
+  // burns, by enough that the leftovers buy the next thing. At 140 a kill it
+  // did — but a finished ship was 2664 kills away, which is the grind this
+  // game exists not to have.
+  const builds = [
+    ['starter Hauler',   'hauler',   ['emitter1'], []],
+    ['mid Vanguard',     'vanguard', Array(3).fill('emitter3'), Array(3).fill('emitter3')],
+    ['finished Vanguard','vanguard', Array(3).fill('emitter5'), Array(6).fill('emitter5')],
+  ];
+  const plain = DEFAULT_AMMO.laser;
+  for (const kind of WILD) {
+    const ehp = effectiveHp(kind), pays = ALIENS[kind].bounty;
+    check(`${ALIENS[kind].name} pays what its toughness says it should`,
+      pays === bountyFor(kind), `${ehp} ehp at ${BOUNTY_RATE} = ${pays} cr`);
+    for (const [label, hull, weapon, drones] of builds) {
+      const f = sanitiseFit(slotsOf(hull), fit({ weapon }));
+      const st = resolve(hull, f, drones);
+      const perBolt = st.damage * (1 + BOOST) / gunsOf(f, drones);
+      const spent = Math.ceil(ehp / perBolt) * roundPrice(plain);
+      check(`${label} clears its own ammunition on a ${ALIENS[kind].name}`,
+        pays > spent * 20,
+        `${spent.toFixed(1)} cr of cells against ${pays} cr — ${Math.round(pays / spent)}x`);
+    }
+    // A full rocket rack is the worst case: fifteen warheads at once, most of
+    // them wasted on something this soft. Standard grade still has to profit.
+    const volley = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(3).fill('pod3') })), []).rockets;
+    const heads = volley * roundPrice(DEFAULT_AMMO.rocket);
+    check(`even a full rocket volley profits on a ${ALIENS[kind].name}`, pays > heads * 4,
+      `${volley} standard warheads is ${heads.toFixed(0)} cr against ${pays} cr`);
+  }
+
+  // Premium grades are a decision, not a default — they are meant to stop making
+  // sense against something this cheap, and to be worth it against something hard.
+  const top = forWeapon('rocket').at(-1);
+  const vol = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(3).fill('pod3') })), []).rockets;
+  const lux = vol * roundPrice(top);
+  console.log(`     a ${AMMO[top].name} volley costs ${lux.toFixed(0)} cr against a ${ALIENS.drifter.bounty} cr husk`);
+  check('the best warheads do not pay on trash', lux > ALIENS.drifter.bounty,
+    'which is the point — you load them for something that deserves it');
+
+  // And the pacing that all of it is for.
+  const ORE = 81;
+  const perKill = ALIENS.drifter.bounty + ORE;
+  const kills = c => Math.round(c / perKill);
+  console.log(`     at ${perKill} cr a Drifter: a Kestrel in ${kills(18000)} kills, ` +
+              `a Swarm Rack in ${kills(40000)}, a finished Vanguard in ${kills(373000)}`);
+  check('a first upgrade is an evening, not a campaign', kills(18000) < 60);
+  check('and the top of the ladder is still something to work toward', kills(373000) > 300);
 }
 
 console.log('\nkeeping it');
