@@ -186,10 +186,12 @@ for (const h of HOMES) {
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
   seed(co + '4', 'drifter', 3);
 }
-// Nullpoint itself. The core sector was three companies' worth of contested space
-// with nothing in it to contest; the Hive is what is there, and the Bandits at
-// every frontier come from it.
-seed('x0', 'hive', 1);
+// One Hive on each gate sector — the first contested ground past your own
+// frontier, and the first place three companies can arrive at once. Nullpoint
+// itself is left empty for now: putting the only one at the very bottom of the
+// map put it where almost nobody would meet it, and the point of the thing is to
+// be met. The Bandits at every frontier come from these.
+for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'hive', 1);
 
 // The hull and formation galleries, resolved once at boot. They never move, take
 // damage or shoot, so there is nothing to step — just rows to hand out.

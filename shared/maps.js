@@ -89,15 +89,17 @@ Object.entries(COMPANIES).forEach(([co, f]) => {
      { ...own, home: true, base: { x: 6000, y: 4000, r: 900 } });   // the docking zone itself
   mk(co + '2', place(a, RAD.mid, -MID_OFF),     `${f.tag}-2`, 1,
      [{ ...NE, to: co + '1' }, { ...S,  to: co + '4' }],                       own);
-  // A pirate outpost, well clear of both gates. It buys ore and nothing else:
-  // no repair, no refit, and emphatically no sanctuary. It is here so that a long
-  // run into the third sector is not governed by how much your hold can carry.
   mk(co + '3', place(a, RAD.mid,  MID_OFF),     `${f.tag}-3`, 2,
-     [{ ...NW, to: co + '1' }, { ...S,  to: co + '4' }],
-     { ...own, outpost: { x: 9200, y: 5200, r: 420 } });
+     [{ ...NW, to: co + '1' }, { ...S,  to: co + '4' }],                       own);
+  // The pirate outpost sits on the frontier, not one hop in. That is where a run
+  // actually gets long enough for a full hold to end it — the third sector is
+  // still close enough to your own dock that flying home was never the problem.
+  // It buys ore and nothing else: no repair, no refit, and emphatically no
+  // sanctuary, which matters more here than it did a sector back.
   mk(co + '4', place(a, RAD.frontier),          `${f.tag}-4`, 3,
      [{ ...NW, to: co + '2' }, { ...NE, to: co + '3' },
-      { ...W,  to: myGates[0] }, { ...E, to: myGates[1] }],                    { ...own, frontier: true });
+      { ...W,  to: myGates[0] }, { ...E, to: myGates[1] }],
+     { ...own, frontier: true, outpost: { x: 9200, y: 5200, r: 420 } });
 });
 
 // Four destinations on a ring, at angles chosen so no two anchors share an x or a y.

@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.13';
+export const VERSION = '0.14';
 
 export const PATCHES = [
+  { v: '0.14', notes: [
+    'Pirate outposts moved to the frontier sectors, where a full hold actually ends a run',
+    'Corsair Hives now hold the three gate sectors instead of Nullpoint, so they get met',
+    'A recall folding home draws collapsing rings, and everyone nearby can see it',
+  ] },
   { v: '0.13', notes: [
     'Recall Beacons: a single-use device that folds you home over five seconds',
     'One hit breaks the fold — and the beacon is not spent, so you can try again',

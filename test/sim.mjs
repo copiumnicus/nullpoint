@@ -256,8 +256,11 @@ check('no two connectors run along the same line', sideBySide === 0);
 console.log('\nthe pirate outpost');
 {
   const withPost = Object.entries(MAPS).filter(([, m2]) => m2.outpost);
-  check('every third sector has one', withPost.length === 3 &&
-    withPost.every(([id]) => id.endsWith('3')), withPost.map(([id]) => id).join(' '));
+  // This used to read "every third sector has one". The third sector is still
+  // close enough to your own dock that flying home was never the problem; the
+  // frontier is where a run gets long enough for a full hold to end it.
+  check('every frontier has one', withPost.length === 3 &&
+    withPost.every(([id]) => MAPS[id].frontier), withPost.map(([id]) => id).join(' '));
   for (const [id, m2] of withPost) {
     const o = m2.outpost;
     check(`${id}'s outpost is clear of both gates`,

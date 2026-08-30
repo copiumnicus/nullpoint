@@ -2470,6 +2470,36 @@ function drawFrame(now) {
 
     // A repair drone at work: one small machine going round and round the hull
     // with a torch on it. Drawn for anyone you can see, not just yourself.
+    // Folding home. Rings collapse inward on a loop for as long as the channel
+    // runs, the same read as a portal spinning up — it is the same thing
+    // happening, just without a gate to do it at. On the wire for every ship, so
+    // somebody else going home is something you watch rather than a vanishing.
+    if ((s.wrp ?? 0) > 0) {
+      const done = s.wrp / 100;
+      const grd = g.createRadialGradient(s.rx, s.ry, R * 0.3, s.rx, s.ry, R * 4);
+      grd.addColorStop(0, 'rgba(127,212,255,0.20)');
+      grd.addColorStop(1, 'rgba(127,212,255,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(s.rx, s.ry, R * 4, 0, 7); g.fill();
+      for (let i = 0; i < 3; i++) {                 // three rings, evenly out of phase
+        const ph = ((now / 620) + i / 3) % 1;
+        const rr = R * (3.6 - 2.8 * ph);            // outside in, over and over
+        g.globalAlpha = 0.55 * Math.sin(ph * Math.PI);
+        g.strokeStyle = '#7fd4ff'; g.lineWidth = 1.6;
+        g.beginPath(); g.arc(s.rx, s.ry, Math.max(2, rr), 0, 7); g.stroke();
+      }
+      g.globalAlpha = 1;
+      g.strokeStyle = '#7fd4ff'; g.lineWidth = 2;   // and how far through it is
+      g.beginPath();
+      g.arc(s.rx, s.ry, R * 3.9, -Math.PI / 2, -Math.PI / 2 + done * Math.PI * 2);
+      g.stroke();
+      if (id === myId) {
+        g.textAlign = 'center'; g.font = 'bold 10px ui-monospace, monospace';
+        g.fillStyle = '#7fd4ff';
+        g.fillText('FOLDING', s.rx, s.ry - R * 4.5);
+        g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+      }
+    }
     if ((s.fix ?? 0) > 0) {
       const a0 = now / 340, rr = R * 2.5;
       const px = s.rx + Math.cos(a0) * rr, py = s.ry + Math.sin(a0) * rr * 0.55;
