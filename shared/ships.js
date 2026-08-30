@@ -138,7 +138,14 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
       if (attr === 'speed' && op === 'add' && v < 0) lost -= v;
   }
   const bare = hull.attrs.speed ?? ATTRS.speed.dflt;
-  out.boost = BOOST + (bare > 0 ? lost / bare : 0);
+  // You cannot give up more speed than you have. Speed is clamped at ATTRS.speed.min
+  // on the way out, so past that floor a generator costs you nothing further —
+  // but `lost` went on summing, and the ceiling went on rising for it. A Bulwark
+  // with two fitted E-Cells and twelve more on drones sat at the 40px/s floor
+  // banking a 198% ceiling: a 2.98x reactor bought with speed it had already
+  // spent. Clamped to what was actually surrendered, the same build reads 114%.
+  const givable = Math.max(0, bare - (ATTRS.speed.min ?? 0));
+  out.boost = BOOST + (bare > 0 ? Math.min(lost, givable) / bare : 0);
   return out;
 }
 

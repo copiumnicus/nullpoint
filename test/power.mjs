@@ -217,6 +217,22 @@ console.log('\nthe reactor ceiling');
   // is exactly what a bigger reactor is for — and unpowered you are simply slower.
   check('unpowered, a generator is still purely a cost',
     one.speed < bare.speed, `${Math.round(one.speed)} against ${bare.speed} with the reactor idle`);
+  // The ceiling is paid for in speed, so it cannot exceed the speed there was to
+  // give. Past the floor a generator costs nothing further and must therefore
+  // earn nothing further — it went on earning, and a floored Bulwark banked a
+  // 198% ceiling for speed it had already spent.
+  const { ATTRS } = await import('../shared/ships.js');
+  const floored = resolve('bulwark', fitOf({ generator: ['cellE', 'cellE'] }), Array(12).fill('cellE'));
+  const bareBul = resolve('bulwark', fitOf());
+  check('the ceiling cannot exceed the speed there was to surrender',
+    ceilingOf(floored) - BOOST <= (bareBul.speed - ATTRS.speed.min) / bareBul.speed + 1e-9,
+    `${((ceilingOf(floored) - BOOST) * 100).toFixed(0)}% earned against ` +
+    `${(((bareBul.speed - ATTRS.speed.min) / bareBul.speed) * 100).toFixed(0)}% surrenderable — it read 198% before`);
+  check('and a ship at the speed floor stops earning more of it', (() => {
+    const more = resolve('bulwark', fitOf({ generator: ['cellE', 'cellE'] }), Array(12).fill('cellE'));
+    const evenMore = resolve('bulwark', fitOf({ generator: ['cellE', 'cellE', 'cellE'] }), Array(12).fill('cellE'));
+    return Math.abs(ceilingOf(more) - ceilingOf(evenMore)) < 1e-9;
+  })(), 'bolting on a generator you cannot pay for buys nothing');
   check('and the ceiling pays nothing without power routed',
     boostOf({ to: null, thrusters: 0, weapons: 0, shields: 0, charge: 99 }, 'thrusters', one) === 1,
     'a ceiling is a ceiling, not a bonus');

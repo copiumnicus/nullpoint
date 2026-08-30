@@ -8,9 +8,12 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.16';
+export const VERSION = '0.17';
 
 export const PATCHES = [
+  { v: '0.17', notes: [
+    'Fixed a reactor exploit: generators past your speed floor were still raising the boost ceiling',
+  ] },
   { v: '0.16', notes: [
     'Dying now costs 10% of your credits as well as your cargo — flying empty is no longer free',
   ] },
