@@ -24,6 +24,7 @@ import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './s
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
 import { splitKill } from './shared/reward.js';
+import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
@@ -299,7 +300,8 @@ wss.on('connection', (ws, req) => {
                     formations: [...acct.formations],
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
-                    scoop: null, want: null, dead: false, lobby });
+                    scoop: null, want: null, dead: false, lobby,
+                    acted: Date.now(), banked: Date.now() });
   // A line back to this pilot only. Lives out here rather than inside the chat
   // handler because anything that refuses a request owes an explanation, and the
   // repair rack was the first thing outside chat that needed one.
@@ -325,7 +327,8 @@ wss.on('connection', (ws, req) => {
                            drones: acct.drones, xp: acct.xp, admin: isAdmin(acct),
                            formation: acct.formation, formations: acct.formations,
                            ammo: acct.ammo, using: acct.using, armed: acct.armed,
-                           kits: acct.kits, kit: acct.kit }));
+                           kits: acct.kits, kit: acct.kit,
+                           rig: acct.rig ?? null, played: acct.played ?? 0 }));
 
   // Who the sides are and how full each is, so somebody choosing can see whether
   // they would be evening things up.
@@ -344,6 +347,10 @@ wss.on('connection', (ws, req) => {
   ws.on('message', buf => {
     let m; try { m = JSON.parse(buf); } catch { return; }
     const P = players.get(id);
+    // Playtime is measured to the last thing a pilot actually did. Anything they
+    // send counts, including a keypress that changes nothing — it is presence
+    // that is being measured, not productivity.
+    if (P) P.acted = Date.now();
 
     if (lobby) {                                  // nothing works until you exist
       if (m.t !== 'join') return;
@@ -741,6 +748,9 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     const p = players.get(id);
+    // capture banks the playtime, and it banks up to the last action rather than
+    // to now — which is the whole point when the tab has been idle for half an
+    // hour before the socket finally goes.
     if (p && !p.lobby) { capture(p.acct, p, Date.now()); store.save(db); }   // last word on where you were
     for (const list of aliens.values()) forgetPlayer(list, id);
     players.delete(id);
@@ -1032,6 +1042,7 @@ setInterval(() => {
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
       ammo: V.ammo, using: V.using, armed: V.armed, kits: V.kits, kit: V.kit,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
+      played: (V.acct.played ?? 0) + sessionSeconds(V.banked ?? V.acted, V.acted),
       // effective levels as whole percent, so the readout cannot jitter between
       // 29 and 30 from a float that is a hair under one
       power: { to: V.ship.power.to, cap: Math.round(100 * chargePct(V.ship.power, V.ship.stats)),

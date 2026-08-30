@@ -37,6 +37,7 @@ import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT, QUIET } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
+import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
@@ -86,6 +87,7 @@ let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
 let myRig = null;                 // the collector, which is not one of the bays
+let myPlayed = 0;                 // seconds flown, idle time already taken off
 let myForm = 'line', myForms = ['line'];
 let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
 let myKits = {}, myKit = DEFAULT_KIT;
@@ -199,6 +201,7 @@ ws.onmessage = e => {
     myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? {}; myHulls = m.hulls ?? [myHull]; credits = m.credits ?? 0;
     myDrones = m.drones ?? []; myRig = m.rig ?? null; myXp = m.xp ?? 0; amAdmin = !!m.admin;
+    myPlayed = m.played ?? 0;
     myForm = m.formation ?? 'line'; myForms = m.formations ?? ['line'];
     myAmmo = m.ammo ?? {}; myUsing = { ...DEFAULT_AMMO, ...(m.using ?? {}) };
     myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
@@ -298,6 +301,7 @@ ws.onmessage = e => {
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
   if (m.drones) myDrones = m.drones;
   if ('rig' in m) myRig = m.rig;
+  if (typeof m.played === 'number') myPlayed = m.played;
   if (m.rank) { myRank = m.rank; myXp = m.xp ?? myXp; }
   const seen = new Set();
   for (const raw of m.ships) {
@@ -1497,6 +1501,10 @@ function drawSettings() {
   g.fillText('MENU', P.x + 20, P.y + 32);
   g.font = '11px ui-monospace, monospace'; g.fillStyle = '#5b6b85';
   g.fillText('Esc or O to close', P.x + P.w - 132, P.y + 32);
+  // Time flown, which is not time the tab was open: the half hour before an idle
+  // sign-out is not in here, because nobody was flying for it.
+  g.font = '10px ui-monospace, monospace'; g.fillStyle = '#3d4757';
+  g.fillText(`${fmtPlayed(myPlayed)} flown`, P.x + 74, P.y + 32);
   for (const sec of L.sections) {
     g.font = '10px ui-monospace, monospace'; g.fillStyle = '#3d4757';
     g.fillText(sec.label, P.x + 20, sec.y);

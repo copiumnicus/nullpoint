@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "DEV_ADMIN=1 node server.js",
-    "test": "node test/account.mjs && node test/ships.mjs && node test/power.mjs && node test/cargo.mjs && node test/radar.mjs && node test/aliens.mjs && node test/stealth.mjs && node test/rockets.mjs && node test/steer.mjs && node test/reward.mjs && node test/ammo.mjs && node test/sim.mjs && node test/render.mjs"
+    "test": "node test/account.mjs && node test/ships.mjs && node test/power.mjs && node test/cargo.mjs && node test/radar.mjs && node test/aliens.mjs && node test/stealth.mjs && node test/rockets.mjs && node test/steer.mjs && node test/reward.mjs && node test/playtime.mjs && node test/ammo.mjs && node test/sim.mjs && node test/render.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

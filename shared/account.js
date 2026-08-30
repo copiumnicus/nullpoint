@@ -12,6 +12,7 @@ import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
 import { sanitiseKits, sanitiseKit, DEFAULT_KIT } from './repair.js';
 import { MAPS, COMPANIES } from './maps.js';
 import { MATERIALS } from './cargo.js';
+import { bankPlaytime } from './playtime.js';
 
 const CALLSIGNS = ['Vex', 'Harrow', 'Kite', 'Sable', 'Rook', 'Marlow', 'Quill', 'Ash', 'Bram',
   'Corvid', 'Dray', 'Fen', 'Grist', 'Halcyon', 'Iber', 'Jax', 'Kesh', 'Lund', 'Mire', 'Nox',
@@ -35,6 +36,7 @@ export function newAccount(token, seq, now) {
     ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     kits: {}, kit: DEFAULT_KIT,
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
+    played: 0,                                    // seconds actually flown, idle tail excluded
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
   };
@@ -71,6 +73,7 @@ export function sanitiseAccount(a, seq, now) {
     ammo: sanitiseAmmo(a?.ammo), using: sanitiseUsing(a?.using), armed: sanitiseArmed(a?.armed),
     kits: sanitiseKits(a?.kits), kit: sanitiseKit(a?.kit),
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
+    played: Number.isFinite(a?.played) ? Math.max(0, Math.floor(a.played)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,
     x: Number.isFinite(a?.x) ? a.x : base.x,
@@ -88,6 +91,7 @@ export function capture(account, p, now) {
   account.hulls = [...p.hulls];
   account.drones = [...p.ship.drones];
   account.rig = p.ship.rig ?? null;
+  bankPlaytime(account, p, now);
   account.formation = p.ship.formation;
   account.formations = [...p.formations];
   account.ammo = { ...p.ammo };
