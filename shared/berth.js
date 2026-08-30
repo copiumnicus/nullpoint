@@ -88,3 +88,35 @@ export function berthPanel(VIEW_W, VIEW_H) {
     buy: { x: x + 20, y: y + h - 56, w: w - 40, h: 36 },
   };
 }
+
+// --- where a wreck comes back -------------------------------------------------
+//
+// Your own ring, or the last hangar you actually used — which now includes a bay
+// you rent on the frontier. Flying four sectors back to the ring you started at,
+// every time, is the least interesting minute in the game, and a pilot who has
+// paid for a bay out here has already said where they want to be.
+//
+// It is re-checked rather than trusted: a berth can be sold, a save can be
+// hand-edited, and a map can stop having an outpost on it. Anything that no longer
+// holds falls back to your company ring, which every pilot always has.
+export function respawnAt(acct, MAPS) {
+  const home = (acct?.co ?? 'm') + '1';
+  const fallback = { map: home, ...MAPS[home].base };
+  const last = acct?.lastDock;
+  if (!last || !MAPS[last]) return fallback;
+  const m = MAPS[last];
+  if (m.outpost && (acct.berths ?? []).includes(last)) return { map: last, ...m.outpost };
+  if (m.base && m.owner === acct.co) return { map: last, ...m.base };
+  return fallback;
+}
+
+// And whether standing here counts as "the last hangar you used", which is the
+// same question as whether the station panel would open — one rule, so the place
+// you respawn can never be somewhere you could not have shopped.
+// Takes the sector's id explicitly: a MAPS entry does not carry its own key, so
+// reading `map.id` here quietly matched nothing and every respawn fell back home.
+export const isHangar = (mapId, map, co, ship, berths = []) =>
+  !!((map?.base && map.owner === co
+      && Math.hypot(map.base.x - ship.x, map.base.y - ship.y) < map.base.r)
+  || (map?.outpost && berths.includes(mapId)
+      && Math.hypot(map.outpost.x - ship.x, map.outpost.y - ship.y) < map.outpost.r));

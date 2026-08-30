@@ -98,6 +98,39 @@ console.log('\nwhat the frontier stocks');
     'four things at one rung was a shelf with nothing to climb');
 }
 
+console.log('\nwhere a wreck comes back');
+{
+  const { respawnAt, isHangar } = await import('../shared/berth.js');
+  const { MAPS } = await import('../shared/maps.js');
+  const where = a => respawnAt(a, MAPS);
+  check('a pilot who has docked nowhere comes back to their own ring',
+    where({ co: 'm' }).map === 'm1');
+  check('and one who last used a bay they rent comes back to the bay',
+    where({ co: 'm', lastDock: 'm4', berths: ['m4'] }).map === 'm4',
+    'four sectors of flying home, every death, was the least interesting minute in the game');
+  // Everything about the last hangar is re-checked rather than trusted: a berth
+  // can be sold, a save can be hand-edited, a sector can stop having an outpost.
+  check('a bay you have since sold does not hold your respawn',
+    where({ co: 'm', lastDock: 'm4', berths: [] }).map === 'm1');
+  check('nor does a rival company ring',
+    where({ co: 'm', lastDock: 'h1' }).map === 'm1');
+  check('nor a sector with no hangar in it at all',
+    where({ co: 'm', lastDock: 'g1' }).map === 'm1');
+  check('and hand-edited nonsense falls back rather than throwing',
+    where({ co: 'm', lastDock: 'nowhere', berths: ['nowhere'] }).map === 'm1');
+
+  // The recorded hangar and the shop counter answer the same question, so you can
+  // never respawn somewhere you could not have shopped.
+  const at = (mapId, x, y, berths) =>
+    isHangar(mapId, MAPS[mapId], 'm', { x, y }, berths);
+  const b = MAPS.m1.base, o = MAPS.m4.outpost;
+  check('standing in your own ring counts as a hangar', at('m1', b.x, b.y, []));
+  check('standing in a bay you rent counts too', at('m4', o.x, o.y, ['m4']));
+  check('standing in an outpost you have no bay at does not',
+    !at('m4', o.x, o.y, []), 'you could not have shopped there, so you cannot come back there');
+  check('and neither does open space', !at('m1', 100, 100, []));
+}
+
 console.log('\nthe panel that sells it');
 {
   const L = berthPanel(1600, 900);

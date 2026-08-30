@@ -270,10 +270,17 @@ console.log('\nthe pirate outpost');
       o.x - o.r > 0 && o.x + o.r < MAP_W && o.y - o.r > 0 && o.y + o.r < MAP_H);
     const at = { x: o.x, y: o.y };
     check(`${id}'s outpost is somewhere you can trade`, inOutpost(m2, at));
-    // The whole point of it. If any of these ever start being true it has quietly
-    // become a second home base, which is not what it is for.
-    check(`${id}'s outpost is not shelter`, !inHaven(m2, at),
-      'it buys ore, and it does not hide you while you fight');
+    // This used to read "an outpost is not shelter", and that was deliberate: the
+    // point of somewhere to empty your hold mid-run was that it stayed open sky.
+    // What changed is that you can respawn at a bay you rent. A wreck comes back
+    // with every grudge cleared, so with no peace at the door a pilot who died on
+    // the frontier respawned unprovoked in front of whatever killed them and died
+    // again, forever. The peace is the price of the respawn.
+    check(`${id}'s outpost keeps the peace at its own door`, inHaven(m2, at),
+      'so a pilot who respawns here is not immediately killed again');
+    check(`${id}'s peace stops at the trading zone`,
+      !inHaven(m2, { x: o.x + o.r + 50, y: o.y }),
+      `${o.r}px and not a pixel more — step outside and the frontier is unchanged`);
     check(`${id}'s outpost is not a dock`, !canDock(m2, m2.owner, at),
       'no repairs, no refit, no station panel');
   }

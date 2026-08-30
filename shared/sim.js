@@ -155,10 +155,19 @@ export function inBase(map, s) {
 // happy to take the money and the client would not draw the counter.
 export const canDock = (map, co, s) => (map.owner === co || !!map.dev) && inBase(map, s);
 
-// A pirate outpost. Anyone may trade there, whatever company they fly for, and it
-// grants nothing else: it is not a haven, it does not repair, and there is no
-// station panel behind it. Deliberately NOT folded into inHaven — the whole point
-// of somewhere you can empty your hold mid-run is that it is still the open sky.
+// A pirate outpost. Anyone may trade there, whatever company they fly for.
+//
+// It IS a haven now, and it deliberately was not: the whole point of somewhere to
+// empty your hold mid-run was that it stayed open sky. What changed is that you
+// can respawn at one. A wreck comes back with every grudge cleared, so without
+// peace at the door a pilot who died on the frontier respawned unprovoked in front
+// of whatever killed them and died again — a loop with no way out of it but
+// quitting.
+//
+// It is still not a dock. It does not repair, it sells nothing without a berth,
+// and the peace covers only the trading zone: step outside 420px and the frontier
+// is exactly as it was. Pirates keeping order at their own door is also the only
+// version of this that makes sense — they are running a shop, not a charity.
 export const inOutpost = (map, s) =>
   !!map.outpost && Math.hypot(map.outpost.x - s.x, map.outpost.y - s.y) < map.outpost.r;
 
@@ -167,7 +176,8 @@ export const inOutpost = (map, s) =>
 // in the alien's own logic, not here.
 export const HAVEN_R = PORTAL_R * 2.4;
 export function inHaven(map, s) {
-  return inBase(map, s) || map.portals.some(p => Math.hypot(p.x - s.x, p.y - s.y) < HAVEN_R);
+  return inBase(map, s) || inOutpost(map, s)
+      || map.portals.some(p => Math.hypot(p.x - s.x, p.y - s.y) < HAVEN_R);
 }
 
 export const SHOT_FLASH = 0.16;   // s the muzzle stays lit

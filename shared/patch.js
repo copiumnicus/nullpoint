@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.27';
+export const VERSION = '0.28';
 
 export const PATCHES = [
+  { v: '0.28', notes: [
+    'You come back at the last hangar you used, including a pirate bay you rent',
+    'Pirate outposts keep the peace inside the trading zone, so a respawn is not a death loop',
+    'The peace stops at the zone edge — step outside and the frontier is unchanged',
+  ] },
   { v: '0.27', notes: [
     'Eleven more technologies — your guns, your escort and your hull ability all have one now',
     'Siege and Rapid Cadence trade bolt weight against cadence for exactly the same damage',

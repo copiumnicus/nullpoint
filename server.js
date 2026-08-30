@@ -28,7 +28,8 @@ import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './s
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
-import { whyNotBerth, whyNotBuyBerth, berthPrice, BERTH_RANK } from './shared/berth.js';
+import { whyNotBerth, whyNotBuyBerth, berthPrice, BERTH_RANK,
+         respawnAt, isHangar } from './shared/berth.js';
 import { splitKill, shareOut } from './shared/reward.js';
 import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
@@ -378,7 +379,7 @@ wss.on('connection', (ws, req) => {
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
                     devices: { ...acct.devices }, device: acct.device, folding: null,
-                    berths: [...(acct.berths ?? [])],
+                    berths: [...(acct.berths ?? [])], lastDock: acct.lastDock ?? null,
                     scoop: null, want: null, dead: false, lobby,
                     acted: Date.now(), banked: Date.now() });
   // A line back to this pilot only. Lives out here rather than inside the chat
@@ -826,11 +827,15 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'respawn') {                      // you choose when to go back out
       if (!P.dead) return;
-      const home = P.co + '1', hb = MAPS[home].base;
-      const ang = Math.random() * 7, dist = Math.random() * hb.r * 0.6;
-      P.mapId = home; P.dead = false; P.contacts.clear();
+      // Back at the last hangar you used, which may be a bay you rent four sectors
+      // out. Flying home from the frontier every time you died was the least
+      // interesting minute in the game, and a pilot who paid for a bay has already
+      // said where they want to be.
+      const at = respawnAt(P, MAPS);
+      const ang = Math.random() * 7, dist = Math.random() * at.r * 0.6;
+      P.mapId = at.map; P.dead = false; P.contacts.clear();
       refit(ship, ship.hull, ship.fit);           // rebuilt and repaired at your own dock
-      Object.assign(ship, { x: hb.x + Math.cos(ang) * dist, y: hb.y + Math.sin(ang) * dist,
+      Object.assign(ship, { x: at.x + Math.cos(ang) * dist, y: at.y + Math.sin(ang) * dist,
                             vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
                             charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0 });
       touch(P);
@@ -949,6 +954,12 @@ setInterval(() => {
     stepDrift(p.ship, dt);
     const map = MAPS[p.mapId];
     p.docked = canDock(map, p.co, p.ship);
+    // The last hangar you actually stood in, which is where a wreck comes back.
+    // Recorded from the same question the station panel asks, so you can never
+    // respawn somewhere you could not have shopped.
+    if (isHangar(p.mapId, map, p.co, p.ship, p.berths)) {
+      if (p.lastDock !== p.mapId) { p.lastDock = p.mapId; touch(p); }
+    }
     stepVitals(p.ship, dt, p.docked);
 
     // A repair drone works while nothing is shooting at you. Take a hit and it

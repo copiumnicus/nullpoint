@@ -38,6 +38,7 @@ export function newAccount(token, seq, now) {
     kits: {}, kit: DEFAULT_KIT,
     devices: {}, device: DEFAULT_DEVICE,
     berths: [],                                   // outposts you rent a bay at
+    lastDock: null,                               // the hangar a wreck comes back to
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
     played: 0,                                    // seconds actually flown, idle tail excluded
     mapId: home, x: base.x, y: base.y,
@@ -77,6 +78,7 @@ export function sanitiseAccount(a, seq, now) {
     kits: sanitiseKits(a?.kits), kit: sanitiseKit(a?.kit),
     devices: sanitiseDevices(a?.devices), device: sanitiseDevice(a?.device),
     berths: [...new Set((Array.isArray(a?.berths) ? a.berths : []).filter(id => MAPS[id]?.outpost))],
+    lastDock: MAPS[a?.lastDock] ? a.lastDock : null,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     played: Number.isFinite(a?.played) ? Math.max(0, Math.floor(a.played)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
@@ -107,6 +109,7 @@ export function capture(account, p, now) {
   account.kit = p.kit;
   account.device = p.device;
   account.berths = [...(p.berths ?? [])];   // a player built before berths existed has none
+  account.lastDock = p.lastDock ?? null;
   account.xp = p.xp;
   account.credits = p.credits;
   account.vault = { ...p.vault };
