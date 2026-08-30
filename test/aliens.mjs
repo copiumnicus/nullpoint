@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { storeHit, stepMirror, spendMirror, LOAD_HOLD } from '../shared/aliens.js';
 import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
          farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR,
@@ -671,6 +672,58 @@ check('and an unknown alien still draws something rather than nothing',
     Object.keys(HULLS).filter(h => HULLS[h].price > 0)
       .every(h => resolve(h, { weapon: [topTier('weapon')], generator: [], tech: [] }).weaponRange < T.attrs.weaponRange),
     `it reaches ${T.attrs.weaponRange}, which is past every gun in the game`);
+}
+
+// The one rule about where things live: the further from your home ring a sector
+// is, the harder the hardest thing in it. Read off server.js rather than off a
+// table here, because a table here would be a second copy of the posting and the
+// whole point is to catch the posting drifting.
+//
+// It was broken in two places before anyone wrote it down. co2 and co3 are the same
+// distance out and held a 10x spread — an Ironhusk at 6,500 against a Leviathan at
+// 65,000 — so which sibling you flew into decided whether the game had a curve at
+// all. And the deeps were EASIER than the gates you pass through to reach them,
+// 205,550 behind 650,000, which is the curve running backwards at the one place a
+// pilot has earned the right to expect it not to.
+{
+  const src = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const where = { "co + '2'": 'm2', "co + '3'": 'm3', "co + '4'": 'm4',
+                  h: 'm1', g: 'gate', d: 'deep' };
+  const posted = {};
+  for (const m of src.matchAll(/seed\(([^,]+), '([a-z]+)',/g)) {
+    const k = where[m[1].trim()];
+    if (k) (posted[k] ??= []).push(m[2]);
+  }
+  // Hops from the home ring, walked over the real portal graph rather than assumed.
+  const dist = { m1: 0 }, q = ['m1'];
+  while (q.length) {
+    const at = q.shift();
+    for (const pt of (MAPS[at]?.portals ?? []))
+      if (pt.to && dist[pt.to] === undefined) { dist[pt.to] = dist[at] + 1; q.push(pt.to); }
+  }
+  const gate = Object.keys(MAPS).find(k => MAPS[k].gate);
+  const deep = Object.keys(MAPS).find(k => MAPS[k].deep);
+  const hops = { m1: 0, m2: dist.m2, m3: dist.m3, m4: dist.m4,
+                 gate: dist[gate], deep: dist[deep] };
+  const ceiling = k => Math.max(0, ...(posted[k] ?? []).map(farmHp));
+
+  const rungs = Object.entries(hops).sort((a, b) => a[1] - b[1]);
+  console.log('     ' + rungs.map(([k, h]) => `${h}:${k} ${Math.round(ceiling(k)).toLocaleString()}`).join('  '));
+
+  check('every sector further from home holds something harder than the one before it',
+    rungs.every(([k, h], i) => i === 0 || h === rungs[i - 1][1] || ceiling(k) > ceiling(rungs[i - 1][0])),
+    rungs.map(([k, h]) => `${h} hops ${Math.round(ceiling(k)).toLocaleString()}`).join(' -> '));
+  check('and two sectors the same distance out are the same kind of fight',
+    ceiling('m2') === ceiling('m3'),
+    `co2 ${Math.round(ceiling('m2')).toLocaleString()} against co3 ${Math.round(ceiling('m3')).toLocaleString()} — ` +
+    'it was 6,500 against 65,000, so which sibling you flew into decided the curve');
+  check('the deeps are the end of the ladder, not one map short of it',
+    ceiling('deep') > ceiling('gate') && ceiling('deep') === farmHp('hive'),
+    `${Math.round(ceiling('gate')).toLocaleString()} at the gates and ` +
+    `${Math.round(ceiling('deep')).toLocaleString()} past them — it used to be the other way round`);
+  check('and no sector further out than the home ring is left empty',
+    Object.keys(hops).every(k => (posted[k] ?? []).length > 0),
+    Object.entries(posted).map(([k, v]) => `${k}: ${[...new Set(v)].join('/')}`).join('  '));
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(ALIENS).length} hostile, ${ALIENS_PER_MAP}/map`}\n`);

@@ -266,12 +266,36 @@ setInterval(persistAll, 15000);   // positions drift without changing anything
 for (const sig of ['SIGINT', 'SIGTERM'])
   process.on(sig, () => { persistAll(); console.log('accounts saved'); process.exit(0); });
 
-// Where each hostile lives, and each sector teaches one thing. Drifters hold the
-// home maps. The two sectors out of home are siblings rather than a ladder, and
-// they ask different questions: an Ironhusk on co2 is the first thing that does
-// not die to the guns you left home with, and a Leviathan on co3 is the first
-// thing you cannot beat alone however well you fly. Bandits are at the frontier,
-// where the problem stops being what you can kill and becomes what you can see.
+// Where each hostile lives.
+//
+// ONE RULE, and it was broken in two places before it was written down: the further
+// a sector is from your home ring, the harder the hardest thing in it. Measured in
+// hops over the real portal graph, and in farm hit points, which is what the game
+// actually pays for:
+//
+//   0 hops  home ring   Drifter                              650
+//   1 hop   co2, co3    Harrier / Ironhusk                 6,500
+//   2 hops  frontier    Bandit, Leviathan                114,000
+//   3 hops  the gates   Thresher                         205,550
+//   4 hops  the deeps   Corsair Hive                     650,000
+//
+// What was wrong. co2 and co3 are the same distance out and held a 10x spread —
+// an Ironhusk at 6,500 against a Leviathan at 65,000 — so which sibling you
+// happened to fly into decided whether the game had a difficulty curve. And the
+// deeps were EASIER than the gates you pass through to reach them, 205,550 behind
+// 650,000, which is the curve running backwards at the one place a pilot has
+// earned the right to expect it not to.
+//
+// The Leviathan moved out to the frontier and the Hive moved out to the deeps. The
+// gates keep a boss and the deeps get the bigger one; both are contested ground, so
+// nothing about three companies meeting is lost.
+//
+// The ceiling is what climbs. Every map also keeps something a rung or two below
+// its ceiling, because a sector with nothing workable in it is a sector you fly
+// through rather than a sector you use — that is why Harriers stand at the frontier
+// beside the Bandits, and why the siblings still differ: co2 asks whether your guns
+// are good enough and co3 asks whether you can catch anything.
+//
 // Seeded per map so a restart replays the same field.
 const aliens = new Map();
 let alienId = 1_000_000;
@@ -286,9 +310,12 @@ for (const h of HOMES) {
   seed(h, 'drifter', ALIENS_PER_MAP);
   const co = h[0];
   for (const mid of [co + '2', co + '3']) seed(mid, 'drifter', 4);
-  seed(co + '2', 'ironhusk', 3);                  // one hop out: the first thing that outclasses you
-  seed(co + '3', 'leviathan', 2);                 // the other hop out: the first that needs a friend
+  seed(co + '2', 'ironhusk', 3);                  // one hop out: the first thing that outclasses your guns
+  seed(co + '2', 'harrier', 2);
+  seed(co + '3', 'harrier', 5);                   // the other hop out: the first thing you cannot outrun
+  seed(co + '3', 'ironhusk', 1);
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
+  seed(co + '4', 'leviathan', 2);                 // and the first thing you cannot beat alone
   // Harriers, not Drifters. The frontier was a wall: Bandits hold it, and a pilot
   // who could afford the trip could not survive the welcome, so the only reason to
   // go was the shop. Something farmable out here means you can work the sector at
@@ -296,19 +323,22 @@ for (const h of HOMES) {
   // worth having, and the Drifters that used to stand here were not it.
   seed(co + '4', 'harrier', 4);
 }
-// One Hive on each gate sector — the first contested ground past your own
-// frontier, and the first place three companies can arrive at once. Nullpoint
-// itself is left empty for now: putting the only one at the very bottom of the
+// A Thresher on each gate — the first contested ground past your own frontier, and
+// the first place three companies can arrive at once. It is the right thing to meet
+// there: a mirror asks what your gun is rather than what your hull is, which is the
+// question a pilot arriving from the frontier has never been asked.
+//
+// Nullpoint itself is still empty. Putting the only boss at the very bottom of the
 // map put it where almost nobody would meet it, and the point of the thing is to
-// be met. The Bandits at every frontier come from these.
-for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'hive', 1);
+// be met.
+for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'thresher', 1);
 
-// The deeps were seeded with nothing at all — three sectors past the gates that a
-// pilot could only reach by beating a Hive, and there was nothing there when they
-// arrived. One Thresher each. It is the right teaching order: past the gate, before
-// Nullpoint, and it asks a question no shop can answer, which is what the deeps are
-// for now that the research ladder exists.
-for (const d of GALAXY.filter(id => MAPS[id].deep)) seed(d, 'thresher', 1);
+// The deeps were seeded with nothing at all — three sectors past the gates, which a
+// pilot can only reach by getting through one, and there was nothing there when
+// they arrived. They hold the Hive now: it is the biggest thing in the game and it
+// belongs at the furthest thing from home, not one map short of it. They are
+// contested ground too, so three companies can still arrive at once.
+for (const d of GALAXY.filter(id => MAPS[id].deep)) seed(d, 'hive', 1);
 
 // The hull and formation galleries, resolved once at boot. They never move, take
 // damage or shoot, so there is nothing to step — just rows to hand out.

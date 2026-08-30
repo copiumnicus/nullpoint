@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.36';
+export const VERSION = '0.37';
 
 export const PATCHES = [
+  { v: '0.37', notes: [
+    'Every sector further from home now holds something harder than the one before it',
+    'The two sectors out of home were 6,500 and 65,000. They are the same fight now',
+    'Leviathans moved out to the frontier, where the Bandits already were',
+    'The deeps were easier than the gates you cross to reach them. Now the Hive is there',
+    'Threshers hold the gates: a mirror asks what your gun is, not what your hull is',
+  ] },
   { v: '0.36', notes: [
     'The deep sectors past the gates were empty. A Thresher holds each one now',
     'It is a mirror: everything you put into it comes back out of it',
