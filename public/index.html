@@ -334,7 +334,17 @@ const toView = e => {
   return { x: (e.clientX - r.left) * (VIEW_W / r.width),
            y: (e.clientY - r.top)  * (VIEW_H / r.height) };
 };
-const toWorld = v => ({ x: v.x / zoom + cam.x, y: v.y / zoom + cam.y });
+// Screen and world, and these two must stay each other's inverse — the draw path
+// is `g.scale(zoom, zoom); g.translate(-cam.x, -cam.y)`, so screen = (world - cam) * zoom.
+// Every conversion goes through one of these. Doing it by hand is what broke
+// course plotting: the move order read `v.x + cam.x`, which equals toWorld only
+// while zoom is 1, and zoom drops below 1 on any window shorter than 2 * SIGHT_R
+// (1120px) — most of them. Courses landed short by a factor of zoom, measured
+// from the top-left of the view, so the further from that corner you clicked the
+// further the ship stopped from your cursor. Steering had the same confusion
+// pointing the other way, which skewed both its heading and its throttle.
+const toWorld  = v => ({ x: v.x / zoom + cam.x, y: v.y / zoom + cam.y });
+const toScreen = p => ({ x: (p.x - cam.x) * zoom, y: (p.y - cam.y) * zoom });
 
 const docked = () => {
   const me = ships.get(myId);
@@ -507,7 +517,7 @@ c.addEventListener('pointerdown', e => {
   }
   held = true; steering = false; downAt = performance.now(); cur = down = v;
   c.setPointerCapture(e.pointerId);
-  marker = { x: v.x + cam.x, y: v.y + cam.y };
+  marker = toWorld(v);
   send({ t: 'intent', mode: 'pt', x: marker.x, y: marker.y });   // instant response on tap
 });
 c.addEventListener('pointermove', e => {
@@ -531,7 +541,8 @@ setInterval(() => {                                   // flush at the server tic
   if (!steering) return;
   const me = ships.get(myId);
   if (!me) return;
-  const dx = cur.x - (me.rx - cam.x), dy = cur.y - (me.ry - cam.y);
+  const at = toScreen({ x: me.rx, y: me.ry });         // where the hull actually is on screen
+  const dx = cur.x - at.x, dy = cur.y - at.y;
   const d = Math.hypot(dx, dy);
   const throttle = Math.min(1, d / SLOW_RADIUS);      // point near yourself = crawl
   marker = null;

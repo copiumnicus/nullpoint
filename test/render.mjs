@@ -12,6 +12,7 @@ import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
+import { SIGHT_R } from '../shared/sim.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -349,6 +350,51 @@ const dismiss = () => {
   evt('pointerdown', { clientX: 4, clientY: 4 });
   evt('pointerup', {});
 };
+
+// Does a course actually go where you pointed? The move order read `v.x + cam.x`
+// where every other conversion reads `v.x / zoom + cam.x`. Those agree only at
+// zoom 1, and zoom is min(1, min(W, H) / (2 * SIGHT_R)) — below 1 on any window
+// shorter than 1120px, which is most of them. Courses came out short by a factor
+// of zoom measured from the top-left of the view, so the ship stopped further
+// from the cursor the further out you clicked, and no frame ever drew anything
+// malformed. Asserted as a difference between two clicks, so it needs to know
+// nothing about where the camera happens to be.
+{
+  feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard', fit: [] });
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0, co: 'm',
+          hull: 'vanguard', hp: 100, sh: 100, flash: 0, guns: 3, lvl: 14, drones: 0, form: 0,
+          dmask: 0, vis: 2 })],
+    rockets: [], bolts: [], hits: [], blasts: [], pods: [],
+    hold: {}, cap: 60, credits: 4820, docked: false,
+    gear: {}, hulls: ['vanguard'], drones: [], formation: 'wedge', formations: ['wedge'],
+    xp: 5200, rank: { level: 14, into: 300, need: 900 },
+    power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
+    shieldNow: 640, shieldMax: 1170, vault: {} });
+  frame(t += 16); frames++;
+  dismiss();
+  frame(t += 16); frames++;
+
+  sent.length = 0;
+  const A = { x: 300, y: 200 }, B = { x: 600, y: 400 };      // empty space, clear of every panel
+  for (const q of [A, B]) {
+    evt('pointerdown', { clientX: q.x, clientY: q.y });
+    evt('pointerup', {});
+  }
+  const pts = sent.filter(m => m.t === 'intent' && m.mode === 'pt');
+  const z = Math.min(1, Math.min(innerWidth, innerHeight) / (2 * SIGHT_R));
+  if (pts.length !== 2) errs.push(`two clicks on empty space plotted ${pts.length} courses, not 2`);
+  else {
+    const gotX = pts[1].x - pts[0].x, gotY = pts[1].y - pts[0].y;
+    const wantX = (B.x - A.x) / z,    wantY = (B.y - A.y) / z;
+    if (Math.abs(gotX - wantX) > 0.5 || Math.abs(gotY - wantY) > 0.5)
+      errs.push(`a course misses the cursor: clicks ${B.x - A.x}x${B.y - A.y} screen px apart `
+        + `at zoom ${z.toFixed(3)} plotted ${gotX.toFixed(1)}x${gotY.toFixed(1)} world units apart, `
+        + `want ${wantX.toFixed(1)}x${wantY.toFixed(1)}`);
+    else console.log(`a plotted course lands under the cursor: at ${innerWidth}x${innerHeight} the `
+      + `view zooms to ${z.toFixed(3)}, so clicks ${B.x - A.x}px apart plot ${wantX.toFixed(1)} apart`);
+  }
+}
 
 // The hangar's APPLY button: does clicking it actually ask the server for a refit?
 {
