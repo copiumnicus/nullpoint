@@ -17,7 +17,14 @@ console.log('\nwhat a berth costs');
 check('its price is the trip it saves you, times the trips',
   berthPrice() === devicePrice('recall') * BERTH_TRIPS,
   `${berthPrice()} = ${devicePrice('recall')} x ${BERTH_TRIPS} — below that a handful of beacons was cheaper`);
-check('and it is a real decision, not pocket change', berthPrice() > devicePrice('recall') * 10);
+// This used to read "more than ten beacons", which was right while a berth was a
+// convenience and wrong the moment it became the door to the upper ladder: a toll
+// you cannot pay when you first want to climb is a wall, not a toll.
+check('it is a real decision, not pocket change', berthPrice() > devicePrice('recall') * 4,
+  `${berthPrice()} — several trips' worth, so a couple of beacons is genuinely the cheaper answer`);
+check('and it is payable by a pilot who has just outgrown the home ring',
+  berthPrice() < devicePrice('recall') * 12,
+  'a gate you reach before you can afford it stops being a gate and becomes a wall');
 
 console.log('\nwho they will rent to');
 check('not to someone who has never left home',
@@ -60,6 +67,36 @@ check('and a hand-edited save cannot invent one where no outpost is', (() => {
   const a = sanitiseAccount({ token: 't', co: 'm', berths: ['m1', 'nonsense', 'm4', 'm4'] }, 1, Date.now());
   return a.berths.length === 1 && a.berths[0] === 'm4';
 })(), 'm1 has no outpost, junk dropped, duplicates merged');
+
+console.log('\nwhat the frontier stocks');
+{
+  const { EQUIPMENT, frontierOnly, whyNotSold, FRONTIER } = await import('../shared/gear.js');
+  const laser = k => EQUIPMENT[k].slot === 'weapon' && EQUIPMENT[k].kind !== 'rocket';
+  check('your own company stops selling emitters at the third rung',
+    !frontierOnly('emitter2') && frontierOnly('emitter3') && frontierOnly('emitter5'),
+    `emitters go frontier at tier ${FRONTIER.laser}`);
+  check('and launchers at the second',
+    !frontierOnly('pod1') && frontierOnly('pod2') && frontierOnly('pod3'));
+  check('the bottom of every ladder is still sold at home',
+    ['emitter1', 'pod1', 'cellA', 'plating'].every(k => !frontierOnly(k)),
+    'you are issued a starter kit, not abandoned');
+  check('frontier stock is refused at your own ring, however docked you are',
+    /frontier/.test(whyNotSold('emitter5', { docked: true })),
+    whyNotSold('emitter5', { docked: true }));
+  check('and sold at a bay you rent', whyNotSold('emitter5', { berth: true }) === null);
+  check('ordinary stock is sold at either', whyNotSold('emitter1', { docked: true }) === null &&
+    whyNotSold('emitter1', { berth: true }) === null);
+  check('and nowhere at all in open space',
+    whyNotSold('emitter1', {}) !== null && whyNotSold('emitter5', {}) !== null);
+  // The berth stopped being a convenience the moment it gated the ladder, so its
+  // price had to stop being a convenience price.
+  check('the toll is payable when you first want to climb',
+    berthPrice() < EQUIPMENT.emitter3.price * 4,
+    `${berthPrice()} against an MK-III at ${EQUIPMENT.emitter3.price} — the first thing it unlocks`);
+  check('every technology is on a rung now',
+    Object.values(EQUIPMENT).filter(e => e.slot === 'tech').every(e => e.tier > 0),
+    'four things at one rung was a shelf with nothing to climb');
+}
 
 console.log('\nthe panel that sells it');
 {

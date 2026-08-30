@@ -19,11 +19,16 @@ import { levelFor } from './level.js';
 
 // What a berth is worth, derived rather than picked: a Recall Beacon buys exactly
 // one trip home and costs 3400. A berth saves that trip every time you would have
-// wanted to change something out here, forever. Thirty trips is the number at
-// which a pilot who actually lives on this frontier is ahead — beyond that it is
-// paying for itself, below it a handful of beacons was the cheaper answer, which
-// is a real decision rather than an obvious one.
-export const BERTH_TRIPS = 30;
+// wanted to change something out here, forever.
+//
+// It was thirty trips, priced as a convenience. It is not one any more: the upper
+// half of every equipment ladder is frontier stock now (see FRONTIER in gear.js),
+// so a bay is the door to the second half of the game rather than a way to skip a
+// flight. A toll on the ladder has to be payable at the moment you first want to
+// climb it — around an MK-III, which is 7200 — so it is eight trips, not thirty.
+// Past eight refits out here it has paid for itself, and below that a handful of
+// beacons really was the cheaper answer.
+export const BERTH_TRIPS = 8;
 export const berthPrice = () => devicePrice('recall') * BERTH_TRIPS;
 
 // Money is not the only thing pirates want. A berth is the first thing in the game
@@ -31,15 +36,18 @@ export const berthPrice = () => devicePrice('recall') * BERTH_TRIPS;
 // you a capability, they are deciding whether they have heard of you. A pilot who
 // has never left home has not.
 //
-// Rank 20 is 82,750 experience: roughly 59 Ironhusks, or six Leviathans, or three
-// and a half Bandits — a pilot who has actually worked the frontier the outposts
-// sit on, rather than one who farmed husks at home until they could afford the fee.
+// And the rank moves with it, for the same reason. Rank 20 was standing on a
+// frontier you had already worked; gating the whole upper equipment ladder behind
+// that would have meant clearing the frontier with home-ring guns, which is the
+// wrong way round. Rank 8 is 8,000 experience — about 57 Drifters, or six
+// Ironhusks — which is a pilot who has finished with the home ring and has
+// nowhere left to go but out. That is exactly who this is for.
 //
 // Read against today's experience table, which is itself un-rebalanced: a single
 // Corsair Hive pays 140,000 and would carry you past this on its own. That is a
 // problem with the Hive's number rather than with this one, and when the bestiary
 // is brought onto the balance model this gate should be re-derived, not nudged.
-export const BERTH_RANK = 20;
+export const BERTH_RANK = 8;
 
 // Long enough that it cannot be used as cover mid-fight, short enough that it is
 // not a punishment for having been shot at once on the way in. The same window

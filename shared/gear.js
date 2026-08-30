@@ -20,6 +20,37 @@ export const MAX_DRONES = 12;
 export const MAX_LAUNCHERS = 3;
 export const dronePrice = owned => 3000 + owned * 2600;
 
+// What your own company will not sell you.
+//
+// The upper half of every ladder is stocked on the frontier and nowhere else. Your
+// company sells the kit it issues; the good stuff comes off a pirate hulk, which
+// is where it should come from and gives the outposts a reason to exist beyond a
+// place to dump ore. It also puts a real shape on progress: the home ring takes
+// you as far as it takes you, and then you have to go somewhere.
+//
+// The rungs are where each ladder stops being starter kit. Emitters have five, so
+// the top three are frontier; launchers and technologies have three, so the top
+// two and the top one are.
+export const FRONTIER = { laser: 3, rocket: 2, tech: 3 };
+
+export function frontierOnly(key) {
+  const e = EQUIPMENT[key];
+  if (!e) return false;
+  const ladder = e.slot === 'tech' ? 'tech' : e.kind === 'rocket' ? 'rocket' : 'laser';
+  const cut = FRONTIER[ladder];
+  return cut !== undefined && (e.tier ?? 0) >= cut;
+}
+
+// Why this pilot cannot buy this here, or null. `berth` is whether they are stood
+// at an outpost bay they rent; `docked` is their own company ring.
+export function whyNotSold(key, { docked = false, berth = false } = {}) {
+  if (!EQUIPMENT[key]) return 'no such thing';
+  if (frontierOnly(key)) {
+    return berth ? null : 'frontier stock — sold at a pirate outpost, to pilots with a bay there';
+  }
+  return docked || berth ? null : 'fly into your base ring';
+}
+
 export const EQUIPMENT = {
   // Weapons — each adds its output to the hull's own, and throws a visibly
   // heavier bolt for it. The ladder is steep on purpose: a finished ship deletes
@@ -95,17 +126,21 @@ export const EQUIPMENT = {
               blurb: 'Clears a wreck field on its own.',
               mods: [['cargo', 'add', 180]] },
 
-  // technologies — one of each, and every one costs you something
-  plating:  { name: 'Composite Plating', slot: 'tech', price: 2600,
+  // technologies — one of each, and every one costs you something.
+  //
+  // Tiered like every other shelf, because "which technology" was the only choice
+  // in the shop with no ladder behind it: four things at one rung, and nothing to
+  // climb toward. Tier 3 and up is frontier stock — see FRONTIER below.
+  plating:  { name: 'Composite Plating', slot: 'tech', tier: 1, price: 2600,
               blurb: 'A third more hull, and slower with it.',
               mods: [['hull', 'mul', 0.35], ['speed', 'mul', -0.09]] },
-  damper:   { name: 'Signal Damper', slot: 'tech', price: 3400,
+  damper:   { name: 'Signal Damper', slot: 'tech', tier: 2, price: 3400,
               blurb: 'Hard to track, and half blind.',
               mods: [['signature', 'mul', -0.5], ['radar', 'mul', -0.25]] },
-  expander: { name: 'Hold Expander', slot: 'tech', price: 2200,
+  expander: { name: 'Hold Expander', slot: 'tech', tier: 1, price: 2200,
               blurb: 'Room for more ore, and slower with it.',
               mods: [['cargo', 'mul', 0.65], ['speed', 'mul', -0.12]] },
-  flywheel: { name: 'Reactor Flywheel', slot: 'tech', price: 4200,
+  flywheel: { name: 'Reactor Flywheel', slot: 'tech', tier: 2, price: 4200,
               blurb: 'A far bigger capacitor, and slower shields.',
               mods: [['capacitor', 'mul', 0.55], ['shieldRegen', 'mul', -0.22]] },
 };

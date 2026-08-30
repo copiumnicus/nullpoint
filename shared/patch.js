@@ -8,9 +8,17 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.21';
+export const VERSION = '0.22';
 
 export const PATCHES = [
+  { v: '0.22', notes: [
+    'MK-III emitters and up, and Tandem launchers and up, are frontier stock now',
+    'Your company issues the starter kit — the rest comes off a pirate hulk',
+    'Technologies are tiered, and the top rung will be frontier stock too',
+    'A berth is 27200 at rank 8: it is the door to the second half of the ladder now',
+    'Outposts say what they are for, instead of expecting you to guess',
+    'A Fighter running Lock glows, so you can see it between volleys',
+  ] },
   { v: '0.21', notes: [
     'Abilities are visible now: a Veil fades you and your drones, a Lock burns orange',
     'And an Anchor braces plates around the hull instead of the usual shield bubble',

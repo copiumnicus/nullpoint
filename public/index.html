@@ -12,6 +12,7 @@ import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
+import { whyNotSold, frontierOnly } from '/shared/gear.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
          isCollector, collectorReach } from '/shared/gear.js';
 import { levelFor, progress } from '/shared/level.js';
@@ -1079,6 +1080,8 @@ function bayClick(v) {
       return credits >= d.price ? send({ t: 'buydevice', key: it.k })
         : say(`A ${d.name} costs ${fmtCredits(d.price)} ${CURRENCY.short}`, '#e0a53f');
     }
+    const gated = whyNotSold(it.k, { docked: atRing && !inMyOutpost(), berth: !berthWhy() });
+    if (gated) return say(`${EQUIPMENT[it.k].name} — ${gated}`, '#e0a53f');
     return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
       : say(`Not enough credits for a ${EQUIPMENT[it.k].name}`, '#e0a53f');
   }
@@ -1366,6 +1369,8 @@ function drawBay() {
                 : it.kind === 'form' ? FORMATIONS[it.k].blurb
                 : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
+                : it.kind === 'item' && frontierOnly(it.k) && berthWhy()
+                  ? 'frontier stock — a pirate outpost, and a bay there'
                 : it.kind === 'ammo' && whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
                   ? whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
@@ -2339,8 +2344,26 @@ function drawFrame(now) {
     g.fillText(mine ? 'PIRATE OUTPOST · YOUR BERTH' : 'PIRATE OUTPOST', o.x, o.y - 76);
     g.font = '9px ui-monospace, monospace'; g.fillStyle = '#6a5a3a';
     g.fillText(mine ? `refit and buy here · H · still no repairs, still no shelter`
-                    : `buys ore at ${Math.round(PIRATE_RATE * 100)}% · H to rent a bay`,
+                    : `buys ore at ${Math.round(PIRATE_RATE * 100)}%`,
                o.x, o.y + 84);
+    // A sign you have to already know about is not a sign. Anyone who comes inside
+    // is told what the place sells and which key opens it.
+    if (near && !mine) {
+      const t = 'PRESS  H  TO RENT A BAY HERE';
+      g.font = 'bold 12px ui-monospace, monospace';
+      const w = g.measureText(t).width + 26;
+      const bx = o.x - w / 2, by = o.y - 132;
+      const puls = 0.6 + 0.4 * Math.sin(now / 420);
+      g.globalAlpha = 0.9;
+      g.fillStyle = 'rgba(6,10,16,0.92)'; g.fillRect(bx, by, w, 26);
+      g.strokeStyle = `rgba(255,212,121,${puls.toFixed(2)})`; g.lineWidth = 1.4;
+      g.strokeRect(bx + .5, by + .5, w - 1, 25);
+      g.fillStyle = '#ffd479';
+      g.fillText(t, o.x, by + 18);
+      g.globalAlpha = 1;
+      g.font = '9px ui-monospace, monospace'; g.fillStyle = '#8a6a3a';
+      g.fillText('refit and buy on the frontier, without flying home', o.x, by + 40);
+    }
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
@@ -2631,6 +2654,30 @@ function drawFrame(now) {
                 g.strokeRect(-R - 4, -R - 4, R * 2 + 8, R * 2 + 8); g.setLineDash([]); }
     g.globalAlpha = 1;
     g.restore();
+
+    // A Lock that only shows on the bolt is a Lock you cannot see between volleys,
+    // and it is running — and draining — the whole time. The hull carries it.
+    const lockd = HULLS[s.hull]?.ability === 'lock' ? (s.abl ?? 0) / 100 : 0;
+    if (lockd > 0.02) {
+      const puls = 0.72 + 0.28 * Math.sin(now / 240);
+      const grd = g.createRadialGradient(s.rx, s.ry, R * 0.5, s.rx, s.ry, R * 2.6);
+      grd.addColorStop(0, `rgba(255,154,60,${(0.30 * lockd * puls).toFixed(3)})`);
+      grd.addColorStop(1, 'rgba(255,154,60,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(s.rx, s.ry, R * 2.6, 0, 7); g.fill();
+      g.strokeStyle = `rgba(255,154,60,${(0.35 + 0.45 * lockd).toFixed(2)})`;
+      g.lineWidth = 1 + lockd;
+      g.beginPath(); g.arc(s.rx, s.ry, R * 1.5, 0, 7); g.stroke();
+      // and the reticle it is holding, so the glow reads as a lock rather than a fire
+      g.lineWidth = 1.4;
+      for (let i = 0; i < 4; i++) {
+        const a2 = (i / 4) * Math.PI * 2 + now / 1800;
+        g.beginPath();
+        g.moveTo(s.rx + Math.cos(a2) * R * 1.9, s.ry + Math.sin(a2) * R * 1.9);
+        g.lineTo(s.rx + Math.cos(a2) * R * (1.9 + 0.5 * lockd), s.ry + Math.sin(a2) * R * (1.9 + 0.5 * lockd));
+        g.stroke();
+      }
+    }
 
     // Anchor is not the shields bubble and must not look like it: routing to
     // shields multiplies a pool, this braces a hull. A faceted shell that closes

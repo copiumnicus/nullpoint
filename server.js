@@ -16,7 +16,8 @@ import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/r
 import { DEVICES, devicePrice, sanitiseDevice, whyNotDevice } from './shared/devices.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
-         MAX_DRONES, dronePrice, sanitiseDrones, sanitiseRig, isCollector, topTier, collectorReach } from './shared/gear.js';
+         MAX_DRONES, dronePrice, sanitiseDrones, sanitiseRig, isCollector, topTier, collectorReach,
+         whyNotSold, frontierOnly } from './shared/gear.js';
 import { levelFor } from './shared/level.js';
 import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
@@ -779,7 +780,12 @@ wss.on('connection', (ws, req) => {
     }
     if (m.t === 'buy') {
       const item = EQUIPMENT[m.item];
-      if (!atStation() || !item || P.credits < item.price) return;
+      if (!item) return;
+      // Your company stocks what it issues. The upper half of every ladder comes
+      // off a pirate hulk, and only to a pilot who rents a bay there.
+      const why = whyNotSold(m.item, { docked: canDock(MAPS[P.mapId], P.co, ship), berth: atBerth() });
+      if (why) return tell(why);
+      if (P.credits < item.price) return;
       P.credits -= item.price;
       P.gear[m.item] = (P.gear[m.item] ?? 0) + 1;
       receipt(item.name, item.price, 'in your locker');
