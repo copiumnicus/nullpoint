@@ -129,6 +129,19 @@ export const PIRATE_RATE = 0.75;
 export const pirateValue = hold =>
   Math.floor(Object.entries(hold).reduce((s, [m, n]) => s + n * (MATERIALS[m]?.value ?? 0), 0) * PIRATE_RATE);
 
+// What dying costs beyond the hold.
+//
+// Losing the cargo alone meant a pilot flying empty had nothing at stake: the
+// cheapest way through a hard fight was to dump the hold and treat the wreck as a
+// free ride home. A tenth of what you are carrying in credits goes with the ship.
+//
+// A tenth rather than a flat sum, so it scales with what you actually have — a
+// new pilot loses pocket change and a rich one loses a real number — and it can
+// never take the last of it, which is the difference between a setback and being
+// unable to buy your way back into the game.
+export const DEATH_TOLL = 0.10;
+export const tollOn = credits => Math.floor(Math.max(0, credits) * DEATH_TOLL);
+
 export const CURRENCY = { name: 'credits', short: 'cr' };
 
 // rand must be the caller's seeded generator, so drops stay reproducible.

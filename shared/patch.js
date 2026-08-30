@@ -8,9 +8,12 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.15';
+export const VERSION = '0.16';
 
 export const PATCHES = [
+  { v: '0.16', notes: [
+    'Dying now costs 10% of your credits as well as your cargo — flying empty is no longer free',
+  ] },
   { v: '0.15', notes: [
     'Corsair Hives launch a raider every 5s and hold twelve — ignore them and they pile up',
     'The number of pilots online is shown beside the patch notes',

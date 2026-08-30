@@ -31,7 +31,7 @@ import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL, mayScoop,
-         pirateValue, PIRATE_RATE, claimLapsed, CLAIM_TIME } from './shared/cargo.js';
+         pirateValue, PIRATE_RATE, claimLapsed, CLAIM_TIME, tollOn, DEATH_TOLL } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
@@ -903,13 +903,17 @@ setInterval(() => {
       const lost = { ...p.hold };
       for (const [m, n] of Object.entries(p.hold)) drop(p.mapId, p.ship.x, p.ship.y, m, n);
       p.hold = {};
+      // The cargo was the only stake, so flying empty made a wreck a free ride
+      // home. A tenth of the credits goes down with the ship.
+      const toll = tollOn(p.credits);
+      p.credits -= toll;
       p.dead = true;
       p.targetId = null; p.want = null; p.scoop = null; p.contacts.clear();
       dropRocketsAt(p.mapId, p.ship);
       for (const list of aliens.values()) forgetPlayer(list, id);   // death settles every grudge
       Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, charge: 0, chargeTo: null });
       touch(p);                                   // a lost hold must survive a hard kill
-      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'dead', lost, where: p.mapId }));
+      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'dead', lost, toll, where: p.mapId }));
       continue;
     }
 

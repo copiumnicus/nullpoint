@@ -390,5 +390,26 @@ console.log('\nflying off mid-pull');
     'the pod is spliced out the moment the lift lands');
 }
 
+// --- what dying costs --------------------------------------------------------
+// The hold was the only stake, so a pilot flying empty had none: the cheapest way
+// through a hard fight was to dump the cargo and treat the wreck as a ride home.
+console.log('\nthe salvage bill');
+{
+  const { DEATH_TOLL, tollOn } = await import('../shared/cargo.js');
+  check('a tenth of the account goes down with the ship',
+    tollOn(10000) === 1000 && DEATH_TOLL === 0.10, `${tollOn(10000)} of 10000`);
+  check('it scales, so it stings the same at every stage',
+    tollOn(500) === 50 && tollOn(1_000_000) === 100_000,
+    'a new pilot loses pocket change, a rich one loses a real number');
+  check('and it can never take the last of it',
+    tollOn(9) === 0 && tollOn(0) === 0 && tollOn(-5) === 0,
+    'a setback, not being unable to buy your way back in');
+  check('it is always a whole number of credits',
+    [1, 7, 33, 12345, 99999].every(c => Number.isInteger(tollOn(c))));
+  check('and you always keep the larger part',
+    [100, 5000, 999999].every(c => c - tollOn(c) > c * 0.85),
+    'dying is expensive, not ruinous');
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
 process.exit(fails.length ? 1 : 0);

@@ -30,7 +30,7 @@ import { audioReady, setThrust, laser, rocket, explosion,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
-import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE,
+import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS, outlineOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
@@ -343,7 +343,9 @@ ws.onmessage = e => {
         m.promoted ? '#7de08a' : '#ffd479');
     return;
   }
-  if (m.t === 'dead')    { dead = { lost: m.lost ?? {}, at: performance.now() }; return; }
+  if (m.t === 'dead')    { dead = { lost: m.lost ?? {}, toll: m.toll ?? 0, at: performance.now() };
+                           if (m.toll) credits = Math.max(0, credits - m.toll);
+                           return; }
   if (m.t === 'map') {
     mapId = m.map; ships.clear(); prevShot.clear(); marker = null; prevSelf = null;
     if (m.respawned) dead = null;
@@ -3091,11 +3093,18 @@ function drawWreck(now) {
     g.textAlign = 'center';
   } else {
     g.fillStyle = '#66748c';
-    g.fillText('an empty hold — nothing to lose', VIEW_W / 2, VIEW_H * 0.34 + 34);
+    g.fillText('an empty hold — but the salvage bill does not care', VIEW_W / 2, VIEW_H * 0.34 + 34);
+  }
+  // The toll is the point of the screen now. An empty hold used to read "nothing
+  // to lose", which was true and was the problem.
+  if (dead.toll) {
+    g.fillStyle = '#ff7a5c'; g.font = '13px ui-monospace, monospace';
+    g.fillText(`\u2212${dead.toll} ${CURRENCY.short} — ${Math.round(DEATH_TOLL * 100)}% of your account, salvaged out of the wreck`,
+               VIEW_W / 2, VIEW_H * 0.34 + 86);
   }
   g.fillStyle = '#ffd479'; g.font = '12px ui-monospace, monospace';
-  g.fillText(`${credits} ${CURRENCY.short} intact — the company keeps your account, not your ship`,
-             VIEW_W / 2, VIEW_H * 0.34 + 86);
+  g.fillText(`${credits} ${CURRENCY.short} left — the company keeps your account, not your ship`,
+             VIEW_W / 2, VIEW_H * 0.34 + (dead.toll ? 110 : 86));
 
   const b = respawnBtn();
   const pulse = 0.75 + 0.25 * Math.sin(now / 380);
