@@ -8,9 +8,17 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.34';
+export const VERSION = '0.35';
 
 export const PATCHES = [
+  { v: '0.35', notes: [
+    'Research stations: stake a plot in your own ring for 500k, with your name on it',
+    'Everyone can see everyone\'s. Only yours opens, and it grows as you build on it',
+    'Deep Space Mining Operation pays you around the clock, logged in or not',
+    'Your credits tick up live while it runs — and keep running while you sleep',
+    'Hull and shield ladders: five tiers each, up to 32x what the shops can sell you',
+    'Bulk Metallic Glass through Degenerate Matter Plating. A Hive can be soloed',
+  ] },
   { v: '0.34', notes: [
     'A cleared sector refills faster, and faster still with more pilots working it',
     'Two Leviathans used to leave the map empty for a minute and a half. Now 45s',

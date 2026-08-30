@@ -10,9 +10,12 @@
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
+import { unpackLab } from '/shared/net.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
 import { havenBadge, havenLine, TONE } from '/shared/haven.js';
+import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, partsOf,
+         nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { whyNotSold, frontierOnly } from '/shared/gear.js';
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from '/shared/scrap.js';
@@ -114,6 +117,14 @@ let myKits = {}, myKit = DEFAULT_KIT;
 let myDevices = {}, myDevice = DEFAULT_DEVICE;
 let myBerths = [];                // outposts you rent a bay at
 let myFoldTo = null;              // and which hangar a beacon takes you to
+let labs = new Map();             // every research station in this sector
+let myLab = null;                 // { mods, income } if you have one
+let labOpen = false;              // the research panel
+// The balance the server last told us, and when. The counter runs UP from that
+// at the rate the server also told us — it never invents money, it only shows
+// the money that is already accruing between one bank and the next. Server truth
+// always wins: a fresh `credits` resets both.
+let creditsAt = 0, creditsSeen = 0;
 // Every hangar this pilot could fold to, and the one they have chosen. Both from
 // shared/berth.js, because the server decides the same question with the same two
 // functions — a menu offering a bay the server would refuse is the bug this shape
@@ -174,6 +185,168 @@ const toast = (what, cost, note) => {
 
 // The changelog. A version number is a small promise that the thing is being
 // worked on, and it costs one icon to keep.
+// The research panel: three ladders, one rung at a time.
+//
+// Not the station panel's machinery — that is shelves you browse, this is a ladder
+// you climb, and forcing one into the other would mean a page of one-item shelves.
+// Geometry comes from shared/research.js so the row you can see is the row you can
+// click, which is a bug this codebase has shipped twice.
+function drawLab() {
+  const L = labPanel(VIEW_W, VIEW_H), P = L.panel;
+  const mask = myLab?.mods ?? 0, near = atMyLab();
+  g.fillStyle = 'rgba(4,7,12,0.94)'; g.fillRect(P.x, P.y, P.w, P.h);
+  g.strokeStyle = '#7de08a'; g.lineWidth = 1.4;
+  g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+
+  g.font = '15px ui-monospace, monospace'; g.textAlign = 'left'; g.fillStyle = '#cfe4ff';
+  g.fillText('RESEARCH STATION', P.x + LAB_PAD, P.y + 30);
+  g.font = '11px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+  g.fillText(`${myName} · ${fmtCredits(credits)} ${CURRENCY.short} held`, P.x + LAB_PAD, P.y + 50);
+  const inc = incomeOf(mask);
+  g.fillStyle = inc ? '#7de08a' : '#4a5568';
+  g.fillText(inc ? `earning ${inc} ${CURRENCY.short}/s — ${(inc * 86400).toLocaleString('en-US')} a day, flying or not`
+                 : 'nothing built yet', P.x + LAB_PAD, P.y + 68);
+  g.textAlign = 'right'; g.fillStyle = '#66748c'; g.font = '12px ui-monospace, monospace';
+  g.fillText('\u00d7', L.close.x + L.close.w, L.close.y + 15);
+  g.textAlign = 'left';
+
+  // No station yet: the panel is the one place that sells you one, so a pilot who
+  // presses R with nothing built finds the thing to buy rather than an empty box.
+  if (!myLab) {
+    const why = whyNotStake({ credits, docked: atDock, has: false });
+    const row = L.rows[0], hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
+                                       && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
+    g.fillStyle = why ? 'rgba(255,255,255,0.02)' : hot ? 'rgba(125,224,138,0.16)' : 'rgba(255,255,255,0.03)';
+    g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+    g.strokeStyle = why ? '#243448' : '#4a6785'; g.lineWidth = 1;
+    g.strokeRect(row.r.x + .5, row.r.y + .5, row.r.w - 1, row.r.h - 1);
+    g.font = '12px ui-monospace, monospace'; g.fillStyle = why ? '#66748c' : '#cfe4ff';
+    g.fillText('Stake a plot in the yard', row.r.x + 12, row.r.y + 22);
+    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+    g.fillText(why ?? 'a bay of your own, in your company ring, with your name on it',
+               row.r.x + 12, row.r.y + 42);
+    g.textAlign = 'right'; g.font = '12px ui-monospace, monospace';
+    g.fillStyle = why ? '#66748c' : '#ffd479';
+    g.fillText(`${fmtCredits(LAB_PRICE)} ${CURRENCY.short}`, row.r.x + row.r.w - 12, row.r.y + 26);
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    return;
+  }
+  for (const row of L.rows) {
+    const st = rowState(mask, row.line, credits);
+    const why = st.next ? whyNotBuild(st.next, { credits, mask, near }) : null;
+    const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
+                      && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
+    g.fillStyle = st.done ? 'rgba(125,224,138,0.10)'
+                : !why ? (hot ? 'rgba(125,224,138,0.16)' : 'rgba(255,255,255,0.03)')
+                : 'rgba(255,255,255,0.02)';
+    g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+    g.strokeStyle = st.done ? '#3d5876' : why ? '#243448' : '#4a6785'; g.lineWidth = 1;
+    g.strokeRect(row.r.x + .5, row.r.y + .5, row.r.w - 1, row.r.h - 1);
+
+    // Pips: how far up this ladder you are, at a glance.
+    for (let i = 0; i < st.max; i++) {
+      g.fillStyle = i < st.tier ? '#7de08a' : '#243448';
+      g.fillRect(row.r.x + 12 + i * 9, row.r.y + 12, 6, 6);
+    }
+    g.font = '12px ui-monospace, monospace'; g.fillStyle = '#cfe4ff';
+    g.fillText(`${st.name}  ${st.tier}/${st.max}`, row.r.x + 12 + st.max * 9 + 10, row.r.y + 18);
+    g.font = '11px ui-monospace, monospace';
+    if (st.done) {
+      g.fillStyle = '#7de08a';
+      g.fillText(`${st.built} — the top of this ladder`, row.r.x + 12, row.r.y + 40);
+    } else {
+      g.fillStyle = why ? '#66748c' : '#cfe4ff';
+      g.fillText(st.nextName, row.r.x + 12, row.r.y + 40);
+      g.fillStyle = '#7f8fa6'; g.font = '10px ui-monospace, monospace';
+      g.fillText(why ?? st.does, row.r.x + 12, row.r.y + 54);
+      g.textAlign = 'right';
+      g.font = '12px ui-monospace, monospace';
+      g.fillStyle = why ? '#66748c' : '#ffd479';
+      g.fillText(`${fmtCredits(st.price)} ${CURRENCY.short}`, row.r.x + row.r.w - 12, row.r.y + 40);
+      g.textAlign = 'left';
+    }
+  }
+  g.font = '12px ui-monospace, monospace';
+}
+
+function labClick(v) {
+  const L = labPanel(VIEW_W, VIEW_H);
+  const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
+  if (inside(L.close) || !inside(L.panel)) { labOpen = false; return true; }
+  const mask = myLab?.mods ?? 0, near = atMyLab();
+  if (!myLab) {
+    if (!inside(L.rows[0].r)) return true;
+    const why = whyNotStake({ credits, docked: atDock, has: false });
+    if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+    send({ t: 'stake' });
+    return true;
+  }
+  for (const row of L.rows) {
+    if (!inside(row.r)) continue;
+    const st = rowState(mask, row.line, credits);
+    if (!st.next) { say('That ladder is finished', '#7de08a'); return true; }
+    const why = whyNotBuild(st.next, { credits, mask, near });
+    if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+    send({ t: 'build', key: st.next });
+    return true;
+  }
+  return true;
+}
+
+// Research stations, standing in the company ring.
+//
+// Small — 26px against a Bulwark's 34 — because a lot of them share a yard and a
+// ring full of enormous private monuments is not somewhere anyone wants to dock.
+// Every pilot sees every station; only yours lights up, and every one carries its
+// owner's name, because the whole first 500,000 buys you a thing other people can
+// see is yours.
+//
+// The picture is derived from the module mask alone, so a station that has been
+// built on looks built on, to everyone, with nothing extra on the wire.
+function drawLabs() {
+  for (const l of labs.values()) {
+    const p = { x: l.x, y: l.y };                  // world space, like the ring it stands in
+    const R = LAB_R, col = l.own ? '#7de08a' : '#4a6785';
+    const parts = partsOf(l.mods);
+
+    // Rings first, under the core: shield work reads as something around it.
+    for (const part of parts.filter(q => q.part === 'ring')) {
+      g.strokeStyle = col; g.globalAlpha = 0.30 + part.at * 0.35; g.lineWidth = 1;
+      g.beginPath(); g.arc(p.x, p.y, R * (1.25 + part.at * 0.5), 0, 7); g.stroke();
+    }
+    g.globalAlpha = 1;
+    // Booms: mining gear, sticking out where you can count it.
+    for (const part of parts.filter(q => q.part === 'boom')) {
+      const a = part.at * Math.PI * 2;
+      g.strokeStyle = col; g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(p.x + Math.cos(a) * R * 0.8, p.y + Math.sin(a) * R * 0.8);
+      g.lineTo(p.x + Math.cos(a) * R * 2.1, p.y + Math.sin(a) * R * 2.1);
+      g.stroke();
+    }
+    // The core, a hexagon, plus a plate per hull tier thickening its edge.
+    const plates = parts.filter(q => q.part === 'plate').length;
+    g.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const px = p.x + Math.cos(a) * R, py = p.y + Math.sin(a) * R;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.closePath();
+    g.fillStyle = l.own ? 'rgba(125,224,138,0.14)' : 'rgba(74,103,133,0.12)';
+    g.fill();
+    g.strokeStyle = col; g.lineWidth = 1 + plates * 0.6; g.stroke();
+
+    if (l.name) {
+      g.font = 'bold 9px ui-monospace, monospace'; g.textAlign = 'center';
+      g.lineWidth = 3; g.strokeStyle = 'rgba(4,7,12,0.9)';
+      g.strokeText(l.name, p.x, p.y - R - 8);
+      g.fillStyle = col; g.fillText(l.name, p.x, p.y - R - 8);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
+  }
+}
+
 // You are safe, and this is the first time the game has ever said so.
 //
 // Two of the three sanctuaries a player learns by accident — stand in your own
@@ -335,6 +508,35 @@ function drawToasts(now) {
 // What SPACE would do right now. The prompt at the bottom of the screen and the
 // key itself both read this, so the screen can never offer something the key
 // will not do — and stowing no longer needs the hold open to reach it.
+// What the balance is right now, as opposed to the last time the server said so.
+//
+// A mine pays out once a second, and a counter that jumps by twelve once a second
+// reads as broken rather than as income. So the client runs FORWARD from the last
+// number it was given, at the rate it was also given — it is not inventing money,
+// it is drawing money that has already accrued and has not been banked yet.
+//
+// Server truth always wins: any change to `credits` resets the anchor, so the two
+// cannot drift. And it never runs more than a second and a bit ahead, because that
+// is how often the bank happens.
+// Your own station, if it is in the sector you are looking at. `own` is filled in
+// per viewer by the server, so this never has to match names.
+const myLabHere = () => [...labs.values()].find(l => l.own) ?? null;
+
+// Standing AT it, which is a different question from owning one in this sector —
+// they were the same expression for a few minutes and the panel would happily
+// have sold a 16,000,000 credit module from the far side of the map.
+function atMyLab() {
+  const me2 = ships.get(myId), mine = myLabHere();
+  return !!me2 && !!mine && nearLab(mine, { x: me2.x, y: me2.y });
+}
+
+function liveCredits() {
+  const rate = myLab?.income ?? 0;
+  if (!rate) return credits;
+  const ahead = Math.min(2, (performance.now() - creditsAt) / 1000);
+  return credits + Math.floor(rate * Math.max(0, ahead));
+}
+
 function spaceAction() {
   const me2 = ships.get(myId);
   if (!me2 || dead) return { kind: 'none' };
@@ -356,6 +558,7 @@ function spaceAction() {
     const n = mats.reduce((t, mt) => t + hold[mt], 0);
     return { kind: 'stow', mats, label: `stow ${n} of ore into the company hangar` };
   }
+
   const pod = pods.filter(pd => Math.hypot(pd.x - me2.rx, pd.y - me2.ry) <= SCOOP_R)
                   .sort((a, b) => Math.hypot(a.x - me2.rx, a.y - me2.ry)
                                 - Math.hypot(b.x - me2.rx, b.y - me2.ry))[0];
@@ -497,8 +700,19 @@ ws.onmessage = e => {
   }
   pods = (m.pods ?? []).map(unpackPod);
   numbers = (m.hits ?? []).map(unpackHit);
+  // Research stations in this sector. Nothing on one ever moves, so the delta
+  // never mentions them again after the keyframe — but the decoder hands back a
+  // whole snapshot either way, so this is just a read.
+  labs = new Map((m.labs ?? []).map(unpackLab).map(l => [l.id, l]));
+  if ('lab' in m) myLab = m.lab;
   hold = m.hold ?? {}; cargoCap = m.cap ?? cargoCap;
-  vault = m.vault ?? vault; credits = m.credits ?? credits;
+  vault = m.vault ?? vault;
+  // The balance, and the moment it was true. Everything between banks is drawn by
+  // running forward from here at the rate the server stated — see liveCredits.
+  if (typeof m.credits === 'number' && m.credits !== creditsSeen) {
+    creditsSeen = m.credits; creditsAt = performance.now();
+  }
+  credits = m.credits ?? credits;
   atDock = !!m.docked; scoop = m.scoop ?? null; want = m.want ?? null;
   myGear = m.gear ?? myGear;
   if (m.ammo) myAmmo = m.ammo;
@@ -673,6 +887,9 @@ addEventListener('keydown', e => {
     else say('A Hauler has no system of its own — route to 1, 2 or 3', '#66748c');
   }
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
+  // R for research. Its own key rather than a SPACE action, because SPACE is
+  // whatever you are standing on and this is a place you go to on purpose.
+  if (k === 'r') { labOpen = !labOpen; sysOpen = false; bayOpen = false; invOpen = false; }
   if (k === 'o') { setOpen = !setOpen; sysOpen = bayOpen = invOpen = false; }
   if (k === 'n') { nextTrack(); }
   if (e.key === '[' || e.key === ']') {
@@ -720,7 +937,7 @@ addEventListener('keydown', e => {
     if (setOpen) { setOpen = false; return; }
     if (feedOpen) { feedOpen = null; return; }
     if (picking) { picking = null; return; }
-    if (sysOpen || bayOpen || invOpen) { sysOpen = bayOpen = invOpen = false; return; }
+    if (sysOpen || bayOpen || invOpen || labOpen) { sysOpen = bayOpen = invOpen = labOpen = false; return; }
     setOpen = true;
     return;
   }
@@ -770,6 +987,7 @@ c.addEventListener('pointerdown', e => {
   if (setOpen) { settingsClick(v); return; }
   if (sysOpen) { sysOpen = false; return; }
   if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
+  if (labOpen) { labClick(v); return; }
   if (invOpen) { invClick(v); return; }
   if (barClick(v)) return;                        // the ammunition bar sits over the world
   const sb = sysBtn();
@@ -2622,6 +2840,8 @@ function drawFrame(now) {
     g.fillStyle = col; g.fillRect(-13, -13, 26, 26);
     g.restore();
 
+    drawLabs();                                                      // the yard
+
     g.fillStyle = col; g.textAlign = 'center'; g.font = '14px ui-monospace, monospace';
     g.fillText(map.dev ? 'WORKSHOP DOCK' : `${COMPANIES[map.owner ?? myCo].tag} BASE`, b.x, b.y - b.r - 18);
     g.font = '12px ui-monospace, monospace'; g.textAlign = 'left';
@@ -3426,7 +3646,15 @@ function drawFrame(now) {
     g.fillText(`CARGO ${vol}/${cargoCap}` + (vol >= cargoCap ? '  HOLD FULL' : '') +
                (vol ? `  ${holdValue(hold)} cr` : ''), 16 + gw + 10, 103);
     g.fillStyle = '#ffd479';
-    g.fillText(`${fmtCredits(credits)} ${CURRENCY.short}`, 16, 124);
+    // Full digits, not fmtCredits, and only while a mine is running. Above 100,000
+    // fmtCredits drops to no decimals, so the smallest visible change is 500 — at
+    // 12 cr/s that is forty-three seconds between visible ticks, at exactly the
+    // wealth where a station exists. The whole point of the counter is that you
+    // can watch it move.
+    const live = liveCredits();
+    g.fillText(myLab?.income
+      ? `${live.toLocaleString('en-US')} ${CURRENCY.short}`
+      : `${fmtCredits(credits)} ${CURRENCY.short}`, 16, 124);
     const rank = myRank ?? levelFor(myXp);
     g.fillStyle = '#cfe4ff';
     g.fillText(`LVL ${rank.level}`, 16 + 96, 124);
@@ -3448,7 +3676,7 @@ function drawFrame(now) {
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
   g.fillText('TAB engage · TAB TAB break off · click cargo to haul it in · ' +
-             'I cargo · H station · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
+             'I cargo · H station · R research · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
 
   // Compensated, the margin is somewhere you are meant to be, so it must stop
   // screaming at you — a permanent red vignette over ground you bought the right
@@ -3499,6 +3727,7 @@ function drawFrame(now) {
   if (bayOpen) drawBay();
   if (berthOpen) drawBerth();
   if (invOpen) drawInventory();
+  if (labOpen) drawLab();
   if (dead) drawWreck(now);
   if (!signup) drawHaven();
   if (!signup) drawPatch();      // after, so an open changelog covers the badge

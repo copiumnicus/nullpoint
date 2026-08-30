@@ -17,6 +17,8 @@ import { SIGHT_R } from '../shared/sim.js';
 import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
 import { NAME_MAX } from '../shared/signup.js';
 import { havenBadge, HAVEN_COPY, HAVEN_BROKEN } from '../shared/haven.js';
+import { labPanel, LAB_PRICE, MODULES } from '../shared/research.js';
+import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
@@ -562,6 +564,75 @@ const dismiss = () => {
   else console.log(`safe zone: the badge at ${B.x},${B.y},${B.w},${B.h} clears the icon and the receipts`);
   show('m1', [me(6000, 4000)]);
   frame(t += 16); frames++;
+}
+
+// The research panel. R opens it from anywhere; what it offers depends on whether
+// you have a station yet, and buying anything on it needs you standing at the one
+// you own. The panel is the only place a plot is sold, so a pilot who presses R
+// with nothing built has to find the thing to buy rather than an empty box.
+{
+  dismiss();
+  const L = labPanel(innerWidth, innerHeight);
+  const ring = MAPS.m1.base;
+  const me = (x, y) => packShip({ id: 1, x, y, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+    hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, name: 'Vy' });
+
+  // No station, standing at the dock, plenty of money: it must offer the plot.
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [me(ring.x, ring.y)], credits: 9_000_000, docked: true, labs: [], lab: null });
+  evt('keydown', { key: 'r' });
+  trace = []; frame(t += 16); frames++;
+  let out = trace; trace = null;
+  if (!out.some(c => /^fillText Stake a plot/.test(c)))
+    errs.push('pressing R with no research station offered no way to get one');
+  sent.length = 0;
+  click(L.rows[0].r); frame(t += 16); frames++;
+  if (!sent.some(m => m.t === 'stake'))
+    errs.push('clicking the only row in an empty research panel did not stake a plot');
+  else console.log(`research: R offers the plot for ${LAB_PRICE} and the row buys it`);
+
+  // With a station, the panel is three ladders — and it will not sell you a rung
+  // while you are sitting at the dock rather than at the station itself.
+  const at = { x: ring.x + 400, y: ring.y };
+  const labRow = packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 0, name: 'Vy' }, true);
+  feed({ t: 's', ships: [me(ring.x, ring.y)], credits: 9_000_000, docked: true,
+         labs: [labRow], lab: { mods: 0, income: 0 } });
+  frame(t += 16); frames++;
+  sent.length = 0;
+  click(L.rows[0].r); frame(t += 16); frames++;
+  if (sent.some(m => m.t === 'build'))
+    errs.push('bought a module from across the sector rather than at the station');
+
+  // Fly to it and the same click works.
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 9_000_000, docked: false,
+         labs: [labRow], lab: { mods: 0, income: 0 } });
+  frame(t += 16); frames++;
+  sent.length = 0;
+  click(L.rows[0].r); frame(t += 16); frames++;
+  const bought = sent.find(m => m.t === 'build');
+  // Checked here rather than at the dock: this is the frame where the panel's
+  // state is known good from both sides, because the click just came out of it.
+  trace = []; frame(t += 16); frames++;
+  const shown = trace; trace = null;
+  if (bought?.key !== 'mine1')
+    errs.push(`standing at my own station, buying sent ${JSON.stringify(bought)}`);
+  else if (!shown.some(c => c.includes(MODULES.mine1.name)))
+    errs.push('the research panel sold a rung it never named on screen');
+  else console.log(`research: a rung is sold at the station and refused from the dock — ` +
+                   `"${MODULES.mine1.name}"`);
+
+  // A station that has been built on looks built on, to everyone, and a mine
+  // running makes the credits counter move between server banks.
+  const others = packLab({ id: 2_000_002, x: ring.x - 400, y: ring.y, mods: 7, name: 'Someone' }, false);
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 1_000_000,
+         labs: [labRow, others], lab: { mods: 1, income: MODULES.mine1.rate } });
+  evt('keydown', { key: 'r' });                    // shut it, so the world is visible
+  frame(t += 16); frames++;
+  trace = []; frame(t += 16); frames++;
+  out = trace; trace = null;
+  if (!out.some(c => /^fillText Someone /.test(c)))
+    errs.push("another pilot's research station was drawn without their name on it");
+  else console.log('research: every station in the ring is drawn and named, yours and theirs');
 }
 
 // Flying without the mouse, driven through the real key handlers and the real

@@ -9,6 +9,8 @@ import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHe
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { respawnDelay } from './shared/spawn.js';
+import { LAB_PRICE, MODULES, claimPlot, plotAt, plotsFor, incomeOf, earnedOver,
+         cappedSecs, addMod, whyNotStake, whyNotBuild, nearLab, applyResearch } from './shared/research.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy,
          whyNotLoad, loadable } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
@@ -26,7 +28,7 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab } from './shared/net.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -180,6 +182,84 @@ const persistAll = () => {
 // ship, and it bounds any loss to about a second.
 let dirty = false;
 const touch = p => { capture(p.acct, p, Date.now()); dirty = true; };
+
+// --- the yard -----------------------------------------------------------------
+//
+// Every research station standing in every company ring, keyed by the sector it is
+// in. Rebuilt from the accounts rather than stored separately, because an account
+// IS the record — a second list would be a second truth to keep in step.
+//
+// The map is derived from the owner's company, so a pilot who changes sides takes
+// their station with them rather than leaving an orphan behind.
+const labId = a => 2_000_000 + (a.seq ?? 0);       // clear of ship ids and of alien ids
+const labMap = a => (a.co ?? 'm') + '1';
+
+function yard() {
+  const out = new Map();
+  for (const [tok, a] of Object.entries(db.accounts)) {
+    if (!a.lab || a.lab.slot === null) continue;
+    const mid = labMap(a), base = MAPS[mid]?.base;
+    const at = base && plotAt(base, a.lab.slot);
+    if (!at) continue;
+    if (!out.has(mid)) out.set(mid, []);
+    out.get(mid).push({ id: labId(a), x: at.x, y: at.y, mods: a.lab.mods | 0,
+                        name: a.name ?? '', token: tok });
+  }
+  return out;
+}
+let labs = new Map();
+const reyard = () => { labs = yard(); };
+
+// Turning elapsed wall clock into credits, in ONE place.
+//
+// The mine runs whether or not anyone is logged in — a mining operation does not
+// stop because you closed the tab — so this is called on the way in (paying for
+// the time you were away), once a second while you fly, and before any upgrade
+// that would change the rate.
+//
+// Once a SECOND, not once a tick. `credits` is a bag field the delta codec
+// compares as text, so paying out at 30Hz would put the balance on the wire
+// thirty times a second for a number that moves by twelve.
+//
+// Whole credits only, and the remainder is left in `since` rather than dropped:
+// at 12 cr/s a per-tick floor would round away most of the income and the mine
+// would quietly pay a fraction of what it promised.
+function bankLab(p, now = Date.now()) {
+  const lab = p?.lab;
+  if (!lab) return 0;
+  const rate = incomeOf(lab.mods);
+  if (rate <= 0) { lab.since = now; return 0; }
+  const secs = cappedSecs((now - (lab.since ?? now)) / 1000);
+  const paid = earnedOver(lab.mods, secs);
+  if (paid <= 0) return 0;
+  p.credits += paid;
+  // Advance by exactly what was paid for, so the fraction of a credit that did
+  // not round survives into the next second instead of being thrown away.
+  lab.since = (lab.since ?? now) + Math.round((paid / rate) * 1000);
+  return paid;
+}
+
+// A station bought before the lattice existed, one whose plot did not survive
+// sanitising, or a duplicate out of a hand-edited save. Placed once at boot; a
+// plot that is already good is never touched, because re-deriving would move a
+// pilot's station the first time a neighbour bought one.
+{
+  const held = new Map();
+  for (const a of Object.values(db.accounts).sort((x, y) => (x.seq ?? 0) - (y.seq ?? 0))) {
+    if (!a.lab) continue;
+    const mid = labMap(a), base = MAPS[mid]?.base;
+    if (!base) { a.lab = null; continue; }
+    if (!held.has(mid)) held.set(mid, []);
+    const taken = held.get(mid);
+    const ok = a.lab.slot !== null && a.lab.slot < plotsFor(base).length && !taken.includes(a.lab.slot);
+    if (!ok) a.lab.slot = claimPlot(a.token ?? a.name ?? String(a.seq), base, taken);
+    if (a.lab.slot !== null) taken.push(a.lab.slot);
+  }
+  reyard();
+  const standing = [...labs.values()].reduce((n, l) => n + l.length, 0);
+  const perRing = plotsFor(MAPS[HOMES[0]].base).length;
+  if (standing) console.log(`research stations: ${standing} standing, ${perRing} plots to a ring`);
+}
 setInterval(() => { if (dirty) { store.save(db); dirty = false; } }, 1000);
 setInterval(persistAll, 15000);   // positions drift without changing anything
 for (const sig of ['SIGINT', 'SIGTERM'])
@@ -384,7 +464,8 @@ wss.on('connection', (ws, req) => {
     acct.x = MAPS[acct.mapId].base.x; acct.y = MAPS[acct.mapId].base.y;
   }
 
-  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation, acct.rig);
+  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation, acct.rig,
+                       acct.lab?.mods ?? 0);
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
                     // What this connection has been told. Per connection, never per
@@ -397,7 +478,7 @@ wss.on('connection', (ws, req) => {
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
                     devices: { ...acct.devices }, device: acct.device, folding: null,
-                    foldTo: acct.foldTo ?? null,
+                    foldTo: acct.foldTo ?? null, lab: acct.lab ?? null,
                     berths: [...(acct.berths ?? [])], lastDock: acct.lastDock ?? null,
                     scoop: null, want: null, dead: false, lobby,
                     // Composite Plating starts seated. You sign in at a dock or a
@@ -937,6 +1018,42 @@ wss.on('connection', (ws, req) => {
       touch(P);
       return outfit();
     }
+    // Staking a plot. The yard is rebuilt from the accounts, so buying one is a
+    // matter of writing it on your own and telling the world to look again.
+    if (m.t === 'stake') {
+      const mid = P.co + '1', base = MAPS[mid]?.base;
+      const taken = Object.values(db.accounts)
+        .filter(a2 => a2.lab && a2.lab.slot !== null && (a2.co ?? 'm') + '1' === mid)
+        .map(a2 => a2.lab.slot);
+      const slot = P.lab ? null : claimPlot(token, base, taken);
+      const why = whyNotStake({ credits: P.credits, docked: !!P.docked, has: !!P.lab,
+                                room: slot !== null, plots: plotsFor(base).length });
+      if (why) return tell(why);
+      P.credits -= LAB_PRICE;
+      P.lab = { slot, mods: 0, since: Date.now() };
+      touch(P); reyard();
+      receipt('Research Station', LAB_PRICE, 'your plot in the yard');
+      return outfit();
+    }
+    if (m.t === 'build') {
+      const mod = MODULES[m.key];
+      if (!mod || !P.lab) return tell('no station — stake a plot in your own ring first');
+      const at = plotAt(MAPS[P.co + '1']?.base, P.lab.slot);
+      const why = whyNotBuild(m.key, { credits: P.credits, mask: P.lab.mods,
+                                       near: P.mapId === P.co + '1' && nearLab(at, ship) });
+      if (why) return tell(why);
+      P.credits -= mod.price;
+      // Bank what the OLD rate earned before the new one starts, or an upgrade
+      // quietly pays the new rate for hours the old one actually worked.
+      bankLab(P);
+      P.lab = { ...P.lab, mods: addMod(P.lab.mods, m.key) };
+      // Hull and shield multipliers ride on the ship, so it has to be told.
+      ship.research = P.lab.mods;
+      refit(ship, ship.hull, ship.fit, ship.drones, ship.formation, ship.rig);
+      touch(P); reyard();
+      receipt(mod.name, mod.price, mod.does);
+      return outfit();
+    }
     if (m.t === 'buyberth') {
       const why = whyNotBuyBerth({ xp: P.xp, credits: P.credits,
                                    owned: P.berths.includes(P.mapId),
@@ -1043,6 +1160,19 @@ setInterval(() => {
       if (p.lastDock !== p.mapId) { p.lastDock = p.mapId; touch(p); }
     }
     stepVitals(p.ship, dt, p.docked);
+    // The mine, paid out once a second rather than once a tick — see bankLab.
+    //
+    // Date.now(), NOT the tick's `now`. The tick runs on performance.now(), which
+    // counts from when the process started; `lab.since` is wall clock, because the
+    // mine has to keep running while nobody is connected. Subtracting one from the
+    // other gives a large negative, cappedSecs clamps it to zero, and the mine
+    // silently pays nothing forever — which is exactly what it did, and only a live
+    // socket caught it. CLAUDE.md says two clocks matter; this is the third time.
+    const wall = Date.now();
+    if (p.lab && incomeOf(p.lab.mods) > 0 && wall - (p.paidAt ?? 0) >= 1000) {
+      p.paidAt = wall;
+      if (bankLab(p, wall)) touch(p);
+    }
     // Composite Plating is re-seated whenever you are standing at a dock, which is
     // what makes the save once per OUTING rather than once per life: a pilot who
     // never goes home never gets a second one.
@@ -1470,9 +1600,20 @@ setInterval(() => {
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
                     blasts: flashes.map(packBlast),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };
-    const streams = { ships, pods: new Map(cans.map(c => [c.id, packPod(c)])) };
+    // Every station in this sector, and which one is theirs. Not radar-filtered:
+    // the radar rule keeps an enemy you have not DETECTED off the wire, and a lab
+    // is furniture in a haven — one popping into being at 2200px would read as a
+    // bug rather than as stealth.
+    const yardHere = labs.get(V.mapId) ?? [];
+    const streams = { ships, pods: new Map(cans.map(c => [c.id, packPod(c)])),
+                      labs: new Map(yardHere.map(l => [l.id, packLab(l, l.token === V.token)])) };
     const bag = { hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
+      // What the station earns per second, and what it has built. `income` moves
+      // only when a module is bought, so it costs nothing per tick — and it is
+      // what lets the client run the counter up smoothly between banks without
+      // inventing money it has not been told about.
+      lab: V.lab ? { mods: V.lab.mods, income: incomeOf(V.lab.mods) } : null,
       ammo: V.ammo, using: V.using, armed: V.armed, kits: V.kits, kit: V.kit,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
       played: (V.acct.played ?? 0) + sessionSeconds(V.banked ?? V.acted, V.acted),

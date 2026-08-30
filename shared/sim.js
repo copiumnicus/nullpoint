@@ -7,6 +7,7 @@ import { DEFAULT_FORMATION } from './formation.js';
 import { emptyFit, techSet } from './gear.js';
 import { newPower, stepPower, boostOf, levelOf, BOOST } from './power.js';
 import { swellOf, dragOf, reachOf, cloakOf } from './ability.js';
+import { applyResearch } from './research.js';
 
 // An ability belongs to the hull, so everything that asks about one starts here.
 export const hullOf = s => HULLS[s?.hull];
@@ -83,8 +84,14 @@ export function newBody(x, y, stats, r) {
 // `[...drones, rig]`; everywhere bays are counted, it is `drones`.
 export const escortOf = (drones = [], rig = null) => (rig ? [...drones, rig] : drones);
 
-export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION, rig = null) {
-  const s = newBody(x, y, resolve(hull, fit, escortOf(drones, rig), formation), radiusOf(hull));
+// `research` is the owner's station mask, carried ON the ship rather than passed to
+// every call site. resolve() answers what the SHOPS sold you; the research ladder
+// multiplies that afterwards, so no hull dominates another because of it and the
+// shops do not have to know the ladder exists. Both sides apply the same function
+// — a second copy would mean a pilot watching a hull bar that is not their hull.
+export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION, rig = null, research = 0) {
+  const s = newBody(x, y, applyResearch(resolve(hull, fit, escortOf(drones, rig), formation), research), radiusOf(hull));
+  s.research = research;
   s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
   s.guns = gunsOf(fit, drones);                     // ship rack plus whatever the escort carries
   // What this ship can DO, as opposed to what its numbers are. Resolved once here
@@ -101,7 +108,7 @@ export const shieldMax = s => s.stats.shield * (s.shieldMult ?? 1);
 // safe — swapping to a tanky hull mid-fight would otherwise be free.
 export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.formation ?? DEFAULT_FORMATION, rig = s.rig ?? null) {
   s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
-  s.stats = resolve(hull, fit, escortOf(drones, rig), formation);
+  s.stats = applyResearch(resolve(hull, fit, escortOf(drones, rig), formation), s.research ?? 0);
   s.r = radiusOf(hull);
   s.guns = gunsOf(fit, drones);
   s.tech = techSet(fit, drones);

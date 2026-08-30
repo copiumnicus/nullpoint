@@ -307,8 +307,11 @@ console.log('\nwhat is deliberately not deltaed');
   check('bolts, rockets, blasts and hits go whole, and the list says so',
     same(EPHEMERAL, ['bolts', 'rockets', 'blasts', 'hits']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
-  check('ships and pods are the ones that are worth diffing',
-    same(Object.keys(STREAMS), ['ships', 'pods']),
+  // Research stations joined them, and they are the extreme case of the argument
+  // rather than an exception to it: nothing on one ever moves, so 50 of them cost
+  // 1,570 bytes once on the keyframe and exactly nothing per tick.
+  check('ships, pods and research stations are the ones that are worth diffing',
+    same(Object.keys(STREAMS), ['ships', 'pods', 'labs']),
     'long-lived, keyed, and 82% of the traffic in a crowded sector');
 }
 

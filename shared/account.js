@@ -11,6 +11,7 @@ import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
          DEFAULT_AMMO, STARTING_AMMO } from './ammo.js';
 import { sanitiseKits, sanitiseKit, DEFAULT_KIT } from './repair.js';
 import { sanitiseDevices, sanitiseDevice, DEFAULT_DEVICE } from './devices.js';
+import { sanitiseMods, HOME_PLOTS } from './research.js';
 import { MAPS, COMPANIES } from './maps.js';
 import { MATERIALS } from './cargo.js';
 import { bankPlaytime } from './playtime.js';
@@ -36,7 +37,7 @@ export function newAccount(token, seq, now) {
     formation: DEFAULT_FORMATION, formations: [DEFAULT_FORMATION],
     ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     kits: {}, kit: DEFAULT_KIT,
-    devices: {}, device: DEFAULT_DEVICE, foldTo: null,
+    devices: {}, device: DEFAULT_DEVICE, foldTo: null, lab: null,
     berths: [],                                   // outposts you rent a bay at
     lastDock: null,                               // the hangar a wreck comes back to
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
@@ -48,6 +49,26 @@ export function newAccount(token, seq, now) {
 
 // Anything that reaches us from disk is untrusted: it was a JSON file a moment
 // ago and may have been hand-edited. Everything is clamped or dropped.
+// A research station off the disk.
+//
+// Four hazards, all of which a hand-edited or restored save can present:
+//   - a plot off the end of the lattice, from a shrunk yard or an edit. Dropped to
+//     null rather than clamped, because clamping every bad value to 0 stacks every
+//     broken save on plot zero. The boot pass re-places a null.
+//   - a mask naming modules that no longer exist. Masked off, so removing a module
+//     cannot leave a lab paying for something the game has forgotten.
+//   - `since` in the future — a clock skew or an edit, and with offline accrual
+//     that is a credit printer. Clamped to now.
+//   - `since` from the distant past. cappedSecs bounds what one login can bank.
+export function sanitiseLab(lab, now = Date.now()) {
+  if (!lab || typeof lab !== 'object') return null;
+  const slot = Number.isFinite(+lab.slot) ? Math.floor(+lab.slot) : -1;
+  const since = Number.isFinite(+lab.since) ? Math.floor(+lab.since) : now;
+  return { slot: slot >= 0 && slot < HOME_PLOTS ? slot : null,
+           mods: sanitiseMods(lab.mods),
+           since: Math.min(now, since) };
+}
+
 export function sanitiseAccount(a, seq, now) {
   const co = COMPANIES[a?.co] ? a.co : companyFor(seq);
   const hull = HULLS[a?.hull] ? a.hull : DEFAULT_HULL;
@@ -81,6 +102,7 @@ export function sanitiseAccount(a, seq, now) {
     // can stop having an outpost, so it is re-checked against homePorts at the
     // moment of use rather than trusted from disk.
     foldTo: typeof a?.foldTo === 'string' ? a.foldTo : null,
+    lab: sanitiseLab(a?.lab, now),
     berths: [...new Set((Array.isArray(a?.berths) ? a.berths : []).filter(id => MAPS[id]?.outpost))],
     lastDock: MAPS[a?.lastDock] ? a.lastDock : null,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
@@ -113,6 +135,7 @@ export function capture(account, p, now) {
   account.kit = p.kit;
   account.device = p.device;
   account.foldTo = p.foldTo ?? null;
+  account.lab = p.lab ?? null;
   account.berths = [...(p.berths ?? [])];   // a player built before berths existed has none
   account.lastDock = p.lastDock ?? null;
   account.xp = p.xp;

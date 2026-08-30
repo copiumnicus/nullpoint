@@ -92,9 +92,23 @@ export const unpackHit = arr => { const o = {}; for (let i = 0; i < HIT_FIELDS.l
 // identifying field, resolved from the name so it cannot drift if the order is
 // ever rearranged.
 const streamOf = (wire, fields, keyName) => ({ wire, fields, key: fields.indexOf(keyName) });
+// A research station standing in a company ring. Nothing on it ever moves, so it
+// rides the keyframe and then goes silent — 50 of them cost 1,570 bytes once and
+// nothing at all per tick. `own` is filled in per viewer, the way HIT_FIELDS does
+// `mine`, so the client never has to match names to know whose it is.
+//
+// Not radar-filtered, deliberately. The radar rule keeps an enemy you have not
+// DETECTED off the wire; a lab is furniture in a haven, and one that popped into
+// existence at 2200px would read as a bug rather than as stealth.
+export const LAB_FIELDS = ['id', 'x', 'y', 'mods', 'own', 'name'];
+export const packLab   = (o, own) => [o.id, Math.round(o.x), Math.round(o.y),
+                                      o.mods | 0, own ? 1 : 0, o.name ?? ''];
+export const unpackLab = arr => { const o = {}; for (let i = 0; i < LAB_FIELDS.length; i++) o[LAB_FIELDS[i]] = arr[i]; return o; };
+
 export const STREAMS = {
   ships: streamOf('s', SHIP_FIELDS, 'id'),
   pods:  streamOf('p', POD_FIELDS,  'id'),
+  labs:  streamOf('l', LAB_FIELDS,  'id'),
 };
 
 // Deliberately NOT deltaed, and this is the measurement that says so rather than
