@@ -21,6 +21,7 @@ export const COMMANDS = {
   tp:    { admin: true,  args: '<map>',           help: 'jump straight to a sector' },
   heal:  { admin: true,  args: '',                help: 'full hull, shields and capacitor' },
   dev:   { admin: true,  args: '',                help: 'the testing ground, and back again' },
+  reset: { admin: true,  args: '[all]',           help: 'wipe your progress — `all` also forgets who you are' },
 };
 
 export const parse = line => {

@@ -231,6 +231,11 @@ ws.onmessage = e => {
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
+  if (m.t === 'reset') {                          // the account is gone; become a stranger
+    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    location.reload();
+    return;
+  }
   if (m.t === 'signup') {
     signup = { companies: m.companies ?? [] };
     if (m.problem) joinSaid = m.problem;

@@ -440,6 +440,45 @@ wss.on('connection', (ws, req) => {
           ws.send(JSON.stringify({ t: 'map', map: a1 }));
           return tell(`jumped to ${MAPS[a1].name}`);
         }
+        // Back to nothing, so a finished pilot can go and find out what the
+        // first ten minutes actually feel like. Plain `/reset` keeps who you
+        // are and takes everything else; `/reset all` forgets the account, so
+        // the next thing you see is the join form.
+        case 'reset': {
+          const wipe = (a1 ?? '').toLowerCase() === 'all';
+          if (wipe) {
+            delete db.accounts[token];
+            store.save(db);
+            players.delete(id);
+            for (const list of aliens.values()) forgetPlayer(list, id);
+            ws.send(JSON.stringify({ t: 'reset' }));   // the client drops its token and reloads
+            console.log(`~ ${acct.name} wiped their account`);
+            return;
+          }
+          const seq = acct.seq, co = acct.co, name = acct.name, admin = acct.admin;
+          acct = newAccount(token, seq, Date.now());
+          Object.assign(acct, { name, co, admin, mapId: co + '1' });
+          const b2 = MAPS[acct.mapId].base;
+          acct.x = b2.x; acct.y = b2.y;
+          db.accounts[token] = acct;
+
+          P.acct = acct; P.mapId = acct.mapId; P.co = co;
+          P.credits = 0; P.xp = 0;
+          P.gear = {}; P.hulls = [...acct.hulls]; P.formations = [...acct.formations];
+          P.ammo = { ...acct.ammo }; P.using = { ...acct.using }; P.armed = { ...acct.armed };
+          P.kits = {}; P.kit = acct.kit;
+          P.hold = {}; P.vault = {};
+          P.targetId = null; P.want = null; P.scoop = null; P.fixing = null;
+          P.contacts.clear();
+          refit(ship, acct.hull, acct.fit, [], acct.formation);
+          Object.assign(ship, { x: b2.x, y: b2.y, vx: 0, vy: 0, tx: null, ty: null,
+                                dx: null, dy: null, charge: 0, chargeTo: null });
+          store.save(db);
+          sendWelcome();
+          ws.send(JSON.stringify({ t: 'map', map: acct.mapId }));
+          console.log(`~ ${acct.name} reset to a new pilot`);
+          return tell('reset — a starter hull, no credits, and your own dock');
+        }
         case 'heal':
           ship.hp = ship.stats.hull;
           ship.shield = ship.stats.shield * (ship.shieldMult ?? 1);
