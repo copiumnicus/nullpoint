@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.28';
+export const VERSION = '0.29';
 
 export const PATCHES = [
+  { v: '0.29', notes: [
+    'Collector rigs refine as you fly: the cheapest metal you carry packs into the next one up',
+    'Value is kept and space is freed, so the rig refills the room and your hold climbs',
+    'A better rig refines faster — the Ore Tender is worth roughly twice the Scavenger',
+  ] },
   { v: '0.28', notes: [
     'You come back at the last hangar you used, including a pirate bay you rent',
     'Pirate outposts keep the peace inside the trading zone, so a respawn is not a death loop',

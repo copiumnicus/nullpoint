@@ -31,6 +31,7 @@ import { GAME } from './shared/brand.js';
 import { whyNotBerth, whyNotBuyBerth, berthPrice, BERTH_RANK,
          respawnAt, isHangar } from './shared/berth.js';
 import { splitKill, shareOut } from './shared/reward.js';
+import { refineStep, applyRefine, refinePeriod } from './shared/refine.js';
 import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
@@ -1177,6 +1178,29 @@ setInterval(() => {
       const s2 = beginScoop(p.ship, p.hold, c, reach, droneSpeed(p.ship));
       if (typeof s2 === 'object') { p.scoop = s2; break; }   // anything else: try the next one
     }
+  }
+
+  // A rig with a refinery aboard packs the hold down while you fly: the cheapest
+  // metal you carry, compressed into the next one up. Value is conserved and
+  // VOLUME is not, so the rig then fills the room it just made and does it again —
+  // which is what turns a hold that fills in ninety seconds into one that climbs
+  // for as long as you stay out, and what makes flying home to bank it a decision.
+  for (const [, p] of players) {
+    if (p.dead) continue;
+    const every = refinePeriod(p.ship.rig);
+    if (!every) { p.refineIn = null; continue; }
+    p.refineIn = (p.refineIn ?? every) - dt;
+    if (p.refineIn > 0) continue;
+    p.refineIn = every;
+    const step = refineStep(p.hold, p.ship.rig);
+    if (!step) continue;
+    applyRefine(p.hold, step);
+    touch(p);
+    // Said out loud, because a hold quietly rearranging itself is indistinguishable
+    // from a bug — and this is the mechanic that puts something at stake.
+    if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'chat', from: '',
+      text: `refined ${step.spent} ${MATERIALS[step.from]?.name ?? step.from} into ` +
+            `${step.made} ${MATERIALS[step.to]?.name ?? step.to} — ${step.freed} of hold freed` }));
   }
 
   for (const [, p] of players) {                  // tractor beams
