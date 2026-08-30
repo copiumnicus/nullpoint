@@ -55,5 +55,8 @@ export function levelOf(p, sys, stats) {
   return Math.min(want, stats?.sustain ?? 0.33);
 }
 
-export const boostOf  = (p, sys, stats) => 1 + BOOST * levelOf(p, sys, stats);
+// The ceiling is the ship's, not a constant: generators raise it by what they
+// cost you in speed. BOOST is only the floor everything starts from.
+export const ceilingOf = stats => stats?.boost ?? BOOST;
+export const boostOf  = (p, sys, stats) => 1 + ceilingOf(stats) * levelOf(p, sys, stats);
 export const chargePct = (p, stats) => Math.max(0, Math.min(1, (p?.charge ?? 0) / (stats?.capacitor || 1)));

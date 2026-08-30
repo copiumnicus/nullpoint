@@ -7,6 +7,7 @@
 
 import { EQUIPMENT, emptyFit, fitList, droneItems, sanitiseFit as cleanFit } from './gear.js';
 import { FORMATIONS, DEFAULT_FORMATION, bonusScale } from './formation.js';
+import { BOOST } from './power.js';
 
 // One cycle rate for every hull, on purpose. Emitters add FLAT damage to a bolt
 // and the rate multiplies the lot, so a hull that fired faster multiplied every
@@ -113,6 +114,31 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
   for (const [attr, p] of Object.entries(pct)) out[attr] *= 1 + p;
   for (const k of Object.keys(out))
     out[k] = Math.min(ATTRS[k].max ?? Infinity, Math.max(ATTRS[k].min ?? 0, out[k]));
+
+  // What a generator takes in speed, it gives back as reactor headroom.
+  //
+  // A generator is a straight trade: shields and capacitor for thrust. But the
+  // reactor it enlarges could only ever pay out BOOST, a flat 30%, so fitting one
+  // made every routing decision a little worse as well — you were slower, and
+  // routing to thrusters could not get you back to where you started.
+  //
+  // The ceiling now rises by the same fraction of your hull's speed that the
+  // generators cost you. Fit 3% of your speed away and the ceiling is 33%, so
+  // routing to thrusters is roughly break-even and routing to weapons or shields
+  // is worth 3% more than it was. It is not free: the headroom only pays while
+  // you are spending capacitor, which is exactly what a bigger reactor is for.
+  //
+  // Measured against the hull's bare speed rather than the resolved one, so
+  // stacking generators cannot compound — two cells that each cost 3% raise the
+  // ceiling by 6%, not by 6.09%.
+  let lost = 0;
+  for (const key of [...fitList(fit), ...droneItems(drones)]) {
+    if (EQUIPMENT[key]?.slot !== 'generator') continue;
+    for (const [attr, op, v] of EQUIPMENT[key].mods ?? [])
+      if (attr === 'speed' && op === 'add' && v < 0) lost -= v;
+  }
+  const bare = hull.attrs.speed ?? ATTRS.speed.dflt;
+  out.boost = BOOST + (bare > 0 ? lost / bare : 0);
   return out;
 }
 

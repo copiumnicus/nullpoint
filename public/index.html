@@ -16,7 +16,7 @@ import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
 import { levelFor, progress } from '/shared/level.js';
 import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
-import { SYSTEMS, BOOST } from '/shared/power.js';
+import { SYSTEMS, BOOST, ceilingOf } from '/shared/power.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
@@ -753,6 +753,26 @@ function drawSystem(me) {
       g.fillRect(st.from.x - 2.5, st.from.y - 2.5, 5, 5);
     }
 
+    // Anywhere you can trade is worth finding from the chart. The outpost was on
+    // the sector plot only, which is no help at all when the question is which
+    // sector to fly to.
+    if (m.outpost) {
+      const ox = r.x + m.outpost.x * kx, oy = r.y + m.outpost.y * ky;
+      g.strokeStyle = '#e0a53f'; g.lineWidth = 1;
+      g.setLineDash([2, 2]);
+      g.beginPath(); g.arc(ox, oy, Math.max(3, m.outpost.r * kx), 0, 7); g.stroke();
+      g.setLineDash([]);
+      g.fillStyle = '#e0a53f';                       // a lopsided mark, like the hulk itself
+      g.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const a2 = (i / 5) * Math.PI * 2 - Math.PI / 2, rr = i % 2 ? 3 : 5.5;
+        i ? g.lineTo(ox + Math.cos(a2) * rr, oy + Math.sin(a2) * rr)
+          : g.moveTo(ox + Math.cos(a2) * rr, oy + Math.sin(a2) * rr);
+      }
+      g.closePath(); g.fill();
+      g.strokeStyle = '#05070b'; g.lineWidth = 1; g.stroke();
+    }
+
     if (m.home) {
       g.fillStyle = COMPANIES[m.owner].color;
       const cx = r.x + m.base.x * kx, cy = r.y + m.base.y * ky;
@@ -824,6 +844,9 @@ const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
   tab: bayTab, page: bayPage, hull: myHull, drones: myDrones.length,
   hulls: myHulls, formations: myForms, gear: myGear });
 
+// The ship as the rules see it. The reactor ceiling lives in here now, so the
+// readout has to ask the ship rather than a constant.
+const myStats = () => resolve(myHull, myFit, escortOf(myDrones, myRig), myForm);
 const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, myRig), formation: myForm,
                          gear: myGear, hulls: myHulls, formations: myForms, credits });
 
@@ -2657,7 +2680,7 @@ function drawFrame(now) {
 
     g.textAlign = 'center';
     g.fillStyle = lvl > 0 ? col : '#5b6b85'; g.font = 'bold 14px ui-monospace, monospace';
-    g.fillText(`+${Math.round(BOOST * lvl * 100)}%`, cx, cy + 2);
+    g.fillText(`+${Math.round(ceilingOf(myStats()) * lvl * 100)}%`, cx, cy + 2);
     g.fillStyle = '#66748c'; g.font = '9px ui-monospace, monospace';
     g.fillText(power.to ? power.to.toUpperCase() : 'REACTOR', cx, cy + 14);
     g.fillText(`${Math.round(cap * 100)}%`, cx, cy - 10);

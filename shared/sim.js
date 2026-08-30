@@ -174,7 +174,7 @@ export function stepVitals(s, dt, docked = false) {
   // would make running home a free escape and the chase pointless.
   // Powering shields multiplies the POOL, charge included: 100 of 800 becomes 130
   // of 1040, and losing the power scales it back down the same way.
-  const m = 1 + BOOST * levelOf(s.power, 'shields', s.stats);
+  const m = boostOf(s.power, 'shields', s.stats);
   if (Math.abs(m - (s.shieldMult ?? 1)) > 1e-9) {
     s.shield *= m / (s.shieldMult ?? 1);
     s.shieldMult = m;

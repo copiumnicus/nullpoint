@@ -60,6 +60,7 @@ export const DROPS = {
   ironhusk:  scaled(HUSK, 4),
   bandit:    scaled(HUSK, 8),
   leviathan: scaled(HUSK, 8),
+  hive:      scaled(HUSK, 8),
 };
 
 // A pod dropped by a shared kill belongs to one of the pilots who earned it, so

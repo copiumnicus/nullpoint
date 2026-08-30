@@ -5,6 +5,7 @@ import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beg
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
+         broodReady, BROOD_R, shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
@@ -184,6 +185,10 @@ for (const h of HOMES) {
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
   seed(co + '4', 'drifter', 3);
 }
+// Nullpoint itself. The core sector was three companies' worth of contested space
+// with nothing in it to contest; the Hive is what is there, and the Bandits at
+// every frontier come from it.
+seed('x0', 'hive', 1);
 
 // The hull and formation galleries, resolved once at boot. They never move, take
 // damage or shoot, so there is nothing to step — just rows to hand out.
@@ -860,13 +865,34 @@ setInterval(() => {
   for (const [mapId, list] of aliens) {
     const map = MAPS[mapId];
     const here = [];
+    const born = [];                              // escorts launched this tick
     for (const [id, p] of players)
       if (p.mapId === mapId && !p.dead) here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
     for (const a of list) {
       if (a.dead > 0) { a.dead -= dt;
-        // Come back somewhere nobody is looking, not on top of whoever killed it.
-        if (a.dead <= 0) respawnAlien(a, map, here.map(c => c.ship)); continue; }
+        // An escort is not a fixture of the sector: when one dies it is gone, and
+        // the hive makes another. Everything else comes back somewhere nobody is
+        // looking, rather than on top of whoever killed it.
+        if (a.dead <= 0) { if (a.spawned) a.gone = true; else respawnAlien(a, map, here.map(c => c.ship)); }
+        continue; }
       const tgt = stepAlienAI(a, map, here, dt);
+
+      // A mothership launches escorts, but only once it has noticed somebody — a
+      // hive nobody has found should not quietly fill its sector with raiders.
+      if (a.def.broods && a.target !== null) {
+        a.brood = (a.brood ?? []).filter(kid => list.some(x => x.id === kid && !x.gone && x.dead <= 0));
+        if (a.brood.length < a.def.broods.max && broodReady(a, dt)) {
+          const ang = Math.random() * Math.PI * 2;
+          const kid = newAlien(a.def.broods.kind, alienId++, map, alienId,
+                               { x: a.x + Math.cos(ang) * BROOD_R, y: a.y + Math.sin(ang) * BROOD_R });
+          kid.spawned = true;                     // launched, not posted: it fights and it stays dead
+          kid.post = null;
+          kid.target = a.target;
+          kid.provoked.add(a.target);
+          born.push(kid);
+          a.brood.push(kid.id);
+        }
+      }
       // Anything in the air with this one's name on it. Rockets first: they are
       // the shots that will not simply go past on their own.
       const incoming = [
@@ -885,8 +911,14 @@ setInterval(() => {
       else faceTarget(a, victim?.ship);
       for (const shot of fire(a, victim?.ship ?? null, dt)) bolts.get(mapId).push(shot);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
+      // Not while it is chasing somebody: a provoked alien follows you in.
+      if (a.target === null) shoveFromBase(a, map);
       if (a.hp <= 0) killAlien(mapId, a);
     }
+    // Escorts launched this tick join the sector, and anything the hive lost
+    // leaves it — an escort is not a fixture the way a seeded hostile is.
+    if (born.length) list.push(...born);
+    if (list.some(a => a.gone)) aliens.set(mapId, list.filter(a => !a.gone));
   }
 
   // --- player guns ----------------------------------------------------------

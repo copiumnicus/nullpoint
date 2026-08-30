@@ -1,4 +1,4 @@
-import { SYSTEMS, BOOST, SPOOL_UP, SPOOL_DN, newPower, routeTo, stepPower, levelOf, boostOf, chargePct }
+import { SYSTEMS, BOOST, SPOOL_UP, SPOOL_DN, newPower, routeTo, stepPower, levelOf, boostOf, chargePct, ceilingOf }
   from '../shared/power.js';
 import { newShip, step, stepVitals, applyDamage, shieldMax } from '../shared/sim.js';
 import { resolve, HULLS, slotsOf } from '../shared/ships.js';
@@ -183,6 +183,43 @@ console.log('\nships and technology');
   const gen = resolve('vanguard', { weapon: [], generator: ['cellC', 'cellC'], tech: [] });
   check('generators raise the free trickle', gen.sustain > resolve('vanguard').sustain,
     `+${Math.round(BOOST * resolve('vanguard').sustain * 100)}% -> +${Math.round(BOOST * gen.sustain * 100)}% forever`);
+}
+
+// --- what a generator gives back --------------------------------------------
+// A generator is a straight trade: shields and capacitor for thrust. But the
+// reactor it enlarges could only ever pay out a flat 30%, so fitting one made
+// every routing decision slightly worse as well — you were slower, and routing
+// to thrusters could not get you back to where you started.
+console.log('\nthe reactor ceiling');
+{
+  const fitOf = o => ({ weapon: [], generator: [], tech: [], ...o });
+  const bare = resolve('hauler', fitOf());
+  const one  = resolve('hauler', fitOf({ generator: ['cellA'] }));
+  const two  = resolve('hauler', fitOf({ generator: ['cellA', 'cellA'] }));
+
+  check('a bare hull still has the plain ceiling', ceilingOf(bare) === BOOST,
+    `${BOOST * 100}% with nothing fitted`);
+  check('a generator raises it by exactly what it cost in speed', (() => {
+    const lost = (bare.speed - one.speed) / bare.speed;
+    return Math.abs((ceilingOf(one) - BOOST) - lost) < 1e-9;
+  })(), `-${((bare.speed - one.speed) / bare.speed * 100).toFixed(1)}% speed, ` +
+        `+${((ceilingOf(one) - BOOST) * 100).toFixed(1)}% ceiling`);
+  check('so routing to thrusters gets you back to about where you started',
+    Math.abs(one.speed * (1 + ceilingOf(one)) - bare.speed * (1 + BOOST)) / (bare.speed * (1 + BOOST)) < 0.02,
+    `${Math.round(one.speed * (1 + ceilingOf(one)))} against ${Math.round(bare.speed * (1 + BOOST))} — within 2%`);
+  check('and routing anywhere else is worth more than it was',
+    ceilingOf(one) > BOOST, 'which is the reason to have paid for the reactor');
+  check('two generators raise it twice, without compounding', (() => {
+    return Math.abs((ceilingOf(two) - BOOST) - 2 * (ceilingOf(one) - BOOST)) < 1e-9;
+  })(), 'measured against the hull\'s bare speed, so stacking is additive');
+
+  // It is not free. The headroom only pays while capacitor is being spent, which
+  // is exactly what a bigger reactor is for — and unpowered you are simply slower.
+  check('unpowered, a generator is still purely a cost',
+    one.speed < bare.speed, `${Math.round(one.speed)} against ${bare.speed} with the reactor idle`);
+  check('and the ceiling pays nothing without power routed',
+    boostOf({ to: null, thrusters: 0, weapons: 0, shields: 0, charge: 99 }, 'thrusters', one) === 1,
+    'a ceiling is a ceiling, not a bonus');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — reactor'}\n`);

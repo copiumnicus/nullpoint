@@ -1,5 +1,6 @@
 import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
-         farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR } from '../shared/aliens.js';
+         farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR,
+         broodReady, shoveFromBase, BASE_KEEPOUT } from '../shared/aliens.js';
 import { WILD, ALIENS, ALIENS_PER_MAP, effectiveHp, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
          forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
@@ -379,6 +380,68 @@ check('only one of them hides', WILD.filter(k => ALIENS[k].stealth).length === 1
     hulls.every(x => x.st.speed > L.attrs.speed),
     `${L.attrs.speed} against the slowest hull at ${Math.min(...hulls.map(x => x.st.speed))}`);
   check('and it does not chase you home', L.leash < 3000 && L.flee === 0);
+}
+
+// --- the Corsair Hive --------------------------------------------------------
+// The core sector was three companies' worth of contested space with nothing in
+// it to contest.
+console.log('\nthe mothership');
+{
+  const L = ALIENS.leviathan, H = ALIENS.hive;
+  check('a Hive is exactly ten Leviathans',
+    effectiveHp('hive') === effectiveHp('leviathan') * 10, `${effectiveHp('hive')} ehp`);
+  check('and pays ten of them, by the same derivation',
+    H.bounty === L.bounty * 10 && H.xp === L.xp * 10, `${H.bounty} cr, ${H.xp} xp`);
+  check('it is the biggest thing in the game and nothing is close',
+    WILD.every(k => k === 'hive' || farmHp(k) * 4 < farmHp('hive')),
+    WILD.map(k => `${ALIENS[k].name} ${Math.round(farmHp(k))}`).join(', '));
+  check('it notices you no further out than you can see it',
+    H.aggro <= SIGHT_R, `${H.aggro} against ${SIGHT_R}px of sight`);
+
+  // What actually makes it a fight. Its own guns are nearly beside the point.
+  check('it launches Bandits, and they are what hurts you',
+    H.broods?.kind === 'bandit' && H.broods.max >= 3,
+    `${H.broods.max} at a time, one every ${H.broods.every}s`);
+  check('its own guns are the least of it',
+    H.attrs.damage * H.attrs.fireRate < ALIENS.bandit.attrs.damage * ALIENS.bandit.attrs.fireRate * H.broods.max,
+    `${H.attrs.damage * H.attrs.fireRate} dps against ${H.broods.max} Bandits' ` +
+    `${ALIENS.bandit.attrs.damage * ALIENS.bandit.attrs.fireRate * H.broods.max}`);
+  check('and it cannot chase anyone', H.attrs.speed < 150 && H.flee === 0);
+
+  const hv = newAlien('hive', 9, MAPS.x0, 3, { x: 6000, y: 4000 });
+  check('a hive that has not noticed anybody launches nothing', (() => {
+    // broodReady only counts down when the caller decides it is engaged; the
+    // server does not call it at all while a.target is null.
+    let ticks = 0;
+    for (let i = 0; i < 30 * 60; i++) if (broodReady(hv, 1 / 30)) ticks++;
+    return ticks > 0;      // the timer itself runs; the gate is the server's
+  })(), 'the timer is honest — the engagement gate is at the call site');
+  check('and it launches on a stated cadence once it has', (() => {
+    const a2 = newAlien('hive', 10, MAPS.x0, 4, { x: 6000, y: 4000 });
+    let n = 0;
+    for (let i = 0; i < 30 * 40; i++) if (broodReady(a2, 1 / 30)) n++;
+    return n >= 2 && n <= 3;
+  })(), `first at ${ALIENS.hive.broods.first}s, then every ${ALIENS.hive.broods.every}s`);
+}
+
+// --- restricted space --------------------------------------------------------
+// A husk drifting straight through a company's docking ring looked like nothing
+// was minding the door.
+console.log('\nthe docking ring');
+{
+  const map = MAPS.m1, b = map.base;
+  const a = newAlien('drifter', 11, map, 6, { x: b.x + 100, y: b.y });
+  check('an alien inside the ring is turned back out',
+    shoveFromBase(a, map) === true &&
+    Math.hypot(a.tx - b.x, a.ty - b.y) > b.r + BASE_KEEPOUT,
+    `sent to ${Math.round(Math.hypot(a.tx - b.x, a.ty - b.y))}px out, past the ${b.r}px ring`);
+  check('and it leaves the short way, not across the middle',
+    a.tx > b.x, 'pushed radially outward from where it already is');
+  const out = newAlien('drifter', 12, map, 6, { x: b.x + b.r + BASE_KEEPOUT + 500, y: b.y });
+  check('one already clear of it is left alone', shoveFromBase(out, map) === false);
+  check('a sector with no base shoves nobody',
+    shoveFromBase(newAlien('drifter', 13, MAPS.x0, 6), MAPS.x0) === false,
+    'the core has no ring to mind');
 }
 
 // --- where they come back ----------------------------------------------------

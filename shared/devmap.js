@@ -60,16 +60,28 @@ const KINDS = Object.keys(ALIENS);
 // The range is also closer to the dock than it was: the line grows with the
 // roster, and it has to stay somewhere you can walk to in a starter hull.
 const PEN_GAP = Math.max(...Object.values(ALIENS).map(a => a.aggro ?? 0)) + 60;
-const PEN_X   = 1150;
-export const PEN_SLOTS = KINDS.map((kind, i) => ({
-  kind, id: 2e6 + i,
-  x: CX + PEN_X,
-  y: CY + (i - (KINDS.length - 1) / 2) * PEN_GAP,   // strung symmetrically about the dock
-}));
+const PEN_X    = 700;
+// Two columns, not one. A single line grew by a full aggro radius with every
+// hostile added, and walked itself out past the "one short burn" the whole room
+// is supposed to fit inside — the Leviathan pushed it to 6.4s and the Hive would
+// have pushed it further. A grid grows at half the rate in the direction that
+// costs, and stays inside the bound to ten hostiles.
+const PEN_COLS = 2;
+const PEN_ROWS = Math.ceil(KINDS.length / PEN_COLS);
+export const PEN_SLOTS = KINDS.map((kind, i) => {
+  const col = i % PEN_COLS, row2 = Math.floor(i / PEN_COLS);
+  return {
+    kind, id: 2e6 + i,
+    x: CX + PEN_X + col * PEN_GAP,
+    y: CY + (row2 - (PEN_ROWS - 1) / 2) * PEN_GAP,  // strung symmetrically about the dock
+  };
+});
 const PEN_PAD = 260;
 export const PEN = {
-  x: CX + PEN_X - 550, y: Math.min(...PEN_SLOTS.map(s => s.y)) - PEN_PAD,
-  w: 1100,            h: (KINDS.length - 1) * PEN_GAP + PEN_PAD * 2,
+  x: Math.min(...PEN_SLOTS.map(s => s.x)) - PEN_PAD,
+  y: Math.min(...PEN_SLOTS.map(s => s.y)) - PEN_PAD,
+  w: (PEN_COLS - 1) * PEN_GAP + PEN_PAD * 2,
+  h: (PEN_ROWS - 1) * PEN_GAP + PEN_PAD * 2,
 };
 
 // The dock labels itself, so it is not in here.

@@ -115,6 +115,38 @@ export const ALIENS = {
     xp: 14000,        // likewise 10 x 1400
   },
 
+  // Ten Leviathans, and the reason there is anything at Nullpoint.
+  //
+  // The core sector sat empty: three companies' worth of contested space with
+  // nothing in it to contest. This is what is there. 650000 ehp by the same chain
+  // that made every other number in this file — ten times the thing one rung
+  // down — which puts the bounty at 455000 and the experience at 140000.
+  //
+  // On its own it would only be a very long Leviathan. What makes it a fight is
+  // that it launches Bandits: it is their mothership, and the raiders you have
+  // been hunting at the frontier come from here. They arrive four at a time,
+  // every eighteen seconds, and only once it has noticed you — a hive nobody has
+  // found does not quietly fill the sector with raiders. So the fight is never
+  // about the hull in front of you: it is about whether your party can keep
+  // killing escorts and still put damage into something with 650000 hit points.
+  //
+  // Its own guns are almost beside the point. 110 dps and it can barely move,
+  // which is deliberate: everything dangerous about it is something else.
+  hive: {
+    name: 'Corsair Hive', cls: 'Mothership', r: 70, colour: '#e04fa0', shape: 'hive',
+    attrs: { hull: 450000, shield: 200000, shieldRegen: 1200, shieldDelay: 4,
+             speed: 110, accel: 180, signature: 10,
+             damage: 220, fireRate: 0.5, weaponRange: 1100 },
+    broods: { kind: 'bandit', every: 18, first: 4, max: 4 },
+    aggro: 540,       // still inside SIGHT_R, so you see it before it decides
+    leash: 2600,
+    patience: 5.0,
+    flee: 0,
+    respawn: 300,     // five minutes. It is the only one, and it should be an event
+    bounty: 455000,   // 650000 ehp at BOUNTY_RATE, and 10 x the Leviathan's 45500
+    xp: 140000,
+  },
+
   // A raider that you mostly cannot see. Its signature is shaped rather than
   // sized: nose-on it returns almost nothing, from the beam it comes and goes,
   // and from behind it is just a ship. The catch is that a Bandit engaging you
@@ -215,6 +247,12 @@ export const SHAPES = {
   // in the game has spikes.
   crown: R => Array.from({ length: 16 }, (_, i) => {
     const a = (i / 16) * Math.PI * 2, rr = R * (i % 2 ? 0.62 : 1.2);
+    return [Math.cos(a) * rr, Math.sin(a) * rr];
+  }),
+  // A knobbly disc: twelve shallow lobes, no nose and no spikes. It reads as a
+  // structure rather than a ship, which is what it is.
+  hive: R => Array.from({ length: 24 }, (_, i) => {
+    const a = (i / 24) * Math.PI * 2, rr = R * (i % 2 ? 0.86 : 1.05);
     return [Math.cos(a) * rr, Math.sin(a) * rr];
   }),
 };
@@ -321,6 +359,39 @@ export function alienStats(kind) {
 // reads as the game cheating rather than as a sector repopulating. Set from the
 // starter hull's radar, so nothing ever appears out of nothing on your screen.
 export const SPAWN_CLEAR = 2400;
+
+// Escorts launch from a hull rather than from nowhere, so they arrive as
+// something the mothership did rather than as something that appeared.
+export const BROOD_R = 300;
+
+// A company's docking ring is restricted space, and a husk drifting straight
+// through it looked like nothing was minding the door. Anything not currently
+// engaged is turned back out at the edge. Anything that IS engaged is not: a
+// provoked alien has always been allowed to follow you into the ring and keep
+// firing, and that rule is older and better than this one.
+export const BASE_KEEPOUT = 320;
+export function shoveFromBase(a, map) {
+  const b = map.base;
+  if (!b) return false;
+  const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy) || 1;
+  const keep = b.r + BASE_KEEPOUT;
+  if (d >= keep) return false;
+  a.tx = b.x + (dx / d) * (keep + 240);           // out, the short way
+  a.ty = b.y + (dy / d) * (keep + 240);
+  a.dx = a.dy = null;
+  return true;
+}
+
+// Counts down only while the thing is actually engaged: a hive nobody has found
+// should not be quietly filling its sector with raiders.
+export function broodReady(a, dt) {
+  const b = a.def.broods;
+  if (!b) return false;
+  a.hatch = (a.hatch ?? b.first ?? b.every) - dt;
+  if (a.hatch > 0) return false;
+  a.hatch = b.every;
+  return true;
+}
 
 // `away` is the ships to keep clear of. Tried first with the clearance and then,
 // if the sector is too crowded to honour it, without — a hostile that refuses to
