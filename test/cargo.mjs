@@ -411,5 +411,35 @@ console.log('\nthe salvage bill');
     'dying is expensive, not ruinous');
 }
 
+// --- credits at a size a person can read --------------------------------------
+// 4120000 and 41200000 look identical at a glance and differ by ten times.
+console.log('\nreading a balance');
+{
+  const { fmtCredits } = await import('../shared/cargo.js');
+  check('millions read as millions, to two decimals',
+    fmtCredits(4120000) === '4.12M', `4120000 -> ${fmtCredits(4120000)}`);
+  check('and billions as billions', fmtCredits(1234567890) === '1.23B');
+  check('trailing zeros are dropped, because 4.00M is 4M with noise on it',
+    fmtCredits(4000000) === '4M' && fmtCredits(41200000) === '41.2M',
+    `${fmtCredits(4000000)}, ${fmtCredits(41200000)}`);
+  check('past three figures the decimals stop saying anything',
+    fmtCredits(412000) === '412k' && fmtCredits(901200) === '901k',
+    'a decimal on a six-figure number is a digit nobody reads');
+  // A price is a thing you compare against another price, and 3.40k is strictly
+  // worse for that than 3400.
+  check('small numbers stay exact, because prices get compared',
+    fmtCredits(3400) === '3400' && fmtCredits(455) === '455' && fmtCredits(9999) === '9999');
+  check('it never returns NaN, undefined or an empty string',
+    [null, undefined, NaN, 'x', {}, 0].every(v => /^[-0-9]/.test(fmtCredits(v))),
+    `garbage in gives ${fmtCredits(undefined)}`);
+  check('and it survives a negative balance', fmtCredits(-25000) === '-25k');
+  check('it never loses more than 1% of the number it is showing',
+    [455, 3400, 41200, 412000, 4120000, 6385899, 1234567890].every(n => {
+      const t = fmtCredits(n);
+      const back = parseFloat(t) * ({ k: 1e3, M: 1e6, B: 1e9 }[t.at(-1)] ?? 1);
+      return Math.abs(back - n) / n < 0.01;
+    }), 'a readable number that is wrong is not readable');
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
 process.exit(fails.length ? 1 : 0);

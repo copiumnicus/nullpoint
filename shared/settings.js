@@ -20,11 +20,14 @@ export const ACTIONS = [
     hint: 'releases the sector — your pilot and everything on it stay yours' },
 ];
 
+// Two lines of numbers, added to the panel's height like everything else in it.
+export const PERF_H = 34;
 export const PANEL_W = 440, ROW_H = 46, HEAD = 54, NOW_H = 42, SECT_H = 26,
              ACT_H = 34, FOOT = 22;
 
 export function settingsLayout(VIEW_W, VIEW_H) {
-  const h = HEAD + SECT_H + ROWS.length * ROW_H + NOW_H + SECT_H + ACTIONS.length * ACT_H + FOOT;
+  const h = HEAD + SECT_H + ROWS.length * ROW_H + NOW_H + SECT_H + 2 * PERF_H
+        + SECT_H + ACTIONS.length * ACT_H + FOOT;
   const w = Math.min(PANEL_W, VIEW_W - 40);
   const x = Math.round((VIEW_W - w) / 2), y = Math.round((VIEW_H - h) / 2);
   const panel = { x, y, w, h };
@@ -52,6 +55,17 @@ export function settingsLayout(VIEW_W, VIEW_H) {
   const skip = { x: x + w - 96, y: cy + 4, w: 76, h: 26 };
   cy += NOW_H;
 
+  // How it is running, before what you can do about it. Frame time is whether your
+  // machine is keeping up; ping is whether the distance is. Different questions,
+  // different fixes, so they get a line each rather than one "performance" number.
+  sections.push({ label: 'PERFORMANCE', y: cy + 16 });
+  cy += SECT_H;
+  const perf = [
+    { key: 'frame', label: 'Frame', r: { x, y: cy, w, h: PERF_H } },
+    { key: 'ping',  label: 'Ping',  r: { x, y: cy + PERF_H, w, h: PERF_H } },
+  ];
+  cy += 2 * PERF_H;
+
   sections.push({ label: 'SESSION', y: cy + 16 });
   cy += SECT_H;
   const actions = ACTIONS.map(a => {
@@ -60,7 +74,7 @@ export function settingsLayout(VIEW_W, VIEW_H) {
     return r;
   });
 
-  return { panel, rows, now, skip, sections, actions };
+  return { panel, rows, now, skip, sections, perf, actions };
 }
 
 // Where along a slider a click landed, 0..1.

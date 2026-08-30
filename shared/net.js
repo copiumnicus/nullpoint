@@ -61,5 +61,39 @@ export const packHit   = (o, mine) => [Math.round(o.x), Math.round(o.y), Math.ro
                                        o.sh ? 1 : 0, mine ? 1 : 0, +(1 - o.t / o.ttl).toFixed(2)];
 export const unpackHit = arr => { const o = {}; for (let i = 0; i < HIT_FIELDS.length; i++) o[HIT_FIELDS[i]] = arr[i]; return o; };
 
+// Which collections the delta codec carries, and what identifies a row in them.
+//
+// This is the seam: a stream listed here gets add / update / remove encoding for
+// free, keyed on the named field, with the field order still declared exactly
+// once above. Adding one is a line of data, not another encoder — and it is here
+// rather than in delta.js so that the order and the diffing can never be
+// declared in two places and disagree, which is the whole reason this file
+// exists.
+//
+// `wire` is the one-letter key the delta message uses. `key` is the INDEX of the
+// identifying field, resolved from the name so it cannot drift if the order is
+// ever rearranged.
+const streamOf = (wire, fields, keyName) => ({ wire, fields, key: fields.indexOf(keyName) });
+export const STREAMS = {
+  ships: streamOf('s', SHIP_FIELDS, 'id'),
+  pods:  streamOf('p', POD_FIELDS,  'id'),
+};
+
+// Deliberately NOT deltaed, and this is the measurement that says so rather than
+// an assumption: with twenty pilots fighting in one sector, bolts, hits, blasts
+// and rockets together came to 3.5 KiB/s of a 69.1 KiB/s stream — 5%. They have
+// no identity to key on, they live between 0.2s and 0.95s, and the one field
+// that changes on them (how far through their life they are) changes every
+// single tick, so a keyed diff would be paying an id and a mask to save a
+// handful of numbers that were already stale. They go whole, and are simply
+// omitted when empty, which is 44 bytes a tick back for nothing.
+export const EPHEMERAL = ['bolts', 'rockets', 'blasts', 'hits'];
+
+// Everything else in a snapshot is the viewer's own state — credits, loadout,
+// power, rank. Named keys, so this is a set difference rather than a list anyone
+// has to maintain: add a field to the snapshot and it is diffed automatically.
+const NOT_BAG = new Set(['t', ...Object.keys(STREAMS), ...EPHEMERAL]);
+export const bagKeys = msg => Object.keys(msg).filter(k => !NOT_BAG.has(k));
+
 export const packShip   = o   => SHIP_FIELDS.map(f => o[f]);
 export const unpackShip = arr => { const o = {}; for (let i = 0; i < SHIP_FIELDS.length; i++) o[SHIP_FIELDS[i]] = arr[i]; return o; };

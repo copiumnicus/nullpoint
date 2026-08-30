@@ -2,10 +2,28 @@
 // file so the two can never drift. Pure, deterministic, no I/O, no wall-clock.
 
 import { MAP_W, MAP_H, PORTAL_R } from './maps.js';
-import { resolve, radiusOf, gunsOf, DEFAULT_HULL } from './ships.js';
+import { resolve, radiusOf, gunsOf, DEFAULT_HULL, HULLS } from './ships.js';
 import { DEFAULT_FORMATION } from './formation.js';
 import { emptyFit } from './gear.js';
 import { newPower, stepPower, boostOf, levelOf, BOOST } from './power.js';
+import { swellOf, dragOf, reachOf, cloakOf } from './ability.js';
+
+// An ability belongs to the hull, so everything that asks about one starts here.
+export const hullOf = s => HULLS[s?.hull];
+// Effective speed, reach and cloak: the hull's ability applied to the resolved
+// stat. Anything that moves, shoots or is looked at goes through these rather
+// than reading stats directly, or an ability would work in one place and not
+// another — which is the drift shared/ exists to prevent.
+export const speedOf = s => s.stats.speed * dragOf(hullOf(s), s.power, s.stats);
+export const rangeOf = s => s.stats.weaponRange * reachOf(hullOf(s), s.power, s.stats);
+export const veilOf  = s => cloakOf(hullOf(s), s.power, s.stats, s.sinceShot ?? 1e9);
+
+// How often the world moves. Both sides need this and both had their own copy —
+// server.js as a local const, the client as a bare `1000 / 30` in its flush loop —
+// and the performance readout needs it too, to say whether a frame or a round trip
+// is fast relative to the only clock that matters.
+export const TICK_HZ = 30;
+export const TICK_MS = 1000 / TICK_HZ;
 
 // The charted zone is 0..MAP_W / 0..MAP_H — exactly what the minimap draws. Space
 // keeps going past it, but only the lattice of navigation beacons inside that
@@ -44,7 +62,7 @@ export const SHIELD_FLASH = 0.45; // s   how long an impact bubble stays lit
 export function newBody(x, y, stats, r) {
   return {
     x, y, vx: 0, vy: 0, heading: 0, stats, r,
-    power: newPower(stats.capacitor), shieldMult: 1, guns: 1, muzzle: 0,
+    power: newPower(stats.capacitor), shieldMult: 1, guns: 1, muzzle: 0, sinceShot: 1e9,
     hp: stats.hull, shield: stats.shield, sinceHit: 1e9, shieldHit: 0,
     cool: 0, shotFlash: 0, volley: 0, volleyCool: 0,
     jumpCd: 0, charge: 0, chargeTo: null,
@@ -93,7 +111,7 @@ export function step(s, dt) {
   if (s.jumpCd > 0) s.jumpCd -= dt;
   stepPower(s.power, dt, s.stats);
   const thr = boostOf(s.power, 'thrusters', s.stats);
-  const MAX = s.stats.speed * thr, ACC = s.stats.accel * thr;
+  const MAX = speedOf(s) * thr, ACC = s.stats.accel * thr;
 
   let wantVx = 0, wantVy = 0;
   if (s.dx !== null) {
@@ -168,13 +186,17 @@ export const DOCK_INTERRUPT   = 4.0;  // s of quiet before the dock will work on
 
 export function stepVitals(s, dt, docked = false) {
   s.sinceHit += dt;
+  s.sinceShot = (s.sinceShot ?? 1e9) + dt;   // a veil rebuilds from this
   if (s.shieldHit > 0) s.shieldHit = Math.max(0, s.shieldHit - dt);
   // Repair only runs while nothing is shooting you. Otherwise a provoked alien
   // could follow you into the ring and the dock would simply out-heal it, which
   // would make running home a free escape and the chase pointless.
   // Powering shields multiplies the POOL, charge included: 100 of 800 becomes 130
   // of 1040, and losing the power scales it back down the same way.
-  const m = boostOf(s.power, 'shields', s.stats);
+  // Powered shields, and then whatever the hull's own ability does to the pool on
+  // top — an Anchored Bulwark is four times its own shield, not four times the
+  // base, so routing to shields as well still means something.
+  const m = boostOf(s.power, 'shields', s.stats) * swellOf(hullOf(s), s.power, s.stats);
   if (Math.abs(m - (s.shieldMult ?? 1)) > 1e-9) {
     s.shield *= m / (s.shieldMult ?? 1);
     s.shieldMult = m;

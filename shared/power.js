@@ -9,13 +9,22 @@
 // The build-up is quadratic so committing costs a couple of seconds before it
 // pays — a decision made ahead of a fight rather than a button mashed during one.
 
-export const SYSTEMS = ['thrusters', 'weapons', 'shields'];
+// The fourth is the hull's own — what it routes to depends on which ship you are
+// flying, and the Hauler has nothing to route there. It lives in the same list so
+// it spools, draws and browns out exactly like the other three; see ability.js.
+export const SYSTEMS = ['thrusters', 'weapons', 'shields', 'special'];
 export const BOOST    = 0.30;    // what a fully powered system is worth
 export const SPOOL_UP = 3.0;     // s from cold to full
 export const SPOOL_DN = 1.5;     // s to bleed back off
 
+// Built from SYSTEMS rather than listed by hand. Listing them was fine for three
+// and wrong the moment there were four: adding 'special' left it uninitialised,
+// stepPower summed undefined into the draw, and every capacitor in the game went
+// NaN on the first tick. A reactor that has to be told twice which systems exist
+// will be told wrong eventually.
 export const newPower = capacitor => ({
-  to: null, thrusters: 0, weapons: 0, shields: 0, charge: capacitor ?? 45,
+  to: null, charge: capacitor ?? 45,
+  ...Object.fromEntries(SYSTEMS.map(s => [s, 0])),
 });
 
 export const routeTo = (p, sys) => {

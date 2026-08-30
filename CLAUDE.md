@@ -51,6 +51,16 @@ pack/unpack. It exists because a hand-maintained positional tuple reached eleven
 fields and the last two ended up transposed — the client read visibility as an
 impact flash.
 
+`shared/delta.js` sits on top of it and is what actually goes out at 30Hz: the
+server sends one keyframe (`t:'s'`, the whole snapshot, unchanged) and then
+per-tick deltas (`t:'d'`). It is generic over any keyed collection listed in
+`STREAMS` in `net.js`, so a new stream is a line of data there rather than an
+encoder. **The baseline is per connection**, because radar means two pilots in
+one sector are legitimately sent different worlds. Decoding a delta returns a
+`t:'s'`, so the client has exactly one snapshot reader and the two shapes cannot
+drift apart. `test/wire-live.mjs` measures the whole thing against a real server
+— it can still produce the old numbers by asking for a keyframe every tick.
+
 `public/audio.js` is the deliberate exception: it depends on **nothing** and
 takes its rules as arguments (`setPicker`, `setLeveller`, `startMusic(sort)`).
 It is synthesis and playback; what the moods mean lives in `shared/music.js`

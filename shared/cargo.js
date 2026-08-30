@@ -144,6 +144,29 @@ export const tollOn = credits => Math.floor(Math.max(0, credits) * DEATH_TOLL);
 
 export const CURRENCY = { name: 'credits', short: 'cr' };
 
+// Credits, at a size a person can read.
+//
+// A seven-figure balance printed in full is a number you have to count digits on:
+// 4120000 and 41200000 look identical at a glance and differ by an order of
+// magnitude. The rule is about three or four significant figures and a suffix,
+// which is how anybody says these out loud anyway — "four point one two million".
+//
+// Small numbers stay exact, because a price of 3400 is a price you compare
+// against another price, and 3.40k is strictly worse for that.
+export function fmtCredits(n) {
+  const v = Math.round(Number(n) || 0);
+  const a = Math.abs(v), sign = v < 0 ? '-' : '';
+  // Two decimals, then trailing zeros dropped: 4.12M keeps both because both say
+  // something, 4.00M is just "4M" with noise on the end. Past three figures the
+  // decimals stop carrying information at all, so 412k rather than 412.00k.
+  const trim = t => t.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  const cut = (d, unit) => sign + trim((a / d).toFixed(a / d >= 100 ? 0 : 2)) + unit;
+  if (a >= 1e9) return cut(1e9, 'B');
+  if (a >= 1e6) return cut(1e6, 'M');
+  if (a >= 1e4) return cut(1e3, 'k');
+  return String(v);
+}
+
 // rand must be the caller's seeded generator, so drops stay reproducible.
 export function rollDrop(kind, rand) {
   const table = DROPS[kind];

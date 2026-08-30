@@ -4,7 +4,7 @@
 // what it is doing, then travels — so holding a straight line gets you hit, and
 // changing course mid-flight is a real dodge rather than a stat check.
 
-import { applyDamage, SHOT_FLASH } from './sim.js';
+import { applyDamage, SHOT_FLASH, rangeOf } from './sim.js';
 import { boostOf } from './power.js';
 import { droneAt } from './formation.js';
 import { EQUIPMENT } from './gear.js';
@@ -60,7 +60,7 @@ export function fire(a, b, dt, mag = null) {
   const guns = Math.max(1, a.guns ?? 1);
   const dry = mag ? mag.n <= 0 : false;
   const live = !dry && b && b.hp > 0 && a.hp > 0 &&
-               Math.hypot(b.x - a.x, b.y - a.y) <= a.stats.weaponRange;
+               Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a);
 
   if (a.volley > 0) {                              // mid-stream
     if (!live) { a.volley = 0; return []; }        // target gone or out of reach: hold fire
@@ -80,6 +80,7 @@ export function fire(a, b, dt, mag = null) {
   if (mag) mag.n -= salvo;
   a.volleyCool = (1 / a.stats.fireRate) / stepsOf(guns);
   a.shotFlash = SHOT_FLASH;
+  a.sinceShot = 0;                                 // and there goes the veil
 
   const each = (a.stats.damage * boostOf(a.power, 'weapons', a.stats) * (mag?.mult ?? 1)) / guns;
   const mounts = hardpoints(a);

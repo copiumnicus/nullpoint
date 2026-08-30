@@ -23,6 +23,7 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './shared/net.js';
+import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
 import { splitKill, shareOut } from './shared/reward.js';
@@ -132,6 +133,17 @@ const ADMIN_TOKENS = new Set((process.env.ADMIN_TOKENS ?? '').split(',').map(t =
 const isAdmin = acct => DEV_ADMIN || acct.admin === true || ADMIN_TOKENS.has(acct.token);
 
 const players = new Map();   // id -> live session
+
+// Telling a client it is somewhere else voids everything it has been told about
+// where it was, so the baseline goes with the message. Doing it here rather than
+// leaving it to the sector having changed covers the two cases where it has not:
+// dying in your own home sector, and /tp to the sector you are already in. Both
+// left the client refusing deltas for two ticks until it could ask for a
+// keyframe — a self-healing blank, but a blank.
+const sendMap = (p, extra = {}) => {
+  p.base = newBase();
+  if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: p.mapId, ...extra }));
+};
 let nextId = 1;
 
 // Accounts outlive sockets. The token in a player's browser is the whole identity;
@@ -279,7 +291,44 @@ const killAlien = (mapId, a, byId = null) => {
   a.crowd = a.threat = null; a.crowdT = a.threatT = 0;
 };
 
-const wss = new WebSocketServer({ server });
+// Snapshots compress extraordinarily well, and for one specific reason: two
+// consecutive ones are nearly the same text, and permessage-deflate keeps its
+// dictionary between messages. Context takeover is therefore left ON — turning
+// it off, which is the usual advice, throws away the whole effect.
+//
+// Measured with twenty pilots fighting in one sector, bytes counted off the
+// client's socket (test/wire-live.mjs):
+//
+//     delta, uncompressed   11.87 KiB/s per player    75.7 ms CPU/s
+//     delta + this           4.95 KiB/s per player   113.2 ms CPU/s
+//     delta + ws's defaults  4.61 KiB/s per player   169.6 ms CPU/s
+//
+// So the defaults buy 0.34 KiB/s more for half as much CPU again, and 32KB of
+// dictionary per connection per direction on top. A 4KB window at level 3 is
+// where the curve stops being worth it.
+//
+// How much it gets is not a constant, and this is worth knowing before trusting
+// a single run: across five runs of the same fight it took between 24% and 55%
+// of what the delta had left. Two snapshots being alike is what it trades on,
+// and a busier fight carries more bolts and damage numbers, which are all
+// different from each other and compress like noise.
+//
+// It does not come out of the tick. zlib runs on the libuv threadpool, and the
+// median gap between snapshots was 34.0ms with it and 34.2ms without — the tick
+// either way. What it does cost is a little tail latency: the 95th percentile
+// gap went from 42.9ms to 50.2ms, measured over a loopback where the bytes it
+// saves were free to send in the first place.
+//
+// threshold 0 because a delta is usually a few hundred bytes and ws's default of
+// 1024 would leave nearly every one of them uncompressed — which is to say, off.
+// 0, 64 and 256 were all measured and came out the same to within noise (4.74,
+// 4.65 and 4.72 KiB/s in that fight), so it is set to the one that needs no
+// explaining.
+const wss = new WebSocketServer({ server, perMessageDeflate: {
+  threshold: 0,
+  serverMaxWindowBits: 12, clientMaxWindowBits: 12,
+  zlibDeflateOptions: { level: 3, memLevel: 6 },
+} });
 wss.on('connection', (ws, req) => {
   const id = nextId++;
   const now = Date.now();
@@ -316,6 +365,10 @@ wss.on('connection', (ws, req) => {
   const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation, acct.rig);
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
+                    // What this connection has been told. Per connection, never per
+                    // map: radar means two pilots in the same sector see different
+                    // things, so there is no shared previous world to diff against.
+                    base: newBase(),
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
                     gear: { ...acct.gear }, hulls: [...acct.hulls], xp: acct.xp,
                     formations: [...acct.formations],
@@ -395,6 +448,14 @@ wss.on('connection', (ws, req) => {
       console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] joined (${players.size} online)`);
       return;
     }
+
+    // The client's half of the keyframe contract: it asks when it is holding a
+    // delta with nothing to apply it to. Dropping the baseline makes the very
+    // next tick a full snapshot, so there is no partial state to repair and
+    // nothing to negotiate — and no way to abuse it either, since the worst a
+    // client can do by asking every tick is receive the full snapshot this game
+    // sent every tick until now.
+    if (m.t === 'need') { if (P) P.base = newBase(); return; }
 
     if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
 
@@ -478,7 +539,7 @@ wss.on('connection', (ws, req) => {
           Object.assign(ship, { x: at.x, y: at.y, vx: 0, vy: 0, tx: null, ty: null,
                                 dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: JUMP_CD });
           touch(P);
-          ws.send(JSON.stringify({ t: 'map', map: to }));
+          sendMap(P);
           return tell(to === DEV_ID ? 'testing ground — /dev again to go back'
                                     : `back in ${MAPS[to].name}`);
         }
@@ -489,7 +550,7 @@ wss.on('connection', (ws, req) => {
           Object.assign(ship, { x: at.x, y: at.y, vx: 0, vy: 0, tx: null, ty: null,
                                 dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: JUMP_CD });
           touch(P);
-          ws.send(JSON.stringify({ t: 'map', map: a1 }));
+          sendMap(P);
           return tell(`jumped to ${MAPS[a1].name}`);
         }
         // Back to nothing, so a finished pilot can go and find out what the
@@ -527,7 +588,7 @@ wss.on('connection', (ws, req) => {
                                 dx: null, dy: null, charge: 0, chargeTo: null });
           store.save(db);
           sendWelcome();
-          ws.send(JSON.stringify({ t: 'map', map: acct.mapId }));
+          sendMap(P);
           console.log(`~ ${acct.name} reset to a new pilot`);
           return tell('reset — a starter hull, no credits, and your own dock');
         }
@@ -749,10 +810,15 @@ wss.on('connection', (ws, req) => {
                             vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
                             charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0 });
       touch(P);
-      return ws.send(JSON.stringify({ t: 'map', map: home, respawned: true }));
+      return sendMap(P, { respawned: true });
     }
     if (P.dead) return;                           // nothing else reaches a wreck
 
+    // A round trip, for the performance readout. Echoed with whatever the client
+    // stamped on it, so the client alone owns the clock — the two machines never
+    // have to agree on what time it is, only on how long the trip took.
+    if (m.t === 'ping') return void (ws.readyState === 1 &&
+      ws.send(JSON.stringify({ t: 'pong', at: m.at })));
     if (m.t === 'scoop') {                        // an order: go get that, however far it is
       const target = (pods.get(P.mapId) ?? []).find(c => c.id === +m.id);
       if (target && !mayScoop(target, id))
@@ -873,7 +939,7 @@ setInterval(() => {
           // The beacon is spent here, so the bar has to be told — touch() saves it
           // but says nothing, and the box went on reading the old count.
           if (p.ws.readyState === 1) {
-            p.ws.send(JSON.stringify({ t: 'map', map: home }));
+            sendMap(p);
             p.ws.send(JSON.stringify({ t: 'fit', hull: p.ship.hull, fit: p.ship.fit,
               drones: p.ship.drones, rig: p.ship.rig ?? null, formation: p.ship.formation,
               formations: p.formations, ammo: p.ammo, using: p.using, armed: p.armed,
@@ -927,7 +993,7 @@ setInterval(() => {
     p.want = null; p.scoop = null;
     Object.assign(p.ship, { x: a.x, y: a.y, vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, jumpCd: JUMP_CD, charge: 0, chargeTo: null });
     touch(p);
-    if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'map', map: p.mapId }));
+    sendMap(p);
   }
 
   // --- hostiles -------------------------------------------------------------
@@ -1159,11 +1225,11 @@ setInterval(() => {
     if (V.ws.readyState !== 1 || V.lobby) continue;
     V.id = vid;
     const seen = stepContacts(V, byMap.get(V.mapId) ?? [], dt);
-    const ships = [];
-    for (const [tid, vis] of seen) ships.push(packShip({ ...row.get(tid), vis }));
+    const ships = new Map();
+    for (const [tid, vis] of seen) ships.set(tid, packShip({ ...row.get(tid), vis }));
     // The gallery. Static, unshootable, and only rendered for whoever is actually
     // in the workshop — they are scenery, not simulation.
-    if (V.mapId === DEV_ID) for (const row2 of PROP_ROWS) ships.push(packShip(row2));
+    if (V.mapId === DEV_ID) for (const row2 of PROP_ROWS) ships.set(row2.id, packShip(row2));
     const reach = V.ship.stats.radar;              // you see the shooting you could see
     const shown = (bolts.get(V.mapId) ?? []).filter(b =>
       Math.hypot(b.sx - V.ship.x, b.sy - V.ship.y) <= reach ||
@@ -1178,10 +1244,11 @@ setInterval(() => {
       h.by === vid || Math.hypot(h.x - V.ship.x, h.y - V.ship.y) <= reach);
     const cans = (pods.get(V.mapId) ?? []).filter(p =>
       Math.hypot(p.x - V.ship.x, p.y - V.ship.y) <= reach);
-    V.ws.send(JSON.stringify({ t: 's', ships, bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
-      blasts: flashes.map(packBlast),
-      hits: numbers.map(h => packHit(h, h.by === vid)),
-      pods: cans.map(packPod), hold: V.hold, cap: V.ship.stats.cargo,
+    const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
+                    blasts: flashes.map(packBlast),
+                    hits: numbers.map(h => packHit(h, h.by === vid)) };
+    const streams = { ships, pods: new Map(cans.map(c => [c.id, packPod(c)])) };
+    const bag = { hold: V.hold, cap: V.ship.stats.cargo,
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
       ammo: V.ammo, using: V.using, armed: V.armed, kits: V.kits, kit: V.kit,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
@@ -1196,7 +1263,17 @@ setInterval(() => {
                  [sy, Math.round(100 * levelOf(V.ship.power, sy, V.ship.stats))])) },
       shieldNow: Math.round(V.ship.shield), shieldMax: Math.round(shieldMax(V.ship)),
       scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / (V.scoop.secs ?? SCOOP_TIME)).toFixed(2) } : undefined,
-      want: V.want ?? undefined }));
+      want: V.want ?? undefined };
+    // A keyframe when this connection has no baseline, or has one built for a
+    // sector it has since left. sendMap already drops the baseline at all six
+    // places a pilot changes sector, so the map check here is the net underneath
+    // that: a seventh place added later gets a keyframe rather than a client
+    // quietly interpolating against ships in a sector it is no longer in.
+    // Everything else is a delta against what this connection was last told.
+    const msg = needsFull(V.base, V.mapId)
+      ? encodeFull(V.base, V.mapId, streams, bag, extra)
+      : encodeDelta(V.base, streams, bag, extra);
+    V.ws.send(JSON.stringify(msg));
   }
 }, 1000 / TICK_HZ);
 

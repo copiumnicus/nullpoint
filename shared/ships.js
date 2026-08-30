@@ -55,17 +55,17 @@ export const HULLS = {
 
   // Radar deliberately runs WITH size: a big hull carries a big sensor array but
   // cannot shake anyone, a small one is a ghost that is half blind.
-  kestrel:  { slots: { weapon: 2, generator: 2, tech: 3 }, price: 18000,
+  kestrel:  { ability: 'veil', slots: { weapon: 2, generator: 2, tech: 3 }, price: 18000,
               name: 'Kestrel', cls: 'Interceptor', r: 10,
               attrs: { hull: 700, shield: 500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600,
                        radar: 2000, signature: 1.5, damage: 38, fireRate: FIRE_RATE, weaponRange: 620,
                        cargo: 30, capacitor: 45, recharge: 2.2, sustain: 0.33 } },
-  vanguard: { slots: { weapon: 3, generator: 2, tech: 2 }, price: 26000,
+  vanguard: { ability: 'lock', slots: { weapon: 3, generator: 2, tech: 2 }, price: 26000,
               name: 'Vanguard', cls: 'Fighter', r: 13,
               attrs: { hull: 1100, shield: 900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200,
                        radar: 2600, signature: 3.0, damage: 55, fireRate: FIRE_RATE, weaponRange: 700,
                        cargo: 60, capacitor: 45, recharge: 1.8, sustain: 0.33 } },
-  bulwark:  { slots: { weapon: 4, generator: 2, tech: 1 }, price: 40000,
+  bulwark:  { ability: 'anchor', slots: { weapon: 4, generator: 2, tech: 1 }, price: 40000,
               name: 'Bulwark', cls: 'Cruiser', r: 17,
               attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel: 800,
                        radar: 3400, signature: 5.5, damage: 95, fireRate: FIRE_RATE, weaponRange: 820,

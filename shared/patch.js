@@ -8,9 +8,24 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.17';
+export const VERSION = '0.20';
 
 export const PATCHES = [
+  { v: '0.20', notes: [
+    'Each hull has an ability on 4: Veil on the Kestrel, Lock on the Vanguard, Anchor on the Bulwark',
+    'All three scale with the power you route to them, and cost the same capacitor your guns want',
+    'Every ship has its own silhouette — an interceptor no longer looks like a smaller bomber',
+    'Frame time and ping in the ESC menu, so you can tell your machine from your connection',
+    'Credits read as 4.12M instead of 4120000',
+  ] },
+  { v: '0.19', notes: [
+    'The sector arrives as what changed, not all of it again — a twentieth of the traffic',
+    'Snapshots are compressed too, so a crowded fight costs a fifteenth of what it did',
+  ] },
+  { v: '0.18', notes: [
+    'Ammunition grades are x1 / x1.25 / x1.5 — a premium on your guns, not a second gun ladder',
+    'Crates are one size at every grade, so the better ammunition no longer has the smaller price',
+  ] },
   { v: '0.17', notes: [
     'Fixed a reactor exploit: generators past your speed floor were still raising the boost ceiling',
   ] },

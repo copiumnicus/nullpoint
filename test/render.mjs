@@ -10,6 +10,7 @@ import { settingsLayout } from '../shared/settings.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
+import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 import { SIGHT_R } from '../shared/sim.js';
@@ -34,27 +35,38 @@ const num = (what, ...vs) => { for (const v of vs) if (typeof v === 'number' && 
 // anything that stringified an undefined or a NaN still fails.
 const COLOUR = /^(#[0-9a-f]{6}([0-9a-f]{2})?|transparent|rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(,\s*[\d.]+\s*)?\))$/i;
 
+// Optional call recording. Off by default and costs nothing when off. It exists
+// because "the frame did not crash" is not the same claim as "the frame drew the
+// same thing": the client is fed deltas now, and the only way to say a sector
+// rebuilt from a keyframe plus deltas is the sector the server meant is to draw
+// both and compare call for call. Coordinates are rounded because the ships lerp
+// toward their true position and the last few digits are float noise, not a
+// difference anyone could see.
+let trace = null;
+const r2 = v => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
+const rec = (...a) => { if (trace) trace.push(a.map(r2).join(' ')); };
+
 const CTX = {
   _fill: '#000', _stroke: '#000', _font: '', _alpha: 1, _dash: [], _align: 'left', _lw: 1, _join: 'miter',
-  set fillStyle(v)   { guard('fillStyle', v); this._fill = v; },   get fillStyle()   { return this._fill; },
-  set strokeStyle(v) { guard('strokeStyle', v); this._stroke = v; }, get strokeStyle() { return this._stroke; },
+  set fillStyle(v)   { guard('fillStyle', v); rec('fillStyle', v); this._fill = v; },   get fillStyle()   { return this._fill; },
+  set strokeStyle(v) { guard('strokeStyle', v); rec('strokeStyle', v); this._stroke = v; }, get strokeStyle() { return this._stroke; },
   set font(v)        { guard('font', v); this._font = v; },        get font()        { return this._font; },
-  set globalAlpha(v) { num('globalAlpha', v); this._alpha = v; },  get globalAlpha() { return this._alpha; },
-  set lineWidth(v)   { num('lineWidth', v); this._lw = v; },       get lineWidth()   { return this._lw; },
+  set globalAlpha(v) { num('globalAlpha', v); rec('alpha', v); this._alpha = v; },  get globalAlpha() { return this._alpha; },
+  set lineWidth(v)   { num('lineWidth', v); rec('lineWidth', v); this._lw = v; },       get lineWidth()   { return this._lw; },
   set lineJoin(v)    { this._join = v; },                          get lineJoin()    { return this._join; },
   set textAlign(v)   { this._align = v; },                         get textAlign()   { return this._align; },
-  fillRect(...a)   { num('fillRect', ...a); },
-  strokeRect(...a) { num('strokeRect', ...a); },
-  fillText(t, x, y){ guard('fillText', t); num('fillText', x, y); },
-  strokeText(t, x, y){ guard('strokeText', t); num('strokeText', x, y); },
+  fillRect(...a)   { num('fillRect', ...a); rec('fillRect', ...a); },
+  strokeRect(...a) { num('strokeRect', ...a); rec('strokeRect', ...a); },
+  fillText(t, x, y){ guard('fillText', t); num('fillText', x, y); rec('fillText', t, x, y); },
+  strokeText(t, x, y){ guard('strokeText', t); num('strokeText', x, y); rec('strokeText', t, x, y); },
   measureText(t)   { guard('measureText', t); return { width: String(t).length * 6 }; },
-  arc(...a)        { num('arc', ...a); if (a[2] < 0) bad.push('arc negative radius'); },
-  rect(...a) { num('rect', ...a); }  , roundRect(...a) { num('roundRect', ...a); },
-  moveTo(...a) { num('moveTo', ...a); }, lineTo(...a) { num('lineTo', ...a); },
-  translate(...a) { num('translate', ...a); }, rotate(a) { num('rotate', a); },
+  arc(...a)        { num('arc', ...a); rec('arc', ...a); if (a[2] < 0) bad.push('arc negative radius'); },
+  rect(...a) { num('rect', ...a); rec('rect', ...a); }, roundRect(...a) { num('roundRect', ...a); rec('roundRect', ...a); },
+  moveTo(...a) { num('moveTo', ...a); rec('moveTo', ...a); }, lineTo(...a) { num('lineTo', ...a); rec('lineTo', ...a); },
+  translate(...a) { num('translate', ...a); rec('translate', ...a); }, rotate(a) { num('rotate', a); rec('rotate', a); },
   scale(...a) { num('scale', ...a); if (a.some(v => v === 0)) bad.push('scale by zero'); },
   setTransform(...a) { num('setTransform', ...a); },
-  beginPath() {}, closePath() {}, stroke() {}, fill() {}, save() {}, restore() {}, clip() {},
+  beginPath() {}, closePath() {}, stroke() { rec('stroke'); }, fill() { rec('fill'); }, save() {}, restore() {}, clip() {},
   setLineDash(d) { this._dash = d; },
   createLinearGradient(...a) {
     num('createLinearGradient', ...a);
@@ -1221,6 +1233,121 @@ const dismiss = () => {
     evt('keydown', { key: 'Escape' });
     performance.now = perf;
     console.log('chat: lingers briefly when closed, full history when reopened');
+  }
+
+  // --- the wire, driven end to end ------------------------------------------
+  // The client is no longer handed a whole snapshot every tick. It is handed one
+  // keyframe and then deltas, and rebuilds the snapshot itself. So the claim
+  // worth making here is not that the frames render — it is that a sector
+  // rebuilt from deltas draws EXACTLY what the same sector sent whole would have
+  // drawn, call for call. A mask bit off by one would still render perfectly; it
+  // would just render the wrong ship.
+  {
+    const perf = performance.now;
+    // Anchored to the real clock and advanced by hand. The suite runs inside a
+    // few milliseconds of wall clock, and both passes have to be handed the same
+    // clock AND the same frame timestamps or every time-driven pixel — the
+    // rotating plot ring, the notice fade — disagrees for reasons that have
+    // nothing to do with the wire.
+    const base = perf.call(performance);
+    let fakeNow = base;
+    performance.now = () => fakeNow;
+    const T = t + 5000;
+
+    const bag = { hold: { iron: 2 }, cap: 240, credits: 5000, docked: false, vault: {}, gear: {},
+                  ammo: { cell1: 900, head1: 40 }, using: { laser: 'cell1', rocket: 'head1' },
+                  armed: { laser: 1, rocket: 1 }, kits: { kit1: 1 }, kit: 'kit1',
+                  xp: 4200, rank: { level: 14, into: 0.4, need: 300 },
+                  drones: [], played: 600, online: 3,
+                  power: { to: 'weapons', cap: 70, lv: { thrusters: 33, weapons: 70, shields: 33 } },
+                  shieldNow: 240, shieldMax: 240 };
+    const row = o => packShip({ id: 0, x: 0, y: 0, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+                               hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, fix: 0, guns: 3,
+                               psys: 2, plvl: 70, lvl: 14, drones: 0, form: 0, dmask: 0, vis: 2,
+                               rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, ...o });
+    // Seven ticks of a sector, and every case the codec has to express: the pilot
+    // flies (update), an ally holds station (no change at all, so nothing on the
+    // wire), a hostile closes and then breaks contact (add, update, remove), and
+    // a pod drifts.
+    const at = n => ({
+      ships: new Map([
+        [1, row({ id: 1, x: 6000 + n * 40, y: 4000 + n * 12, heading: 0.3 })],
+        [2, row({ id: 2, x: 5200, y: 3400, hull: 'bulwark', guns: 4 })],
+        ...(n >= 2 && n <= 5
+            ? [[1e6, row({ id: 1e6, x: 6600 - n * 55, y: 4400, co: 'x', hull: 'drifter', hp: 70, sh: 30, vis: 1 })]]
+            : []),
+      ]),
+      pods: new Map([[9001, packPod({ id: 9001, x: 6100 + n * 3, y: 4100, mat: 'iron', n: 3, own: 0 })]]),
+    });
+    const play = deltas => {
+      fakeNow = base;                              // both passes see the same clock
+      feed({ t: 'map', map: 'm1' });
+      const b = newBase();
+      for (let n = 0; n <= 6; n++) {
+        feed(deltas && n > 0 ? encodeDelta(b, at(n), bag, {}) : encodeFull(b, 'm1', at(n), bag, {}));
+        fakeNow += 33; frame(T + n * 33); frames++;
+      }
+      trace = [];                                  // one settled frame, recorded
+      fakeNow += 33; frame(T + 7 * 33); frames++;
+      const out = trace; trace = null;
+      return out;
+    };
+    const whole = play(false), rebuilt = play(true);
+    const differs = whole.length !== rebuilt.length
+      ? `${whole.length} calls whole vs ${rebuilt.length} from deltas`
+      : (() => { const i = whole.findIndex((c, k) => c !== rebuilt[k]);
+                 return i < 0 ? null : `call ${i}: "${whole[i]}" vs "${rebuilt[i]}"`; })();
+    if (!whole.length) errs.push('the wire comparison recorded no draw calls at all');
+    else if (differs) errs.push(`a sector rebuilt from deltas drew differently — ${differs}`);
+    else console.log(`wire: a keyframe and 6 deltas draw the same ${whole.length} calls as 7 whole snapshots`);
+
+    // Add and remove, read back through the client's own targeting rather than
+    // anything internal: TAB engages the nearest thing on the plot, so what it
+    // sends is exactly what the client believes is out there.
+    {
+      const tab = () => { sent.length = 0; fakeNow += 500;   // clear of the double-tap window
+                          evt('keydown', { key: 'Tab' });
+                          return sent.find(m => m.t === 'target') ?? null; };
+      const b = newBase();
+      fakeNow = base;
+      feed({ t: 'map', map: 'm1' });
+      feed(encodeFull(b, 'm1', at(0), bag, {}));
+      fakeNow += 33; frame(t += 33); frames++;
+      // One throwaway press first. An earlier block in this file drives TAB on a
+      // fake clock a quarter of an hour ahead of this one, so the very next press
+      // reads as the second half of a double tap however long you wait. After one
+      // press lastTab is either zeroed or set to this clock, and either way the
+      // press after it is an honest single.
+      tab();
+      const before = tab();
+      for (let k = 0; k <= 3; k++) { feed(encodeDelta(b, at(Math.min(3, k + 1)), bag, {}));
+                                     fakeNow += 33; frame(t += 33); frames++; }
+      const during = tab();
+      for (let k = 0; k < 4; k++) { feed(encodeDelta(b, at(6), bag, {}));
+                                    fakeNow += 33; frame(t += 33); frames++; }
+      const after = tab();
+      if (before) errs.push(`a hostile that had not arrived yet was already targetable (${JSON.stringify(before)})`);
+      else if (during?.id !== 1e6) errs.push(`a hostile added by a delta could not be targeted (got ${JSON.stringify(during)})`);
+      else if (after) errs.push(`a hostile removed by a delta was still targetable (got ${JSON.stringify(after)})`);
+      else console.log('wire: a delta adds a hostile you can engage and removes one you cannot');
+    }
+
+    // A delta with nothing to apply it to must ask for a keyframe rather than
+    // draw against nothing. Over TCP this is a reconnect landing mid-tick.
+    {
+      feed({ t: 'map', map: 'm1' });               // the client drops its baseline
+      sent.length = 0;
+      const b = newBase();
+      encodeFull(b, 'm1', at(0), bag, {});         // the server's copy moves on without it
+      feed(encodeDelta(b, at(1), bag, {}));
+      fakeNow += 33; frame(t += 33); frames++;
+      if (!sent.some(m => m.t === 'need'))
+        errs.push('a delta with no keyframe behind it was applied instead of refused');
+      else console.log('wire: a delta with no keyframe behind it asks for one instead of guessing');
+      feed(encodeFull(newBase(), 'm1', at(0), bag, {}));
+      fakeNow += 33; frame(t += 33); frames++;
+    }
+    performance.now = perf;
   }
 
   // idle sign-out: the clock only advances with no input, and a click brings you back

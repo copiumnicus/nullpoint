@@ -6,6 +6,8 @@
 
 import { MAPS } from './maps.js';
 
+import { veilOf } from './sim.js';
+
 export const ALLY = 2, FRESH = 1, STALE = 0;
 
 // Friendly is blue, hostile is red, and neither is up for negotiation by company.
@@ -19,6 +21,12 @@ export const ALLY_DOT = '#4fc3f7';
 // involved. Enemies have to be found — and once found, they stay on your plot for
 // their own signature duration after leaving your radius, so a Bulwark is far
 // harder to shake than a Kestrel.
+//
+// How far away you can be FOUND is your looker's radar shortened by whatever you
+// are doing to hide. That is 1 for everything in the game except a Kestrel running
+// its Veil, so nothing else changes — but it is the hook the ability needs, and
+// putting it here means one rule decides who is on a plot rather than the client
+// deciding what to draw. An undetected ship must never reach the wire at all.
 export function stepContacts(viewer, others, dt) {
   for (const [id, left] of viewer.contacts) {
     const next = left - dt;
@@ -31,7 +39,7 @@ export function stepContacts(viewer, others, dt) {
   for (const o of others) {
     if (o.co === viewer.co) { seen.set(o.id, ALLY); continue; }
     const d = Math.hypot(o.ship.x - viewer.ship.x, o.ship.y - viewer.ship.y);
-    if (d <= range) {
+    if (d <= range * veilOf(o.ship)) {
       viewer.contacts.set(o.id, o.ship.stats.signature);   // refresh while held
       seen.set(o.id, FRESH);
     } else if (viewer.contacts.has(o.id)) {

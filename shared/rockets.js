@@ -13,7 +13,8 @@
 // drone — a drone is a gun platform, and six of them carrying swarm racks would
 // put thirty rockets in the air off one trigger.
 
-import { applyDamage } from './sim.js';
+import { applyDamage, rangeOf, hullOf } from './sim.js';
+import { lockOf } from './ability.js';
 import { boostOf } from './power.js';
 import { EQUIPMENT, MAX_LAUNCHERS } from './gear.js';
 import { hardpoints } from './combat.js';
@@ -59,13 +60,20 @@ export const ROCKET_R     = 40;     // proximity fuse, on top of the hull's radi
 // something that was never really there.
 export const SEEK_WOBBLE = 190;    // px of aim error at the faintest return
 
-export function seekerOn(rocket, target) {
+// `lock` is 0..1 from the firing ship's Lock ability and closes the gap between
+// what a seeker can actually see and a perfect return. At 1 there is no wobble and
+// no dropout; at 0.5, half of each. It cannot help with DODGING — a Bandit that
+// breaks the firing line still breaks it — only with aiming, which is the half
+// that camouflage was winning. Measured: 28% of what is fired at a Bandit lands.
+export function seekerOn(rocket, target, lock = 0) {
   if (!target?.def?.stealth) return { locked: true, wobble: 0, aspect: 1 };
   const aspect = aspectOf(target, rocket);        // from the seeker's own seat
+  const k = Math.max(0, Math.min(1, lock));
   return {
     aspect,
-    locked: shownAt(aspect, (rocket.age ?? 0) * 1000, rocket.seed ?? 0),
-    wobble: (1 - alphaAt(aspect)) * SEEK_WOBBLE,
+    locked: k >= 1 || shownAt(aspect, (rocket.age ?? 0) * 1000, rocket.seed ?? 0) ||
+            Math.random() < k,                    // a partial lock holds partly
+    wobble: (1 - alphaAt(aspect)) * SEEK_WOBBLE * (1 - k),
   };
 }
 
@@ -96,7 +104,7 @@ export function launch(a, b, dt, mag = null) {
   const rated = Math.round(a.stats?.rockets ?? 0);
   if (!rated) return [];
   const live = b && b.hp > 0 && a.hp > 0 &&
-               Math.hypot(b.x - a.x, b.y - a.y) <= a.stats.weaponRange;
+               Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a);
   if (!live || a.rocketCool > 0) return [];
   // Short of warheads it throws what it has. Each one still hits for its full
   // share: you are firing fewer rockets, not weaker ones.
@@ -124,6 +132,7 @@ export function launch(a, b, dt, mag = null) {
       x: m.x, y: m.y, heading: h,
       vx: Math.cos(h) * ROCKET_SPEED, vy: Math.sin(h) * ROCKET_SPEED,
       dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, age: 0, w: Math.round(each), gr: mag?.tier ?? 0,
+      lock: lockOf(hullOf(a), a.power, a.stats),
       seed: (a.rocketSeed = ((a.rocketSeed ?? 0) + 1) % 97) + i,   // each seeker blinks its own way
     });
   }
@@ -144,7 +153,10 @@ export function stepRockets(list, dt) {
     // only while the seeker can actually see it.
     r.age = (r.age ?? 0) + dt;
     const range = Math.hypot(tg.x - r.x, tg.y - r.y);
-    const eye = seekerOn(r, tg);
+    // The lock is stamped at launch, not read now: the seeker was calibrated when
+    // it left the rail, and a pilot cutting power mid-flight does not un-aim a
+    // rocket that has already gone.
+    const eye = seekerOn(r, tg, r.lock ?? 0);
     if (!eye.locked) {                              // lost it: fly the last bearing
       r.x += r.vx * dt;
       r.y += r.vy * dt;

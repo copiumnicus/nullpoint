@@ -4,7 +4,7 @@ import { AMMO, AMMO_KEYS, FEEDS, forWeapon, DEFAULT_AMMO, STARTING_AMMO,
 import { newShip } from '../shared/sim.js';
 import { fire } from '../shared/combat.js';
 import { launch, ROCKET_RATE } from '../shared/rockets.js';
-import { sanitiseFit } from '../shared/gear.js';
+import { sanitiseFit, EQUIPMENT } from '../shared/gear.js';
 import { slotsOf, resolve, gunsOf, FIRE_RATE } from '../shared/ships.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
 import { KITS, KIT_KEYS, whyNotRepair, KIT_QUIET, sanitiseKits } from '../shared/repair.js';
@@ -48,6 +48,23 @@ for (const f of FEEDS) {
   check(`the ${f} premium climbs with the grade, so the plain one still has a job`,
     g.every((k, i) => i === 0 || perPoint(k) > perPoint(g[i - 1])),
     'paying more per point buys real dps — it is a trade, not a free upgrade');
+  // The invariant that would have caught this ladder being wrong in BOTH
+  // directions. Damage tiers live in the emitters, which cost real money and take
+  // a slot; a grade is a premium on whatever you already bought. So the entire
+  // ammunition ladder must be worth less than a single rung of the weapon ladder.
+  // At x1/x3/x5 it was worth more than the whole weapon ladder, which is how it
+  // became a free x5 nobody would ever decline.
+  const rungs = Object.keys(EQUIPMENT)
+    .filter(k => EQUIPMENT[k].slot === 'weapon' && EQUIPMENT[k].kind !== 'rocket')
+    .sort((a, b) => (EQUIPMENT[a].tier ?? 0) - (EQUIPMENT[b].tier ?? 0));
+  const smallestRung = Math.min(...rungs.slice(1).map((k, i) =>
+    (EQUIPMENT[k].mods?.find(m => m[0] === 'damage')?.[2] ?? 1) /
+    (EQUIPMENT[rungs[i]].mods?.find(m => m[0] === 'damage')?.[2] ?? 1)));
+  const ladder = AMMO[g.at(-1)].mult / AMMO[g[0]].mult;
+  check(`the whole ${f} ammunition ladder is worth less than one rung of the gun ladder`,
+    ladder < smallestRung,
+    `ammunition spans x${ladder.toFixed(2)} against x${smallestRung.toFixed(2)} for the ` +
+    `cheapest step between emitters — a grade is a premium, not a tier`);
   check(`every ${f} grade is telling them apart by colour`,
     g.every(k => /^#[0-9a-f]{6}$/i.test(AMMO[k].colour ?? '')) &&
     new Set(g.map(k => AMMO[k].colour)).size === g.length,

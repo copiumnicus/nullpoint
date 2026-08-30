@@ -17,10 +17,12 @@ import { levelFor, progress } from '/shared/level.js';
 import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
 import { SYSTEMS, BOOST, ceilingOf } from '/shared/power.js';
+import { ABILITIES, SPECIAL } from '/shared/ability.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
+import { outlineFor, accentFor, canopyFor } from '/shared/silhouette.js';
 import { VERSION, PATCHES, patchIcon, patchPanel,
          PAD as PATCH_PAD, HEAD_H as PATCH_HEAD } from '/shared/patch.js';
 import { audioReady, setThrust, laser, rocket, explosion,
@@ -30,7 +32,8 @@ import { audioReady, setThrust, laser, rocket, explosion,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
-import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL,
+import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
+import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS, outlineOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
@@ -39,6 +42,7 @@ import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT, QUIET } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
+import { sampler, push as pushSample, frameLine, pingLine, GRADE } from '/shared/perf.js';
 import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
@@ -101,7 +105,12 @@ let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
 // rather than a second blue.
-const SYS_COLOUR = ['#ffffff', '#ff5c6b', '#5fd0ff'];   // thrusters, weapons, shields
+const SYS_COLOUR = ['#ffffff', '#ff5c6b', '#5fd0ff', '#c78fff'];   // thrusters, weapons, shields, ability
+// The fourth is whatever this hull's ability is, so it is named and coloured by
+// the hull rather than by the slot — routing to 'special' means nothing to read.
+const abilityHere = () => ABILITIES[HULLS[myHull]?.ability] ?? null;
+const sysColour = i => (i === 3 ? (abilityHere()?.colour ?? SYS_COLOUR[3]) : SYS_COLOUR[i]);
+const sysName = i => (i === 3 ? (abilityHere()?.name ?? 'NONE').toUpperCase() : SYSTEMS[i].toUpperCase());
 
 const defOf = s => s.co === 'x' ? ALIENS[s.hull] : HULLS[s.hull];
 const rOf   = s => defOf(s)?.r ?? 12;
@@ -223,9 +232,9 @@ function drawToasts(now) {
     g.fillText(t.note ?? '', x + 14, y + 35);
     g.textAlign = 'right'; g.font = '13px ui-monospace, monospace';
     g.fillStyle = earned ? '#7de08a' : '#ffd479';
-    g.fillText(`${earned ? '+' : '\u2212'}${sum} ${CURRENCY.short}`, x + TOAST_W - 12, y + 22);
+    g.fillText(`${earned ? '+' : '\u2212'}${fmtCredits(sum)} ${CURRENCY.short}`, x + TOAST_W - 12, y + 22);
     g.font = '9px ui-monospace, monospace'; g.fillStyle = '#4a5568';
-    g.fillText(`${credits} held`, x + TOAST_W - 12, y + 35);
+    g.fillText(`${fmtCredits(credits)} held`, x + TOAST_W - 12, y + 35);
     g.textAlign = 'left'; g.globalAlpha = 1;
   });
   g.font = '12px ui-monospace, monospace';
@@ -252,7 +261,7 @@ function spaceAction() {
   }
   if (mats.length && inOutpost(MAPS[mapId], { x: me2.x, y: me2.y })) {
     const n = mats.reduce((t, mt) => t + hold[mt], 0);
-    return { kind: 'fence', label: `sell ${n} of ore to the outpost for ${pirateValue(hold)} ${CURRENCY.short}` };
+    return { kind: 'fence', label: `sell ${n} of ore to the outpost for ${fmtCredits(pirateValue(hold))} ${CURRENCY.short}` };
   }
   return { kind: 'none' };
 }
@@ -271,8 +280,20 @@ const ws = new WebSocket(`${WS_PROTO}//${location.host}/?t=${encodeURIComponent(
 const send = o => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
 ws.onopen  = () => status = 'online';
 ws.onclose = () => status = 'disconnected';
+// What the server last told us, so a delta has something to be relative to.
+// Everything below this line still reads a whole snapshot: a delta is turned
+// back into one before it reaches any of it, so there is exactly one snapshot
+// reader and a delta cannot drift from a keyframe by growing a second.
+const wire = newBase();
 ws.onmessage = e => {
-  const m = JSON.parse(e.data);
+  let m = JSON.parse(e.data);
+  if (m.t === 'd') {
+    // A delta with no baseline is unusable. Ask for a keyframe and drop it —
+    // over TCP this only happens on a reconnect that lands mid-tick, but a
+    // client quietly applying updates to nothing is a black screen.
+    if (!wire.ready) { send({ t: 'need' }); return; }
+    m = decodeDelta(wire, m);
+  } else if (m.t === 's') absorbFull(wire, m);
   if (m.t === 'welcome') {
     myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? {}; myHulls = m.hulls ?? [myHull]; credits = m.credits ?? 0;
@@ -337,17 +358,24 @@ ws.onmessage = e => {
     // fight is whether their help cost you or paid you.
     const split = m.with ? ` — shared ${m.with + 1} ways on ${Math.round(m.share * 100)}% of the damage` : '';
     say(m.promoted
-        ? `${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short} — and promotes you to level ${m.level}${split}`
-        : `${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short}` +
+        ? `${COMPANIES[myCo].tag} awards you ${fmtCredits(m.amount)} ${CURRENCY.short} — and promotes you to level ${m.level}${split}`
+        : `${COMPANIES[myCo].tag} awards you ${fmtCredits(m.amount)} ${CURRENCY.short}` +
           (m.xp ? ` and ${m.xp} XP` : '') + ` for a ${m.what}${split}`,
         m.promoted ? '#7de08a' : '#ffd479');
     return;
   }
+  // The server echoes whatever we stamped, so the round trip is measured on one
+  // clock and the two machines never have to agree what time it is.
+  if (m.t === 'pong') { pushSample(pingSamples, performance.now() - (m.at ?? 0)); return; }
   if (m.t === 'dead')    { dead = { lost: m.lost ?? {}, toll: m.toll ?? 0, at: performance.now() };
                            if (m.toll) credits = Math.max(0, credits - m.toll);
                            return; }
   if (m.t === 'map') {
     mapId = m.map; ships.clear(); prevShot.clear(); marker = null; prevSelf = null;
+    // The sector changed, so everything the baseline holds is about somewhere
+    // else. The server sends a keyframe on the first tick after a jump for the
+    // same reason; this is the client refusing to apply anything until it lands.
+    wire.ready = false;
     if (m.respawned) dead = null;
     return;
   }
@@ -515,7 +543,14 @@ addEventListener('keydown', e => {
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
   if (k === 'h') { if (picking) { picking = null; return; }        // back out of the chooser first
                    bayOpen = !bayOpen; sysOpen = false; invOpen = false; }
+  // 4 is the hull's own system. The Hauler has none, so the key says so rather
+  // than silently doing nothing — a dead key reads as a bug.
   if (k === '1' || k === '2' || k === '3') send({ t: 'power', sys: SYSTEMS[+k - 1] });
+  if (k === '4') {
+    const ab = ABILITIES[HULLS[myHull]?.ability];
+    if (ab) send({ t: 'power', sys: SPECIAL });
+    else say('A Hauler has no system to route there', '#66748c');
+  }
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
   if (k === 'o') { setOpen = !setOpen; sysOpen = bayOpen = invOpen = false; }
   if (k === 'n') { nextTrack(); }
@@ -941,32 +976,32 @@ function bayClick(v) {
     if (it.kind === 'hull') {
       if (it.owned) return it.k === myHull ? undefined : send({ t: 'hull', key: it.k });
       return credits >= HULLS[it.k].price ? send({ t: 'buyhull', key: it.k })
-        : say(`A ${HULLS[it.k].name} costs ${HULLS[it.k].price} ${CURRENCY.short}`, '#e0a53f');
+        : say(`A ${HULLS[it.k].name} costs ${fmtCredits(HULLS[it.k].price)} ${CURRENCY.short}`, '#e0a53f');
     }
     if (it.kind === 'form') {
       if (it.owned) return it.k === myForm ? undefined : send({ t: 'formation', key: it.k });
       return credits >= FORMATIONS[it.k].price ? send({ t: 'buyformation', key: it.k })
-        : say(`${FORMATIONS[it.k].name} costs ${FORMATIONS[it.k].price} ${CURRENCY.short}`, '#e0a53f');
+        : say(`${FORMATIONS[it.k].name} costs ${fmtCredits(FORMATIONS[it.k].price)} ${CURRENCY.short}`, '#e0a53f');
     }
     if (it.kind === 'drone') {
       const cost = dronePrice(myDrones.length);
       return credits >= cost ? send({ t: 'buydrone' })
-        : say(`A drone costs ${cost} ${CURRENCY.short}`, '#e0a53f');
+        : say(`A drone costs ${fmtCredits(cost)} ${CURRENCY.short}`, '#e0a53f');
     }
     if (it.kind === 'ammo') {
       const a = AMMO[it.k];
       return credits >= a.price ? send({ t: 'buyammo', key: it.k, n: 1 })
-        : say(`A crate of ${a.name} costs ${a.price} ${CURRENCY.short}`, '#e0a53f');
+        : say(`A crate of ${a.name} costs ${fmtCredits(a.price)} ${CURRENCY.short}`, '#e0a53f');
     }
     if (it.kind === 'kit') {
       const k = KITS[it.k];
       return credits >= k.price ? send({ t: 'buykit', key: it.k })
-        : say(`A ${k.name} costs ${k.price} ${CURRENCY.short}`, '#e0a53f');
+        : say(`A ${k.name} costs ${fmtCredits(k.price)} ${CURRENCY.short}`, '#e0a53f');
     }
     if (it.kind === 'device') {
       const d = DEVICES[it.k];
       return credits >= d.price ? send({ t: 'buydevice', key: it.k })
-        : say(`A ${d.name} costs ${d.price} ${CURRENCY.short}`, '#e0a53f');
+        : say(`A ${d.name} costs ${fmtCredits(d.price)} ${CURRENCY.short}`, '#e0a53f');
     }
     return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
       : say(`Not enough credits for a ${EQUIPMENT[it.k].name}`, '#e0a53f');
@@ -1012,7 +1047,7 @@ function drawTip(tip, at) {
   g.textAlign = 'left'; g.fillStyle = '#cfe4ff'; g.font = '12px ui-monospace, monospace';
   g.fillText(tip.title, x + 10, ty);
   if (tip.price) { g.textAlign = 'right'; g.fillStyle = credits >= tip.price ? '#ffd479' : '#7a6a45';
-                   g.fillText(`${tip.price} ${CURRENCY.short}`, x + w - 10, ty); g.textAlign = 'left'; }
+                   g.fillText(`${fmtCredits(tip.price)} ${CURRENCY.short}`, x + w - 10, ty); g.textAlign = 'left'; }
   ty += 14;
   g.font = '10px ui-monospace, monospace'; g.fillStyle = '#66748c';
   g.fillText(tip.sub ?? '', x + 10, ty); ty += tip.blurb ? 15 : 6;
@@ -1062,7 +1097,7 @@ function drawBay() {
     g.fillText(t.name, t.r.x + t.r.w / 2, t.r.y + t.r.h / 2 + 4);
   }
   g.textAlign = 'right'; g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffd479';
-  g.fillText(`${credits} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
+  g.fillText(`${fmtCredits(credits)} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = home ? '#66748c' : '#e0a53f';
   g.fillText(home ? 'docked — every change takes effect at once'
@@ -1276,7 +1311,7 @@ function drawBay() {
                     g.fillText((it.kind === 'hull' ? it.k === myHull : it.k === myForm) ? 'FLYING' : 'owned — fly it',
                                r.x + r.w - 12, r.y + 20); }
     else { g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
-           g.fillText(`${price} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
+           g.fillText(`${fmtCredits(price)} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
     const stock = it.kind === 'item' ? (myGear[it.k] ?? 0)
                 : it.kind === 'ammo' ? (myAmmo[it.k] ?? 0)
                 : it.kind === 'kit' ? (myKits[it.k] ?? 0)
@@ -1353,14 +1388,14 @@ function drawInventory() {
   g.font = '15px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
   g.fillText('INVENTORY', P.x + 20, P.y + 32);
   g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffd479'; g.textAlign = 'right';
-  g.fillText(`${credits} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
+  g.fillText(`${fmtCredits(credits)} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = atDock ? '#66748c' : '#e0a53f';
   g.fillText(atDock ? 'docked — click a stack to move it the other way'
                     : 'you can look, but transfers happen at your home base', P.x + 20, P.y + 52);
 
   g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
-  g.fillText(`SHIP HOLD   ${vol}/${cargoCap}` + (vol ? `   ${holdValue(hold)} ${CURRENCY.short}` : '') +
+  g.fillText(`SHIP HOLD   ${vol}/${cargoCap}` + (vol ? `   ${fmtCredits(holdValue(hold))} ${CURRENCY.short}` : '') +
              (atDock ? '   → click to stow' : ''), P.x + 20, G.top - 12);
   g.fillText('COMPANY HANGAR   unlimited' + (atDock ? '   → left half loads, right half sells' : ''),
              P.x + 40 + G.colW, G.top - 12);
@@ -1375,7 +1410,7 @@ function drawInventory() {
     g.fillStyle = 'rgba(255,212,121,0.10)';
     g.fillRect(r.x + r.w * 0.62, r.y + 1, r.w * 0.38 - 1, r.h - 2);
     g.fillStyle = '#ffd479'; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
-    g.fillText(`SELL ${vault[mat] * M.value} ${CURRENCY.short}`, r.x + r.w * 0.81, r.y + r.h / 2 + 4);
+    g.fillText(`SELL ${fmtCredits(vault[mat] * M.value)} ${CURRENCY.short}`, r.x + r.w * 0.81, r.y + r.h / 2 + 4);
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
@@ -1652,6 +1687,20 @@ function drawSettings() {
     const tw = g.measureText(sec.label).width;
     g.strokeStyle = 'rgba(61,71,87,0.45)'; g.lineWidth = 1;
     g.beginPath(); g.moveTo(P.x + 28 + tw, sec.y - 4); g.lineTo(P.x + P.w - 20, sec.y - 4); g.stroke();
+  }
+
+  // Frame time and ping. Two lines because they are two questions: one is whether
+  // this machine is keeping up, the other whether the distance is, and the fix for
+  // one is not the fix for the other. Coloured against the server tick, so "good"
+  // means good relative to the only clock the game actually runs on.
+  for (const row of (L.perf ?? [])) {
+    const line = row.key === 'frame' ? frameLine(frameSamples) : pingLine(pingSamples);
+    g.font = '12px ui-monospace, monospace'; g.fillStyle = '#8ea3bd';
+    g.fillText(row.label, row.r.x + 20, row.r.y + 21);
+    g.textAlign = 'right';
+    g.fillStyle = GRADE[line.grade] ?? '#66748c';
+    g.fillText(line.text, row.r.x + row.r.w - 22, row.r.y + 21);
+    g.textAlign = 'left';
   }
 
   for (const row of L.rows) {
@@ -2069,7 +2118,15 @@ function drawBar() {
 
 // --- render -------------------------------------------------------------------
 let renderFailed = false;
+// How long a frame took, and how long the server takes to answer. Sampled always
+// rather than only while the menu is open: a readout that starts measuring when
+// you look at it can only ever show you the frames you spent opening a menu.
+const frameSamples = sampler(), pingSamples = sampler();
+let lastPingAt = 0;
+const PING_EVERY = 1000;                            // once a second is plenty for a median
+
 requestAnimationFrame(function frame(now) {
+  if (now - lastPingAt > PING_EVERY) { lastPingAt = now; send({ t: 'ping', at: now }); }
   try { drawFrame(now); } catch (err) {
     if (!renderFailed) { renderFailed = true; console.error('render error (loop kept alive):', err); }
   }
@@ -2082,6 +2139,9 @@ function drawFrame(now) {
 
   // Thruster tracks how fast you are actually going, measured off the smoothed
   // render position — the server never sends velocity and does not need to.
+  // Sampled here, off the delta the renderer already computes — timing the frame
+  // in two places is two answers waiting to disagree.
+  if (lastFrameAt) pushSample(frameSamples, now - lastFrameAt);
   const frameDt = Math.min(0.1, (now - lastFrameAt) / 1000) || 0.016;
   lastFrameAt = now;
   if (me) {
@@ -2414,10 +2474,23 @@ function drawFrame(now) {
       g.closePath(); g.fill();
       g.strokeStyle = '#1b0d28'; g.lineWidth = 1.5; g.stroke();
     } else {
-      g.fillStyle = colOf(s);
-      g.fillRect(-R, -R, R * 2, R * 2);
-      if (id === myId) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.strokeRect(-R, -R, R * 2, R * 2); }
-      g.fillStyle = '#05070b'; g.fillRect(R - 6, -2, 6, 4);
+      // Each hull is its own silhouette. They were all the same square at three
+      // sizes, so the fleet read as one ship you could buy larger — an interceptor
+      // and a bomber should not need a label to tell apart.
+      const path = () => {
+        g.beginPath();
+        outlineFor(s.hull, R).forEach(([px, py], i) => i ? g.lineTo(px, py) : g.moveTo(px, py));
+        g.closePath();
+      };
+      g.fillStyle = colOf(s);                      // company first: whose side it is on
+      path(); g.fill();
+      // and then the hull's own accent, so the class survives on the same ship
+      // without fighting the colour that says friend or foe.
+      g.strokeStyle = id === myId ? '#fff' : accentFor(s.hull);
+      g.lineWidth = id === myId ? 2 : 1.4;
+      path(); g.stroke();
+      g.fillStyle = '#05070b';                     // a canopy, so it has a front
+      g.beginPath(); g.arc(R * canopyFor(s.hull), 0, Math.max(2, R * 0.2), 0, 7); g.fill();
 
       // Cannons go ON TOP of the hull and out past its nose, on the same
       // hardpoints the bolts actually leave from. Drawn under the body they were
@@ -2806,7 +2879,7 @@ function drawFrame(now) {
     g.fillStyle = lvl > 0 ? col : '#5b6b85'; g.font = 'bold 14px ui-monospace, monospace';
     g.fillText(`+${Math.round(ceilingOf(myStats()) * lvl * 100)}%`, cx, cy + 2);
     g.fillStyle = '#66748c'; g.font = '9px ui-monospace, monospace';
-    g.fillText(power.to ? power.to.toUpperCase() : 'REACTOR', cx, cy + 14);
+    g.fillText(power.to ? sysName(SYSTEMS.indexOf(power.to)) : 'REACTOR', cx, cy + 14);
     g.fillText(`${Math.round(cap * 100)}%`, cx, cy - 10);
 
     SYSTEMS.forEach((sys, i) => {                  // 1 2 3, arranged around the dial
@@ -2915,7 +2988,7 @@ function drawFrame(now) {
     g.fillText(`CARGO ${vol}/${cargoCap}` + (vol >= cargoCap ? '  HOLD FULL' : '') +
                (vol ? `  ${holdValue(hold)} cr` : ''), 16 + gw + 10, 103);
     g.fillStyle = '#ffd479';
-    g.fillText(`${credits} ${CURRENCY.short}`, 16, 124);
+    g.fillText(`${fmtCredits(credits)} ${CURRENCY.short}`, 16, 124);
     const rank = myRank ?? levelFor(myXp);
     g.fillStyle = '#cfe4ff';
     g.fillText(`LVL ${rank.level}`, 16 + 96, 124);
@@ -3099,11 +3172,11 @@ function drawWreck(now) {
   // to lose", which was true and was the problem.
   if (dead.toll) {
     g.fillStyle = '#ff7a5c'; g.font = '13px ui-monospace, monospace';
-    g.fillText(`\u2212${dead.toll} ${CURRENCY.short} — ${Math.round(DEATH_TOLL * 100)}% of your account, salvaged out of the wreck`,
+    g.fillText(`\u2212${fmtCredits(dead.toll)} ${CURRENCY.short} — ${Math.round(DEATH_TOLL * 100)}% of your account, salvaged out of the wreck`,
                VIEW_W / 2, VIEW_H * 0.34 + 86);
   }
   g.fillStyle = '#ffd479'; g.font = '12px ui-monospace, monospace';
-  g.fillText(`${credits} ${CURRENCY.short} left — the company keeps your account, not your ship`,
+  g.fillText(`${fmtCredits(credits)} ${CURRENCY.short} left — the company keeps your account, not your ship`,
              VIEW_W / 2, VIEW_H * 0.34 + (dead.toll ? 110 : 86));
 
   const b = respawnBtn();

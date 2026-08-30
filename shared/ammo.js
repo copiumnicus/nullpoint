@@ -13,18 +13,28 @@
 // matters, because fire rate is fixed: a grade's multiplier IS your dps, so the
 // only question a pilot has is whether the extra damage is worth the extra money.
 //
-// It used to be answered "no". A Charged Cell was 1.25x the damage for 8x the
-// price per round — 6.4x the cost per point — so nothing above the plain grade
-// was ever worth loading, and two thirds of the ammunition in the shop was
-// decoration. The ladder is now a stated premium instead of a trap:
+// It has been wrong twice, in opposite directions.
 //
-//   Standard  x1  0.20 cr/round  0.200 per point
-//   Charged   x3  0.72 cr/round  0.240 per point  (+20%)
-//   Fusion    x5  1.40 cr/round  0.280 per point  (+40%)
+// First a Charged Cell was 1.25x the damage for 8x the price per round — 6.4x the
+// cost per point — so nothing above the plain grade was ever worth loading. That
+// was fixed by making the grades x1/x3/x5, which overcorrected badly: a x5 round
+// costs 0.2% of the bounty it earns, so nothing BELOW the top grade was ever
+// worth loading either, and the shop was decoration again with the shelves
+// swapped. Measured, a Corsair Hive cost 1011 credits of ammunition against a
+// 455000 credit bounty.
 //
-// So better rounds still cost more per point — they have to, or the plain grade
-// would be pointless — but the premium buys real dps rather than punishing you
-// for wanting it. Warheads run the same ladder at their own base.
+// The mistake both times was treating a grade as a tier of the weapon ladder.
+// Damage tiers live in the emitters, which cost real money and take a slot. A
+// grade is a small, stated premium on top of whatever you have already bought:
+//
+//   Standard  x1.00  0.20 cr/round  0.200 per point
+//   Charged   x1.25  0.30 cr/round  0.240 per point  (+20%)
+//   Fusion    x1.50  0.42 cr/round  0.280 per point  (+40%)
+//
+// The crate is the same size at every grade now. It used to shrink as the grade
+// climbed, which meant the better ammunition had the smaller price on the shelf —
+// true per round and nonsense to read. Warheads run the same ladder at their own
+// base.
 // One colour per grade, so the bar, the chooser and the round itself in flight
 // cannot disagree about what is loaded. Telling grades apart by counting pips in
 // the HUD was no help at all in the middle of a fight.
@@ -36,21 +46,21 @@ export const AMMO = {
   cell1: { name: 'Standard Cells', for: 'laser', tier: 1, mult: 1.00, pack: 2000, price:  400,
            colour: GRADE_COLOUR[1],
            blurb: 'What the racks are calibrated for.' },
-  cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 3.00, pack: 1000, price:  720,
+  cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 1.25, pack: 2000, price:  600,
            colour: GRADE_COLOUR[2],
-           blurb: 'Three times the bolt, for a fifth more per point of damage.' },
-  cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: 5.00, pack:  500, price:  700,
+           blurb: 'A quarter more out of every bolt, at a fifth more per point.' },
+  cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: 1.50, pack: 2000, price:  840,
            colour: GRADE_COLOUR[3],
-           blurb: 'Five times the bolt. The most damage a rack can throw at once.' },
+           blurb: 'Half again out of every bolt. The last word in cells.' },
 
   // For launchers. One warhead per rocket, so a Swarm Rack is fifteen a volley.
   head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, pack: 400, price:  600,
            colour: GRADE_COLOUR[1],
            blurb: 'Shaped charge, mass produced.' },
-  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 3.00, pack: 200, price: 1100,
+  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 1.25, pack: 400, price:  900,
            colour: GRADE_COLOUR[2],
-           blurb: 'Two stages. Three times through shielding that shrugs off one.' },
-  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: 5.00, pack: 100, price: 1050,
+           blurb: 'Two stages. Goes through shielding that shrugs off the first.' },
+  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: 1.50, pack: 400, price: 1260,
            colour: GRADE_COLOUR[3],
            blurb: 'Rare, unstable, and worth every credit when it lands.' },
 };
