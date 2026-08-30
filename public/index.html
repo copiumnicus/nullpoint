@@ -22,7 +22,7 @@ import { SYSTEMS, BOOST, ceilingOf } from '/shared/power.js';
 import { ABILITIES, SPECIAL } from '/shared/ability.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
-import { tipFor } from '/shared/tooltip.js';
+import { tipFor, modSummary } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { outlineFor, accentFor, canopyFor } from '/shared/silhouette.js';
 import { VERSION, PATCHES, patchIcon, patchPanel,
@@ -231,11 +231,16 @@ function drawBerth() {
 
   g.textAlign = 'left'; g.font = '14px ui-monospace, monospace'; g.fillStyle = '#ffd479';
   g.fillText('A BERTH HERE', P.x + 20, P.y + 32);
+  // Four lines and no more: the panel is 380px wide, so a sentence past about
+  // fifty-six characters runs out of the frame. The second line is the one that
+  // matters and used to be missing entirely — a bay is not a convenience, it is
+  // the only shelf that stocks the top half of every ladder.
   g.font = '10px ui-monospace, monospace'; g.fillStyle = '#8ea3bd';
-  g.fillText('Refit and buy without flying home.', P.x + 20, P.y + 56);
+  g.fillText('Rent a bay: refit and buy here, without flying home.', P.x + 20, P.y + 56);
+  g.fillText('The only shelf that sells the top of every ladder.', P.x + 20, P.y + 74);
   g.fillStyle = '#66748c';
-  g.fillText('No shelter. No repairs. Closed while anything is shooting you.', P.x + 20, P.y + 74);
-  g.fillText(`Rank ${BERTH_RANK} and up — they rent to pilots they have heard of.`, P.x + 20, P.y + 92);
+  g.fillText('No repairs, no shelter, and shut while you are shot at.', P.x + 20, P.y + 92);
+  g.fillText(`Rank ${BERTH_RANK} and up: they rent to pilots they know of.`, P.x + 20, P.y + 110);
 
   g.font = '12px ui-monospace, monospace'; g.textAlign = 'right';
   g.fillStyle = credits >= berthPrice() ? '#ffd479' : '#e05a5a';
@@ -288,7 +293,7 @@ function spaceAction() {
   // The gate outranks everything. Sitting in a portal mouth with ore under you,
   // the thing you came to the gate to do is leave — and hauling a pod first, then
   // pressing again, was a fight with the key rather than with anything in space.
-  if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump' };
+  if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump through the gate' };
   // Somewhere you flew TO outranks whatever happens to be lying beside it. This is
   // the same rule the gate needed: standing in a place you came to use, the thing
   // you came to do is the thing the key should do. Hauling first meant a full hold
@@ -611,7 +616,7 @@ addEventListener('keydown', e => {
   if (k === '4') {
     const ab = ABILITIES[HULLS[myHull]?.ability];
     if (ab) send({ t: 'power', sys: SPECIAL });
-    else say('A Hauler has no system to route there', '#66748c');
+    else say('A Hauler has no system of its own — route to 1, 2 or 3', '#66748c');
   }
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
   if (k === 'o') { setOpen = !setOpen; sysOpen = bayOpen = invOpen = false; }
@@ -649,7 +654,7 @@ addEventListener('keydown', e => {
     }
     if (act.kind === 'jump') return send({ t: 'jump' });
     if (act.kind === 'fence') return send({ t: 'fence' });
-    return say(atDock ? 'Hold is empty' : 'Nothing in reach', '#66748c');
+    return say(atDock ? 'Nothing in the hold to stow' : 'Nothing in reach to haul in', '#66748c');
   }
   if (e.key === 'Escape') {
     // Escape closes whatever is on top, and once there is nothing left to close
@@ -949,7 +954,7 @@ function drawSystem(me) {
   g.strokeStyle = '#8a94a8'; g.lineWidth = 1.4; g.setLineDash([4, 3]);
   g.strokeRect(VIEW_W / 2 - 306.5, 62.5, 11, 11); g.setLineDash([]);
   g.fillStyle = '#7f8ea8';
-  g.fillText('CONTESTED — no holder.   Fill colour is the region itself; the outline is who holds it.',
+  g.fillText('CONTESTED — nobody holds it.   The fill is the region; the outline is its owner.',
              VIEW_W / 2 - 288, 72);
   g.textAlign = 'center'; g.fillStyle = '#5b6b85'; g.font = '12px ui-monospace, monospace';
   g.fillText('click anywhere or press M to close', VIEW_W / 2, VIEW_H - 18);
@@ -982,7 +987,8 @@ const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
 // readout has to ask the ship rather than a constant.
 const myStats = () => resolve(myHull, myFit, escortOf(myDrones, myRig), myForm);
 const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, myRig), formation: myForm,
-                         gear: myGear, hulls: myHulls, formations: myForms, credits });
+                         gear: myGear, hulls: myHulls, formations: myForms, credits,
+                         ammo: myAmmo, kits: myKits, devices: myDevices });
 
 function bayClick(v) {
   const G = bayGeom();
@@ -1033,7 +1039,7 @@ function bayClick(v) {
       if (row.slot === 'rig') {
         if (myRig) return send({ t: 'rigstrip' });
         const rigs = lockerFor('rig');
-        if (!rigs.length) return say('No collector in the locker — the rigs are on the drones page', '#8ab4e6');
+        if (!rigs.length) return say('No collector rig yet — buy one on the Drones page', '#8ab4e6');
         if (rigs.length === 1) return send({ t: 'rigfit', item: rigs[0] });
         picking = { slot: 'rig', index: 0 };
         return;
@@ -1042,8 +1048,8 @@ function bayClick(v) {
         return send({ t: 'uninstall', slot: row.slot, index: row.index });
       // Empty: ask, do not guess. Guessing meant a pilot holding MK-Vs got MK-Is.
       const stock = lockerFor(row.slot);
-      if (!stock.length) return say(row.slot === 'drone' ? 'Nothing in the locker to mount — buy one in the store'
-                                                        : `Nothing in the locker for a ${row.slot} slot — buy one in the store`,
+      if (!stock.length) return say(row.slot === 'drone' ? 'Nothing spare to mount — buy a module in the STORE tab'
+                                                        : `Nothing spare fits a ${row.slot} slot — buy one in the STORE tab`,
                                     '#8ab4e6');
       if (stock.length === 1) return row.slot === 'drone' ? send({ t: 'dronefit', index: row.index, item: stock[0] })
                                                           : send({ t: 'install', item: stock[0] });
@@ -1091,14 +1097,14 @@ function bayClick(v) {
     const gated = whyNotSold(it.k, { docked: atRing && !inMyOutpost(), berth: !berthWhy() });
     if (gated) return say(`${EQUIPMENT[it.k].name} — ${gated}`, '#e0a53f');
     return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
-      : say(`Not enough credits for a ${EQUIPMENT[it.k].name}`, '#e0a53f');
+      : say(`A ${EQUIPMENT[it.k].name} costs ${fmtCredits(EQUIPMENT[it.k].price)} ${CURRENCY.short}`, '#e0a53f');
   }
 }
 
 const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
 
-// The one number that tells you which of two lockers items you want, without
-// opening a tooltip: what it is for, not everything it does.
+// The one number that tells you which of two items in your inventory you want,
+// without opening a tooltip: what it is for, not everything it does.
 const headline = k => {
   const e = EQUIPMENT[k];
   const pick = a => e.mods.find(([n]) => n === a);
@@ -1119,12 +1125,14 @@ function drawTip(tip, at) {
   g.font = '11px ui-monospace, monospace';
   const lines = tip.lines.slice(0, 12);
   const cut = tip.lines.length - lines.length;
+  const notes = tip.notes ?? [];
   const widest = Math.max(g.measureText(tip.title).width + 90,
                           g.measureText(tip.blurb ?? '').width,
-                          g.measureText(tip.note ?? '').width,
+                          ...notes.map(n => g.measureText(n).width),
                           ...lines.map(l => g.measureText(`${l.label}  ${l.from} → ${l.to}${l.unit}`).width + 54));
   const w = Math.min(340, Math.max(190, widest + 24));
-  const h = 40 + (tip.blurb ? 15 : 0) + lines.length * 15 + (cut ? 14 : 0) + (tip.note ? 20 : 0);
+  const h = 40 + (tip.blurb ? 15 : 0) + lines.length * 15 + (cut ? 14 : 0)
+          + (notes.length ? 6 + notes.length * 14 : 0);
   const x = Math.min(at.x + 18, VIEW_W - w - 8), y = Math.min(at.y + 14, VIEW_H - h - 8);
 
   g.fillStyle = 'rgba(6,10,16,0.97)'; g.fillRect(x, y, w, h);
@@ -1156,8 +1164,12 @@ function drawTip(tip, at) {
   }
   if (cut) { ty += 14; g.fillStyle = '#4a5568'; g.font = '10px ui-monospace, monospace';
              g.fillText(`+${cut} more`, x + 10, ty); }
-  if (tip.note) { ty += 18; g.fillStyle = '#5b6b85'; g.font = '10px ui-monospace, monospace';
-                  g.fillText(tip.note, x + 10, ty); }
+  // Every note on its own line. They used to be one string, which meant the one
+  // that mattered most — where the thing is even sold — had to be left out.
+  if (notes.length) {
+    g.font = '10px ui-monospace, monospace'; ty += 4;
+    for (const n of notes) { ty += 14; g.fillStyle = '#5b6b85'; g.fillText(n, x + 10, ty); }
+  }
   g.font = '11px ui-monospace, monospace';
 }
 
@@ -1189,7 +1201,7 @@ function drawBay() {
   g.fillStyle = home ? '#66748c' : '#e0a53f';
   g.fillText(home ? 'docked — every change takes effect at once'
            : MAPS[mapId].dev ? 'fly into the workshop ring to outfit'
-                             : 'out here you can buy ammunition — the rest needs a dock',
+                             : 'out here only ammunition sells — the rest wants a dock or a rented bay',
              P.x + 236, P.y + 32);
 
   // a live stat line, so the effect of a click is visible immediately
@@ -1286,7 +1298,7 @@ function drawBay() {
       if (over(r) && held) tip = tipFor('item', held, shipCtx());
       else if (over(r) && stock.length === 1) {
         tip = tipFor('item', stock[0], shipCtx());
-        tip = tip && { ...tip, note: 'the only thing in your locker that fits — click to bolt it on' };
+        tip = tip && { ...tip, notes: ['The only thing you own that fits. Click to fit it.', ...tip.notes] };
       }
       g.fillStyle = item ? 'rgba(125,224,138,0.12)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
       g.fillRect(r.x, r.y, r.w, r.h);
@@ -1385,12 +1397,15 @@ function drawBay() {
                : it.kind === 'kit' ? KITS[it.k].name
                : it.kind === 'device' ? DEVICES[it.k].name
                                      : EQUIPMENT[it.k].name;
-    const blurb = it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}`
-                : it.kind === 'form' ? FORMATIONS[it.k].blurb
-                : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
+    // Every row carries a sentence AND its numbers. The numbers are read off the
+    // tables rather than written into the blurbs, so a rebalance cannot leave the
+    // shelf advertising last week's figures — see modSummary.
+    const blurb = it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}   ${HULLS[it.k].blurb}`
+                : it.kind === 'form' ? `${FORMATIONS[it.k].blurb}   ${modSummary(FORMATIONS[it.k].mods) || 'no bonus'}`
+                : it.kind === 'drone' ? `An escort ship carrying one module of yours.   bay ${myDrones.length + 1} of ${MAX_DRONES}`
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
-                : it.kind === 'device' ? `${DEVICES[it.k].blurb}`
+                : it.kind === 'device' ? `${DEVICES[it.k].blurb}   ${DEVICES[it.k].secs}s to fold`
                                       : EQUIPMENT[it.k].blurb;
     const afford = credits >= price;
     const sells = sellsAt(G.page, home);
@@ -1401,7 +1416,7 @@ function drawBay() {
     // said something odd where its description should be, and refused the click.
     // A locked row now looks locked.
     const locked = it.kind === 'item' && frontierOnly(it.k) && berthWhy()
-        ? 'Sold only at a pirate outpost, and only if you rent a bay there'
+        ? 'Sold only at a pirate outpost, and only to pilots who rent a bay there'
       : it.kind === 'ammo'
         ? whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
       : null;
@@ -1429,7 +1444,7 @@ function drawBay() {
                 : it.kind === 'device' ? (myDevices[it.k] ?? 0) : 0;
     if (stock) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
                  g.fillText(it.kind === 'ammo' ? `${stock} rounds held`
-                          : it.kind === 'kit' || it.kind === 'device' ? `${stock} aboard` : `${stock} in locker`,
+                          : it.kind === 'kit' || it.kind === 'device' ? `${stock} aboard` : `${stock} in your inventory`,
                             r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';
   }
@@ -1497,13 +1512,13 @@ function drawInventory() {
   g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
 
   g.font = '15px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
-  g.fillText('INVENTORY', P.x + 20, P.y + 32);
+  g.fillText('CARGO', P.x + 20, P.y + 32);
   g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffd479'; g.textAlign = 'right';
   g.fillText(`${fmtCredits(credits)} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = atDock ? '#66748c' : '#e0a53f';
   g.fillText(atDock ? 'docked — click a stack to move it the other way'
-                    : 'you can look, but transfers happen at your home base', P.x + 20, P.y + 52);
+                    : 'looking only — ore moves and sells at your base ring', P.x + 20, P.y + 52);
 
   g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
   g.fillText(`SHIP HOLD   ${vol}/${cargoCap}` + (vol ? `   ${fmtCredits(holdValue(hold))} ${CURRENCY.short}` : '') +
@@ -1511,7 +1526,7 @@ function drawInventory() {
   g.fillText('COMPANY HANGAR   unlimited' + (atDock ? '   → left half loads, right half sells' : ''),
              P.x + 40 + G.colW, G.top - 12);
 
-  if (!G.ship.length) { g.fillStyle = '#3d4757'; g.fillText('empty', P.x + 20, G.top + 18); }
+  if (!G.ship.length) { g.fillStyle = '#3d4757'; g.fillText('the hold is empty', P.x + 20, G.top + 18); }
   for (const { mat, r } of G.ship) stack(r, mat, hold[mat], atDock);
   if (!G.bank.length) { g.fillStyle = '#3d4757'; g.fillText('nothing stored yet', P.x + 40 + G.colW, G.top + 18); }
   for (const { mat, r } of G.bank) {
@@ -1914,7 +1929,13 @@ const heldGrades = feed => feed === 'repair'
 function recallBlocked() {
   const me = ships.get(myId);
   return whyNotDevice({ devices: myDevices, using: myDevice,
-                        docked: docked(), busy: (me?.wrp ?? 0) > 0 });
+                        // atDock, not docked(): the client's docked() counts a rented
+                        // outpost bay and the server's does not, and a bay explicitly
+                        // never repairs. Passing the wrong one greyed both boxes out
+                        // here and told you the dock was already mending you — which
+                        // no bay does, and which the server would have disagreed with
+                        // if the button had let you ask. One rule, two copies.
+                        docked: atDock, busy: (me?.wrp ?? 0) > 0 });
 }
 
 // Why the repair button is not available, or null. The button, its tooltip and
@@ -1922,7 +1943,7 @@ function recallBlocked() {
 function repairBlocked() {
   const me = ships.get(myId);
   return whyNotRepair({
-    kits: myKits, using: myKit, docked: docked(),
+    kits: myKits, using: myKit, docked: atDock,
     sinceHit: sinceHitSecs(), hurt: !!me && (me.hp ?? 100) < 100, busy: !!me?.fix,
   });
 }
@@ -1970,7 +1991,7 @@ function barClick(v) {
         feedOpen = feedOpen === b.feed ? null : b.feed;
         return true;
       }
-      if (!held.length) { say('No beacon aboard — they are sold at a dock', '#e0a53f'); return true; }
+      if (!held.length) { say('No beacon aboard — buy one on the Beacons page at a dock', '#e0a53f'); return true; }
       const why = recallBlocked();
       if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
       send({ t: 'recall' });
@@ -1985,13 +2006,13 @@ function barClick(v) {
         feedOpen = feedOpen === b.feed ? null : b.feed;
         return true;
       }
-      if (!held.length) { say('No repair drones aboard — they are sold at a dock', '#e0a53f'); return true; }
+      if (!held.length) { say('No repair drone aboard — buy one on the Repair page at a dock', '#e0a53f'); return true; }
       const why = repairBlocked();
       if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
       send({ t: 'repair' });
       return true;
     }
-    if (!held.length) { say(`No ${b.feed === 'laser' ? 'cells' : 'warheads'} — buy a crate at the dock`, '#e0a53f'); return true; }
+    if (!held.length) { say(`Out of ${b.feed === 'laser' ? 'cells' : 'warheads'} — a crate is sold anywhere, docked or not`, '#e0a53f'); return true; }
     if (held.length === 1) {                    // nothing to choose between
       if (held[0] !== myUsing[b.feed]) send({ t: 'ammo', key: held[0] });
       return true;
@@ -2005,7 +2026,7 @@ function barClick(v) {
 // Step to the next grade of one feed that you actually hold.
 function cycleAmmo(feed) {
   const held = heldGrades(feed);
-  if (held.length < 2) return say(`Nothing else to feed the ${feed}s`, '#66748c');
+  if (held.length < 2) return say(`You hold only one grade of ${feed === 'laser' ? 'cells' : 'warheads'}`, '#66748c');
   const i = held.indexOf(myUsing[feed]);
   send({ t: 'ammo', key: held[(i + 1) % held.length] });
   feedOpen = null;
@@ -2371,8 +2392,8 @@ function drawFrame(now) {
     g.fillStyle = mine ? (near ? '#7de08a' : '#3f6a4a') : (near ? '#ffd479' : '#6a5a3a');
     g.fillText(mine ? 'PIRATE OUTPOST · YOUR BERTH' : 'PIRATE OUTPOST', o.x, o.y - 76);
     g.font = '9px ui-monospace, monospace'; g.fillStyle = '#6a5a3a';
-    g.fillText(mine ? `refit and buy here · H · still no repairs, still no shelter`
-                    : `buys ore at ${Math.round(PIRATE_RATE * 100)}%`,
+    g.fillText(mine ? 'press H to refit and buy · no repairs and no shelter here'
+                    : `buys ore at ${Math.round(PIRATE_RATE * 100)}% of its value`,
                o.x, o.y + 84);
     // A sign you have to already know about is not a sign. Anyone who comes inside
     // is told what the place sells and which key opens it.
@@ -2390,7 +2411,7 @@ function drawFrame(now) {
       g.fillText(t, o.x, by + 18);
       g.globalAlpha = 1;
       g.font = '9px ui-monospace, monospace'; g.fillStyle = '#8a6a3a';
-      g.fillText('refit and buy on the frontier, without flying home', o.x, by + 40);
+      g.fillText('refit here, and buy the gear your company will not sell', o.x, by + 40);
     }
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
@@ -3215,7 +3236,7 @@ function drawFrame(now) {
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
   g.fillText('TAB engage · TAB TAB break off · click cargo to haul it in · ' +
-             'I inventory · H hangar · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
+             'I cargo · H station · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
 
   if (depth > 0 && !sysOpen && !bayOpen) {
     const t = Math.min(1, depth / DRIFT_MARGIN);
@@ -3365,7 +3386,7 @@ function drawWreck(now) {
   g.font = '13px ui-monospace, monospace';
   if (lost.length) {
     g.fillStyle = '#8d99ab';
-    g.fillText('cargo lost with the hull — it is still out there', VIEW_W / 2, VIEW_H * 0.34 + 34);
+    g.fillText('the hold spilled where you died, and it is still there', VIEW_W / 2, VIEW_H * 0.34 + 34);
     let lx = VIEW_W / 2 - lost.reduce((w2, [m, n]) =>
       w2 + g.measureText(`${MATERIALS[m]?.sym ?? m} ×${n}`).width + 26, 0) / 2;
     for (const [m, n] of lost) {
@@ -3377,7 +3398,7 @@ function drawWreck(now) {
     g.textAlign = 'center';
   } else {
     g.fillStyle = '#66748c';
-    g.fillText('an empty hold — but the salvage bill does not care', VIEW_W / 2, VIEW_H * 0.34 + 34);
+    g.fillText('nothing in the hold to lose — the bill below stands anyway', VIEW_W / 2, VIEW_H * 0.34 + 34);
   }
   // The toll is the point of the screen now. An empty hold used to read "nothing
   // to lose", which was true and was the problem.

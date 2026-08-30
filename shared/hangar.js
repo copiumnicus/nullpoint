@@ -24,18 +24,21 @@ export const TABS = [{ key: 'hangar', name: 'HANGAR' }, { key: 'store', name: 'S
 export const ANYWHERE = ['ammo'];
 export const sellsAt = (page, docked) => docked || ANYWHERE.includes(page);
 
+// A hint says what the page sells and, where it is not obvious, where you have to
+// be standing to buy it. They used to be fragments with the verb taken out — "the
+// frontier rungs, a pirate hulk stocks these" — which read as atmosphere and
+// answered neither question.
 export const STORE_PAGES = [
-  { key: 'ships',     name: 'Ships',       hint: 'hulls and their racks' },
-  { key: 'weapon',    name: 'Lasers',      hint: 'emitters — a bolt you can dodge, thrown fast' },
-  { key: 'rocket',    name: 'Launchers',   hint: 'rockets — slower, and they follow you' },
-  { key: 'generator', name: 'Generators',  hint: 'reactor and shield capacity' },
-  { key: 'tech',      name: 'Technology',  hint: 'one of each, every one a trade' },
-  { key: 'techx',     name: 'Deep Tech',   hint: 'the frontier rungs — a pirate hulk stocks these' },
-  { key: 'ammo',      name: 'Ammunition',  hint: 'sold by the crate, carried without limit' },
-  { key: 'kits',      name: 'Repair',      hint: 'single use, and only sold at a dock' },
-  { key: 'devices',   name: 'Beacons',     hint: 'single use, and the way home' },
-  { key: 'drones',    name: 'Drones',      hint: 'bays, and the rigs that haul instead of shoot' },
-  { key: 'forms',     name: 'Formations',  hint: 'how the escort flies' },
+  { key: 'ships',     name: 'Ships',       hint: 'Hulls. Each one carries a different mix of slots.' },
+  { key: 'weapon',    name: 'Lasers',      hint: 'Emitters. Each adds flat damage to every bolt you fire.' },
+  { key: 'rocket',    name: 'Launchers',   hint: 'Rockets that chase. Three racks per ship, never on a drone.' },
+  { key: 'generator', name: 'Generators',  hint: 'Shields and capacitor, paid for in speed.' },
+  { key: 'tech',      name: 'Technology',  hint: 'One of each per ship, and every one trades a stat away.' },
+  { key: 'techx',     name: 'Deep Tech',   hint: 'The top rungs. Sold only at an outpost bay you rent.' },
+  { key: 'ammo',      name: 'Ammunition',  hint: 'Cells and warheads by the crate. The one thing sold anywhere.' },
+  { key: 'utility',   name: 'Utilities',   hint: 'One use each. Repair drones mend hull; beacons fold you home.' },
+  { key: 'drones',    name: 'Drones',      hint: 'Escort bays, and the rigs that gather ore instead of firing.' },
+  { key: 'forms',     name: 'Formations',  hint: 'Where the escort flies, and what that is worth to you.' },
 ];
 
 // What a store page holds. Kinds tell the client how to draw and what to send.
@@ -54,8 +57,11 @@ export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}
     case 'rocket': return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'rocket')
                      .map(k => ({ kind: 'item', k, owned: false }));
     case 'ammo':   return AMMO_KEYS.map(k => ({ kind: 'ammo', k, owned: false }));
-    case 'kits':   return KIT_KEYS.map(k => ({ kind: 'kit', k, owned: false }));
-    case 'devices': return DEVICE_KEYS.map(k => ({ kind: 'device', k, owned: false }));
+    // Both consumables share a shelf. They are the same kind of purchase — one use,
+    // bought at a counter, carried until you need it — and two pages of three rows
+    // was two thirds of a screen each to say so.
+    case 'utility': return [...KIT_KEYS.map(k => ({ kind: 'kit', k, owned: false })),
+                            ...DEVICE_KEYS.map(k => ({ kind: 'device', k, owned: false }))];
     // The technology shelf outgrew one page: fifteen rows on a 30.5px step drew a
     // 22.5px row and the blurb underneath it clipped. Split at the frontier rung,
     // which is the line the shelf already has.
@@ -70,7 +76,7 @@ export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}
   }
 }
 
-// What the locker can put in one slot, best first. "Best" is the tier you paid
+// What your inventory can put in one slot, best first. "Best" is the tier you paid
 // most for, because filling an empty slot with whatever happened to sort first
 // meant a pilot holding MK-Vs kept getting MK-Is bolted on.
 export function fitsIn(target, { gear = {}, fit = emptyFit(), drones = [] } = {}) {
