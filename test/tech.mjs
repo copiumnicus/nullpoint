@@ -30,7 +30,7 @@ import { ROCKET_RATE } from '../shared/rockets.js';
 import { AMMO, roundPrice } from '../shared/ammo.js';
 import { priceFor, techRung, TECH_POINTS, DELIVERY_PREMIUM, ANCHORS, premiumAt,
          buildFor, dpsOf, freeMultipliers } from '../shared/balance.js';
-import { ALIENS, WILD, BOUNTY_RATE, farmHp, bountyFor, newAlien, stepAlienAI } from '../shared/aliens.js';
+import { ALIENS, WILD, BOUNTY_RATE, farmHp, effectiveHp, bountyFor, newAlien, stepAlienAI } from '../shared/aliens.js';
 import { MAPS } from '../shared/maps.js';
 import { driftDps, driftDepth, stepDrift, DRIFT_MARGIN, DRIFT_MIN, SIGHT_R } from '../shared/sim.js';
 import { seenAs, aspectOf } from '../shared/stealth.js';
@@ -452,6 +452,26 @@ const flying = (h, t, o = {}) => Object.assign(newShip(0, 0, h, fit({ tech: t ? 
     sh.hp = 1; sh.sinceHit = 1e9;
     return foundryBurn(sh, hold, dt) === null && hold.iron === 40;
   })());
+  // What pricing it by VOLUME actually does once the drop tables have a shape.
+  // A hostile drops the part of the metal ladder it is worth killing for, so a
+  // frontier hold is rhodium and up and a home hold is iron — same volume, forty
+  // five times the value. So the furnace is pocket change in your own ring and a
+  // real bill out where you need it, which is the right way round and needed no
+  // second rule to arrange.
+  {
+    const cost = (hull, mat) => {
+      const s2 = resolve(hull, fit({ tech: ['foundry'] }));
+      const units = s2.hull / (volOf(mat) * hullPerVol(s2));
+      return units * MATERIALS[mat].value;
+    };
+    check('and what a full hull costs you climbs with the sector you are mending in',
+      cost('bulwark', 'rhodium') > cost('bulwark', 'iron') * 30 &&
+      cost('bulwark', 'rhodium') < KITS.kit3.price,
+      `a Bulwark hull is ${Math.round(cost('bulwark', 'iron'))} cr of iron at home and ` +
+      `${Math.round(cost('bulwark', 'rhodium'))} cr of rhodium at the frontier, where a Bandit's ` +
+      `drop table now starts — still under a ${KITS.kit3.name}'s ${KITS.kit3.price}, so it stays the ` +
+      'thrifty way to mend, and it stops being free the further out you take it');
+  }
 }
 
 // --- Wake Tap ----------------------------------------------------------------
@@ -521,6 +541,17 @@ const flying = (h, t, o = {}) => Object.assign(newShip(0, 0, h, fit({ tech: t ? 
     driftDps(SHEAR_GRACE) > 500,
     `at ${SHEAR_GRACE}px a hostile takes ${Math.round(driftDps(SHEAR_GRACE))} hull/s, which is a Drifter's whole ` +
     `${farmHp('drifter')} effective hp in ${f(farmHp('drifter') / driftDps(SHEAR_GRACE), 1)}s`);
+  // And the boundary, which is the honest half of the same claim: the margin is a
+  // weapon against the things that chase you and not against the things that kill
+  // you. A Harrier is the interesting case — new at the frontier, faster than every
+  // hull but a Kestrel, so it is the one hostile you genuinely cannot walk away
+  // from — and it does not survive the trip. A Bandit does.
+  check('but the margin kills what chases you, not what beats you', (() => {
+    const secs = k => effectiveHp(k) / driftDps(SHEAR_GRACE);
+    return secs('harrier') < 5 && secs('bandit') > 30;
+  })(), WILD.map(k => `${ALIENS[k].name} ${f(effectiveHp(k) / driftDps(SHEAR_GRACE), 1)}s`).join(', ') +
+    ` at ${Math.round(driftDps(SHEAR_GRACE))} hull/s — a Harrier you cannot outrun dies out there in four ` +
+    'seconds, and a Bandit follows you out and finishes the job');
   check('holding it costs the reactor, and costs more the further out you are', (() => {
     const shallow = out('compensator', 1); shallow.x = -400;
     const deep = out('compensator', 1); deep.x = -1600;
@@ -575,6 +606,24 @@ const flying = (h, t, o = {}) => Object.assign(newShip(0, 0, h, fit({ tech: t ? 
   })(), `x${LOUD} on every aggro radius there is, which puts all of them past the ${SIGHT_R}px you are ` +
         'guaranteed to see: ' + WILD.filter(k => ALIENS[k].aggro).map(k =>
           `${ALIENS[k].name} ${ALIENS[k].aggro}->${Math.round(ALIENS[k].aggro * LOUD)}`).join(', '));
+  // Which hostile this is actually a price against, and the answer is a short list.
+  // Hearing you early only matters if the thing that heard you can arrive: four of
+  // the six LOSE ground to a Bulwark and would never close the gap. The Harrier is
+  // the one that makes the cost real at the frontier, and it is new — it was not in
+  // the bestiary when this technology was designed.
+  check('and it is a real price only against something quick enough to arrive', (() => {
+    // 50px/s of closing speed, which is 768px in fifteen seconds — the difference
+    // between a chase and a rounding error. A Drifter's +10 on a Bulwark would take
+    // it seventy-seven seconds to cross the extra range this buys it.
+    const gain = k => ALIENS[k].attrs.speed - HULLS.bulwark.attrs.speed;
+    const quick = WILD.filter(k => gain(k) > 50);
+    return quick.includes('harrier') && quick.includes('bandit') && quick.length === 2;
+  })(), WILD.filter(k => ALIENS[k].aggro).map(k => {
+    const gain = ALIENS[k].attrs.speed - HULLS.bulwark.attrs.speed;
+    return `${ALIENS[k].name} ${gain > 0 ? '+' : ''}${gain}`;
+  }).join(', ') + ' px/s on a Bulwark — only the Harrier and the Bandit close at any speed, and a Harrier ' +
+     `opening at ${Math.round(ALIENS.harrier.aggro * LOUD)}px is on you in ` +
+     `${f(ALIENS.harrier.aggro * LOUD / (ALIENS.harrier.attrs.speed - HULLS.bulwark.attrs.speed), 1)}s`);
   check('and it is the alien AI that reads it, not a number on your ship', (() => {
     // Parked exactly between a Drifter's aggro and its aggro with a filter running.
     const map = MAPS.m1;
