@@ -21,6 +21,7 @@ import { ANCHORS, ANCHOR, ANCHOR_DPS, ANCHOR_EHP, ANCHOR_FIGHT, WORTH, UNPRICED,
 import { EQUIPMENT, MAX_DRONES } from '../shared/gear.js';
 import { HULLS, ATTRS, FIRE_RATE, resolve } from '../shared/ships.js';
 import { AMMO } from '../shared/ammo.js';
+import { threatDps } from '../shared/aliens.js';
 import { ALIENS, WILD, bountyFor, xpFor, farmHp, effectiveHp, BOUNTY_RATE, XP_RATE } from '../shared/aliens.js';
 import { KITS } from '../shared/repair.js';
 import { DEVICES } from '../shared/devices.js';
@@ -338,25 +339,49 @@ console.log('\nwhat the model currently says about the game (it reports, it does
     `${f(Math.max(...dl) / Math.min(...dl))}x across the ${armed.length} armed hostiles against ` +
     `${f(stageEhp('finished') / stageEhp('arrival'))}x of player effective hp — a fight has been getting ` +
     'safer for the whole game, which is what the one unarmed hostile exists to stop');
-  check('and the one hostile without a gun is the one whose danger cannot decay', (() => {
+  // Two hostiles have no gun now, and they are the answer to the line above rather
+  // than exceptions to it: a Lamprey drinks a share of your hull and a Censer burns
+  // a share of everything you have, so the seconds each needs are FLAT across the
+  // whole ladder while an armed hostile's are a curve. That is the entire reason
+  // they exist, and it is why threatDps had to stop being damage x fireRate.
+  check('the hostiles without guns are the ones whose danger cannot decay', (() => {
     const gunless = WILD.filter(k => ALIENS[k].attrs.damage === 0);
-    if (gunless.length !== 1) return false;
-    const S = ALIENS[gunless[0]].siphon;
-    if (!S) return false;
-    // Its pressure is a share, so the seconds it needs are flat across the whole
-    // ladder. An armed hostile's are a curve, and this compares the two spans.
-    const mine = STAGE_KEYS.map(st => stageHull(st) / (S.rate * stageHull(st)));
-    const gun  = STAGE_KEYS.map(st => stageEhp(st) / (ALIENS.drifter.attrs.damage * ALIENS.drifter.attrs.fireRate));
-    return Math.max(...mine) / Math.min(...mine) < 1.001
-        && Math.max(...gun) / Math.min(...gun) > 6;
-  })(), (() => { const S = ALIENS.lamprey.siphon;
+    if (gunless.length < 1) return false;
+    // Flat: the seconds it needs are the same at the bottom of the ladder and the
+    // top, because both the threat and the pool it eats are shares of the pilot.
+    // Each measured against the pool it actually eats. A Censer burns everything
+    // standing in it, shields included; a Lamprey goes straight past the shield to
+    // the hull. Measuring a tether against effective hit points would read 74-110s
+    // and call it a curve, when what varies is the shield it never touches.
+    const pool = (k, st) => ALIENS[k].siphon ? stageHull(st) : stageEhp(st);
+    const flat = gunless.every(k => {
+      const secs = STAGE_KEYS.map(st => pool(k, st) / threatDps(k, stageEhp(st), stageHull(st)));
+      return Math.max(...secs) / Math.min(...secs) < 1.05;
+    });
+    // Against a Drifter, whose flat number is only ever true at one stage.
     const gun = STAGE_KEYS.map(st => stageEhp(st) / (ALIENS.drifter.attrs.damage * ALIENS.drifter.attrs.fireRate));
-    return `a Lamprey needs ${f(1 / S.rate, 1)}s against every ship in the game; a Drifter needs ` +
-      `${f(Math.min(...gun), 0)}s against a new account and ${f(Math.max(...gun), 0)}s against a finished one`; })());
-  check('the Bandit is the only hostile whose danger is within reach of its posting',
+    return flat && Math.max(...gun) / Math.min(...gun) > 4;
+  })(), (() => {
+    const gunless = WILD.filter(k => ALIENS[k].attrs.damage === 0);
+    const pool = (k, st) => ALIENS[k].siphon ? stageHull(st) : stageEhp(st);
+    const span = k => {
+      const secs = STAGE_KEYS.map(st => pool(k, st) / threatDps(k, stageEhp(st), stageHull(st)));
+      return `${ALIENS[k].name} ${Math.min(...secs).toFixed(1)}-${Math.max(...secs).toFixed(1)}s`;
+    };
+    const gun = STAGE_KEYS.map(st => stageEhp(st) / (ALIENS.drifter.attrs.damage * ALIENS.drifter.attrs.fireRate));
+    return `${gunless.map(span).join(', ')} across every stage, against a Drifter's ` +
+           `${Math.min(...gun).toFixed(0)}-${Math.max(...gun).toFixed(0)}s`;
+  })());
+
+  // It used to be the Bandit alone, and it is now second. A Censer's rate IS
+  // ANCHORS.pressure rather than an approximation of it, so its ratio is 1.000 at
+  // every stage by construction — the only thing in the bestiary that is on model
+  // on both halves at once.
+  check('a Censer is exactly on model, and the Bandit is the nearest thing with a gun',
+    b.censer.dpsRatio > 0.99 && b.censer.dpsRatio < 1.01 &&
     b.bandit.dpsRatio > 0.6 && b.hive.dpsRatio < 0.5,
-    `Bandit ${f(b.bandit.dpsRatio)}, Ironhusk ${f(b.ironhusk.dpsRatio)}, Leviathan ${f(b.leviathan.dpsRatio)}, ` +
-    `Hive ${f(b.hive.dpsRatio)} of the dps its stage asks for`);
+    `Censer ${f(b.censer.dpsRatio)}, Bandit ${f(b.bandit.dpsRatio)}, Ironhusk ${f(b.ironhusk.dpsRatio)}, ` +
+    `Leviathan ${f(b.leviathan.dpsRatio)}, Hive ${f(b.hive.dpsRatio)} of the dps its stage asks for`);
   check('and the Corsair Hive is the furthest thing in the game from what it claims to be',
     b.hive.hpRatio < 0.15,
     `${f(b.hive.actualFight, 1)}s against four finished ships, posted as ${b.hive.seconds}s — ` +

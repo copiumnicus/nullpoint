@@ -21,7 +21,7 @@ import { EQUIPMENT, dronePrice, MAX_DRONES } from './gear.js';
 import { AMMO } from './ammo.js';
 import { ROCKET_RATE } from './rockets.js';
 import { BOOST } from './power.js';
-import { ALIENS, WILD, effectiveHp, farmHp, BOUNTY_RATE, XP_RATE } from './aliens.js';
+import { ALIENS, WILD, effectiveHp, farmHp, threatDps, BOUNTY_RATE, XP_RATE } from './aliens.js';
 import { MATERIALS, DROPS } from './cargo.js';
 import { MAPS, HOMES, JUMP_CD } from './maps.js';
 import { escortOf } from './sim.js';
@@ -520,20 +520,17 @@ export const claimedFight = (bounty, { stage = 'anchor', party = 1, A = ANCHORS 
 
 // What a hostile actually does to you at a stage, as a share of yourself per
 // second. Compare against ANCHORS.pressure: below 1 and it cannot threaten you.
-// A siphon has no gun, and reading damage x fireRate on one returns 0 — which
-// would have this report call a Lamprey harmless. What a tether takes is a
-// pressure like any other; it simply arrives as a share of your hull per second
-// instead of as an amount of damage, so it is converted here and nowhere else.
+// Two hostiles have no gun, and reading damage x fireRate on either returns 0 —
+// which would have this report call both of them harmless. What a field burns and
+// what a tether drinks are pressures like any other; they simply arrive as a share
+// per second rather than as an amount, so threatDps converts them and this passes
+// it both pools, because a field takes shields too and a tether does not.
 export const stageHull = stage => {
   const b = buildFor(stage);
   return resolve(b.hull, b.fit, escortOf(b.drones ?? [], null)).hull;
 };
-export const pressureOf = (kind, stage) => {
-  const a = ALIENS[kind];
-  const gun   = a.attrs.damage * a.attrs.fireRate;
-  const bleed = (a.siphon?.rate ?? 0) * stageHull(stage);
-  return (gun + bleed) / stageEhp(stage);
-};
+export const pressureOf = (kind, stage) =>
+  threatDps(kind, stageEhp(stage), stageHull(stage)) / stageEhp(stage);
 
 // Where each hostile is met, how long the fight is meant to run, and how many
 // pilots it is meant to take. This is the designer's statement of intent — it is
@@ -559,6 +556,9 @@ export const POSTING = Object.freeze({
                why: 'aliens.js: "built to survive a finished ship for a quarter of a minute"' },
   // server.js: the frontier, under the Leviathan — the thing out there one pilot
   // is meant to be able to finish alone.
+  // server.js: the other hop out, where its rung-mate the Ironhusk is not.
+  censer:    { stage: 'interceptor', seconds: 15, party: 1,
+               why: 'aliens.js: 6500 / 429 dps is the fight its hit points buy at that stage' },
   lamprey:   { stage: 'fighter',     seconds: 12, party: 1,
                why: 'aliens.js: 20,550 points against a full Vanguard is 11.7s of shooting, 14.3s once it mends' },
   // server.js: one on each gate sector, respawn 300s.

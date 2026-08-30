@@ -7,6 +7,8 @@
 import { ATTRS } from './ships.js';
 import { MAP_W, MAP_H } from './maps.js';
 import { newBody, inHaven } from './sim.js';
+import { burnOf, burnR, stepBurn, goadBurn, burnBite, burnBurst,
+         pyreFor, inPyre, poolOf, inBurn } from './burn.js';
 
 export const ALIENS = {
   drifter: {
@@ -39,6 +41,101 @@ export const ALIENS = {
     xp: 140,          // and what the kill is worth toward your rank
   },
 
+  // A reactor with nothing left holding it in, and no gun at all.
+  //
+  // Everything about it is one circle. The circle is what hurts you, the circle is
+  // how much of it you have killed, and the circle is what happens when you finish
+  // it. There is nothing else to read and nothing else to learn.
+  //
+  // WHY IT IS A RATE. A Drifter throws 49.5 damage a second. Against the starter it
+  // was written for that is 4.5% of the pilot a second; against a finished ship at
+  // x32 research it is 0.025%, which is 4,558 seconds to kill anybody. Every hostile
+  // in this file that carries a gun is a flat number that was only ever true at one
+  // stage, and the research ladder is what made that visible. So this one takes a
+  // SHARE — 0.045 of whatever is standing in it, per second, which is
+  // ANCHORS.pressure itself rather than a new number. Its pressure is exactly 1.00
+  // at every stage in the model, which nothing else in the bestiary manages.
+  //
+  // WHY THE RING GROWS. `goad` is full spin per its own effective hit points taken
+  // off it, so damaging it destabilises it in exact proportion to how much of it is
+  // gone: the radius IS the health bar, drawn at the scale it matters at, and you
+  // are standing inside it. It climbs on a clock as well, because a field driven by
+  // damage alone inverts the difficulty — the weaker your gun the slower it winds
+  // up, and a starter Hauler would out-farm a finished Bulwark.
+  //
+  // 720 is the reach at full spin, and it is set BETWEEN the Vanguard's 700 and the
+  // Bulwark's 820. So exactly one hull in the shop can hold the trigger from outside
+  // the ring, and it is the slowest and dearest one — which makes this the first
+  // thing in the game that argues for weapon range rather than for hit points, one
+  // hop out, at the moment a pilot is choosing what to buy. It is deliberately not
+  // the Lamprey's 900: a tether has to out-reach everybody to hold on, a fire only
+  // has to reach as far as the thing shooting it.
+  //
+  // WHAT IT ASKS YOU TO DO. Fight at your own range, and be somewhere else when it
+  // dies. The pyre goes off at `blast` times the ring — 900px, past every gun in the
+  // game — 1.8 seconds after the kill, and it is the only 1.8 seconds that matter.
+  // Simulated at every stage: hold 85% of your reach or better and you clear it;
+  // let it inside 70% and nothing you do afterwards helps. A finished ship at x32
+  // pays 0.1% of its hull for the first and 14.2% for the second, and those two
+  // numbers are the same at x1, x2, x4, x8, x16 and x32 — because both are
+  // fractions, and research multiplies the pool it takes its fraction of.
+  //
+  // 6,500 is the Ironhusk's rung exactly, and so are the 4,550 bounty and the 1,400
+  // experience. That is the point rather than a coincidence: co2 and co3 are the
+  // same distance from home and the seeding rule says they must be the same weight
+  // of fight, so the way to make them different is to make the SAME weight ask a
+  // different question. An Ironhusk is armour with a short gun — 500 reach against
+  // your 620-820, so kiting costs it everything. A Censer is the inverse in every
+  // term: no gun at all, and a reach that comes to you and grows while you win.
+  //
+  // 5,500 hull to 1,000 shield rather than the husks' 69/31, because the shield IS
+  // the containment and there is not much of it left.
+  //
+  // Speed 190 is the Ironhusk's, and it is measured rather than inherited: "slower
+  // than every hull" is a claim about BARE hulls and the game does not contain any —
+  // generators cost speed, so a finished Bulwark idles at 152 and tops out at 234
+  // with the reactor on its thrusters. 190 is under that with 44px/s to spare, which
+  // is what "leaving always works" actually costs to promise.
+  censer: {
+    name: 'Censer', cls: 'Runaway', r: 28, colour: '#f0b429', shape: 'rotor',
+    attrs: { hull: 5500, shield: 1000, shieldRegen: 120, shieldDelay: 4,
+             speed: 190, accel: 520, signature: 8,
+             // No gun, and this is the whole brief. weaponRange 0 makes fire()
+             // refuse every tick without a special case — the Bulkhead Target has
+             // done exactly this since it was added. fireRate is the ATTRS floor
+             // rather than 0 because 1 / fireRate is a real division.
+             damage: 0, fireRate: 0.1, weaponRange: 0 },
+    burn: {
+      idle:  110,     // px  cold. Inside every hull's reach with 500px to spare, so an
+                      //     idle one drifting past you is scenery and not a hazard
+      reach: 720,     // px  at full spin — between the Vanguard's 700 and the Bulwark's
+                      //     820, so exactly one hull can hold the trigger from outside it
+      rate:  0.045,   // of your effective hit points per second: ANCHORS.pressure, exactly
+      up:    15,      // s   hunting you, cold to full, and half that with you inside it.
+                      //     Not picked: 6500 / 429 dps is the 15.2s fight its hit points
+                      //     buy the pilot it is posted for, so the ring arrives exactly as
+                      //     the fight ends for them, early for anyone slower and late for
+                      //     anyone faster
+      down:  6,       // s   to settle once it has lost you
+      goad:  1,       // full spin per its own effective hit points taken off it
+      blast: 1.25,    // the pyre reaches 1.25x the ring — 900px at full spin, past every
+                      //     gun in the game, so distance alone never saves you
+      fuse:  1.8,     // s   the ring stands after it dies, and then lets go. Measured: it
+                      //     is long enough for the slowest ship in the game to clear the
+                      //     pyre from 85% of its own reach, and not from 70%
+    },
+    aggro: 460,       // the Ironhusk's, and inside SIGHT_R like every other
+    // Nothing settles the reactor except losing you, so how far you have to go to be
+    // lost IS the price of the patient way through. It has to be comfortably outside
+    // the pyre or it would forget you while it was still about to kill you: 1300
+    // against a 900px blast leaves 400px of margin.
+    leash: 1300,
+    patience: 3.0,
+    flee: 0,          // a runaway reaction has nowhere to be
+    respawn: 30,      // the Ironhusk's — same rung, same sector distance, same cadence
+    bounty: 4550,     // 6500 ehp at BOUNTY_RATE, which is the Ironhusk's to the credit
+    xp: 1400,         // and likewise
+  },
   // A mirror. It returns what you put into it, and that is the whole design.
   //
   // Every other hostile is a wall of hit points, and the research ladder is about to
@@ -324,6 +421,26 @@ export const XP_RATE = 140 / 650;                  // the Drifter is the anchor:
 export const farmHp = kind => effectiveHp(kind) * (ALIENS[kind].effort ?? 1);
 export const BOUNTY_RATE = 0.70;
 export const effectiveHp = kind => ALIENS[kind].attrs.hull + ALIENS[kind].attrs.shield;
+
+// What a hostile actually does to you per second, whatever shape it arrives in.
+//
+// `damage x fireRate` was the whole answer while every hostile had a barrel, and
+// the balance model, the bestiary report and pressureOf all read it directly. Two
+// hostiles now have no gun at all and reading it on them returns zero, which would
+// have both reported as harmless — a Lamprey drinking 2.25% of your hull a second
+// and a Censer burning 4.5% of everything you have.
+//
+// The two shares are taken against different pools, and that difference is the
+// design rather than a detail: a field burns whatever is standing in it, shields
+// included, and a tether goes straight past the shield to the hull. So the caller
+// passes both, and anything with a barrel ignores them and reads as it always did.
+export const threatDps = (kind, ehp, hull = ehp) => {
+  const a = ALIENS[kind];
+  if (!a) return 0;
+  return (a.attrs.damage ?? 0) * (a.attrs.fireRate ?? 0)
+       + (a.burn?.rate ?? 0) * ehp
+       + (a.siphon?.rate ?? 0) * hull;
+};
 // Effective hit points TIMES effort: what it costs to kill, not what it is made
 // of. A thing you cannot hit is worth more than a thing you can, at the same
 // toughness, and this is the one place that gets to decide it.
@@ -379,6 +496,14 @@ export const SHAPES = {
     }
     return [...out, ...inn.reverse()];
   },
+  // Three lobes at 120 degrees, and it is the only three-fold thing in the
+  // bestiary. Everything else has a nose, a plate or a spike; this has none,
+  // because it does not have to face you to hurt you — and three-fold is what a
+  // thing that spins looks like when you freeze it.
+  rotor: R => Array.from({ length: 18 }, (_, i) => {
+    const a = (i / 18) * Math.PI * 2, rr = R * (0.86 + 0.48 * Math.cos(3 * a));
+    return [Math.cos(a) * rr, Math.sin(a) * rr];
+  }),
   // A knobbly disc: twelve shallow lobes, no nose and no spikes. It reads as a
   // structure rather than a ship, which is what it is.
   hive: R => Array.from({ length: 24 }, (_, i) => {
@@ -641,7 +766,26 @@ export const THREAT_EDGE = 2.0;   // and by this multiple, so a graze does not p
 // and a tether's reach for the one thing that has none: reading weaponRange alone
 // parked a Lamprey inside your hull, because 0 x 0.7 is 0, and a tether with no
 // length is not a tether.
-export const standOff = a => a.def?.siphon?.reach ?? a.stats.weaponRange;
+// How far out a hostile holds station. A gun's range for anything that has one —
+// but a Lamprey's gun range is 0 and a Censer's is 0, and stepAlienAI multiplying
+// that by 0.7 parks them both inside your hull with their own mechanic having no
+// room to work. Each answers with its own reach instead.
+//
+// A Censer's is live rather than fixed: cold it presses right up at 110, and once
+// it has spun up it stops closing at 630, because by then the ring has come to you.
+export const standOff = a =>
+  a.def?.siphon?.reach ??
+  (a.def?.burn ? Math.max(a.def.burn.idle, burnR(a.def, a.spin ?? 0) * 0.7) : a.stats.weaponRange);
+
+// Sanctuary, and the one exception to it: an alien will not start on somebody
+// standing in a base ring, an outpost or a portal mouth — unless they shot it
+// first, and then nothing saves them.
+//
+// It is a function rather than the expression it used to be, because a passive
+// field asks the same question and a second copy of it would be a Censer quietly
+// burning down a pilot parked at their own dock. `c` is a contender row:
+// { id, ship, haven }.
+export const mayHarm = (a, c) => !(c.haven && !a.provoked.has(c.id));
 
 export function stepAlienAI(a, map, contenders, dt) {
   const at = id => contenders.find(c => c.id === id);
@@ -653,7 +797,7 @@ export function stepAlienAI(a, map, contenders, dt) {
     const angry = a.provoked.has(t.id);
     // Sanctuary only holds for someone who has not shot at it. Once provoked it
     // will follow you into a base ring or a portal mouth and keep firing.
-    if (t.haven && !angry) t = null;
+    if (!mayHarm(a, t)) t = null;
     else if (dist(t) > a.def.leash) {
       a.lost += dt;
       // Outrunning it is a real escape: it forgets the grudge along with the target.
@@ -681,7 +825,7 @@ export function stepAlienAI(a, map, contenders, dt) {
   // brushing past it does nothing and committing to crowding it does.
   if (t) {
     const eligible = c => alive(c) && c.id !== t.id
-      && !(c.haven && !a.provoked.has(c.id)) && dist(c) <= a.def.leash;
+      && mayHarm(a, c) && dist(c) <= a.def.leash;
     let near = null, nearD = Infinity;
     for (const c of contenders) {
       if (!eligible(c)) continue;

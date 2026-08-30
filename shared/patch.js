@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.38';
+export const VERSION = '0.39';
 
 export const PATCHES = [
+  { v: '0.39', notes: [
+    'A Censer holds the other hop out: a reactor with no containment and no gun',
+    'Its ring is the fight — it widens as you kill it, and you are standing in it',
+    'It burns a share of you per second, so no amount of research makes it safer',
+    'When it dies the ring stands for 1.8 seconds, then lets go of everything left',
+    'Be somewhere else. Hold 85% of your reach and it costs you almost nothing',
+  ] },
   { v: '0.38', notes: [
     'A Lamprey holds the frontier. It has no gun — it opens a tether onto your hull',
     'It drinks straight past your shields and mends itself with what it takes',

@@ -39,7 +39,8 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre } from '/shared/net.js';
+import { burnOf, burnR } from '/shared/burn.js';
 import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
@@ -154,7 +155,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], blasts = [], pods = [], numbers = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [];   // rebuilt every snapshot
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
 let invOpen = false, notice = null;
@@ -716,6 +717,7 @@ ws.onmessage = e => {
   rockets = (m.rockets ?? []).map(unpackRocket);
   snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
+  pyres  = (m.pyres ?? []).map(unpackPyre);
   {                                               // a blast is new the first time we see it low
     const self0 = ships.get(myId);
     for (const b of blasts) {
@@ -3129,6 +3131,66 @@ function drawFrame(now) {
     g.globalAlpha = 1;
     g.restore();
 
+    // The Censer's ring, and it is the entire fight drawn as one circle.
+    //
+    // The radius comes out of shared/burn.js from the spin the server put on `abl`,
+    // so the circle you can see and the circle that burns you are the same circle —
+    // a ring you could stand inside safely would be the same bug as a row you can
+    // see and cannot click, and this codebase has shipped that twice.
+    //
+    // Everything animates off `now`, the frame timestamp, and nothing multiplies or
+    // divides by anything that could be zero: `spin` is (s.abl ?? 0) / 100, which is
+    // 0 for every other hostile and for a row that arrived without the field, and
+    // `spin > 0` is false for NaN — so a bad number draws nothing rather than a bad
+    // arc. Every alpha is clamped and fixed to three places before it reaches a
+    // colour string.
+    const cdef = foe ? ALIENS[s.hull] : null;
+    const spin = burnOf(cdef) ? Math.min(1, Math.max(0, (s.abl ?? 0) / 100)) : 0;
+    if (spin > 0) {
+      const rr = burnR(cdef, spin);
+      const hot = cdef.colour;
+      const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+      // It whirls faster as it winds up: one turn in 1.6s cold, one in 0.45s at full.
+      const turn = now / (1600 - 1150 * spin);
+      g.save(); g.translate(s.rx, s.ry);
+      // the wash inside, thin at the rim so it never competes with the edge
+      const grd = g.createRadialGradient(0, 0, R, 0, 0, rr);
+      grd.addColorStop(0, `rgba(232,194,58,${al(0.10 + 0.16 * spin)})`);
+      grd.addColorStop(0.72, `rgba(232,194,58,${al(0.04 + 0.09 * spin)})`);
+      grd.addColorStop(1, 'rgba(232,194,58,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(0, 0, rr, 0, 7); g.fill();
+      // THE RIM. The one line a player has to read: inside it you are burning.
+      g.strokeStyle = `rgba(255,214,90,${al(0.35 + 0.5 * spin)})`;
+      g.lineWidth = 1.5 + 2.5 * spin;
+      g.beginPath(); g.arc(0, 0, rr, 0, 7); g.stroke();
+      // five blades sweeping just inside it, and five shorter ones going the other
+      // way further in — two directions, because one is a glow and two is machinery
+      for (const [n, at, len, wide, dir, k] of [[5, 0.88, 0.62, 5.5, 1, 1], [5, 0.55, 0.40, 3.5, -1, 0.75]]) {
+        g.strokeStyle = hot;
+        g.lineWidth = wide * (0.45 + 0.55 * spin);
+        g.lineCap = 'round';
+        for (let i = 0; i < n; i++) {
+          const a0 = turn * dir + (i / n) * Math.PI * 2;
+          g.globalAlpha = al(k * (0.25 + 0.55 * spin) * (0.55 + 0.45 * Math.sin(a0 * 3 + now / 260)));
+          g.beginPath(); g.arc(0, 0, rr * at, a0, a0 + len); g.stroke();
+        }
+      }
+      g.lineCap = 'butt';
+      // and sparks thrown off the rim, so the edge reads as moving rather than drawn
+      g.globalAlpha = al(0.25 + 0.45 * spin);
+      g.strokeStyle = '#fff2c4'; g.lineWidth = 1.2;
+      for (let i = 0; i < 9; i++) {
+        const a0 = -turn * 1.7 + (i / 9) * Math.PI * 2;
+        const c0 = Math.cos(a0), s0 = Math.sin(a0);
+        g.beginPath();
+        g.moveTo(c0 * rr * 0.97, s0 * rr * 0.97);
+        g.lineTo(c0 * (rr + 5 + 7 * spin), s0 * (rr + 5 + 7 * spin));
+        g.stroke();
+      }
+      g.globalAlpha = 1; g.restore();
+    }
+
     // A Lamprey's tether, and the whole of what it does — it has no gun at all.
     // It has to read as flowing TOWARD the drainer, because the direction IS the
     // mechanic: that is your hull going the other way, and hull does not come back
@@ -3458,6 +3520,33 @@ function drawFrame(now) {
     g.fillStyle = colour;
     g.fillText(txt, h.x, h.y - h.p * 36);
     g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+
+  // A reactor that has died and not yet let go. The ring stops turning and CLOSES —
+  // it is the only thing in the game that draws inward, so it cannot be read as
+  // anything else — and the dashes count the fuse down. Everything inside it when
+  // the last one lands takes the field's remaining fuel at once, so this circle is
+  // an instruction and not an effect.
+  for (const py of pyres) {
+    const left = 1 - py.p;                        // 1 at the moment it died, 0 as it goes
+    const rr = py.r * (0.35 + 0.65 * left);       // closing on the wreck
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    g.strokeStyle = `rgba(255,214,90,${al(0.45 + 0.5 * py.p)})`;
+    g.lineWidth = 2 + 5 * py.p;
+    g.setLineDash([26, 18]);
+    g.lineDashOffset = -now / 24;
+    g.beginPath(); g.arc(py.x, py.y, rr, 0, 7); g.stroke();
+    g.setLineDash([]);
+    // the standing edge, where the damage will actually reach — it does not move,
+    // because the thing a player needs is the line they have to be outside of
+    g.strokeStyle = `rgba(255,120,60,${al(0.30 + 0.45 * py.p)})`;
+    g.lineWidth = 1.4;
+    g.beginPath(); g.arc(py.x, py.y, py.r, 0, 7); g.stroke();
+    const grd = g.createRadialGradient(py.x, py.y, 0, py.x, py.y, Math.max(1, rr));
+    grd.addColorStop(0, `rgba(255,236,170,${al(0.10 + 0.35 * py.p)})`);
+    grd.addColorStop(1, 'rgba(255,180,60,0)');
+    g.fillStyle = grd;
+    g.beginPath(); g.arc(py.x, py.y, Math.max(1, rr), 0, 7); g.fill();
   }
 
   for (const b of blasts) {                        // kill flash, over everything in world space

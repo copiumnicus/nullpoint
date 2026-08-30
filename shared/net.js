@@ -105,6 +105,17 @@ export const packLab   = (o, own) => [o.id, Math.round(o.x), Math.round(o.y),
                                       o.mods | 0, own ? 1 : 0, o.name ?? ''];
 export const unpackLab = arr => { const o = {}; for (let i = 0; i < LAB_FIELDS.length; i++) o[LAB_FIELDS[i]] = arr[i]; return o; };
 
+// A reactor that has died and not yet let go. Same five numbers as a blast — where,
+// how wide, how far through, and whose side — because it IS a blast with a fuse on
+// the front of it: the ring stands at its last radius while `p` runs 0 to 1, and
+// then everything still inside takes it. It is a stream of its own rather than a
+// blast with a long life because the two mean opposite things to a pilot: a blast
+// has already happened and a pyre has not yet.
+export const PYRE_FIELDS = ['x', 'y', 'r', 'p', 'foe'];
+export const packPyre   = o   => [Math.round(o.x), Math.round(o.y), Math.round(o.r),
+                                  +(1 - o.t / o.ttl).toFixed(3), 1];
+export const unpackPyre = arr => { const o = {}; for (let i = 0; i < PYRE_FIELDS.length; i++) o[PYRE_FIELDS[i]] = arr[i]; return o; };
+
 export const STREAMS = {
   ships: streamOf('s', SHIP_FIELDS, 'id'),
   pods:  streamOf('p', POD_FIELDS,  'id'),
@@ -119,7 +130,7 @@ export const STREAMS = {
 // single tick, so a keyed diff would be paying an id and a mask to save a
 // handful of numbers that were already stale. They go whole, and are simply
 // omitted when empty, which is 44 bytes a tick back for nothing.
-export const EPHEMERAL = ['bolts', 'rockets', 'blasts', 'hits'];
+export const EPHEMERAL = ['bolts', 'rockets', 'blasts', 'hits', 'pyres'];
 
 // Everything else in a snapshot is the viewer's own state — credits, loadout,
 // power, rank. Named keys, so this is a set difference rather than a list anyone

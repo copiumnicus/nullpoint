@@ -304,8 +304,12 @@ console.log('\nwhat is deliberately not deltaed');
   // ephemeral streams were 3.5 KiB/s of 69.1 KiB/s. They have no id to key on and
   // the one field that changes on them changes every tick, so a keyed diff would
   // pay an id and a mask to save nothing.
-  check('bolts, rockets, blasts and hits go whole, and the list says so',
-    same(EPHEMERAL, ['bolts', 'rockets', 'blasts', 'hits']),
+  // Pyres joined them, and they are the argument's edge case rather than an
+  // exception to it: a pyre lives 1.8 seconds and its fuse moves every single tick,
+  // so a keyed diff would pay an id and a mask to re-send the one field that
+  // changed. There is at most one per dead Censer.
+  check('bolts, rockets, blasts, hits and pyres go whole, and the list says so',
+    same(EPHEMERAL, ['bolts', 'rockets', 'blasts', 'hits', 'pyres']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost

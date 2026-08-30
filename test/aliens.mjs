@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { storeHit, stepMirror, spendMirror, LOAD_HOLD } from '../shared/aliens.js';
+import { storeHit, stepMirror, spendMirror, LOAD_HOLD, standOff } from '../shared/aliens.js';
 import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
          farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR,
          broodReady, shoveFromBase, BASE_KEEPOUT } from '../shared/aliens.js';
@@ -724,6 +724,44 @@ check('and an unknown alien still draws something rather than nothing',
   check('and no sector further out than the home ring is left empty',
     Object.keys(hops).every(k => (posted[k] ?? []).length > 0),
     Object.entries(posted).map(([k, v]) => `${k}: ${[...new Set(v)].join('/')}`).join('  '));
+}
+
+// Every hostile is driven through stepAlienAI at least once.
+//
+// This exists because a Censer crashed the live server on its first tick — standOff
+// reached for burnR() and aliens.js had never imported it — and the whole suite was
+// green, because nothing here had ever run the AI on a hostile that has a field
+// instead of a gun. A stat block that is only ever read is a stat block whose code
+// path is untested.
+{
+  const map = MAPS.m3;
+  const dummy = newShip(6200, 4000, 'vanguard');
+  for (const kind of WILD) {
+    const a = newAlien(kind, 9000 + WILD.indexOf(kind), map, 11);
+    a.x = dummy.x - 300; a.y = dummy.y;
+    let threw = null;
+    try {
+      for (let i = 0; i < 60; i++) {
+        stepAlienAI(a, map, [{ id: 1, ship: dummy, haven: false, loud: 1 }], dt);
+        step(a, dt);
+      }
+    } catch (e) { threw = e.message; }
+    if (threw) fails.push(`${kind} threw in stepAlienAI: ${threw}`);
+  }
+  check('every hostile survives its own AI, including the ones with no gun',
+    !fails.some(f => f.includes('stepAlienAI')),
+    `${WILD.length} hostiles x 2 seconds of ticks — a Censer crashed the live server here ` +
+    'with a green suite behind it');
+  check('and a hostile with a field holds station at the field rather than at its gun',
+    (() => {
+      const c = newAlien('censer', 9100, map, 11);
+      const cold = standOff(c);
+      c.spin = 1;
+      return cold === ALIENS.censer.burn.idle && standOff(c) > cold * 4;
+    })(),
+    (() => { const c = newAlien('censer', 9101, map, 11); const a0 = Math.round(standOff(c));
+             c.spin = 1; return `${a0}px cold, ${Math.round(standOff(c))}px spun up — ` +
+             'a weaponRange of 0 times 0.7 would park it inside your hull'; })());
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(ALIENS).length} hostile, ${ALIENS_PER_MAP}/map`}\n`);

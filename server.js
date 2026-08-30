@@ -6,7 +6,7 @@ import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
-         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
+         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { respawnDelay } from './shared/spawn.js';
 import { LAB_PRICE, MODULES, claimPlot, plotAt, plotsFor, incomeOf, earnedOver,
@@ -28,9 +28,10 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab } from './shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre } from './shared/net.js';
 import { storeHit, stepMirror, spendMirror } from './shared/aliens.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
+import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -183,6 +184,9 @@ const persistAll = () => {
 // below is belt and braces; this is the thing that actually protects a player's
 // ship, and it bounds any loss to about a second.
 let dirty = false;
+// A hostile's own size, for anything reasoning in shares of it — a Censer's ring
+// winds up by what has been taken OFF it, so it needs to know what it started with.
+const alienEhp = a => (a?.isAlien ? effectiveHp(a.kind) : 0);
 const touch = p => { capture(p.acct, p, Date.now()); dirty = true; };
 
 // --- the yard -----------------------------------------------------------------
@@ -313,7 +317,8 @@ for (const h of HOMES) {
   for (const mid of [co + '2', co + '3']) seed(mid, 'drifter', 4);
   seed(co + '2', 'ironhusk', 3);                  // one hop out: the first thing that outclasses your guns
   seed(co + '2', 'harrier', 2);
-  seed(co + '3', 'harrier', 5);                   // the other hop out: the first thing you cannot outrun
+  seed(co + '3', 'censer', 3);                    // the other hop out: the same weight, the opposite question
+  seed(co + '3', 'harrier', 5);
   seed(co + '3', 'ironhusk', 1);
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
   seed(co + '4', 'leviathan', 2);                 // and the first thing you cannot beat alone
@@ -374,7 +379,8 @@ const dropRocketsAt = (mapId, ship) => {
   for (let i = list.length - 1; i >= 0; i--) if (list[i].target === ship) list.splice(i, 1);
 };
 const blasts = new Map();    // mapId -> kill flashes still playing
-for (const id of Object.keys(MAPS)) { bolts.set(id, []); rockets.set(id, []); blasts.set(id, []); }
+const pyres = new Map();     // mapId -> reactors that have died and not yet let go
+for (const id of Object.keys(MAPS)) { bolts.set(id, []); rockets.set(id, []); blasts.set(id, []); pyres.set(id, []); }
 
 const pods = new Map();      // mapId -> cargo adrift
 for (const id of Object.keys(MAPS)) pods.set(id, []);
@@ -429,6 +435,11 @@ const killAlien = (mapId, a, byId = null) => {
   // The ore is shared on the same terms as the bounty. One pod that whoever got
   // there first took meant two rigs racing over a haul both pilots had earned,
   // and the faster ship won cargo the slower one had paid for in hull.
+  // A reactor does not simply stop. The ring stands where it died for `fuse` seconds
+  // and then lets go of everything it was still holding — which is why range
+  // discipline through the whole fight is the answer to a Censer and nothing else is.
+  if (burnOf(a.def) && (a.spin ?? 0) > 0) pyres.get(mapId).push(pyreFor(a, 1));
+
   const loot = rollDrop(a.kind, a.rand);          // seeded, so drops replay with the alien
   if (loot && cuts.length) {
     const shares = shareOut(cuts, loot.n);
@@ -1450,6 +1461,30 @@ setInterval(() => {
       for (const shot of spat) bolts.get(mapId).push(shot);
       if (spat.length) spendMirror(a);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
+      // The ring. It winds up while it has somebody and settles when it does not, and
+      // it burns whoever is standing in it — everyone, not just its target, because a
+      // field does not aim. Sanctuary is checked with mayHarm(), the same predicate
+      // stepAlienAI targets with, so a Censer drifting past your own dock cannot
+      // quietly cook somebody parked in the ring.
+      if (burnOf(a.def)) {
+        const scorched = here.filter(c => c.ship.hp > 0 && mayHarm(a, c) && inBurn(a, c.ship));
+        stepBurn(a, a.target !== null, scorched.length > 0, dt);
+        for (const c of scorched) {
+          const bite = burnBite(a.def, a.spin, poolOf(c.ship), dt);
+          const split = applyDamage(c.ship, bite);
+          // One floating number a second rather than thirty. A field that printed a
+          // number every tick buried the screen and said nothing you could read.
+          a.sear = (a.sear ?? 0) + bite;
+          // A ship the field kills is settled by the wreck block at the top of the
+          // next tick, exactly the way a ship a bolt kills is. Nothing here has to
+          // know what dying costs.
+          if ((a.searT = (a.searT ?? 0) + dt) >= 1) {
+            hits.get(mapId).push({ x: c.ship.x, y: c.ship.y - c.ship.r - 6, n: a.sear,
+                                   sh: split.hull === 0, by: null, t: HIT_TIME, ttl: HIT_TIME });
+            a.sear = 0; a.searT = 0;
+          }
+        }
+      }
       // Not while it is chasing somebody: a provoked alien follows you in.
       if (a.target === null) shoveFromBase(a, map);
       if (a.hp <= 0) killAlien(mapId, a);
@@ -1575,6 +1610,7 @@ setInterval(() => {
                              by: h.rocket.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
       tally(h.target, h.rocket.owner ?? null, h.split.shield + h.split.hull);
       storeHit(h.target, h.split.shield + h.split.hull);
+      goadBurn(h.target, h.split.shield + h.split.hull, alienEhp(h.target));
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.rocket.owner ?? null);
     }
   }
@@ -1585,9 +1621,29 @@ setInterval(() => {
                              by: h.bolt.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
       tally(h.target, h.bolt.owner ?? null, h.split.shield + h.split.hull);
       storeHit(h.target, h.split.shield + h.split.hull);
+      goadBurn(h.target, h.split.shield + h.split.hull, alienEhp(h.target));
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.bolt.owner ?? null);
     }
     for (const a of aliens.get(mapId) ?? []) if (a.hp <= 0) killAlien(mapId, a);
+  }
+  // And the fuse. `dmg` on the pyre is a FRACTION of whoever is standing in it when
+  // it goes, not a number of points — the same rule the field itself uses, so a
+  // pilot at x32 and a pilot at x1 lose the same share of their ship.
+  for (const [mapId, list] of pyres) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const py = list[i];
+      if ((py.t -= dt) > 0) continue;
+      list.splice(i, 1);
+      boom(mapId, { x: py.x, y: py.y, r: py.r }, true, null);
+      for (const [id, p] of players) {
+        if (p.mapId !== mapId || p.dead || p.lobby || p.ship.hp <= 0) continue;
+        if (inHaven(MAPS[mapId], p.ship) || !inPyre(py, p.ship)) continue;
+        const took = py.dmg * poolOf(p.ship);
+        const split = applyDamage(p.ship, took);
+        hits.get(mapId).push({ x: p.ship.x, y: p.ship.y - p.ship.r - 6, n: took,
+                               sh: split.hull === 0, by: null, t: HIT_TIME, ttl: HIT_TIME });
+      }
+    }
   }
   for (const [, list] of blasts)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
@@ -1655,7 +1711,11 @@ setInterval(() => {
       // needed no new SHIP_FIELDS entry — the row is at 30 of a hard 31 — and `tgt`,
       // on the wire since the beginning, is already the victim's id.
       rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0,
-      abl: Math.round(100 * (a.draw ?? 0)), name: '' });
+      // Whichever dial this hostile has. A Lamprey rides its tether draw here and a
+      // Censer its ring spin; both are 0..1 and both have to be visible, because a
+      // ring you cannot see widening and a cord you cannot see tighten are both
+      // indistinguishable from a bug. Everything else sends 0, as it always has.
+      abl: Math.round(100 * (a.draw ?? a.spin ?? 0)), name: '' });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
@@ -1682,8 +1742,12 @@ setInterval(() => {
       h.by === vid || Math.hypot(h.x - V.ship.x, h.y - V.ship.y) <= reach);
     const cans = (pods.get(V.mapId) ?? []).filter(p =>
       Math.hypot(p.x - V.ship.x, p.y - V.ship.y) <= reach);
+    // A pyre is drawn from outside its own radius, so it reaches further than a
+    // bolt does: you have to be able to see the thing you are running out of.
+    const alight = (pyres.get(V.mapId) ?? []).filter(py =>
+      Math.hypot(py.x - V.ship.x, py.y - V.ship.y) <= reach + py.r);
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
-                    blasts: flashes.map(packBlast),
+                    blasts: flashes.map(packBlast), pyres: alight.map(packPyre),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };
     // Every station in this sector, and which one is theirs. Not radar-filtered:
     // the radar rule keeps an enemy you have not DETECTED off the wire, and a lab
