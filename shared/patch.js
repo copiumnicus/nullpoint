@@ -8,9 +8,17 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.37';
+export const VERSION = '0.38';
 
 export const PATCHES = [
+  { v: '0.38', notes: [
+    'A Lamprey holds the frontier. It has no gun — it opens a tether onto your hull',
+    'It drinks straight past your shields and mends itself with what it takes',
+    'It takes a SHARE of your hull, so no amount of research makes it safer',
+    'Break the cord: fly past 900 and it snaps. Route to thrusters or you cannot',
+    'Sanctuary is total against it. A base ring or a portal mouth and it has nothing',
+    'One friend standing still is worth nothing. Two taking turns kill it',
+  ] },
   { v: '0.37', notes: [
     'Every sector further from home now holds something harder than the one before it',
     'The two sectors out of home were 6,500 and 65,000. They are the same fight now',

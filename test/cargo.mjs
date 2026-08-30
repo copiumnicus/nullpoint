@@ -57,7 +57,7 @@ check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
   const worstPod = t => Math.max(...t.map(r => r.max * MATERIALS[r.mat].vol));
   const oreOf    = t => t.reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
   // The hold of a pilot who has any business being in that sector.
-  const HOLD = { drifter: 60, harrier: 60, ironhusk: 100, bandit: 240, leviathan: 240,
+  const HOLD = { drifter: 60, harrier: 60, ironhusk: 100, lamprey: 100, bandit: 240, leviathan: 240,
                  thresher: 240, hive: 240 };
 
   for (const k of WILD) {

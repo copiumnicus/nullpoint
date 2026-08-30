@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
@@ -30,6 +30,7 @@ import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from '.
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab } from './shared/net.js';
 import { storeHit, stepMirror, spendMirror } from './shared/aliens.js';
+import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -316,6 +317,14 @@ for (const h of HOMES) {
   seed(co + '3', 'ironhusk', 1);
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
   seed(co + '4', 'leviathan', 2);                 // and the first thing you cannot beat alone
+  // The rung between the Harriers and the Leviathan, and the only thing out here
+  // that a single fighter-stage pilot is meant to be able to finish. It does not
+  // move the sector's ceiling — a Bandit is still the hardest thing on the
+  // frontier — it fills the 31x hole underneath it. It belongs at a frontier
+  // rather than one hop in for two reasons that are both about the answer to it:
+  // this is where a full hold makes breaking off expensive, and this is the only
+  // sector with an outpost, which is somewhere to break off TO.
+  seed(co + '4', 'lamprey', 3);
   // Harriers, not Drifters. The frontier was a wall: Bandits hold it, and a pilot
   // who could afford the trip could not survive the welcome, so the only reason to
   // go was the shop. Something farmable out here means you can work the sector at
@@ -1414,6 +1423,29 @@ setInterval(() => {
       // exists — and it is spent on firing rather than on time, so breaking off does
       // not empty the chamber, it only stops you filling it.
       stepMirror(a, dt);
+      // A Lamprey has no gun at all — the tether is instead of firing, not as well
+      // as it, and fire() produces nothing for one anyway because its weaponRange is
+      // 0. Sanctuary is gated on the SAME `haven` the AI was just handed rather than
+      // on a second lookup: one predicate, one answer. Two copies of "where is it
+      // safe to stand" is exactly how the workshop dock ended up refusing to sell
+      // anything for a day.
+      const grip = victim ? tetherHolds(a, victim.ship, victim.haven) : false;
+      const bite = stepSiphon(a, victim?.ship ?? null, grip, dt);
+      if (bite) {
+        const got = drainHull(victim.ship, bite.take);
+        a.hp = Math.min(a.stats.hull, a.hp + bite.mend);
+        // Hull leaving with no number over it is indistinguishable from a bug, and
+        // one number a frame is thirty a second. Accumulated and flushed twice a
+        // second, marked as hull rather than shield because that is what it is —
+        // a tether never touches a shield.
+        a.bit = (a.bit ?? 0) + got.hull;
+        a.bitT = (a.bitT ?? 0) + dt;
+        if (a.bitT >= DRAIN_TELL && a.bit >= 1) {
+          hits.get(mapId).push({ x: victim.ship.x, y: victim.ship.y - victim.ship.r - 6,
+                                 n: a.bit, sh: false, by: null, t: HIT_TIME, ttl: HIT_TIME });
+          a.bit = 0; a.bitT = 0;
+        }
+      }
       const spat = fire(a, victim?.ship ?? null, dt);
       for (const shot of spat) bolts.get(mapId).push(shot);
       if (spat.length) spendMirror(a);
@@ -1617,7 +1649,13 @@ setInterval(() => {
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
       guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0,
-      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0, name: '' });
+      // `abl` is free on a hostile row: every alien has always sent 0 and the client
+      // only reads abl through HULLS[s.hull]?.ability, which is undefined for
+      // anything flying co 'x'. A Lamprey's tether draw rides it, so the tether
+      // needed no new SHIP_FIELDS entry — the row is at 30 of a hard 31 — and `tgt`,
+      // on the wire since the beginning, is already the victim's id.
+      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0,
+      abl: Math.round(100 * (a.draw ?? 0)), name: '' });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

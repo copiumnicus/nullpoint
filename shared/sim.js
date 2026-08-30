@@ -265,6 +265,20 @@ export function applyDamage(s, amount) {
   return { shield: onShield, hull: onHull, dead: s.hp <= 0 };
 }
 
+// A siphon takes hull and nothing else — past the shields, which is the one thing
+// in the game that does that. A shield stops momentum; a tether is a gradient and
+// there is nothing for the bubble to catch, so applyDamage is deliberately NOT the
+// path this takes. It still stamps sinceHit, because being drained is being in
+// combat: the shields must not tick back up under a live tether, and neither a
+// repair drone, an Ore Foundry nor a dock may work on you while one is attached.
+export function drainHull(s, amount) {
+  if (!(amount > 0)) return { hull: 0, dead: false };
+  s.sinceHit = 0;
+  const took = Math.min(s.hp, amount);
+  s.hp = Math.max(0, s.hp - amount);
+  return { hull: took, dead: s.hp <= 0 };
+}
+
 // Shear is ordinary damage: it eats shields first and, because applyDamage resets
 // the timer every tick, they never start coming back while you are still out there.
 export function stepDrift(s, dt, grace = 0) {

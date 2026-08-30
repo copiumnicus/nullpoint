@@ -510,6 +510,36 @@ const dismiss = () => {
   console.log(`bestiary: all ${WILD.length} hostile outlines drawn — ${WILD.join(' ')}`);
 }
 
+// A Lamprey's tether, through the real draw path, including the two cases that
+// would produce a NaN or a radar leak: a victim this viewer was never sent (the
+// tether must simply not be drawn) and a victim standing on top of the drainer.
+{
+  dismiss();
+  feed({ t: 'map', map: 'm1' });
+  const leech = (extra) => packShip({ id: 1_000_500, x: 6600, y: 4000, heading: 3.1, charge: 0,
+    co: 'x', hull: 'lamprey', hp: 100, sh: 100, flash: 0, shot: 0, rk: 0, vis: 1, name: '', ...extra });
+  const me2 = (x, y) => packShip({ id: 1, x, y, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+    hp: 60, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, guns: 3, lvl: 4, drones: 0, form: 0,
+    dmask: 0, psys: 0, plvl: 0, vis: 2, name: 'you' });
+  for (const d of [0, 1, 17, 50, 99, 100]) {                 // every draw, spooling up
+    feed({ t: 's', ships: [me2(6000, 4000), leech({ tgt: 1, abl: d })] });
+    frame(t += 16); frames++;
+  }
+  // A victim the radar never handed this client. tgt names an id that is not in
+  // the ship map at all, which is exactly what happens when a Lamprey is draining
+  // somebody you have not detected.
+  feed({ t: 's', ships: [me2(6000, 4000), leech({ tgt: 987654, abl: 100 })] });
+  frame(t += 16); frames++;
+  // tgt 0: it has nobody.
+  feed({ t: 's', ships: [me2(6000, 4000), leech({ tgt: 0, abl: 100 })] });
+  frame(t += 16); frames++;
+  // Zero length: the victim is standing exactly on it.
+  feed({ t: 's', ships: [me2(6600, 4000), leech({ tgt: 1, abl: 100 })] });
+  frame(t += 16); frames++;
+  frame(t += 16); frames++;
+  console.log('siphon: tether drawn at six draws, plus an undetected victim, no victim and zero length');
+}
+
 // The safe-zone badge. Sanctuary has been in the game since the beginning and had
 // never once said so — you learned the base ring by noticing nothing shot you, and
 // the portal mouth you never learned at all, because nothing draws that 288px

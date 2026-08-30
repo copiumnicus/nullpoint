@@ -13,7 +13,7 @@
 import { ANCHORS, ANCHOR, ANCHOR_DPS, ANCHOR_EHP, ANCHOR_FIGHT, WORTH, UNPRICED,
          worthTable, premiumAt, priceFor, hullPriceFor, capabilityOf, ammoPriceFor, feedBase,
          payFor, alienFor, claimedFight, earnRate, pressureOf,
-         STAGES, STAGE_KEYS, stageDps, stageEhp, stageCost, buildFor, dpsOf, ehpOf, costOf,
+         STAGES, STAGE_KEYS, stageDps, stageEhp, stageHull, stageCost, buildFor, dpsOf, ehpOf, costOf,
          report, consumableReport, bestiaryReport, POSTING, DELIVERY_PREMIUM,
          ORE_RATE, TRIP, HOPS, TIERS, rung, addOf, kitWorth, deviceWorth, consumablePrice,
          freeMultipliers }
@@ -324,11 +324,35 @@ console.log('\nwhat the model currently says about the game (it reports, it does
     b.hive.haveFarmHp / b.drifter.haveFarmHp > 100,
     `content spans ${Math.round(effectiveHp('hive') / effectiveHp('drifter'))}x against a ` +
     `${Math.round(stageDps('finished') / stageDps('arrival'))}x span in player dps`);
-  const dl = WILD.map(k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate);
-  check('content dps has not kept up with the player\'s hull',
+  // Rewritten rather than deleted, per rule five: the claim is the same claim and
+  // still fails the moment content guns fall behind. What changed under it is that
+  // the game now holds a hostile with NO gun, and dividing by its zero sent this
+  // ratio to Infinity — failing a claim about a trend it is deliberately not part
+  // of. A Lamprey takes a share instead of an amount, which is an answer to this
+  // complaint rather than another instance of it, so it is measured by the claim
+  // underneath.
+  const armed = WILD.filter(k => ALIENS[k].attrs.damage > 0);
+  const dl = armed.map(k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate);
+  check('content dps has not kept up with the player\'s hull — for everything that carries a gun',
     Math.max(...dl) / Math.min(...dl) < stageEhp('finished') / stageEhp('arrival'),
-    `${f(Math.max(...dl) / Math.min(...dl))}x of content dps against ${f(stageEhp('finished') / stageEhp('arrival'))}x of player ` +
-    'effective hp — a fight has been getting safer for the whole game');
+    `${f(Math.max(...dl) / Math.min(...dl))}x across the ${armed.length} armed hostiles against ` +
+    `${f(stageEhp('finished') / stageEhp('arrival'))}x of player effective hp — a fight has been getting ` +
+    'safer for the whole game, which is what the one unarmed hostile exists to stop');
+  check('and the one hostile without a gun is the one whose danger cannot decay', (() => {
+    const gunless = WILD.filter(k => ALIENS[k].attrs.damage === 0);
+    if (gunless.length !== 1) return false;
+    const S = ALIENS[gunless[0]].siphon;
+    if (!S) return false;
+    // Its pressure is a share, so the seconds it needs are flat across the whole
+    // ladder. An armed hostile's are a curve, and this compares the two spans.
+    const mine = STAGE_KEYS.map(st => stageHull(st) / (S.rate * stageHull(st)));
+    const gun  = STAGE_KEYS.map(st => stageEhp(st) / (ALIENS.drifter.attrs.damage * ALIENS.drifter.attrs.fireRate));
+    return Math.max(...mine) / Math.min(...mine) < 1.001
+        && Math.max(...gun) / Math.min(...gun) > 6;
+  })(), (() => { const S = ALIENS.lamprey.siphon;
+    const gun = STAGE_KEYS.map(st => stageEhp(st) / (ALIENS.drifter.attrs.damage * ALIENS.drifter.attrs.fireRate));
+    return `a Lamprey needs ${f(1 / S.rate, 1)}s against every ship in the game; a Drifter needs ` +
+      `${f(Math.min(...gun), 0)}s against a new account and ${f(Math.max(...gun), 0)}s against a finished one`; })());
   check('the Bandit is the only hostile whose danger is within reach of its posting',
     b.bandit.dpsRatio > 0.6 && b.hive.dpsRatio < 0.5,
     `Bandit ${f(b.bandit.dpsRatio)}, Ironhusk ${f(b.ironhusk.dpsRatio)}, Leviathan ${f(b.leviathan.dpsRatio)}, ` +

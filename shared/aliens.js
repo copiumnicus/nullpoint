@@ -280,6 +280,18 @@ export const ALIENS = {
     xp: 24554,        // and the same effective hp at XP_RATE
   },
 
+  // A parasite. It has no gun at all.
+  lamprey: {
+    name: 'Lamprey', cls: 'Parasite', r: 30, colour: '#3fd19b', shape: 'maw',
+    siphon: { reach: 900, spool: 5.0, rate: 0.0225, mend: 0.0225 },
+    attrs: { hull: 14550, shield: 6000, shieldRegen: 200, shieldDelay: 5,
+             speed: 200, accel: 300, signature: 7,
+             damage: 0, fireRate: 0.5, weaponRange: 0 },
+    aggro: 500, leash: 2000, patience: 4.0, flee: 0, respawn: 45,
+    bounty: 14385,
+    xp: 4426,
+  },
+
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
   // flee, and carries enough hull that a finished ship cannot delete it before you
   // have read a number off it. Never seeded outside the testing ground.
@@ -354,6 +366,19 @@ export const SHAPES = {
     [0.95, 1.15], [1.10, 0.38], [1.10, -0.38], [0.95, -1.15],
     [-0.45, -0.85], [-1.30, 0], [-0.45, 0.85],
   ].map(([x, y]) => [x * R, y * R]),
+  // A ring with the front bitten out of it. Everything else in the bestiary either
+  // has a nose or is radial; this has a mouth, and the gap in it is the side the
+  // tether leaves from. Two arcs joined at the jaw tips, so it is one closed
+  // outline like every other shape here.
+  maw: R => {
+    const N = 12, span = Math.PI * 1.42, out = [], inn = [];
+    for (let i = 0; i <= N; i++) {
+      const a = Math.PI - span / 2 + (i / N) * span;   // centred on the tail: the gap faces +x
+      out.push([Math.cos(a) * R * 1.15, Math.sin(a) * R * 1.15]);
+      inn.push([Math.cos(a) * R * 0.55, Math.sin(a) * R * 0.55]);
+    }
+    return [...out, ...inn.reverse()];
+  },
   // A knobbly disc: twelve shallow lobes, no nose and no spikes. It reads as a
   // structure rather than a ship, which is what it is.
   hive: R => Array.from({ length: 24 }, (_, i) => {
@@ -612,6 +637,12 @@ export const CLOSER_EDGE = 0.85;  // and nearer by a margin, not merely tied
 export const THREAT_HOLD = 2.0;   // s of out-damaging its target before it switches
 export const THREAT_EDGE = 2.0;   // and by this multiple, so a graze does not pull it
 
+// How far out a hostile likes to stand. A gun's range for anything with a gun,
+// and a tether's reach for the one thing that has none: reading weaponRange alone
+// parked a Lamprey inside your hull, because 0 x 0.7 is 0, and a tether with no
+// length is not a tether.
+export const standOff = a => a.def?.siphon?.reach ?? a.stats.weaponRange;
+
 export function stepAlienAI(a, map, contenders, dt) {
   const at = id => contenders.find(c => c.id === id);
   const alive = c => c && c.ship.hp > 0;
@@ -689,7 +720,7 @@ export function stepAlienAI(a, map, contenders, dt) {
       a.ty = Math.max(500, Math.min(MAP_H - 500, a.y + (dy / m) * 2200));
       return null;                                           // fleeing, not firing
     }
-    const d = dist(t), hold = a.stats.weaponRange * 0.7;
+    const d = dist(t), hold = standOff(a) * 0.7;
     a.dx = a.dy = null;
     if (d > hold) { a.tx = t.ship.x; a.ty = t.ship.y; }     // close
     else           { a.tx = a.ty = null; }                   // hold station and shoot

@@ -3129,6 +3129,70 @@ function drawFrame(now) {
     g.globalAlpha = 1;
     g.restore();
 
+    // A Lamprey's tether, and the whole of what it does — it has no gun at all.
+    // It has to read as flowing TOWARD the drainer, because the direction IS the
+    // mechanic: that is your hull going the other way, and hull does not come back
+    // in the field.
+    //
+    // No new SHIP_FIELDS entry, and the row is at 30 of a hard 31. `tgt` has been
+    // on the wire for every ship since the beginning and the server already fills
+    // it in for hostiles; `abl` rides free on an alien row, because aliens send
+    // abl: 0 and this client only ever reads abl through HULLS[s.hull]?.ability,
+    // which is undefined for every hostile. So the draw is a 0..100 dial on two
+    // fields that already existed.
+    //
+    // Three guards, and they are why this cannot put a NaN or an undefined into a
+    // draw call. The victim is radar-filtered PER VIEWER, so a Lamprey can quite
+    // legitimately be drawing on a pilot this client was never sent — ships.get
+    // misses and nothing is drawn, which is the radar rule as much as the maths
+    // one: a tether to a ship you have not detected would announce it. `tgt` is 0
+    // when it has nobody. And a cord shorter than a pixel has no direction, so it
+    // is skipped rather than divided by zero.
+    const bled = foe && ALIENS[s.hull]?.siphon ? Math.max(0, Math.min(1, (s.abl ?? 0) / 100)) : 0;
+    const prey = bled > 0 && s.tgt ? ships.get(s.tgt) : null;
+    if (prey && Number.isFinite(prey.rx) && Number.isFinite(prey.ry)) {
+      const dx = s.rx - prey.rx, dy = s.ry - prey.ry, len = Math.hypot(dx, dy);
+      if (len > 1) {
+        const ux = dx / len, uy = dy / len;         // prey -> drainer: the way it flows
+        const nx = -uy, ny = ux, tint = colOf(s);
+        const at = (u, off) => [prey.rx + ux * len * u + nx * off,
+                                prey.ry + uy * len * u + ny * off];
+        // The cord hangs rather than lases: a standing wave pinned to zero at both
+        // ends, with the phase running backwards down the line so the wave itself
+        // is a second statement of which way this goes.
+        const wob = (u, k) => Math.sin(u * 9 - now / 150 + k) * (1 - Math.abs(u * 2 - 1)) * (3 + 5 * bled);
+        for (const [k, wide, a2] of [[0, 3.2, 0.16], [2.1, 1.4, 0.5]]) {
+          g.globalAlpha = a2 * (0.35 + 0.65 * bled);
+          g.strokeStyle = tint; g.lineWidth = wide * (0.5 + bled);
+          g.beginPath();
+          for (let i = 0; i <= 24; i++) {
+            const u = i / 24, p2 = at(u, wob(u, k));
+            if (i) g.lineTo(p2[0], p2[1]); else g.moveTo(p2[0], p2[1]);
+          }
+          g.stroke();
+        }
+        // What is travelling along it. Five knots out of phase, each one swelling
+        // as it goes: that is your hull, on its way into the thing taking it.
+        for (let i = 0; i < 5; i++) {
+          const u = ((now / 900) + i / 5) % 1, p2 = at(u, wob(u, 0));
+          g.globalAlpha = (0.25 + 0.75 * bled) * Math.sin(u * Math.PI);
+          g.fillStyle = tint;
+          g.beginPath(); g.arc(p2[0], p2[1], 1.6 + 3.4 * u * bled, 0, 7); g.fill();
+        }
+        // The mouth at its end, swallowing on a beat.
+        const gulp = 0.55 + 0.45 * Math.sin(now / 210);
+        g.globalAlpha = 0.18 + 0.42 * bled * gulp;
+        g.fillStyle = tint;
+        g.beginPath(); g.arc(s.rx, s.ry, R * (0.9 + 0.5 * gulp), 0, 7); g.fill();
+        // And the grip at yours, closing as the draw comes up — so the pilot being
+        // drained is told which end of this they are on without reading a number.
+        g.globalAlpha = 0.35 + 0.5 * bled;
+        g.strokeStyle = tint; g.lineWidth = 1.4;
+        g.beginPath(); g.arc(prey.rx, prey.ry, Math.max(3, rOf(prey) * (2.4 - 1.1 * bled)), 0, 7); g.stroke();
+        g.globalAlpha = 1;
+      }
+    }
+
     // A Lock that only shows on the bolt is a Lock you cannot see between volleys,
     // and it is running — and draining — the whole time. The hull carries it.
     const lockd = HULLS[s.hull]?.ability === 'lock' ? (s.abl ?? 0) / 100 : 0;
