@@ -6,8 +6,13 @@
 // is all it buys you.
 //
 // What it deliberately does NOT buy you:
-//   - protection. An outpost is not a haven and a berth does not make it one.
-//   - repair. The dock at home mends you for free; these people do not.
+//   - repair. The dock at home mends you for free; these people do not. The badge
+//     top right says so in as many words when you are standing in one, because an
+//     outpost IS a haven now — the pirates keep order inside their own ring, so a
+//     respawn there is not a death loop — and "safe" reads as "mended" unless the
+//     game says otherwise. This line used to claim an outpost was not a haven at
+//     all, which stopped being true when the protection zone went in and stayed
+//     on the page for two versions.
 //   - safety while you use it. Take a hit and the bay closes until you are clear,
 //     because a shop you can use mid-fight is a shop that ends fights.
 //

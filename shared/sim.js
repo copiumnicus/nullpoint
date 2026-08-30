@@ -187,10 +187,20 @@ export const inOutpost = (map, s) =>
 // with anyone standing in one — but provocation overrides it, and that check lives
 // in the alien's own logic, not here.
 export const HAVEN_R = PORTAL_R * 2.4;
-export function inHaven(map, s) {
-  return inBase(map, s) || inOutpost(map, s)
-      || map.portals.some(p => Math.hypot(p.x - s.x, p.y - s.y) < HAVEN_R);
+
+// WHICH sanctuary, or null. inHaven is this question with the answer thrown away.
+//
+// One function rather than two, because the HUD has to say which kind you are in —
+// a company ring mends you and a pirate outpost pointedly does not — while the
+// aliens only need to know that you are in one. Two copies of "where is it safe"
+// would disagree the first time either moved, and this codebase has the scar.
+export function havenKind(map, s) {
+  if (inBase(map, s))    return 'ring';
+  if (inOutpost(map, s)) return 'outpost';
+  if (map?.portals?.some(p => Math.hypot(p.x - s.x, p.y - s.y) < HAVEN_R)) return 'portal';
+  return null;
 }
+export const inHaven = (map, s) => havenKind(map, s) !== null;
 
 export const SHOT_FLASH = 0.16;   // s the muzzle stays lit
 

@@ -8,9 +8,17 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.33';
+export const VERSION = '0.34';
 
 export const PATCHES = [
+  { v: '0.34', notes: [
+    'A cleared sector refills faster, and faster still with more pilots working it',
+    'Two Leviathans used to leave the map empty for a minute and a half. Now 45s',
+    'A quiet, full sector is unchanged — nothing comes back faster for free',
+    'Bosses keep their five minutes: an event should stay an event',
+    'The top right says when you are safe, and which kind of safe it is',
+    'Portal mouths have always been sanctuary. Now the game admits it',
+  ] },
   { v: '0.33', notes: [
     'Pilots have their handle over their bars, so a crowded sector has names in it',
     'A contact your radar has lost stays anonymous — no bars, no name',

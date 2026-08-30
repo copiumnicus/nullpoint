@@ -11,7 +11,8 @@ import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
 import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
-         DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
+         DRIFT_MARGIN, WORLD, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
+import { havenBadge, havenLine, TONE } from '/shared/haven.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { whyNotSold, frontierOnly } from '/shared/gear.js';
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from '/shared/scrap.js';
@@ -173,6 +174,36 @@ const toast = (what, cost, note) => {
 
 // The changelog. A version number is a small promise that the thing is being
 // worked on, and it costs one icon to keep.
+// You are safe, and this is the first time the game has ever said so.
+//
+// Two of the three sanctuaries a player learns by accident — stand in your own
+// ring long enough and you notice nothing shoots you. The portal mouth they never
+// learn: nothing draws that 288px circle anywhere, so the thing you should run for
+// when something faster than you finds you is invisible.
+//
+// It draws nothing at all outside a haven. A badge that is always on the screen is
+// furniture, and furniture is not read.
+function drawHaven() {
+  const me = ships.get(myId);
+  if (!me || dead || signup) return;
+  const map = MAPS[mapId];
+  const line = havenLine(havenKind(map, me), {
+    mine: canDock(map, myCo, me),                // your ring mends you; nowhere else does
+    hunted: fightState().hunted,                 // peace stops one STARTING, not one already on you
+  });
+  if (!line) return;
+
+  const b = havenBadge(VIEW_W), col = TONE[line.tone] ?? TONE.calm;
+  g.fillStyle = 'rgba(6,10,16,0.93)'; g.fillRect(b.x, b.y, b.w, b.h);
+  g.strokeStyle = col; g.lineWidth = 1;
+  g.strokeRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1);
+  g.fillStyle = col; g.fillRect(b.x, b.y, 3, b.h);   // the same spine the receipts wear
+  g.font = '11px ui-monospace, monospace'; g.textAlign = 'center';
+  g.fillStyle = col;
+  g.fillText(`${line.tone === 'warn' ? '\u25b2' : '\u25c6'}  ${line.text}`, b.x + b.w / 2, b.y + 17);
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+}
+
 function drawPatch() {
   const b = patchIcon(VIEW_W);
   const hot = hover && hover.x > b.x && hover.x < b.x + b.w && hover.y > b.y && hover.y < b.y + b.h;
@@ -3469,7 +3500,8 @@ function drawFrame(now) {
   if (berthOpen) drawBerth();
   if (invOpen) drawInventory();
   if (dead) drawWreck(now);
-  if (!signup) drawPatch();
+  if (!signup) drawHaven();
+  if (!signup) drawPatch();      // after, so an open changelog covers the badge
   // Receipts go on top of the panels. Drawn under them, the station's own
   // backdrop dimmed the confirmation for the purchase you just made in it.
   if (!dead) drawToasts(now);

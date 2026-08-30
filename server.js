@@ -8,6 +8,7 @@ import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHe
          broodReady, BROOD_R, shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
+import { respawnDelay } from './shared/spawn.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy,
          whyNotLoad, loadable } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
@@ -1168,8 +1169,37 @@ setInterval(() => {
       // from the front, paid in every hostile opening on you sooner.
       if (p.mapId === mapId && !p.dead)
         here.push({ id, ship: p.ship, haven: inHaven(map, p.ship), loud: loudOf(p.ship) });
+    // How stripped this sector is, per kind. Measured per kind rather than across
+    // the whole sector because the sector-wide answer is useless: m3 holds four
+    // Drifters beside its two Leviathans, so clearing both Leviathans reads as
+    // four of six standing and the timer barely moves.
+    //
+    // A boss is deliberately not in this. Its respawn is not a population rate, it
+    // is a statement about how often the event should happen — the Corsair Hive's
+    // five minutes says "it should be an event" in as many words — and a party
+    // that beats it should not thereby be allowed to beat it three times an hour.
+    const alive = new Map(), total = new Map();
     for (const a of list) {
-      if (a.dead > 0) { a.dead -= dt;
+      if (a.spawned || a.def.broods) continue;
+      total.set(a.kind, (total.get(a.kind) ?? 0) + 1);
+      if (a.dead <= 0 && !a.gone) alive.set(a.kind, (alive.get(a.kind) ?? 0) + 1);
+    }
+    // The COUNTDOWN is scaled, not the delay stamped at death, and that is the
+    // whole point: pressure comes off mid-countdown as the sector refills, so a
+    // pilot who leaves does not leave a queue of instant respawns behind them.
+    // Under constant conditions the total still comes to exactly respawnDelay(),
+    // which is what keeps MIN_RESPAWN honest.
+    //
+    // Read as posted/actual rather than by calling refillRate(): that normalises
+    // to a base of 100 and would let a Drifter through the 3s floor at 0.4s.
+    const refill = a => (a.spawned || a.def.broods) ? 1
+      : a.def.respawn / respawnDelay(a.def.respawn, {
+          pilots: here.length,
+          alive: alive.get(a.kind) ?? 0,
+          total: total.get(a.kind) ?? 1,
+        });
+    for (const a of list) {
+      if (a.dead > 0) { a.dead -= dt * refill(a);
         // An escort is not a fixture of the sector: when one dies it is gone, and
         // the hive makes another. Everything else comes back somewhere nobody is
         // looking, rather than on top of whoever killed it.

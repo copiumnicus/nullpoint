@@ -16,6 +16,8 @@ import { ALIENS } from '../shared/aliens.js';
 import { SIGHT_R } from '../shared/sim.js';
 import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
 import { NAME_MAX } from '../shared/signup.js';
+import { havenBadge, HAVEN_COPY, HAVEN_BROKEN } from '../shared/haven.js';
+import { havenKind, HAVEN_R } from '../shared/sim.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -487,6 +489,79 @@ const dismiss = () => {
   frame(t += 16); frames++;
   console.log(`changelog: v${VERSION}, ${PATCHES.length} entries, ${L.lines.length} lines whole, ` +
     `${L.maxScroll} to scroll; wheel, click-away and Escape all drive it`);
+}
+
+// The safe-zone badge. Sanctuary has been in the game since the beginning and had
+// never once said so — you learned the base ring by noticing nothing shot you, and
+// the portal mouth you never learned at all, because nothing draws that 288px
+// circle anywhere. Half the value of this badge is that it is the only place the
+// game admits the portal haven exists.
+{
+  dismiss();
+  const B = havenBadge(innerWidth);
+  const me = (x, y, extra = {}) => packShip({ id: 1, x, y, heading: 0, charge: 0, co: 'm',
+    hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2,
+    name: 'Vy', ...extra });
+  const show = (map, ships) => { feed({ t: 'map', map }); feed({ t: 's', ships }); };
+  const badge = () => {                              // what the badge says this frame
+    trace = []; frame(t += 16); frames++;
+    const out = trace; trace = null;
+    // Must say SAFE: the docked readout top-left opens with the same diamond, and
+    // matching on the glyph alone quietly tested that instead.
+    const hit = out.find(c => /^fillText [\u25c6\u25b2]\s+SAFE/.test(c));
+    return hit ? hit.split(/\s+/).slice(2, -2).join(' ') : null;
+  };
+
+  const ring = MAPS.m1.base, mouth = MAPS.m1.portals[0], post = MAPS.m4.outpost;
+  show('m1', [me(ring.x, ring.y)]);
+  hoverAt(B);                                        // drive the pointer over it, not just frames
+  const inRing = badge();
+  show('m1', [me(ring.x + ring.r + 40, ring.y)]);
+  const outside = badge();
+  if (!inRing || !inRing.includes('SAFE'))
+    errs.push(`a ship in its own ring was not told it was safe (badge said ${JSON.stringify(inRing)})`);
+  else if (outside)
+    errs.push(`a ship outside the ring was still told it was safe (${JSON.stringify(outside)})`);
+  else console.log(`safe zone: told inside the ${ring.r}px ring and silent ${40}px outside it — ` +
+                   `"${inRing}"`);
+
+  // The portal mouth, which is the one nothing else in the game mentions.
+  show('m1', [me(mouth.x, mouth.y)]);
+  const atMouth = badge();
+  if (!atMouth || !atMouth.includes('PORTAL'))
+    errs.push(`a portal mouth is sanctuary and the badge did not say so (${JSON.stringify(atMouth)})`);
+  else console.log(`safe zone: a portal mouth says so too — ${HAVEN_R}px, and nothing else in the game draws it`);
+
+  // A pirate outpost keeps the peace and pointedly does not mend you. If the two
+  // read the same, the badge is telling a pilot at 8% hull that they are fine.
+  show('m4', [me(post.x, post.y)]);
+  const atPost = badge();
+  if (!atPost || atPost === inRing)
+    errs.push('a pirate outpost read exactly like your own ring, which mends you and it does not');
+  else console.log(`safe zone: an outpost does not read like a ring — "${atPost}"`);
+
+  // And peace already broken is not peace. Sanctuary stops an alien STARTING;
+  // one that is already on you follows you in. A badge a pilot learns to trust
+  // and then dies inside is worse than no badge at all.
+  show('m1', [me(ring.x, ring.y), packShip({ id: 1e6, x: ring.x + 200, y: ring.y, heading: 0,
+    charge: 0, co: 'x', hull: 'drifter', hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0,
+    vis: 1, name: '' })]);
+  const hunted = badge();
+  if (hunted !== HAVEN_BROKEN.text)
+    errs.push(`a hostile already firing on me in a haven still read as calm (${JSON.stringify(hunted)})`);
+  else console.log(`safe zone: with one already on you it warns instead of reassuring — "${hunted}"`);
+
+  // Pure geometry, and the reason the rectangle lives in shared/ rather than in
+  // the client: it has to be provable that the badge does not land on the
+  // changelog icon or on the first receipt.
+  const icon = patchIcon(innerWidth);
+  const toast = { x: innerWidth - 260 - 16, y: 92, w: 260, h: 46 };
+  const clash = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  if (clash(B, icon) || clash(B, toast))
+    errs.push(`the safe-zone badge lands on ${clash(B, icon) ? 'the changelog icon' : 'the first receipt'}`);
+  else console.log(`safe zone: the badge at ${B.x},${B.y},${B.w},${B.h} clears the icon and the receipts`);
+  show('m1', [me(6000, 4000)]);
+  frame(t += 16); frames++;
 }
 
 // Flying without the mouse, driven through the real key handlers and the real
