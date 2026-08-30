@@ -3069,6 +3069,28 @@ function drawFrame(now) {
     g.fillStyle = '#5fd0ff'; g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 16, (bw - 2) * (s.sh ?? 0) / 100, 2.5);
     g.fillStyle = (s.hp ?? 100) > 33 ? '#7de08a' : '#e05a5a';
     g.fillRect(s.rx - bw / 2 + 1, s.ry - R - 12.5, (bw - 2) * (s.hp ?? 0) / 100, 2.5);
+    // The handle, over the bars it belongs to. Two Vanguards in the same company
+    // are the same shape in the same colour, so until now the only thing telling
+    // two pilots apart was the gap between them.
+    //
+    // It sits inside the vitals block on purpose: the block is already skipped for
+    // a contact the radar has lost (`if (lost) continue` above), so a track fading
+    // out of detection goes anonymous with its bars rather than announcing who is
+    // out there in the dark. No extra rule, and none to forget.
+    //
+    // No truncation here. cleanName caps a handle at NAME_MAX before it is ever
+    // stored, so the worst case is a known width and clipping it again would be a
+    // second copy of a rule that already lives in shared/.
+    if (s.name) {
+      g.font = 'bold 9px ui-monospace, monospace'; g.textAlign = 'center';
+      // Dark stroke behind it, the same trick the damage numbers use — a name over
+      // a nebula is otherwise unreadable exactly when the sector is busiest.
+      g.lineWidth = 3; g.strokeStyle = 'rgba(4,7,12,0.9)';
+      g.strokeText(s.name, s.rx, s.ry - R - 21);
+      g.fillStyle = colOf(s);                      // the colour that fills the hull
+      g.fillText(s.name, s.rx, s.ry - R - 21);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
     if (s.lvl > 0) {                               // rank, so everyone can read it
       g.fillStyle = 'rgba(4,7,12,0.8)';
       g.fillRect(s.rx + bw / 2 + 3, s.ry - R - 18, 20, 11);

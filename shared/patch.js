@@ -8,9 +8,13 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.32';
+export const VERSION = '0.33';
 
 export const PATCHES = [
+  { v: '0.33', notes: [
+    'Pilots have their handle over their bars, so a crowded sector has names in it',
+    'A contact your radar has lost stays anonymous — no bars, no name',
+  ] },
   { v: '0.32', notes: [
     'The technology shelf is twelve entries, not twenty-six, and every one is a real trade',
     'Every shop row says what the thing lets you DO, and what it costs you to have it',

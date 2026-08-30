@@ -30,7 +30,7 @@ import { STREAMS, EPHEMERAL, bagKeys } from './net.js';
 // Bitwise operators in JavaScript are 32-bit and SIGNED, so `1 << 31` is
 // negative and `1 << 32` wraps around to 1. A 32nd field would therefore corrupt
 // every update in a way no test of the 31 below would notice. SHIP_FIELDS is
-// already at 28.
+// already at 30, so there is exactly one slot left.
 export const MAX_FIELDS = 31;
 
 // What a connection remembers having been told. `map` is on it because a jump

@@ -230,7 +230,7 @@ const PROP_ROWS = PROPS.map(p2 => {
            guns: s2.guns, lvl: 0, drones: s2.drones.length,
            form: Math.max(0, FORMATION_KEYS.indexOf(p2.formation)),
            dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY,
-           rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0 };
+           rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0, name: '' };
 });
 
 const bolts  = new Map();    // mapId -> bolts in flight
@@ -1376,6 +1376,10 @@ setInterval(() => {
     row.set(id, { id, x: Math.round(p.ship.x), y: Math.round(p.ship.y),
       heading: +p.ship.heading.toFixed(2), charge: +p.ship.charge.toFixed(2),
       co: p.co, hull: p.ship.hull,
+      // `?? ''` because this row is built before the lobby players are skipped a
+      // few lines down, and acct.name does not exist until someone has joined.
+      // The row never reaches anyone, but undefined in a tuple JSONs to null.
+      name: p.acct?.name ?? '',
       hp: Math.round(100 * p.ship.hp / p.ship.stats.hull),
       sh: Math.round(100 * p.ship.shield / Math.max(1, shieldMax(p.ship))),
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
@@ -1406,7 +1410,7 @@ setInterval(() => {
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
       guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0,
-      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0 });
+      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0, name: '' });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

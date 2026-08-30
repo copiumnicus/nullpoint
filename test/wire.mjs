@@ -5,6 +5,11 @@
 // claims below are the durable half of that measurement — a scripted sector the
 // codec can be run over deterministically, so a change that quietly puts the
 // bytes back has something to fail against.
+//
+// Adding the pilot's handle to the row cost one byte a tick, 217 to 218, because a
+// name never changes and so never sets its bit in the delta mask. It rides the
+// keyframe and then goes quiet. That is the argument for putting it in the row
+// rather than in a roster message, and this is where the argument is checked.
 
 import { SHIP_FIELDS, POD_FIELDS, STREAMS, EPHEMERAL, bagKeys, packShip, packPod, unpackShip }
   from '../shared/net.js';
@@ -64,6 +69,10 @@ function tick(S, n) {
     id: s.id, x: Math.round(s.x), y: Math.round(s.y), heading: +s.heading.toFixed(2),
     charge: 0, co: s.co, hull: s.hull, hp: s.hp, sh: s.sh, flash: 0, tgt: 0, shot: 0,
     rk: 0, fix: 0, guns: 3, psys: 2, plvl: 71, lvl: 14, drones: 2, form: 0, dmask: 3,
+    // A real handle, not a blank. A name never changes so it never sets its mask
+    // bit, but leaving it null here would have the benchmark measure a row that
+    // nobody is ever sent and quietly stop being the number in the header.
+    name: s.name ?? `Pilot-${s.id}`,
     vis: s.co === 'm' ? 2 : 1, rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0 }));
   return { ships: rows, pods: new Map(S.pods.map(p => [p.id, packPod(p)])) };
 }

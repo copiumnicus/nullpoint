@@ -26,7 +26,16 @@ export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', '
                             // a Veil you cannot see fade is indistinguishable from
                             // a bug, and an Anchor nobody can see is just a ship
                             // that stopped.
-                            'abl'];
+                            'abl',
+                            // Who is flying it. A name never changes, so the delta
+                            // mask never sets its bit and it costs nothing per tick —
+                            // it rides the keyframe and then goes quiet. It is in the
+                            // row rather than in a roster message for one reason that
+                            // matters more than the bytes: the row set IS the radar
+                            // set, so a pilot you have not detected cannot be named
+                            // by accident. A roster would be a second copy of "who
+                            // may this pilot see", and a rule kept twice disagrees.
+                            'name'];
 
 // A bolt in flight: where it started, where it is aimed, how far along it is,
 // whether a hostile fired it, and how much damage it carries — which is what the

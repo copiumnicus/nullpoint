@@ -15,6 +15,7 @@ import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 import { SIGHT_R } from '../shared/sim.js';
 import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
+import { NAME_MAX } from '../shared/signup.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -308,6 +309,42 @@ for (const id of Object.keys(MAPS)) {
   if (seen !== 'legacy-token') errs.push(`a token under ${OLD_TOKEN_KEYS[0]} was not migrated (got ${seen})`);
   else if (store.get(OLD_TOKEN_KEYS[0]) !== undefined) errs.push('the old key was left behind');
   else console.log(`identity: a pilot stored under ${OLD_TOKEN_KEYS[0]} carried over to ${TOKEN_KEY}`);
+}
+
+// Handles, over the bars. Two Vanguards in the same company are the same shape in
+// the same colour, so before this the only thing telling two pilots apart was the
+// gap between them. cleanName caps a handle at NAME_MAX server-side, so the widest
+// one is a known width and nothing on this side has to truncate.
+//
+// The ship with vis 0 is the load-bearing half. A contact the radar has lost keeps
+// its silence — the vitals block already stops at `if (lost) continue`, and the
+// handle sits under that same rule rather than announcing who is out there in the
+// dark. Asserting only that text appears would pass with the radar rule broken.
+{
+  feed({ t: 'welcome', id: 1, token: 'test-token', name: 'Vy', co: 'm', map: 'm1',
+         hull: 'vanguard', fit: { weapon: [], generator: [], tech: [] } });
+  feed({ t: 'map', map: 'm1' });
+  const longest = 'A'.repeat(NAME_MAX);
+  const crowd = () => feed({ t: 's', ships: [
+    packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+               hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, lvl: 14, name: 'Vy' }),
+    packShip({ id: 2, x: 6120, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+               hp: 60, sh: 40, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, lvl: 3, name: longest }),
+    packShip({ id: 3, x: 5880, y: 4000, heading: 0, charge: 0, co: 'h', hull: 'kestrel',
+               hp: 80, sh: 0, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 0, lvl: 9, name: 'Ghost' }),
+    packShip({ id: 1e6, x: 6000, y: 4200, heading: 0, charge: 0, co: 'x', hull: 'drifter',
+               hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 1, name: '' }),
+  ] });
+  crowd(); frame(t += 16); frames++;               // one frame to let rx/ry settle
+  crowd(); trace = [];
+  frame(t += 16); frames++;
+  const out = trace; trace = null;
+  const drew = n => out.some(c => c.startsWith(`fillText ${n} `));
+  if (!drew('Vy') || !drew(longest))
+    errs.push('a pilot in the sector was drawn with no handle over their bars');
+  else if (drew('Ghost'))
+    errs.push('a contact the radar has lost was still labelled with the pilot flying it');
+  else console.log(`handles: every pilot on the plot is named over their bars, up to ${NAME_MAX} characters, and a stale contact is not`);
 }
 
 // A first visit chooses a name and a side, and can do nothing else until it has.
