@@ -8,6 +8,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
+import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET } from '/shared/berth.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
@@ -48,7 +49,7 @@ import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, devicePrice, whyNotDevice } from '/shared/devices.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
-         barLayout, feedMenu, gradeColour } from '/shared/ammo.js';
+         barLayout, feedMenu, gradeColour, whyNotBuy } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
@@ -76,6 +77,7 @@ const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 let sysOpen = false;
 let patchOpen = false, patchScroll = 0;   // the changelog, top right
+let berthOpen = false;                    // the pirates' offer of a bay
 
 let myId = null, myCo = 'm', myName = '', mapId = 'm1', status = 'connecting…';
 document.title = GAME;
@@ -101,6 +103,7 @@ let myForm = 'line', myForms = ['line'];
 let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
 let myKits = {}, myKit = DEFAULT_KIT;
 let myDevices = {}, myDevice = DEFAULT_DEVICE;
+let myBerths = [];                // outposts you rent a bay at
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -213,6 +216,41 @@ function drawPatch() {
   g.font = '12px ui-monospace, monospace';
 }
 
+// What the pirates will rent you, and what they will not. Deliberately blunt about
+// the second part: the whole risk of the thing is a pilot assuming a bay is cover.
+function drawBerth() {
+  const L = berthPanel(VIEW_W, VIEW_H), P = L.panel;
+  const why = whyNotBuyBerth({ xp: myXp, credits, owned: myBerths.includes(mapId), inside: inMyOutpost() });
+  const over = hover && hover.x > L.buy.x && hover.x < L.buy.x + L.buy.w
+                     && hover.y > L.buy.y && hover.y < L.buy.y + L.buy.h;
+
+  g.fillStyle = 'rgba(3,5,9,0.86)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.fillStyle = 'rgba(8,12,19,0.98)'; g.fillRect(P.x, P.y, P.w, P.h);
+  g.strokeStyle = '#8a6a3a'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+
+  g.textAlign = 'left'; g.font = '14px ui-monospace, monospace'; g.fillStyle = '#ffd479';
+  g.fillText('A BERTH HERE', P.x + 20, P.y + 32);
+  g.font = '10px ui-monospace, monospace'; g.fillStyle = '#8ea3bd';
+  g.fillText('Refit and buy without flying home.', P.x + 20, P.y + 56);
+  g.fillStyle = '#66748c';
+  g.fillText('No shelter. No repairs. Closed while anything is shooting you.', P.x + 20, P.y + 74);
+  g.fillText(`Rank ${BERTH_RANK} and up — they rent to pilots they have heard of.`, P.x + 20, P.y + 92);
+
+  g.font = '12px ui-monospace, monospace'; g.textAlign = 'right';
+  g.fillStyle = credits >= berthPrice() ? '#ffd479' : '#e05a5a';
+  g.fillText(`${fmtCredits(berthPrice())} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
+  g.textAlign = 'left';
+
+  g.fillStyle = why ? 'rgba(255,255,255,0.03)' : over ? 'rgba(125,224,138,0.20)' : 'rgba(125,224,138,0.12)';
+  g.fillRect(L.buy.x, L.buy.y, L.buy.w, L.buy.h);
+  g.strokeStyle = why ? '#3d4757' : '#7de08a'; g.lineWidth = 1.4;
+  g.strokeRect(L.buy.x + .5, L.buy.y + .5, L.buy.w - 1, L.buy.h - 1);
+  g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
+  g.fillStyle = why ? '#66748c' : '#7de08a';
+  g.fillText(why ? why.toUpperCase() : 'RENT THE BAY', L.buy.x + L.buy.w / 2, L.buy.y + 23);
+  g.textAlign = 'left';
+}
+
 function drawToasts(now) {
   toasts = toasts.filter(t => now - t.at < TOAST_LIFE);
   toasts.forEach((t, i) => {
@@ -250,19 +288,24 @@ function spaceAction() {
   // the thing you came to the gate to do is leave — and hauling a pod first, then
   // pressing again, was a fight with the key rather than with anything in space.
   if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump' };
-  const pod = pods.filter(pd => Math.hypot(pd.x - me2.rx, pd.y - me2.ry) <= SCOOP_R)
-                  .sort((a, b) => Math.hypot(a.x - me2.rx, a.y - me2.ry)
-                                - Math.hypot(b.x - me2.rx, b.y - me2.ry))[0];
-  if (pod) return { kind: 'scoop', pod, label: `haul in ${MATERIALS[pod.mat]?.name ?? 'cargo'}` };
+  // Somewhere you flew TO outranks whatever happens to be lying beside it. This is
+  // the same rule the gate needed: standing in a place you came to use, the thing
+  // you came to do is the thing the key should do. Hauling first meant a full hold
+  // beside a wreck field could not sell to the outpost it was parked in — which is
+  // exactly the situation you go to an outpost to get out of.
   const mats = Object.keys(hold).filter(mt => (hold[mt] ?? 0) > 0);
-  if (atDock && mats.length) {
-    const n = mats.reduce((t, mt) => t + hold[mt], 0);
-    return { kind: 'stow', mats, label: `stow ${n} of ore into the company hangar` };
-  }
   if (mats.length && inOutpost(MAPS[mapId], { x: me2.x, y: me2.y })) {
     const n = mats.reduce((t, mt) => t + hold[mt], 0);
     return { kind: 'fence', label: `sell ${n} of ore to the outpost for ${fmtCredits(pirateValue(hold))} ${CURRENCY.short}` };
   }
+  if (atDock && mats.length) {
+    const n = mats.reduce((t, mt) => t + hold[mt], 0);
+    return { kind: 'stow', mats, label: `stow ${n} of ore into the company hangar` };
+  }
+  const pod = pods.filter(pd => Math.hypot(pd.x - me2.rx, pd.y - me2.ry) <= SCOOP_R)
+                  .sort((a, b) => Math.hypot(a.x - me2.rx, a.y - me2.ry)
+                                - Math.hypot(b.x - me2.rx, b.y - me2.ry))[0];
+  if (pod) return { kind: 'scoop', pod, label: `haul in ${MATERIALS[pod.mat]?.name ?? 'cargo'}` };
   return { kind: 'none' };
 }
 
@@ -304,6 +347,7 @@ ws.onmessage = e => {
     myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
     myKits = m.kits ?? {}; myKit = m.kit ?? DEFAULT_KIT;
     myDevices = m.devices ?? {}; myDevice = m.device ?? DEFAULT_DEVICE;
+    myBerths = m.berths ?? [];
     myName = m.name ?? '';
     signup = null; joinSaid = '';                 // whoever you are, you are in now
     // Written and then read back. A storage write that silently fails loses the
@@ -332,6 +376,7 @@ ws.onmessage = e => {
     if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
     myKits = m.kits ?? myKits; myKit = m.kit ?? myKit;
     myDevices = m.devices ?? myDevices; myDevice = m.device ?? myDevice;
+    myBerths = m.berths ?? myBerths;
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
@@ -407,6 +452,7 @@ ws.onmessage = e => {
   if (m.kit) myKit = m.kit;
   if (m.devices) myDevices = m.devices;
   if (m.device) myDevice = m.device;
+  if (m.berths) myBerths = m.berths;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
   if (m.drones) myDrones = m.drones;
@@ -470,9 +516,18 @@ const toView = e => {
 const toWorld  = v => ({ x: v.x / zoom + cam.x, y: v.y / zoom + cam.y });
 const toScreen = p => ({ x: (p.x - cam.x) * zoom, y: (p.y - cam.y) * zoom });
 
+// A berth you rent is the same counter as your own dock for everything the panel
+// does — and it shuts the instant something hits you, which your own ring does not.
+const inMyOutpost = () => {
+  const me = ships.get(myId);
+  return !!me && inOutpost(MAPS[mapId], { x: me.x, y: me.y });
+};
+const berthWhy = () => whyNotBerth({
+  owned: myBerths.includes(mapId), inside: inMyOutpost(), sinceHit: sinceHitSecs(),
+});
 const docked = () => {
   const me = ships.get(myId);
-  return !!me && canDock(MAPS[mapId], myCo, { x: me.x, y: me.y });
+  return (!!me && canDock(MAPS[mapId], myCo, { x: me.x, y: me.y })) || !berthWhy();
 };
 
 // Nearest hostile to a world point, within a forgiving radius. Demanding a direct
@@ -542,6 +597,12 @@ addEventListener('keydown', e => {
   if (k === 'v') say(toggleAudio() ? 'Sound on' : 'Sound off', '#8ab4e6');
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
   if (k === 'h') { if (picking) { picking = null; return; }        // back out of the chooser first
+                   // At an outpost you have no bay at, the station key offers you
+                   // one rather than doing nothing — a dead key reads as a bug.
+                   if (!bayOpen && inMyOutpost() && !myBerths.includes(mapId)) {
+                     berthOpen = !berthOpen; sysOpen = invOpen = false; return;
+                   }
+                   berthOpen = false;
                    bayOpen = !bayOpen; sysOpen = false; invOpen = false; }
   // 4 is the hull's own system. The Hauler has none, so the key says so rather
   // than silently doing nothing — a dead key reads as a bug.
@@ -594,6 +655,7 @@ addEventListener('keydown', e => {
     // it opens the menu — which is where anything that is not flying the ship
     // ends up living.
     if (patchOpen) { patchOpen = false; return; }
+    if (berthOpen) { berthOpen = false; return; }
     if (leaving()) { cancelLeaving('Staying'); return; }
     if (setOpen) { setOpen = false; return; }
     if (feedOpen) { feedOpen = null; return; }
@@ -633,6 +695,18 @@ c.addEventListener('pointerdown', e => {
     }
   }
   if (leaving()) { cancelLeaving('Staying'); return; }
+  if (berthOpen) {
+    const L = berthPanel(VIEW_W, VIEW_H);
+    if (v.x > L.buy.x && v.x < L.buy.x + L.buy.w && v.y > L.buy.y && v.y < L.buy.y + L.buy.h) {
+      const why = whyNotBuyBerth({ xp: myXp, credits, owned: myBerths.includes(mapId), inside: inMyOutpost() });
+      if (why) return say(why, '#e0a53f');
+      send({ t: 'buyberth' });
+      berthOpen = false;
+      return;
+    }
+    berthOpen = false;                             // anywhere else puts the offer away
+    return;
+  }
   if (setOpen) { settingsClick(v); return; }
   if (sysOpen) { sysOpen = false; return; }
   if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
@@ -990,6 +1064,8 @@ function bayClick(v) {
     }
     if (it.kind === 'ammo') {
       const a = AMMO[it.k];
+      const locked = whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT });
+      if (locked) return say(`${a.name} ${locked}`, '#e0a53f');
       return credits >= a.price ? send({ t: 'buyammo', key: it.k, n: 1 })
         : say(`A crate of ${a.name} costs ${fmtCredits(a.price)} ${CURRENCY.short}`, '#e0a53f');
     }
@@ -1290,6 +1366,8 @@ function drawBay() {
                 : it.kind === 'form' ? FORMATIONS[it.k].blurb
                 : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
+                : it.kind === 'ammo' && whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
+                  ? whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
                 : it.kind === 'device' ? `${DEVICES[it.k].blurb}`
                                       : EQUIPMENT[it.k].blurb;
@@ -2234,11 +2312,35 @@ function drawFrame(now) {
     g.closePath(); g.stroke();
     g.fillStyle = '#0a0f16'; g.fill(); g.stroke();
     g.restore();
+    // A berth you rent is drawn on the hulk itself: lit bays and an open gantry,
+    // so an outpost you can work at reads differently from one you can only sell to
+    // from across the sector.
+    const mine = myBerths.includes(mapId);
+    if (mine) {
+      g.save(); g.translate(o.x, o.y); g.rotate(now / 14000);
+      g.strokeStyle = near ? '#7de08a' : '#3f6a4a'; g.lineWidth = 2;
+      for (let i = 0; i < 5; i++) {                 // a gantry off each face
+        const a2 = (i / 5) * Math.PI * 2 + 0.6;
+        g.beginPath();
+        g.moveTo(Math.cos(a2) * 52, Math.sin(a2) * 52);
+        g.lineTo(Math.cos(a2) * 84, Math.sin(a2) * 84);
+        g.stroke();
+      }
+      const lit = 0.5 + 0.5 * Math.sin(now / 700);
+      g.globalAlpha = 0.35 + 0.4 * lit; g.fillStyle = '#7de08a';
+      for (let i = 0; i < 5; i++) {
+        const a2 = (i / 5) * Math.PI * 2 + 0.6;
+        g.beginPath(); g.arc(Math.cos(a2) * 84, Math.sin(a2) * 84, 3.2, 0, 7); g.fill();
+      }
+      g.globalAlpha = 1; g.restore();
+    }
     g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
-    g.fillStyle = near ? '#ffd479' : '#6a5a3a';
-    g.fillText('PIRATE OUTPOST', o.x, o.y - 76);
+    g.fillStyle = mine ? (near ? '#7de08a' : '#3f6a4a') : (near ? '#ffd479' : '#6a5a3a');
+    g.fillText(mine ? 'PIRATE OUTPOST · YOUR BERTH' : 'PIRATE OUTPOST', o.x, o.y - 76);
     g.font = '9px ui-monospace, monospace'; g.fillStyle = '#6a5a3a';
-    g.fillText(`buys ore at ${Math.round(PIRATE_RATE * 100)}% · no repairs, no shelter`, o.x, o.y + 84);
+    g.fillText(mine ? `refit and buy here · H · still no repairs, still no shelter`
+                    : `buys ore at ${Math.round(PIRATE_RATE * 100)}% · H to rent a bay`,
+               o.x, o.y + 84);
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
@@ -2390,14 +2492,18 @@ function drawFrame(now) {
     // And a better ROUND throws a differently coloured one. Knowing what is
     // loaded mattered least in the HUD and most out the window, where you can
     // see at a glance whether the expensive cells are actually going downrange.
-    const shot = b.foe ? '#ff7a5c' : b.gr > 1 ? gradeColour(b.gr) : '#8fe7ff';
+    // A locked bolt is orange whatever grade fired it: what is guiding it stopped
+    // being the ammunition, so the ammunition stops being what it tells you.
+    const shot = b.foe ? '#ff7a5c'
+               : b.lk > 0 ? '#ff9a3c'
+               : b.gr > 1 ? gradeColour(b.gr) : '#8fe7ff';
     g.strokeStyle = shot;
     g.globalAlpha = 0.22; g.lineWidth = thick + 3.5;
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     g.globalAlpha = 1; g.lineWidth = thick;
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     if (thick > 3.2) {                            // heavy rounds run white hot down the middle
-      g.strokeStyle = b.foe ? '#ffd6c8' : b.gr > 1 ? '#ffffff' : '#e8fbff';
+      g.strokeStyle = b.foe ? '#ffd6c8' : b.lk > 0 ? '#ffe0b0' : b.gr > 1 ? '#ffffff' : '#e8fbff';
       g.lineWidth = thick * 0.34;
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     }
@@ -2450,7 +2556,13 @@ function drawFrame(now) {
     g.translate(s.rx, s.ry); g.rotate(s.heading);
     // One alpha for the whole hull, so nothing further down can reset past the
     // veil and draw a Bandit back in at full strength.
-    const dim = (lost ? 0.35 : 1) * (veil ? veil.alpha : 1);
+    // A Veil that cannot be seen fading is indistinguishable from a bug. Enemies
+    // never receive a veiled ship at all — that is decided by radar, server-side —
+    // so this is what YOU and your own side see: the hull thinning out as the
+    // reactor takes it, escort included, because a ship whose drones stayed solid
+    // would be advertising exactly where it was.
+    const fading = HULLS[s.hull]?.ability === 'veil' ? 1 - 0.88 * ((s.abl ?? 0) / 100) : 1;
+    const dim = (lost ? 0.35 : 1) * (veil ? veil.alpha : 1) * fading;
     g.globalAlpha = dim;
 
     if (sys === 1 && lvl > 0.02) {                 // thrusters: a plume out the back
@@ -2519,6 +2631,29 @@ function drawFrame(now) {
                 g.strokeRect(-R - 4, -R - 4, R * 2 + 8, R * 2 + 8); g.setLineDash([]); }
     g.globalAlpha = 1;
     g.restore();
+
+    // Anchor is not the shields bubble and must not look like it: routing to
+    // shields multiplies a pool, this braces a hull. A faceted shell that closes
+    // in as it goes, plates rather than a soap film.
+    const anch = HULLS[s.hull]?.ability === 'anchor' ? (s.abl ?? 0) / 100 : 0;
+    if (anch > 0.02) {
+      const rr = R * (1.85 - 0.25 * anch);         // it draws IN as it hardens
+      g.save(); g.translate(s.rx, s.ry); g.rotate(now / 5200);
+      for (const [k, wide] of [[1, 2.4], [0.86, 1.2]]) {
+        g.globalAlpha = (0.22 + 0.5 * anch) * k;
+        g.strokeStyle = '#e05a5a'; g.lineWidth = wide * (0.5 + anch);
+        g.beginPath();
+        for (let i = 0; i < 6; i++) {              // six plates, with the seams left open
+          const a0 = (i / 6) * Math.PI * 2 + 0.12, a1 = a0 + Math.PI / 3 - 0.24;
+          g.moveTo(Math.cos(a0) * rr * k, Math.sin(a0) * rr * k);
+          g.arc(0, 0, rr * k, a0, a1);
+        }
+        g.stroke();
+      }
+      g.globalAlpha = 0.05 + 0.13 * anch; g.fillStyle = '#e05a5a';
+      g.beginPath(); g.arc(0, 0, rr, 0, 7); g.fill();
+      g.globalAlpha = 1; g.restore();
+    }
 
     if (sys === 3 && lvl > 0.02) {                 // shields: a bubble that thickens
       const rr = R * (2.2 + lvl * 0.8);
@@ -2631,7 +2766,7 @@ function drawFrame(now) {
         if (rig && lifting) { dx = s.rgx; dy = s.rgy; }
         const armed = !rig && (((s.dmask ?? 0) >> d) & 1);
         g.save(); g.translate(dx, dy); g.rotate(s.heading);
-        g.globalAlpha = lost ? 0.3 : 0.95;
+        g.globalAlpha = (lost ? 0.3 : 0.95) * fading;
         g.fillStyle = '#0a0f16'; g.fillRect(-dr - 1, -dr - 1, dr * 2 + 2, dr * 2 + 2);
         // A working rig is warm brass; a full one goes grey and dead, so you can
         // tell at a glance why it has stopped without reading the tag.
@@ -3050,6 +3185,7 @@ function drawFrame(now) {
   if (setOpen) drawSettings();
   if (sysOpen) drawSystem(me);
   if (bayOpen) drawBay();
+  if (berthOpen) drawBerth();
   if (invOpen) drawInventory();
   if (dead) drawWreck(now);
   if (!signup) drawPatch();

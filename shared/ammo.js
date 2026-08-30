@@ -38,6 +38,24 @@
 // One colour per grade, so the bar, the chooser and the round itself in flight
 // cannot disagree about what is loaded. Telling grades apart by counting pips in
 // the HUD was no help at all in the middle of a fight.
+// What you must already own to buy a grade.
+//
+// Every grade was on the shelf from the first minute, so the ladder was a ladder
+// you could skip: a new pilot with 840 credits bought the best cells in the game
+// and the two rungs below them never existed.
+//
+// Rank would gate it, and rank is now allowed to — but it is the wrong gate HERE.
+// Experience is earned by killing anything at all, so a rank gate on ammunition is
+// cleared by grinding the easiest content in the game, which is the opposite of
+// what it should ask. A grade is gated on the gun that fires it. A round is calibrated for a rack;
+// the racks are the thing you actually pay for, and they are already a ladder. It
+// also reads without a manual: you cannot buy Fusion Cells because you have
+// nothing that could fire one.
+//
+// Three grades across five emitter rungs is the two ends and the middle. Three
+// grades across three launcher rungs is one each.
+export const NEEDS = { cell1: 1, cell2: 3, cell3: 5, head1: 1, head2: 2, head3: 3 };
+
 export const GRADE_COLOUR = { 1: '#c2a24f', 2: '#e05a5a', 3: '#7de08a' };
 export const gradeColour = tier => GRADE_COLOUR[tier] ?? GRADE_COLOUR[1];
 
@@ -117,6 +135,33 @@ export function magazine(stock, using, feed) {
   // `tier` rides along so a round in flight can be drawn in its own colour —
   // combat.js never has to know what a grade is, only what it was handed.
   return { key, n: Math.max(0, Math.floor(stock?.[key] ?? 0)), mult: AMMO[key].mult, tier: AMMO[key].tier };
+}
+
+// The best gun of the right sort you are actually carrying, rack and escort both.
+// Drones count: they are guns, they cost money, and a pilot who put their MK-Vs on
+// the escort has still bought MK-Vs.
+export function bestTierFor(feed, fit, drones = [], EQUIPMENT) {
+  const wants = feed === 'rocket' ? 'rocket' : 'laser';
+  const keys = [...(fit?.weapon ?? []), ...drones].filter(Boolean);
+  let best = 0;
+  for (const k of keys) {
+    const e = EQUIPMENT[k];
+    if (!e || e.slot !== 'weapon') continue;
+    const kind = e.kind === 'rocket' ? 'rocket' : 'laser';
+    if (kind === wants) best = Math.max(best, e.tier ?? 0);
+  }
+  return best;
+}
+
+// Why this grade is not for sale to this pilot, or null if it is.
+export function whyNotBuy(key, { fit, drones = [], EQUIPMENT } = {}) {
+  const a = AMMO[key];
+  if (!a) return 'no such grade';
+  const need = NEEDS[key] ?? 1;
+  if (need <= 1) return null;
+  const have = bestTierFor(a.for, fit, drones, EQUIPMENT);
+  if (have >= need) return null;
+  return `needs a tier ${need} ${a.for === 'rocket' ? 'launcher' : 'emitter'} — you have tier ${have || 'none'}`;
 }
 
 // True if this pilot could fire that weapon at all right now.

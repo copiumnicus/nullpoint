@@ -4,7 +4,8 @@
 // what it is doing, then travels — so holding a straight line gets you hit, and
 // changing course mid-flight is a real dodge rather than a stat check.
 
-import { applyDamage, SHOT_FLASH, rangeOf } from './sim.js';
+import { applyDamage, SHOT_FLASH, rangeOf, hullOf } from './sim.js';
+import { lockOf } from './ability.js';
 import { boostOf } from './power.js';
 import { droneAt } from './formation.js';
 import { EQUIPMENT } from './gear.js';
@@ -95,6 +96,7 @@ export function fire(a, b, dt, mag = null) {
       sx: m.x, sy: m.y,
       ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
       dmg: each, target: b, foe: !!a.isAlien, w: Math.round(each), gr: mag?.tier ?? 0,
+      lk: Math.round(100 * lockOf(hullOf(a), a.power, a.stats)),
       t: travel, ttl: Math.max(0.001, travel),
     });
   }

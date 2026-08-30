@@ -8,7 +8,7 @@ import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHe
          broodReady, BROOD_R, shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
-import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
+import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
 import { nameProblem, cleanName } from './shared/signup.js';
 import { MUSIC_DIRS, pickDir } from './config.js';
@@ -20,12 +20,14 @@ import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
 import { levelFor } from './shared/level.js';
 import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
+import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './shared/net.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
+import { whyNotBerth, whyNotBuyBerth, berthPrice, BERTH_RANK } from './shared/berth.js';
 import { splitKill, shareOut } from './shared/reward.js';
 import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
@@ -214,7 +216,7 @@ const PROP_ROWS = PROPS.map(p2 => {
            guns: s2.guns, lvl: 0, drones: s2.drones.length,
            form: Math.max(0, FORMATION_KEYS.indexOf(p2.formation)),
            dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY,
-           rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0 };
+           rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0 };
 });
 
 const bolts  = new Map();    // mapId -> bolts in flight
@@ -375,6 +377,7 @@ wss.on('connection', (ws, req) => {
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
                     devices: { ...acct.devices }, device: acct.device, folding: null,
+                    berths: [...(acct.berths ?? [])],
                     scoop: null, want: null, dead: false, lobby,
                     acted: Date.now(), banked: Date.now() });
   // A line back to this pilot only. Lives out here rather than inside the chat
@@ -395,6 +398,7 @@ wss.on('connection', (ws, req) => {
                                                 armed: players.get(id).armed,
                                                 kits: players.get(id).kits, kit: players.get(id).kit,
                                                 devices: players.get(id).devices, device: players.get(id).device,
+                                                berths: players.get(id).berths,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
   const sendWelcome = () => ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
@@ -404,7 +408,7 @@ wss.on('connection', (ws, req) => {
                            formation: acct.formation, formations: acct.formations,
                            ammo: acct.ammo, using: acct.using, armed: acct.armed,
                            kits: acct.kits, kit: acct.kit,
-                           devices: acct.devices, device: acct.device,
+                           devices: acct.devices, device: acct.device, berths: acct.berths ?? [],
                            rig: acct.rig ?? null, played: acct.played ?? 0 }));
 
   // Who the sides are and how full each is, so somebody choosing can see whether
@@ -460,7 +464,15 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
 
     // --- station: everything below needs you sitting in your own base ring ---
-    const atStation = () => canDock(MAPS[P.mapId], P.co, ship);
+    // Your own dock, or a berth you rent at a pirate outpost. The berth is the
+    // same counter for everything that reads atStation() — refit, buy, sell — and
+    // it closes the moment anything hits you, because a shop you can use mid-fight
+    // is a shop that ends fights. It is not a haven and it does not repair.
+    const atBerth = () => !whyNotBerth({
+      owned: P.berths.includes(P.mapId), inside: inOutpost(MAPS[P.mapId], ship),
+      sinceHit: ship.sinceHit,
+    });
+    const atStation = () => canDock(MAPS[P.mapId], P.co, ship) || atBerth();
 
     if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
 
@@ -692,6 +704,12 @@ wss.on('connection', (ws, req) => {
       // problem, it is just a walk home.
       const a = AMMO[m.key];
       if (!a) return;
+      // A grade is calibrated for a rack. You cannot buy rounds for a gun you have
+      // not bought — which is what stops the ladder being one you skip on minute
+      // one. Using rounds you already hold is never blocked: selling a gun should
+      // not strand the ammunition in your hold.
+      const why = whyNotBuy(m.key, { fit: ship.fit, drones: ship.drones, EQUIPMENT });
+      if (why) return tell(why);
       const crates = Math.max(1, Math.min(99, Math.floor(+m.n) || 1));
       const cost = a.price * crates;
       if (P.credits < cost) return;
@@ -826,6 +844,19 @@ wss.on('connection', (ws, req) => {
       P.want = target ? +m.id : null;
       if (process.env.DEBUG_SCOOP) console.log(`scoop order id=${m.id} accepted=${P.want !== null}`);
       return;
+    }
+    // Renting a bay. Rank and money both, and neither is refundable — see berth.js
+    // for why standing is the gate rather than only the fee.
+    if (m.t === 'buyberth') {
+      const why = whyNotBuyBerth({ xp: P.xp, credits: P.credits,
+                                   owned: P.berths.includes(P.mapId),
+                                   inside: inOutpost(MAPS[P.mapId], ship) });
+      if (why) return tell(why);
+      P.credits -= berthPrice();
+      P.berths = [...P.berths, P.mapId];
+      receipt('Berth · ' + MAPS[P.mapId].name, berthPrice(), 'refit and trade here');
+      touch(P);
+      return outfit();
     }
     // Ore straight to credits, at the pirates' rate, without flying home. The
     // hold is what it empties — the company hangar is none of their business.
@@ -1194,6 +1225,7 @@ setInterval(() => {
       tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH),
       fix: p.fixing ? Math.round(100 * (1 - p.fixing.left / p.fixing.secs)) : 0,
       wrp: p.folding ? Math.round(100 * (1 - p.folding.left / p.folding.secs)) : 0,
+      abl: Math.round(100 * levelOf(p.ship.power, SPECIAL, p.ship.stats)),
       rk: Math.round(100 * (p.ship.rocketFlash ?? 0) / LAUNCH_FLASH),
       guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.drones.length,
       form: Math.max(0, FORMATION_KEYS.indexOf(p.ship.formation)),
@@ -1217,7 +1249,7 @@ setInterval(() => {
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
       guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0,
-      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0 });
+      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

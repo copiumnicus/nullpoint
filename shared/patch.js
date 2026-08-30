@@ -8,9 +8,17 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.20';
+export const VERSION = '0.21';
 
 export const PATCHES = [
+  { v: '0.21', notes: [
+    'Abilities are visible now: a Veil fades you and your drones, a Lock burns orange',
+    'And an Anchor braces plates around the hull instead of the usual shield bubble',
+    'Ammunition grades need a gun that can fire them — no more buying the best cells on day one',
+    'Rent a berth at a pirate outpost and refit there, if the pirates have heard of you',
+    'A berth is 102000, rank 20, and shuts the moment anything shoots at you',
+    'SPACE at an outpost sells to it instead of hauling in whatever is lying beside it',
+  ] },
   { v: '0.20', notes: [
     'Each hull has an ability on 4: Veil on the Kestrel, Lock on the Vanguard, Anchor on the Bulwark',
     'All three scale with the power you route to them, and cost the same capacitor your guns want',

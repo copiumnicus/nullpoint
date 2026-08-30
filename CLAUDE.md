@@ -156,7 +156,16 @@ keeping.
 **Anti-pay-to-win invariants are tests, not intentions.** Every technology must
 give something up. No purchasable hull may strictly dominate another. Every
 weapon and generator adds absolute amounts; every technology multiplies. Levels
-are cosmetic. These are enforced, and they are the reason this game exists.
+may gate, but never scale. These are enforced, and they are the reason this game
+exists.
+
+Levels were cosmetic and are no longer: a rank may be a **gate** — a door that
+opens at a rank — but must never be a **multiplier**. A veteran and a newcomer in
+the same ship still fly the same ship; the veteran is simply allowed places the
+newcomer is not. The distinction is the whole invariant: a gate is content you
+have not reached, a multiplier is a fight you cannot lose. The first thing to use
+one is the berth at a pirate outpost (`shared/berth.js`), where rank stands for
+whether the pirates have heard of you.
 
 ---
 
