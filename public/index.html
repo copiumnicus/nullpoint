@@ -31,6 +31,7 @@ import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS } from '/shared/aliens.js';
+import { STEER_KEYS, steerVector } from '/shared/steer.js';
 import { seenAs } from '/shared/stealth.js';
 import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
@@ -323,6 +324,8 @@ ws.onmessage = e => {
 // the ship (and the camera under the cursor) keeps moving while you hold still.
 const HOLD_MS = 150, DRAG_PX = 10;
 let held = false, steering = false, downAt = 0, cur = { x: 0, y: 0 }, down = { x: 0, y: 0 };
+const steerDown = new Set();      // WASD currently held
+let keySteer = false;             // ...and whether they were steering last flush
 let hover = null, lastClick = { t: -1e9, x: 0, y: 0 };
 let lastTab = -Infinity;          // never a double tap on the first press after load
 const DOUBLE_TAP = 320;           // ms — the same window a double click uses
@@ -407,9 +410,10 @@ addEventListener('keydown', e => {
     return;
   }
   if (signup) return joinKey(e);                 // the form owns the keyboard
-  if (e.key === 'Enter' && !dead) { e.preventDefault(); chatOpen = true; chatLine = ''; return; }
+  if (e.key === 'Enter' && !dead) { e.preventDefault(); chatOpen = true; chatLine = ''; steerDown.clear(); return; }
 
   const k = e.key.toLowerCase();
+  if (!dead && STEER_KEYS[k]) steerDown.add(k);
   if (k === 'v') say(toggleAudio() ? 'Sound on' : 'Sound off', '#8ab4e6');
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
   if (k === 'h') { if (picking) { picking = null; return; }        // back out of the chooser first
@@ -529,6 +533,14 @@ c.addEventListener('pointermove', e => {
   cur = v;
   if (Math.hypot(cur.x - down.x, cur.y - down.y) > DRAG_PX) steering = true;
 });
+// Releasing is never conditional. keyup is deliberately outside every mode check
+// the keydown handler makes, because a key pressed while flying and released
+// after opening the chat would otherwise stay down forever — and so would every
+// key held at the moment the window lost focus, which is what alt-tabbing mid-burn
+// does. A ship that flies off on its own with nothing touching the keyboard is
+// the single worst bug this input can have.
+addEventListener('keyup', e => steerDown.delete(e.key.toLowerCase()));
+addEventListener('blur', () => steerDown.clear());
 c.addEventListener('pointerleave', () => hover = null);
 addEventListener('pointerup', () => {
   if (held && steering) { send({ t: 'intent', mode: 'stop' }); marker = null; }
@@ -536,6 +548,17 @@ addEventListener('pointerup', () => {
 });
 
 setInterval(() => {                                   // flush at the server tick rate
+  // The keyboard outranks the mouse so you can take the ship off a plotted course
+  // by just reaching for WASD, without having to click something first.
+  const key = steerVector(steerDown);
+  if (key) {
+    marker = null; keySteer = true;
+    return send({ t: 'intent', mode: 'dir', dx: key.dx, dy: key.dy });
+  }
+  if (keySteer) {                                     // the last key came up
+    keySteer = false;
+    if (!held) return send({ t: 'intent', mode: 'stop' });
+  }
   if (!held) return;
   if (!steering && performance.now() - downAt > HOLD_MS) steering = true;
   if (!steering) return;

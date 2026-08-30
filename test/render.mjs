@@ -83,7 +83,12 @@ globalThis.localStorage = {
 };
 globalThis.document = { getElementById: () => canvas, title: '' };
 globalThis.addEventListener = on;
-globalThis.setInterval = () => 0;
+// The client's one setInterval is the flush that turns a held mouse or a held
+// key into a 'dir' intent. Throwing the callback away meant hold-to-steer was
+// never exercised at all — by mouse or by key — so keep it and drive it by hand.
+const timers = [];
+globalThis.setInterval = fn => { timers.push(fn); return 0; };
+const flush = () => timers.forEach(fn => fn());
 let raf = null;
 globalThis.requestAnimationFrame = cb => { raf = cb; };
 const socks = [];
@@ -394,6 +399,60 @@ const dismiss = () => {
     else console.log(`a plotted course lands under the cursor: at ${innerWidth}x${innerHeight} the `
       + `view zooms to ${z.toFixed(3)}, so clicks ${B.x - A.x}px apart plot ${wantX.toFixed(1)} apart`);
   }
+}
+
+// Flying without the mouse, driven through the real key handlers and the real
+// flush. Farming wants a hand free, so WASD feeds the same 'dir' intent the mouse
+// hold does rather than inventing a second way to move a ship.
+{
+  const dirs  = () => sent.filter(m => m.t === 'intent' && m.mode === 'dir');
+  const stops = () => sent.filter(m => m.t === 'intent' && m.mode === 'stop');
+  const only  = () => { const d = dirs(); return d.length === 1 ? d[0] : null; };
+
+  sent.length = 0;
+  evt('keydown', { key: 'd' }); flush();
+  const east = only();
+  if (!east) errs.push(`holding D sent ${dirs().length} course intents, not 1`);
+  else if (east.dx !== 1 || east.dy !== 0) errs.push(`D steered ${east.dx},${east.dy}, not 1,0`);
+
+  sent.length = 0;
+  evt('keydown', { key: 'w' }); flush();               // W and D together
+  const ne = only();
+  if (!ne) errs.push('holding W and D together stopped sending a course');
+  else if (Math.abs(Math.hypot(ne.dx, ne.dy) - 1) > 1e-9)
+    errs.push(`a diagonal asked for ${Math.hypot(ne.dx, ne.dy).toFixed(3)} throttle, not 1`);
+
+  sent.length = 0;                                     // drop D, then hold W's opposite
+  evt('keyup',   { key: 'd' });
+  evt('keydown', { key: 's' }); flush();
+  if (dirs().length) errs.push('W and S at once still steered somewhere');
+  if (stops().length !== 1) errs.push(`cancelling keys sent ${stops().length} stops, not 1`);
+
+  sent.length = 0;                                     // let go of everything
+  for (const k of ['w', 'a', 's', 'd']) evt('keyup', { key: k });
+  flush(); flush();
+  if (dirs().length) errs.push('the ship kept steering after every key came up');
+  if (stops().length > 1) errs.push(`releasing sent ${stops().length} stops, and it should settle`);
+
+  // Typing must never fly the ship. h/i/q/x are already letters in the chat and
+  // WASD has to be too — otherwise saying "was" to someone launches you.
+  sent.length = 0;
+  evt('keydown', { key: 'Enter' });                    // opens the chat
+  for (const k of ['w', 'a', 's', 'd']) evt('keydown', { key: k });
+  flush();
+  if (dirs().length || stops().length) errs.push('typing in the chat steered the ship');
+
+  // A key held as the window loses focus is the one that never comes up on its
+  // own: alt-tab mid-burn and the ship would fly until something else stopped it.
+  for (const k of ['Escape']) evt('keydown', { key: k });   // close the chat
+  sent.length = 0;
+  evt('keydown', { key: 'w' }); flush();
+  if (!dirs().length) errs.push('W did not steer once the chat was closed again');
+  sent.length = 0;
+  evt('blur'); flush(); flush();
+  if (dirs().length) errs.push('a key held when the window lost focus kept flying the ship');
+  console.log('steering: WASD flies, diagonals hold one throttle, opposites stop, '
+    + 'typing and blur release');
 }
 
 // The hangar's APPLY button: does clicking it actually ask the server for a refit?
