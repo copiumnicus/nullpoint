@@ -89,25 +89,39 @@ export function berthPanel(VIEW_W, VIEW_H) {
   };
 }
 
-// --- where a wreck comes back -------------------------------------------------
+// --- every hangar this pilot has ----------------------------------------------
 //
-// Your own ring, or the last hangar you actually used — which now includes a bay
-// you rent on the frontier. Flying four sectors back to the ring you started at,
-// every time, is the least interesting minute in the game, and a pilot who has
-// paid for a bay out here has already said where they want to be.
+// Your company's rings, plus a bay you rent on any frontier. Two things read this
+// and they used to disagree about it: where a wreck comes back, and where a recall
+// beacon folds you. One list, so they cannot.
+export function homePorts(acct, MAPS) {
+  const co = acct?.co ?? 'm', berths = acct?.berths ?? [], out = [];
+  for (const [id, m] of Object.entries(MAPS)) {
+    if (m.base && m.owner === co) out.push({ map: id, x: m.base.x, y: m.base.y,
+                                             name: m.name ?? id, kind: 'dock' });
+    else if (m.outpost && berths.includes(id)) out.push({ map: id, x: m.outpost.x, y: m.outpost.y,
+                                                         name: m.name ?? id, kind: 'bay' });
+  }
+  return out;
+}
+
+// Which of them a beacon takes you to. Folding always went to your company ring,
+// which was right while the ring was the only place you could dock and useless the
+// moment it was not: a pilot working a frontier they rent a bay on was paying 3400
+// to be sent four sectors from where they wanted to be. The beacon is worth having
+// again once it can go to the bay.
 //
-// It is re-checked rather than trusted: a berth can be sold, a save can be
-// hand-edited, and a map can stop having an outpost on it. Anything that no longer
-// holds falls back to your company ring, which every pilot always has.
+// Re-checked against the same list rather than trusted, because a berth can be
+// sold and a save can be edited. Anything that no longer holds folds you home,
+// which every pilot always has.
+export function foldTo(acct, MAPS, want) {
+  const ports = homePorts(acct, MAPS);
+  return ports.find(p => p.map === want) ?? ports.find(p => p.map === (acct?.co ?? 'm') + '1')
+      ?? { map: (acct?.co ?? 'm') + '1', ...MAPS[(acct?.co ?? 'm') + '1'].base };
+}
+
 export function respawnAt(acct, MAPS) {
-  const home = (acct?.co ?? 'm') + '1';
-  const fallback = { map: home, ...MAPS[home].base };
-  const last = acct?.lastDock;
-  if (!last || !MAPS[last]) return fallback;
-  const m = MAPS[last];
-  if (m.outpost && (acct.berths ?? []).includes(last)) return { map: last, ...m.outpost };
-  if (m.base && m.owner === acct.co) return { map: last, ...m.base };
-  return fallback;
+  return foldTo(acct, MAPS, acct?.lastDock);
 }
 
 // And whether standing here counts as "the last hangar you used", which is the

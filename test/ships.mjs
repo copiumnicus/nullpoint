@@ -1,5 +1,6 @@
 import { ATTRS, HULLS, DEFAULT_HULL, resolve, sanitiseFit, slotsOf, FIRE_RATE } from '../shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat, topTier, MAX_DRONES } from '../shared/gear.js';
+import { SPENDS } from '../shared/tech.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
@@ -34,16 +35,16 @@ check('resolve does not mutate the hull table', (() => {
   return JSON.stringify(HULLS.vanguard) === before;
 })());
 check('flat adds apply before percentages', (() => {
-  // cellA adds a flat 120 shield; plating then multiplies hull by 1.35.
+  // cellA adds a flat 120 shield; plating then multiplies hull by 1.50.
   // vanguard is 1100 hull / 900 shield / 340 speed.
   const r = resolve('vanguard', fit({ generator: ['cellA'], tech: ['plating'] }));
-  return r.shield === 1020 && Math.abs(r.hull - 1100 * 1.35) < 1e-6
-      && Math.abs(r.speed - (340 - 8) * 0.91) < 1e-6;
+  return r.shield === 1020 && Math.abs(r.hull - 1100 * 1.50) < 1e-6
+      && Math.abs(r.speed - (340 - 8) * 0.80) < 1e-6;
 })());
 check('percentages sum instead of compounding', (() => {
-  // expander -12% speed and plating -9%: 0.79, not 0.88 x 0.91 = 0.8008
-  const r = resolve('vanguard', fit({ tech: ['expander', 'plating'] }));
-  return Math.abs(r.speed - 340 * 0.79) < 1e-6;
+  // repeaters -14% speed and plating -20%: 0.66, not 0.86 x 0.80 = 0.688
+  const r = resolve('vanguard', fit({ tech: ['repeaters', 'plating'] }));
+  return Math.abs(r.speed - 340 * 0.66) < 1e-6;
 })(), 'two technologies are worth two, never less');
 check('attributes are clamped to their floor', (() => {
   EQUIPMENT.__sink = { name: 'sink', slot: 'tech', price: 1, mods: [['speed', 'mul', -5]] };
@@ -53,10 +54,18 @@ check('attributes are clamped to their floor', (() => {
 })());
 
 console.log('\nbalance invariants');
+// Every technology still gives something up. What changed is that it no longer
+// has to be a stat: an entry may surrender an attribute, or it may name a cost
+// shared/tech.js actually implements — the ore in your hold, the charge in your
+// reactor, being noticed sooner. The Shear Compensator has no attribute on it at
+// all and is paid for entirely in capacitor, and the old form of this check would
+// have refused it while happily passing twenty-six things nobody wanted to buy.
 for (const [k, M] of Object.entries(EQUIPMENT))
   if (M.slot === 'tech')
-    check(`${M.name} costs something`, M.mods.some(([a, , v]) => !better(a, v)),
-      'technologies are trade-offs, not upgrades');
+    check(`${M.name} costs something`,
+      M.mods.some(([a, , v]) => !better(a, v)) || (M.spends && M.spends in SPENDS),
+      M.mods.some(([a, , v]) => !better(a, v)) ? 'an attribute it surrenders'
+                                              : `paid in ${SPENDS[M.spends]}`);
 const dominates = (A, B) => {
   const keys = ['hull','shield','shieldRegen','shieldDelay','speed','accel'];
   const cmp = keys.map(k => (ATTRS[k].better === 'high' ? 1 : -1) * (A.attrs[k] - B.attrs[k]));
@@ -286,18 +295,23 @@ console.log('\ntooltips');
   const tips = every.map(([kind, k]) => [kind, k, tipFor(kind, k, ctx)]);
   check('everything on sale has a tooltip', tips.every(([, , t]) => t),
         tips.filter(([, , t]) => !t).map(([, k]) => k).join(' '));
-  check('every tooltip states at least one real number', tips.every(([, , t]) => t.lines.length > 0),
+  // Everything except the one entry that HAS no numbers. A Shear Compensator moves
+  // no attribute — it sells a rule — so it says what it lets you do and what that
+  // costs, and demanding a percentage of it would be demanding the shelf go back
+  // to being percentages.
+  check('every tooltip with numbers in it states them',
+        tips.every(([, k, t]) => t.lines.length > 0 || (EQUIPMENT[k]?.mods?.length === 0 && t.does)),
         'a blurb alone does not say how much');
   check('no tooltip line is NaN or undefined',
         tips.every(([, , t]) => t.lines.every(l => Number.isFinite(l.from) && Number.isFinite(l.to)
                                                && (l.pct === null || Number.isFinite(l.pct)))));
   check('a tooltip agrees with the ship it describes',
-        tipFor('item', 'plating', ctx).lines.some(l => l.key === 'hull' && l.pct === 35),
-        'Composite Plating is a third more hull, and says so');
-  const damp = tipFor('item', 'damper', ctx);
+        tipFor('item', 'plating', ctx).lines.some(l => l.key === 'hull' && l.pct === 50),
+        'Composite Plating is half again the hull, and says so');
+  const damp = tipFor('item', 'filter', ctx);
   console.log(`     ${damp.title}: ` + damp.lines.map(l => `${l.label} ${l.from}→${l.to}${l.unit} (${l.pct}%)`).join(', '));
-  check('a downside reads as a downside', damp.lines.find(l => l.key === 'radar').good === false
-                                       && damp.lines.find(l => l.key === 'signature').good === true,
+  check('a downside reads as a downside', damp.lines.find(l => l.key === 'signature').good === false
+                                       && tipFor('item', 'plating', ctx).lines.find(l => l.key === 'hull').good === true,
         'lower radar is bad, lower signature is good');
   check('the drone tip prices the next bay, not the first',
         tipFor('drone', 'drone', ctx).price === tipFor('drone', 'drone', { ...ctx, drones: [] }).price + 2600);
@@ -373,9 +387,17 @@ console.log('\nabsolute racks, multiplying technology');
     check(`every ${slot} adds an absolute amount`, wrong.length === 0,
           wrong.length ? `${wrong.join(' ')} multiplies` : Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === slot).join(' '));
   }
-  const wrongTech = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'tech' && byOp(k).join() !== 'mul');
-  check('every technology is a multiplier', wrongTech.length === 0,
-        wrongTech.length ? `${wrongTech.join(' ')} adds a flat amount` : 'nothing in the tech rack is a flat add');
+  // Stated as "never a flat add" rather than "always a multiplier", because the
+  // Shear Compensator moves no attribute at all — what it sells is a rule, and an
+  // empty mod list is the honest way to say a thing has no stats. The claim the
+  // split actually needs is the negative one: nothing in the tech rack fills a
+  // hull out the way a rack does.
+  const wrongTech = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'tech' &&
+    EQUIPMENT[k].mods.some(([, op]) => op !== 'mul'));
+  check('no technology adds a flat amount', wrongTech.length === 0,
+        wrongTech.length ? `${wrongTech.join(' ')} adds a flat amount`
+          : `${Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'tech').length} technologies, ` +
+            'every stat on them a multiplier');
 
   // The point of the split, stated as behaviour: the same emitter is worth the
   // same everywhere, and the same technology is worth more on a bigger hull.

@@ -56,26 +56,33 @@ const lk = linger('kestrel'), lb = linger('bulwark');
 check('a cruiser is far harder to shake than an interceptor', lb > lk * 2,
   `kestrel ${lk.toFixed(1)}s vs bulwark ${lb.toFixed(1)}s`);
 
-console.log('\nfitting changes what you see');
+console.log('\nwhat the hull you fly sees, and what it shows');
+// Radar deliberately runs WITH size: a big hull carries a big array and cannot
+// shake anyone, a small one is a ghost that is half blind. This used to be stated
+// with a Signal Damper on one of the two ships, and the shelf no longer sells
+// radar in either direction — deliberately. Signature is a stat nothing outside
+// PvP reads, so "-55% of it for -40% of your sight" was a trade against nothing,
+// and its opposite, the Long-Baseline Array, was the same trade backwards. The
+// claim was never about the module: it is that the number comes off the ship.
 const blind = mk(1, 'm', 'kestrel', 0, 0);                     // radar 2000
-const scout = mk(1, 'm', 'kestrel', 0, 0, fit({ tech: ['damper'] }));   // -25% radar
-const bogey = mk(5, 'h', 'vanguard', 1800, 0);
-check('a bare hull sees what a damped one cannot',
-  stepContacts(blind, [blind, bogey], dt).get(5) === FRESH
-  && !stepContacts(scout, [scout, bogey], dt).has(5), '1800px out, kestrel radar 2000 vs 1500 damped');
-const quiet = resolve('bulwark', fit({ tech: ['damper'] }));
+const scout = mk(1, 'm', 'bulwark', 0, 0);                     // radar 3400
+const bogey = mk(5, 'h', 'vanguard', 2600, 0);
+check('a cruiser holds a contact an interceptor has already lost',
+  stepContacts(scout, [scout, bogey], dt).get(5) === FRESH
+  && !stepContacts(blind, [blind, bogey], dt).has(5),
+  '2600px out, bulwark radar 3400 against a kestrel\'s 2000');
+// The one entry left on the shelf that touches either of them, and it moves
+// signature the WRONG way on purpose: an Aspect Filter is an active illuminator,
+// so what it buys is seeing a Bandit from the front and what it costs is being
+// held on a plot half again as long — and being noticed sooner by everything,
+// which is not a stat at all and lives in shared/tech.js.
+const loudSt = resolve('bulwark', fit({ tech: ['filter'] }));
 const bare = resolve('bulwark', fit());
-// This used to demand the damper halve your signature exactly. It buys more than
-// signature now, because signature alone was worth nothing outside PvP: nothing an
-// alien does reads it, so against every hostile in the game the old damper was a
-// quarter of your radar for no return at all. It still makes you quiet, and it now
-// also gets your shields started again sooner — which is what a ship breaking
-// contact is actually trying to do.
-check('a damper makes you quieter and mends you sooner, and costs you sight',
-  quiet.signature < bare.signature && quiet.shieldDelay < bare.shieldDelay
-  && quiet.radar < bare.radar,
-  `signature ${bare.signature} -> ${quiet.signature.toFixed(2)}, ` +
-  `delay ${bare.shieldDelay} -> ${quiet.shieldDelay.toFixed(2)}s, radar ${bare.radar} -> ${quiet.radar}`);
+check('and the only technology that touches either of them buys reach with being heard',
+  loudSt.radar > bare.radar * 1.5 && loudSt.signature > bare.signature * 1.5,
+  `radar ${bare.radar} -> ${Math.round(loudSt.radar)}, and signature ${bare.signature}s -> ` +
+  `${loudSt.signature.toFixed(2)}s held on someone else's plot — an illuminator is not a quieter ship, ` +
+  'it is a louder one that can see');
 
 console.log('\nsector isolation');
 const other = mk(6, 'h', 'bulwark', 10, 10);                   // same spot, different map: not in the list

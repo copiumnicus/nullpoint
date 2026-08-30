@@ -279,12 +279,23 @@ check('and every gap says why, not just that', Object.values(UNPRICED).every(v =
 // says so and names every attribute it could not read, however many that is —
 // silence scored as zero is the failure this guards against.
 check('a module the model can read nothing on reports that, rather than reporting zero', (() => {
-  const c = capabilityOf(EQUIPMENT.damper.mods);
-  const attrs = EQUIPMENT.damper.mods.map(([a]) => a);
+  const c = capabilityOf(EQUIPMENT.walk.mods);
+  const attrs = EQUIPMENT.walk.mods.map(([a]) => a);
   return c.points === 0 && c.unpriced.length === attrs.length
       && attrs.every(a => c.unpriced.includes(a));
-})(), `Signal Damper scores nothing and names all ${EQUIPMENT.damper.mods.length} of ` +
-      `${EQUIPMENT.damper.mods.map(([a]) => a).join(', ')} as the reason`);
+})(), `Anchor Servos scores nothing and names all ${EQUIPMENT.walk.mods.length} of ` +
+      `${EQUIPMENT.walk.mods.map(([a]) => a).join(', ')} as the reason`);
+// The other half of the same rule, and the one the rebuilt shelf leans on hardest:
+// a module the model can read ONE SIDE of has to say which side it missed, or a
+// row that is half a gain and half an invisible cost reports as a bargain. Every
+// technology on the shelf is now a trade with a felt cost, and for several of them
+// the cost is exactly the kind of thing UNPRICED lists.
+check('and a module the model can read only half of names the half it could not', (() => {
+  const c = capabilityOf(EQUIPMENT.plating.mods);
+  return c.points > 0 && c.unpriced.length === 1 && c.unpriced[0] === 'speed';
+})(), `Composite Plating scores ${Math.round(capabilityOf(EQUIPMENT.plating.mods).points)} points of hull and ` +
+      'reports `speed` as the part it cannot see — so the report says "this row is incomplete" rather than ' +
+      '"this row is cheap"');
 check('nothing that has a price is missing from the report', (() => {
   const seen = new Set([...report(), ...consumableReport(KITS, DEVICES)].map(r => r.key));
   return [...Object.keys(HULLS), ...Object.keys(EQUIPMENT), ...Object.keys(AMMO),

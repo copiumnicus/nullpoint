@@ -21,10 +21,10 @@ export const MATERIALS = {
   iridium:  { name: 'Iridium',   sym: 'Ir', tier: 6, density: 22.56, vol: 1, value: 600, colour: '#7fd4c8' },
 };
 
-// Weights must sum to 1. A test enforces that, and that rarer never beats commoner.
-// Quantities carry the weight rather than rarities: the shape of what a husk is
-// made of should not change just because the payroll did. So there is one shape,
-// and a bigger husk drops more of the same rather than better.
+// Weights must sum to 1 and rarer must never beat commoner. Both are tested.
+//
+// One shape, six rungs. The husk is what an M-type asteroid is made of, commonest
+// first, and a hostile drops the part of that ladder it is worth killing for.
 const HUSK = [
   { mat: 'iron',     p: 0.44, min: 3, max: 9 },
   { mat: 'nickel',   p: 0.26, min: 2, max: 7 },
@@ -33,34 +33,75 @@ const HUSK = [
   { mat: 'platinum', p: 0.04, min: 1, max: 3 },
   { mat: 'iridium',  p: 0.01, min: 1, max: 2 },
 ];
-const scaled = (table, k) => table.map(r => ({ ...r, min: r.min * k, max: r.max * k }));
 
-// Every alien drops. The Ironhusk and the Bandit shipped without a table at all,
-// which rollDrop reads as "nothing", so the two biggest kills in the game paid
-// their bounty and left nothing on the floor.
+// Where a hostile's table STARTS on that ladder. This is the thing that was wrong.
 //
-// The multiple is not the alien's ehp multiple, and cannot be: bounty scales
-// linearly with ehp because credits have nowhere to overflow, but ore has to fit
-// in a hold. So each is scaled so its commonest drop is about one hold-full for a
-// pilot equipped to be in that sector:
+// Every alien used to drop the same six metals and the big ones simply dropped
+// more of them, so a Bandit — the hardest thing outside a boss fight — paid out
+// in iron. Seventy-two units of it, 216 volume, worth 216 credits and filling most
+// of an Ore Tender with the cheapest metal in the game. You flew to the frontier,
+// beat the thing that lives there, and hauled home scrap.
 //
-//   drifter   x1  — 9 iron is 27 volume, into a starter's 60
-//   ironhusk  x4  — 36 iron is 108 volume, against 100 with a Scavenger Rig
-//   bandit    x8  — 72 iron is 216 volume, against 240 with an Ore Tender
-//   leviathan x8  — the same, because the Ore Tender is the biggest hold there is
+// So the rung is derived from how hard the thing is to kill, and it is not a table
+// anybody picked. The bestiary is a ladder of tens — 650, 6500, 65000, 650000 —
+// and the metals are a ladder of roughly threes by value (3, 9, 22, 90, 260, 600).
+// Two metal rungs per hostile rung is 3² ≈ 10, so the two ladders are the same
+// ladder at different resolutions:
 //
-// The Leviathan is ten Ironhusks in every number that scales, but not this one:
-// x40 would be 360 iron, four and a half Ore Tenders, and the answer to "what do
-// you do with the rest" is nothing. It is capped by the biggest hold in the game
-// because ore that will not fit is not a reward. Past that the pay stays in the
-// bounty, which is where it can grow without asking anyone to make four trips —
-// and where a group splits it without anyone having to ferry.
+//   rung = 1 + round(2 · log10(ehp / 650))
+//
+// Anything new lands on it without anyone choosing, which is the point.
+//
+// Clamped at platinum rather than iridium. A table with one row left is not a
+// table, it is a fixed drop, and the top of the metal ladder should stay something
+// you get lucky on rather than something you are paid.
+export const BASE_HP = 650;                       // the Drifter: rung 1 by definition
+export const TOP_RUNG = 5;
+export const oreRung = ehp =>
+  Math.min(TOP_RUNG, Math.max(1, 1 + Math.round(2 * Math.log10((ehp || BASE_HP) / BASE_HP))));
+
+// And how MUCH, which is two rules pulling against each other.
+//
+// Ore should be worth about a fifth of what the kill pays, so it is a real part of
+// the reward and never the whole of it — 0.14 credits per point of effective hit
+// points, which is a fifth of the Drifter's 455 bounty and therefore not a new
+// number so much as the old one restated.
+//
+// And a pod has to FIT. Ore that will not go in the hold is not a reward, it is a
+// second trip, so the worst pod a hostile can drop is capped at the hold of a pilot
+// equipped to be in that sector. The value target binds at the bottom of the ladder
+// and the ceiling binds at the top: a Corsair Hive would owe 47 Ore Tenders of
+// platinum on value alone and drops exactly one. The rest of what a boss is worth
+// stays in the bounty, which is where it can grow without asking anyone to make
+// four trips — and where a group splits it without anyone having to ferry.
+export const ORE_RATE = 0.14;
+
+// Renormalised, so a hostile that drops no iron is not silently dropping nothing
+// 44% of the time. rollDrop walks the weights and falls off the end otherwise.
+export const husk = (rung, k) => {
+  const rows = HUSK.slice(rung - 1);
+  const tot = rows.reduce((s, r) => s + r.p, 0);
+  return rows.map(r => ({ mat: r.mat, p: r.p / tot, min: r.min * k, max: r.max * k }));
+};
+
+//              rung  metal floor  k    worst pod        ore per kill
+//   drifter      1   Iron          1    27 of a 60      ~81 cr
+//   harrier      2   Nickel        2    42 of a 60      ~260 cr
+//   ironhusk     3   Cobalt        4    60 of a 100     ~832 cr
+//   bandit       4   Rhodium      12    96 of a 240     ~4290 cr
+//   leviathan    5   Platinum     15    45 of a 240     ~8940 cr
+//   hive         5   Platinum     80   240 of a 240     ~47680 cr   (capped)
+//
+// The k column is min(value target, hold ceiling), rounded. test/cargo.mjs
+// re-derives every one of these from shared/aliens.js and fails if a number here
+// stops matching the rule that produced it.
 export const DROPS = {
-  drifter:   HUSK,
-  ironhusk:  scaled(HUSK, 4),
-  bandit:    scaled(HUSK, 8),
-  leviathan: scaled(HUSK, 8),
-  hive:      scaled(HUSK, 8),
+  drifter:   husk(1, 1),
+  harrier:   husk(2, 2),
+  ironhusk:  husk(3, 4),
+  bandit:    husk(4, 12),
+  leviathan: husk(5, 15),
+  hive:      husk(5, 80),
 };
 
 // A pod dropped by a shared kill belongs to one of the pilots who earned it, so

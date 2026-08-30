@@ -1036,6 +1036,29 @@ const dismiss = () => {
     const M = feedMenu(laserBox, ['cell1', 'cell3']);
     if (M.box.y < 0) errs.push('the ammunition menu opened off the top of the screen');
     for (const row of M.rows) { hoverAt(row.r); frame(t += 16); frames++; }
+
+    // Fusion Cells need EVERY emitter at tier 5, and this ship flies one MK-I. The
+    // row is still drawn — you own the rounds — and clicking it has to say why
+    // rather than quietly doing nothing, which is what an unhandled click looks
+    // like from the outside.
+    sent.length = 0;
+    click(M.rows.find(r => r.k === 'cell3').r);
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'ammo'))
+      errs.push('loaded Fusion Cells into an MK-I emitter');
+
+    // Refit the whole ship, escort included, and the same click loads them.
+    feed({ t: 'fit', hull: 'vanguard',
+           fit: { weapon: ['emitter5', 'emitter5'], generator: ['cellA'], tech: [] },
+           drones: ['emitter5', 'emitter5'], formation: 'arrow', formations: ['arrow'],
+           ammo: { cell1: 4000, cell3: 250, head1: 400 }, using: { laser: 'cell1', rocket: 'head1' },
+           armed: { laser: true, rocket: true }, kits: {}, devices: {}, credits: 0 });
+    frame(t += 16); frames++;
+    // Via the rocket box, because two clicks on the SAME box inside 320ms is the
+    // safe-this-weapon gesture and the suite runs inside a millisecond of it.
+    sent.length = 0;
+    click(B.boxes.find(b => b.feed === 'rocket').r); frame(t += 16); frames++;
+    click(laserBox.r); frame(t += 16); frames++;                   // menu again
     click(M.rows.find(r => r.k === 'cell3').r);
     frame(t += 16); frames++;
     const pick = sent.find(m => m.t === 'ammo');

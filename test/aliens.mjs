@@ -585,5 +585,43 @@ check('and an unknown alien still draws something rather than nothing',
   check('an unposted one still roams', loose.post === null && JSON.stringify(loose.way) !== JSON.stringify(post));
 }
 
+// The frontier used to be a wall: Bandits hold it and nothing else out there was
+// worth the trip, so a pilot who could afford the flight could not survive the
+// welcome. A Harrier is the rung in between, and the fight is that you farm it
+// while watching for the thing you cannot fight.
+{
+  const H = ALIENS.harrier, D = ALIENS.drifter, I = ALIENS.ironhusk;
+  // Half a rung, to the nearest ten. It has to be a multiple of ten: a bounty is
+  // whole credits at BOUNTY_RATE 0.70, so 2055 would pay 1438.5 and the identity
+  // test/balance.mjs rests on would stop being exact. Every hostile before this
+  // one was a round multiple of 650 and the constraint never showed itself.
+  check('the Harrier is half a rung between a Drifter and an Ironhusk',
+    Math.abs(effectiveHp('harrier') - effectiveHp('drifter') * Math.sqrt(10)) <= 5 &&   // the nearest ten
+    effectiveHp('harrier') % 10 === 0,
+    `${effectiveHp('drifter')} -> ${effectiveHp('harrier')} -> ${effectiveHp('ironhusk')}, ` +
+    `a ladder of tens (x sqrt(10) is ${(effectiveHp('drifter') * Math.sqrt(10)).toFixed(1)})`);
+  check('and its bounty is exactly what its toughness owes, with nothing left over',
+    ALIENS.harrier.bounty === farmHp('harrier') * BOUNTY_RATE,
+    `${farmHp('harrier')} x ${BOUNTY_RATE} = ${ALIENS.harrier.bounty} cr, not 1438.5`);
+  check('and it is between them in every other number too',
+    H.attrs.damage * H.attrs.fireRate > D.attrs.damage * D.attrs.fireRate &&
+    H.attrs.damage * H.attrs.fireRate < I.attrs.damage * I.attrs.fireRate &&
+    H.bounty > D.bounty && H.bounty < I.bounty && H.respawn > D.respawn && H.respawn < I.respawn,
+    `${(H.attrs.damage * H.attrs.fireRate).toFixed(0)} dps, ${H.bounty} cr, ${H.respawn}s`);
+  // The one number it is NOT in between on, and the whole character of the thing.
+  check('except speed, where it beats every hull but a Kestrel',
+    Object.keys(HULLS).filter(h => HULLS[h].price >= 0)
+      .every(h => resolve(h).speed <= H.attrs.speed || h === 'kestrel'),
+    `${H.attrs.speed} against ` + Object.keys(HULLS).filter(h => HULLS[h].price >= 0)
+      .map(h => `${h} ${resolve(h).speed}`).join(', '));
+  check('but you can still out-range it, which is how it dies',
+    Object.keys(HULLS).filter(h => HULLS[h].price > 0)
+      .every(h => resolve(h, { weapon: ['emitter1'], generator: [], tech: [] }).weaponRange > H.attrs.weaponRange),
+    `${H.attrs.weaponRange} reach — a starter emitter outranges it`);
+  check('and a Bandit still catches it, which is why you leave',
+    ALIENS.bandit.attrs.speed > H.attrs.speed,
+    `Bandit ${ALIENS.bandit.attrs.speed} against Harrier ${H.attrs.speed}`);
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(ALIENS).length} hostile, ${ALIENS_PER_MAP}/map`}\n`);
 process.exit(fails.length ? 1 : 0);

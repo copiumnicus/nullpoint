@@ -8,9 +8,27 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.30';
+export const VERSION = '0.32';
 
 export const PATCHES = [
+  { v: '0.32', notes: [
+    'The technology shelf is twelve entries, not twenty-six, and every one is a real trade',
+    'Every shop row says what the thing lets you DO, and what it costs you to have it',
+    'Composite Plating takes the killing blow for you once, and re-seats when you dock',
+    'An Ore Foundry mends your hull out of your own ore — a full hold is a full hull',
+    'A Wake Tap nearly doubles the tank and fills it by killing rather than by waiting',
+    'A Shear Compensator makes the sky past the beacons flyable while your charge holds',
+    'An Aspect Filter sees a Bandit from any angle — and everything out there hears you',
+  ] },
+  { v: '0.31', notes: [
+    'A Harrier holds the frontier now: fast, and something to farm while you watch for Bandits',
+    'It outruns everything but a Kestrel, so you fight it — you cannot leave',
+    'Loot follows the kill: the frontier pays in rhodium and platinum, and never again in iron',
+    'A Bandit dropped 216 volume of scrap iron. It drops 96 of rhodium and up',
+    'The recall beacon asks where: your ring, or any pirate bay you rent',
+    'Better ammunition needs the WHOLE ship specced for it — every gun, escort included',
+    'You can still buy it on one good gun. Loading it is the part that asks for the rest',
+  ] },
   { v: '0.30', notes: [
     'An INVENTORY tab: everything you own and are not flying, in one place at last',
     'Click anything in it to break it up for 40% — spare guns, generators, whole hulls',

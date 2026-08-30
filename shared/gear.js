@@ -9,8 +9,14 @@
 //
 // That keeps the two kinds of choice separate: racks are how much ship you have,
 // technology is what kind of ship it is, and a multiplier is worth most to whoever
-// already has the most of the thing it scales. A test enforces the split, and
-// another enforces that every technology still costs you something.
+// already has the most of the thing it scales. A test enforces the split.
+//
+// A technology is also the only kind of module that can carry a CAPABILITY — a
+// rule that is true for a ship with it fitted and false for one without. `does`
+// says what that is in a sentence the shop draws, and shared/tech.js implements
+// it. Every one still gives something up, and a test still enforces that; what
+// changed is that the thing given up no longer has to be a stat. See the
+// technology block below, which argues all of this at length.
 
 export const SLOTS = ['weapon', 'generator', 'tech'];
 
@@ -152,254 +158,254 @@ export const EQUIPMENT = {
               blurb: 'Clears a wreck field on its own.',
               mods: [['cargo', 'add', 180]] },
 
-  // technologies — one of each, and every one costs you something.
+  // --- technologies ----------------------------------------------------------
   //
-  // Tiered like every other shelf, because "which technology" was the only choice
-  // in the shop with no ladder behind it: four things at one rung, and nothing to
-  // climb toward. Tier 3 and up is frontier stock — see FRONTIER below.
-  // A technology may multiply UP only an attribute a rack cannot already run away
-  // with, and may multiply DOWN anything. Measured spans: a rack moves hull, speed,
-  // radar, signature, range and rate by x1.00 and shield by x3.00 — but it moves
-  // DAMAGE by x68 on a Bulwark and x174 on a Hauler. A benefit that grows
-  // sixty-eight times with your guns cannot keep a fixed price: a `damage x1.22`
-  // technology prices at 634 cr against a new pilot and hands a finished ship
-  // 85,734 cr of capability.
+  // Twelve of them, and every one is a VERB.
+  //
+  // The shelf was twenty-six, and every single entry was a stat swap: a third
+  // more hull for nine percent of your speed, half again your reach for a quarter
+  // of your legs, fifty percent more thrust for fourteen percent of your top end.
+  // Read as a list that is arithmetic homework, and the honest answer to most of
+  // it is that it is a wash. The rule above — every technology must give
+  // something up — had been read as "every technology is a paired stat penalty",
+  // and THAT reading is what made the whole shelf feel like nothing worth buying.
+  //
+  // So an entry has to pass two tests now.
+  //
+  // ONE: you must be able to say what fitting it LETS YOU DO. `does` is that
+  // sentence, and it lives on the entry rather than in a comment here because the
+  // tooltip draws it — what you are buying is on the row, before you click.
+  //
+  // TWO: it has to be a TRADE a pilot can feel, and one they should take. The
+  // shape asked for is "fifteen percent more damage output at the cost of ten
+  // percent of the shields — a stat swap that is slightly positive EV", and the
+  // two halves of that are both rules now, enforced in test/tech.mjs:
+  //
+  //   FELT      the gain is at least 15% of something. Nothing on this shelf
+  //             moves a number by three percent; the smallest gain here is 45%.
+  //   POSITIVE  the percentages you gain come to at least 1.5x the percentages
+  //             you give up — which is exactly the 15-for-10 of the example. So
+  //             fitting one is the right answer, and it is never free.
+  //
+  // What that shape could NOT be is the literal pairing, and it is worth writing
+  // the measurement down because it looks so reasonable. Damage and shields grow
+  // at wildly different rates: a rack moves shield by x3.00 and DAMAGE by x68 on a
+  // Bulwark. Priced against every stage of the ladder, `damage x1.15, shield
+  // x0.90` scores
+  //
+  //   arrival -23 points   anchor -9   interceptor +107   fighter +634
+  //   cruiser +1,926       finished +4,451  (= 53,415 cr of capability at tier 2)
+  //
+  // — a DOWNGRADE for the pilot it would be priced for, and fifty thousand credits
+  // of free capability for one who has finished. Same row, same price. So the
+  // trades below pair terms that scale together: hull against speed, one dps term
+  // against another, a hold against the hull it is fed to. The shape is the one
+  // asked for; the pairings are the ones that survive being measured at both ends.
+  //
+  // Giving something up still holds and is still enforced. It just no longer has
+  // to be a second number on the same line: `spends` names a cost that is not an
+  // attribute — the ore in your hold, the charge in your reactor, hostiles
+  // noticing you sooner — and shared/tech.js implements every one of them and
+  // exports SPENDS, which test/tech.mjs checks the shelf against. A cost cannot
+  // be a promise on a shop row with nothing behind it.
+  //
+  // WHAT WAS CUT, and why, because a deleted entry is a rule somebody dropped:
+  //   Hold Expander, Refinery Bulkhead   the hold is grown by collector rigs,
+  //     which ADD to it. A multiplier on it was a second, worse cargo ladder.
+  //   Ablative Lattice                   merged into Composite Plating, which is
+  //     now the entry about surviving a hit instead of two entries about hull.
+  //   Cold-Running Trim, Fast-Cycle Exciter, Reactor Flywheel   three shapes of
+  //     the same duty cycle. The Wake Tap replaces all three with a rule.
+  //   Snap Regulator, Deep-Bank Exchanger  when your shields come back is
+  //     arithmetic on the gap between hits, and nobody was doing that arithmetic.
+  //   Kinetic Braking Spars, Interdiction Trim, Gravitic Vanes   reach against
+  //     legs, three times over, and every one of them a wash.
+  //   Long-Baseline Array, Signal Damper  radar up or radar down. The Aspect
+  //     Filter is what a sensor technology is actually for.
+  //   Racked Reloads                     more, lighter seekers. A number.
+  //   Wing Coupling                      a multiplier on a multiplier on a
+  //     formation; Wing Repeaters is the one with a shape.
+  //   Fade Governor, Keel Bracing, Predictive Array   one technology per ability
+  //     instead of two, and the survivor is the one that changes what the ability
+  //     IS rather than moving its dial along.
+  //
+  // The damage rule is unchanged and still the reason the cadence shelf can
+  // exist at all. A technology may multiply an attribute UP only where a rack
+  // cannot already run away with it, and may multiply anything DOWN. Measured
+  // spans: a rack moves hull, speed, radar, signature, range and rate by x1.00
+  // and shield by x3.00 — but it moves DAMAGE by x68 on a Bulwark and x174 on a
+  // Hauler, so a `damage x1.22` technology prices at 634 cr against a new pilot
+  // and hands a finished ship 85,734 cr of capability.
   //
   // THE EXCEPTION, and it is the only one: a technology may multiply damage up if
   // what it multiplies DOWN is another term of a damage-per-second product.
   //
   //   dps = damage x fireRate  +  rocketVolley x ROCKET_RATE
   //
-  // Everything else on this shelf is paid for in an attribute a rack cannot move,
-  // which is exactly why a naked damage multiplier cannot be: the gain grows x68
-  // and the price stays put. Pay for the product out of the product and BOTH sides
-  // grow x68, so the trade a starter Hauler is offered and the trade a finished
-  // Bulwark is offered are the same trade. Measured, on the three below:
+  // Pay for the product out of the product and BOTH sides grow x68, so the trade
+  // a starter Hauler is offered and the trade a finished Bulwark is offered are
+  // the same trade. balance.js scores the pair as a product for the same reason.
   //
-  //   Siege / Rapid Cadence  x1.60 against x0.625 — dps identical to the last
-  //     digit at both ends: 57.6 on a starter Hauler, 7794.0 on a finished
-  //     Bulwark, with and without. What moves is WHEN it arrives.
-  //   Launcher Primacy  +25% dps on a Hauler with one Sparrow Pod, +33% on a
-  //     Bulwark with three Swarm Racks, -12% on the same Bulwark once twelve
-  //     drones are carrying emitters, and a flat -30% for anyone with no rack at
-  //     all. It only pays for the build that gave something up to earn it.
-  //
-  // balance.js scores the pair as a product rather than as two rows now, so the
-  // model can see this for itself: capabilityOf reads Siege Cadence as exactly zero
-  // points of capability. Added up as separate rows it read +22.5%, and the
-  // off-model report put the entry at 7.4x over model — which was the model being
-  // linear about a product, not the shelf getting away with something.
-  //
-  // The rocket entry still buys DELIVERY, and that has not changed either.
+  // PRICES. Almost everything here scores zero against the cost model — it has no
+  // term for a reactor duty cycle, a shear margin, an ability dial or a thing you
+  // are allowed to do — and balance.js says so for every one of them. They are
+  // not priced at random even so: divide any of these by base x premiumAt(tier)
+  // and the answer is the same number, which IS the shelf's rung for a technology
+  // the model cannot read. 6,700 / 8,000 / 9,300 by tier. The one entry that
+  // charges more is Composite Plating, and it charges exactly the rung PLUS the
+  // hull the model CAN read: 7,971 + 3,900 = 11,871.
 
   // --- hull and hold ---------------------------------------------------------
-  plating:  { name: 'Composite Plating', slot: 'tech', tier: 1, price: 6700,
-              blurb: 'A third more hull, and slower with it.',
-              mods: [['hull', 'mul', 0.35], ['speed', 'mul', -0.09]] },
-  expander: { name: 'Hold Expander', slot: 'tech', tier: 1, price: 10100,
-              blurb: 'Room for more ore, and slower with it.',
-              mods: [['cargo', 'mul', 0.65], ['speed', 'mul', -0.12]] },
-  bulkhead: { name: 'Refinery Bulkhead', slot: 'tech', tier: 2, price: 11100,
-              blurb: 'Room made by taking out the frames that were holding you together.',
-              mods: [['cargo', 'mul', 0.90], ['hull', 'mul', -0.25]] },
-  lattice:  { name: 'Ablative Lattice', slot: 'tech', tier: 3, price: 14600,
-              blurb: 'Half again as much ship, and it does not heal.',
-              mods: [['hull', 'mul', 0.55], ['shieldRegen', 'mul', -0.60]] },
+  // Half again the hull for a fifth of your speed — and the killing blow takes the
+  // plating instead of you. The old entry was +35% for -9%, which is the shape the
+  // whole shelf was cut over: nine percent of your top speed is a number you
+  // cannot feel, so the row read as a bonus nobody could price rather than a
+  // decision. A fifth of your speed is a different ship. The save is once. It is
+  // re-seated at a dock, so a pilot who never goes home never gets a second one,
+  // and what it leaves you on is read off the cheapest kit in the shop rather
+  // than picked — see PLATE_BACK in tech.js.
+  plating:  { name: 'Composite Plating', slot: 'tech', tier: 2, price: 11900,
+              does: 'Lets you survive the hit that would have killed you.',
+              blurb: 'Half again the hull, a fifth off your speed, one free death.',
+              mods: [['hull', 'mul', 0.50], ['speed', 'mul', -0.20]] },
+  // Hull never comes back in the field. That is the rule this breaks, and it
+  // breaks it with the one resource a pilot out there already has: ore.
+  // A full hold mends a full hull, exactly, on every ship — see hullPerVol.
+  foundry:  { name: 'Ore Foundry', slot: 'tech', tier: 2, price: 8000,
+              does: 'Lets you mend your hull out of the ore you carry.',
+              spends: 'hold',
+              blurb: 'Plate made out of your own ore. A third less hold to make it in.',
+              mods: [['hull', 'mul', 0.45], ['cargo', 'mul', -0.30]] },
 
   // --- the reactor -----------------------------------------------------------
-  // power.js normalises draw, so the duty cycle of a boost you cycle is
-  // recharge/(1+recharge) — the CAPACITOR CANCELS OUT of it. The old Flywheel sold
-  // a bigger tank as though that were more power; measured, a 55% larger capacitor
-  // moved every hull's duty cycle by about one point. These three are the only
-  // honest reactor trades there are: the floor, the period, and one long hold.
-  trim:     { name: 'Cold-Running Trim', slot: 'tech', tier: 2, price: 8000,
-              blurb: 'The reactor never quite lets go. It never quite fills, either.',
-              mods: [['sustain', 'mul', 0.55], ['capacitor', 'mul', -0.40]] },
-  exciter:  { name: 'Fast-Cycle Exciter', slot: 'tech', tier: 2, price: 8000,
-              blurb: 'Half the tank, filled twice as often.',
-              mods: [['recharge', 'mul', 0.60], ['capacitor', 'mul', -0.45]] },
-  flywheel: { name: 'Reactor Flywheel', slot: 'tech', tier: 2, price: 8000,
-              blurb: 'One very long hold, and a very long wait for the next.',
-              mods: [['capacitor', 'mul', 0.90], ['recharge', 'mul', -0.40]] },
+  // The old reactor shelf was three arrangements of one duty cycle, and power.js
+  // had already proved the interesting one impossible: the capacitor CANCELS OUT
+  // of recharge/(1+recharge), so a bigger tank cannot buy uptime — which is why the
+  // Reactor Flywheel sold a bigger tank and did nothing.
+  //
+  // This is the rule that replaces all three, and it is what makes a bigger tank
+  // mean something at last: nearly twice the capacitor, and a refill rate cut to
+  // less than half, so standing still is no longer how you get it back. A KILL is.
+  // And what a kill hands back is exactly the seconds the fight took — an identity
+  // out of balance.js rather than a number anybody chose. See wakeSeconds.
+  waketap:  { name: 'Wake Tap', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you fight a whole wave on one tank of reactor.',
+              spends: 'standdown',
+              blurb: 'Nearly twice the tank, filled by killing rather than by waiting.',
+              mods: [['capacitor', 'mul', 0.90], ['recharge', 'mul', -0.60]] },
 
-  // --- the shield clock ------------------------------------------------------
-  // Not more shield: WHEN. Which of these two is right is arithmetic on the gap
-  // between hits — regen x (gap - delay) — so they cross over, and where they cross
-  // depends on the hull. Snap wins under about 6.7s of quiet on a Kestrel and
-  // 13.4s on a Bulwark; the Exchanger wins above 9.2s and 18.4s.
-  snap:      { name: 'Snap Regulator', slot: 'tech', tier: 2, price: 8000,
-               blurb: 'It starts again the moment they look away. It just never hurries.',
-               mods: [['shieldDelay', 'mul', -0.55], ['shieldRegen', 'mul', -0.45]] },
-  exchanger: { name: 'Deep-Bank Exchanger', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'Twice the flow, once it has decided to start.',
-               mods: [['shieldRegen', 'mul', 0.85], ['shieldDelay', 'mul', 0.60]] },
-
-  // --- reach against legs ----------------------------------------------------
-  // The two poles of kiting, and each is the other's price.
-  spars:     { name: 'Kinetic Braking Spars', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'You reach further because you have stopped going anywhere.',
-               mods: [['weaponRange', 'mul', 0.35], ['speed', 'mul', -0.28]] },
-  interdict: { name: 'Interdiction Trim', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'You will get there first. You will have to.',
-               mods: [['speed', 'mul', 0.22], ['weaponRange', 'mul', -0.35]] },
-  // A bolt is LED, and displacement goes with the square of time — so acceleration
-  // is the stat that dodges one and top speed is the stat that runs from it.
-  vanes:     { name: 'Gravitic Vanes', slot: 'tech', tier: 2, price: 8000,
-               blurb: 'You will not outrun it. You will not be where the bolt was, either.',
-               mods: [['accel', 'mul', 0.50], ['speed', 'mul', -0.14]] },
-
-  // --- rockets ---------------------------------------------------------------
-  // launch() divides the volley across the count, so multiplying the COUNT alone
-  // conserves total damage and splits it into more, lighter seekers. More of them
-  // survive a Bandit's dropout; each one hurts less; and you burn half again as
-  // many warheads. Delivery, not damage — which is the only rocket lever a fixed
-  // price can hold.
-  reloads:   { name: 'Racked Reloads', slot: 'tech', tier: 3, price: 11000,
-               blurb: 'More of them, thrown from closer.',
-               mods: [['rockets', 'mul', 0.50], ['weaponRange', 'mul', -0.20]] },
+  // --- outside the chart -----------------------------------------------------
+  // 1800px of uncharted sky past every edge, 45 to 2000 hull/s of shear in it,
+  // and nothing in the game touched any of it. This is the key to half of it: the
+  // margin becomes ground you can cross, hold and fight on — and anything that
+  // follows you out there has no compensator and is dying while it does.
+  //
+  // The shear itself is not on the row and cannot be — the sim has no attribute for
+  // it — so this is the one entry with a third term the tooltip does not draw. What
+  // is on the row is the trade you can see: half again the thrust for a third of
+  // your sight, which is a real fight out there where a Bandit opens at 520px. What
+  // is not on it is paid in reactor, and how much margin you get is how much charge
+  // you have left, so the wall closes on you as the tank runs down.
+  compensator: { name: 'Shear Compensator', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you fly and fight outside the charted sky.',
+              spends: 'reactor',
+              blurb: 'Half again the thrust, a third off your radar, and no shear.',
+              mods: [['accel', 'mul', 0.55], ['radar', 'mul', -0.35]] },
 
   // --- what you can see, and what can see you --------------------------------
-  array:     { name: 'Long-Baseline Array', slot: 'tech', tier: 2, price: 8000,
-               blurb: 'You will see them a long way off. They will still be a long way off.',
-               mods: [['radar', 'mul', 0.55], ['weaponRange', 'mul', -0.25],
-                      ['signature', 'mul', 0.60]] },
-  // The old Damper bought a stat nothing in the game reads outside PvP and charged
-  // a quarter of your radar for it — which also costs you salvage, since the server
-  // filters pods by radar reach. It keeps the quiet and now also buys the thing a
-  // quiet ship is actually doing: breaking contact and coming back whole.
-  damper:    { name: 'Signal Damper', slot: 'tech', tier: 2, price: 8000,
-               blurb: 'Hard to hold, quick to mend, and half blind.',
-               mods: [['signature', 'mul', -0.55], ['shieldDelay', 'mul', -0.35],
-                      ['radar', 'mul', -0.40]] },
+  // The old pair was radar up or radar down, and the Damper bought a stat nothing
+  // outside PvP reads. This is what a sensor technology is for: it beats the one
+  // thing in the game that hides, and it does it by shouting — so everything else
+  // hears you first. Every hostile's aggro radius against you goes past SIGHT_R,
+  // which means fights start off-screen. See LOUD in tech.js.
+  filter:   { name: 'Aspect Filter', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you see a Bandit from any angle it faces.',
+              spends: 'attention',
+              blurb: 'Twice the reach, and everything out there hears you coming.',
+              mods: [['radar', 'mul', 0.90], ['signature', 'mul', 0.60]] },
 
   // --- the cadence -----------------------------------------------------------
-  // The laser system finally gets what the rocket system already had. Racked
-  // Reloads splits a volley into more, lighter seekers and conserves the damage
-  // exactly, because launch() divides the volley across the count; these two do the
-  // same thing to a bolt, because fire() divides a cycle's damage across the guns
-  // and cycles at `fireRate`. x1.60 against x0.625 is 1.0000, so the dps a build
-  // throws is unchanged to the last digit, at every rung of the ladder.
+  // x1.60 damage against x0.625 rate is 1.0000, so the dps a build throws is
+  // unchanged to the last digit at every rung of the ladder. What changes is the
+  // WINDOW: the first bolt off a cold gun carries x1.60 with Siege and x0.625
+  // with Rapid, and the wait for the next cycle is 1.33s against 0.52s where
+  // stock is 0.83s. Measured with the real fire()/stepBolts() loop against a
+  // stationary target and averaged over windows of half a second to a second and
+  // a half, Siege puts 7-17% more down inside one and Rapid 4-17% less, on every
+  // build tried — and by thirty seconds all three are inside 5% of each other.
   //
-  // What changes is the WINDOW. Two numbers are exact by construction: the first
-  // bolt off a cold gun carries x1.60 with Siege and x0.625 with Rapid, and the wait
-  // for the next cycle is 1.33s against 0.52s where stock is 0.83s. Measured with the
-  // real fire()/stepBolts() loop against a stationary target, averaged over windows
-  // of half a second to a second and a half so one bolt's rounding is not the answer,
-  // Siege puts 7-17% more down inside one and Rapid 4-17% less, on every build tried
-  // — and by thirty seconds all three are inside 5% of each other.
-  //
-  // So Siege is what you fit when the thing you are shooting is not going to stand
-  // there, and Rapid is what you fit when you want the next bolt sooner.
-  //
-  // NOT an ammunition trade, though it looks like one: rounds are spent per bolt,
-  // so Siege burns 37.5% fewer of them. Measured against earnings that is worth
-  // between 1.5% (a new pilot on Standard Cells) and 0.1% (a finished ship on
-  // Fusion) of what the same seconds pay in bounty. Ammunition is not a currency
-  // anything can be balanced in, and saying so here is cheaper than someone
-  // measuring it again.
-  siege:     { name: 'Siege Cadence', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'Fewer bolts. Each one lands like a dropped anvil.',
-               mods: [['damage', 'mul', 0.60], ['fireRate', 'mul', -0.375]] },
-  rapid:     { name: 'Rapid Cadence', slot: 'tech', tier: 2, price: 8000,
-               blurb: 'A thinner bolt, far more often. Nothing gets a rest.',
-               mods: [['fireRate', 'mul', 0.60], ['damage', 'mul', -0.375]] },
-  // The cross-system version: one dps product bought out of the other. A drone can
-  // never carry a launcher, so the rack is capped at three however big the hull —
-  // which is what stops this being a general damage multiplier. The more you have
-  // spent on emitters, the more it costs you: 0.55 x ROCKET_RATE against 0.30 x
-  // FIRE_RATE means it only pays once rocketVolley is worth more than about 1.2x
-  // your bolt damage, and below that it is a straight loss. A pilot with no
-  // launcher at all is simply buying -30% damage and nothing back.
-  primacy:   { name: 'Launcher Primacy', slot: 'tech', tier: 2, price: 8000,
-               blurb: 'The racks get the reactor. The guns get what is left.',
-               mods: [['rocketVolley', 'mul', 0.55], ['damage', 'mul', -0.30]] },
+  // NOT an ammunition trade, though it looks like one: Siege burns 37.5% fewer
+  // rounds, and measured against earnings that is between 1.5% (a new pilot on
+  // Standard Cells) and 0.1% (a finished ship on Fusion) of what the same seconds
+  // pay in bounty. Saying so here is cheaper than someone measuring it again.
+  siege:    { name: 'Siege Cadence', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you land a fight\'s worth of damage at once.',
+              blurb: 'Fewer bolts. Each one lands like a dropped anvil.',
+              mods: [['damage', 'mul', 0.60], ['fireRate', 'mul', -0.375]] },
+  rapid:    { name: 'Rapid Cadence', slot: 'tech', tier: 2, price: 8000,
+              does: 'Lets you keep fire on something that never rests.',
+              blurb: 'A thinner bolt, far more often. Nothing gets a rest.',
+              mods: [['fireRate', 'mul', 0.60], ['damage', 'mul', -0.375]] },
+  // The cross-system version: one dps product bought out of the other. A drone
+  // can never carry a launcher, so the rack is capped at three however big the
+  // hull — which is what stops this being a general damage multiplier. Measured:
+  // +25% on a Hauler with one Sparrow Pod, +33% on a Bulwark with three Swarm
+  // Racks, -12% on the same Bulwark once twelve drones are carrying emitters, and
+  // a flat -30% for anyone with no rack at all. It only pays the build that gave
+  // something up to earn it.
+  primacy:  { name: 'Launcher Primacy', slot: 'tech', tier: 2, price: 8000,
+              does: 'Lets you fly a ship that is all racks and no guns.',
+              blurb: 'The racks get the reactor. The guns get what is left.',
+              mods: [['rocketVolley', 'mul', 0.55], ['damage', 'mul', -0.30]] },
 
   // --- the escort ------------------------------------------------------------
-  // Nothing could touch the wing before this: FORMATIONS carried its own mods and
-  // resolve() folded them in against a ramp nothing was allowed an opinion about.
-  // Two attributes now carry it — `cohesion`, how many drones the formation needs
-  // to pay in full, and `escort`, how hard it pays once it does — and these are the
-  // two ends of it.
-  //
-  // They cross, and where they cross is the whole decision. Repeaters finish the
-  // ramp early and add nothing once it is finished; Coupling lengthens the ramp and
-  // pays 1.7x at the end of it. min(1, n/1) against min(1, n/6) x 1.7 means
-  // Repeaters wins outright at one and two drones, both are exactly the stock
-  // formation at three, and Coupling passes it at four.
-  //
-  // Coupling's price is in the guns and it has to be: the Attack Wedge multiplies
-  // DAMAGE, so `escort` is a damage dial in disguise the moment a Wedge is flying
-  // one. The offset is sized against the MARGINAL gain, not the whole bonus — the
-  // Wedge already gives x1.12 and Coupling takes it to x1.204, which is x1.075 —
-  // so x0.925 on the rate lands on 0.9944 and the escort shelf cannot sell you dps
-  // whatever it does to the formation. Sized against the Wedge's 12% specifically:
-  // a formation with a bigger damage mod would need it resized, and test/tech.mjs
-  // checks every formation rather than trusting this comment.
+  // `cohesion` is how many drones a formation needs before it pays in full.
+  // Cutting it is worth everything to a pilot with one drone and NOTHING to one
+  // with twelve, because the ramp is already finished — the only entry on this
+  // shelf that is worth less the bigger you get, which is why it survived the cut
+  // and Wing Coupling did not. -0.67 lands on 0.99 and the floor of 1 catches it;
+  // a formation that paid in full with no escort at all is a formation with no
+  // escort in it.
   repeaters: { name: 'Wing Repeaters', slot: 'tech', tier: 1, price: 6700,
-               blurb: 'One drone flies the formation like three. Three fly like three.',
-               // -0.67 lands on 0.99 and the floor of 1 catches it; a formation that
-               // paid in full with no escort at all is a formation with no escort in it.
-               mods: [['cohesion', 'mul', -0.67], ['speed', 'mul', -0.14]] },
-  coupling:  { name: 'Wing Coupling', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'A real wing flies half again as hard, and your guns pay the bill.',
-               mods: [['escort', 'mul', 0.70], ['cohesion', 'mul', 1.00],
-                      ['fireRate', 'mul', -0.075]] },
+              does: 'Lets you fly a full formation off a single drone.',
+              blurb: 'One drone flies the formation like three. It costs you legs.',
+              mods: [['cohesion', 'mul', -0.67], ['speed', 'mul', -0.14]] },
 
   // --- the fourth system -----------------------------------------------------
-  // One pair per ability, and every one of them is dead weight on the three hulls
-  // that do not have it — which is the point. These are the first technologies on
-  // the shelf that are about which SHIP you fly rather than how much of it there is.
+  // One per ability, and each one is dead weight on the three hulls that do not
+  // have it — which is the point. These are the entries that are about which SHIP
+  // you fly rather than how much of it there is, and each survivor is the one of
+  // its old pair that changes what the ability IS rather than sliding its dial.
   //
-  // All six are frontier stock, and deliberately: your company issues the hull with
-  // its ability tuned the way the design intends, and retuning the thing that makes
-  // a Kestrel a Kestrel is pirate work. Three of them push right up against ceilings
-  // ability.js argues for out loud, and the ATTRS clamps are what stop them going
-  // past.
+  // All three are frontier stock, deliberately: your company issues the hull with
+  // its ability tuned the way the design intends, and retuning the thing that
+  // makes a Kestrel a Kestrel is pirate work.
 
-  // Veil. Depth against rebuild, and the two cross at a stated cadence: mean
-  // detection over a firing period is 1 - depth x (1 - rebuild/2T) once you shoot
-  // less often than the rebuild, so 0.616/1.0s and 0.94/2.5s cross at
-  //   T = (0.94x1.25 - 0.616x0.5) / (0.94 - 0.616) = 2.68s
-  // between shots. Firing faster than one shot per 2.68s, the Governor hides you
-  // better; slower, the Null Skin does. Holding fire entirely, the Skin is x0.06
-  // against the Governor's x0.384 — six times harder to find.
-  quicken:   { name: 'Fade Governor', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'A thinner veil that forgives you for shooting.',
-               mods: [['veilRecover', 'mul', -0.60], ['veilDepth', 'mul', -0.30]] },
-  // 0.88 -> 0.9416, which the 0.94 ceiling in ATTRS catches: detection x0.12 becomes
-  // x0.06, so a Kestrel is found at half the range. The shields are what pays, and
-  // a Kestrel has the fewest of them — that is the trade, not an accident.
-  deepen:    { name: 'Null Skin', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'Twice as hard to find. Very little left to find.',
-               mods: [['veilDepth', 'mul', 0.07], ['shield', 'mul', -0.35]] },
-
-  // Anchor. Both halves come off the same dial in ability.js — you never get the
-  // wall without the anchor — so a technology can only move the exchange rate.
-  walk:      { name: 'Anchor Servos', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'A wall that can walk. Half a wall.',
-               mods: [['anchorDrag', 'mul', -0.50], ['anchorSwell', 'mul', -0.50]] },
-  // 3 -> 4.5, so shields swell x5.5 rather than x4, and drag 0.8 -> 0.95 leaves you
-  // 5% of your speed. That is the ATTRS ceiling on drag, and it is there because a
-  // ship at zero is repositioned only by whatever is shooting it.
-  deepset:   { name: 'Keel Bracing', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'Five and a half times the shield. You are not going anywhere.',
-               mods: [['anchorSwell', 'mul', 0.50], ['anchorDrag', 'mul', 0.1875]] },
-
-  // Lock. reachOf is 1 - lockReach x drive, so these two move the cost of aiming
-  // rather than the aim. At a full lock the Repeater keeps 89.5% of your reach
-  // against the stock 65% — but 15% comes off the reach itself, so the ship is
-  // worse whenever the lock is cold. Better locked, worse idle.
-  standoff:  { name: 'Lock Repeater', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'Hold the lock from out here. Everything else got shorter.',
-               mods: [['lockReach', 'mul', -0.70], ['weaponRange', 'mul', -0.15]] },
-  // A bite of 1.8 reaches a perfect return at 56% of what the ability can deliver —
-  // lockOf clamps at 1, so the rest of the reactor is free for the guns — and at
-  // 0.556 the reach cost is 1 - 0.63x0.556 = 0.65, exactly what the stock lock costs
-  // at FULL. Push it to full anyway and you are at 37% of your range, which is knife
-  // work: the same lock for less reactor, or a much shorter one for the same.
-  bite:      { name: 'Predictive Array', slot: 'tech', tier: 3, price: 9300,
-               blurb: 'The lock bites at half the dial. Push it and you are inside their guns.',
-               mods: [['lockTighten', 'mul', 0.80], ['lockReach', 'mul', 0.80]] },
+  // 0.88 -> 0.9416, which the 0.94 ceiling in ATTRS catches: detection x0.12
+  // becomes x0.06. At 2600px of radar that is being found at 156px, which is
+  // knife range — a Kestrel with this fitted crosses a sector nobody plots. The
+  // shields pay for it, and a Kestrel has the fewest of them.
+  deepen:   { name: 'Null Skin', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you cross a sector without ever being found.',
+              blurb: 'Half the range they find you at. A third of your shields.',
+              mods: [['veilDepth', 'mul', 0.07], ['signature', 'mul', -0.55],
+                     ['shield', 'mul', -0.35]] },
+  // Both halves of an Anchor come off the same dial — you never get the wall
+  // without the anchor — so a technology can only move the exchange rate. Stock
+  // is x4 shields at a fifth of your speed, which is a wall. This is x2.5 at
+  // three fifths, which is a ship that can hold the ability through a chase.
+  walk:     { name: 'Anchor Servos', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you hold an Anchor and still go somewhere.',
+              blurb: 'A wall that can walk, at two thirds of the wall.',
+              mods: [['anchorDrag', 'mul', -0.60], ['anchorSwell', 'mul', -0.40]] },
+  // reachOf is 1 - lockReach x drive, so this moves the cost of aiming rather
+  // than the aim. At a full lock it keeps 89.5% of your reach against the stock
+  // 65% — but 15% comes off the reach itself, so the ship is worse whenever the
+  // lock is cold. Better locked, worse idle.
+  standoff: { name: 'Lock Repeater', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you hold a perfect Lock from out of reach.',
+              blurb: 'The lock costs you almost no reach. The reach got shorter.',
+              mods: [['lockReach', 'mul', -0.85], ['weaponRange', 'mul', -0.15]] },
 };
 
 // A collector lives in its own bay, not in a combat one. It used to sit in the
@@ -497,3 +503,14 @@ export function sanitiseDrones(list, fit, max = MAX_DRONES, techCap = Infinity) 
 }
 
 export const droneItems = drones => (drones ?? []).filter(Boolean);
+
+// Every technology this ship is flying, rack and escort together. It lives here
+// rather than in tech.js because it is a fact about a FIT, and gear.js is the
+// only file with no imports at all — which is what lets sim.js stamp it onto a
+// ship without dragging the whole capability layer in behind it.
+//
+// A technology on a drone counts exactly as much as one in the rack. That is the
+// same rule sanitiseDrones enforces from the other side: the hull says how many
+// you may fly, wherever they happen to be mounted.
+export const techSet = (fit, drones = []) => new Set(
+  [...(fit?.tech ?? []), ...droneItems(drones)].filter(k => EQUIPMENT[k]?.slot === 'tech'));

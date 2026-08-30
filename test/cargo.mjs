@@ -1,9 +1,10 @@
 import { MATERIALS, DROPS, rollDrop, stow, unload, holdVol, holdValue, volOf,
-         POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY } from '../shared/cargo.js';
+         POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY,
+         oreRung, husk, ORE_RATE, BASE_HP, TOP_RUNG } from '../shared/cargo.js';
 import { beginScoop, stepScoop, approachPod, load, rigAt, DWELL, pullTime,
          droneSpeed, DRONE_SPEED_MULT } from '../shared/cargo.js';
 import { EQUIPMENT, sanitiseDrones, sanitiseRig, collectorReach, isCollector } from '../shared/gear.js';
-import { WILD, ALIENS } from '../shared/aliens.js';
+import { WILD, ALIENS, effectiveHp } from '../shared/aliens.js';
 import { newShip, escortOf } from '../shared/sim.js';
 import { HULLS, ATTRS, resolve } from '../shared/ships.js';
 import { rng } from '../shared/aliens.js';
@@ -46,11 +47,48 @@ for (const [kind, table] of Object.entries(DROPS)) {
 // reads a missing kind as "drops nothing", so this fails loudly rather than
 // quietly the next time an alien is added.
 check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
-  WILD.map(k => `${k} ${DROPS[k] ? `x${DROPS[k][0].max / 9}` : 'NOTHING'}`).join(', '));
-check('a bigger husk drops more of the same, not rarer',
-  WILD.filter(k => DROPS[k]).every(k =>
-    DROPS[k].every((r, i) => r.p === DROPS.drifter[i].p && r.mat === DROPS.drifter[i].mat)),
-  'one shape, scaled — the composition of a husk does not change with the payroll');
+  WILD.map(k => `${k} ${DROPS[k] ? 'from ' + DROPS[k][0].mat : 'NOTHING'}`).join(', '));
+
+// This used to read "a bigger husk drops more of the same, not rarer", and it was
+// the bug: a Bandit paid out in 72 units of iron, 216 volume of the cheapest metal
+// in the game, for the hardest fight outside a boss. The composition DOES change
+// with the payroll now, and it changes by a stated rule rather than by taste.
+{
+  const worstPod = t => Math.max(...t.map(r => r.max * MATERIALS[r.mat].vol));
+  const oreOf    = t => t.reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
+  // The hold of a pilot who has any business being in that sector.
+  const HOLD = { drifter: 60, harrier: 60, ironhusk: 100, bandit: 240, leviathan: 240, hive: 240 };
+
+  for (const k of WILD) {
+    const ehp = effectiveHp(k), rung = oreRung(ehp), t = DROPS[k];
+    console.log(`     ${k.padEnd(10)} ${String(ehp).padStart(6)} ehp  rung ${rung} ` +
+      `${t[0].mat.padEnd(9)} worst pod ${String(worstPod(t)).padStart(3)} of ${HOLD[k]}  ` +
+      `ore ${oreOf(t).toFixed(0).padStart(5)} cr`);
+  }
+  check('what a hostile drops starts where its toughness says it does',
+    WILD.every(k => MATERIALS[DROPS[k][0].mat].tier === oreRung(effectiveHp(k))),
+    'rung = 1 + round(2 x log10(ehp / 650)) — two metal rungs per hostile rung');
+  check('nothing at the frontier pays out in iron',
+    !DROPS.bandit.some(r => r.mat === 'iron') && !DROPS.leviathan.some(r => r.mat === 'iron'),
+    `a Bandit drops ${DROPS.bandit[0].mat} and up, worst pod ${worstPod(DROPS.bandit)} volume — it was 216 of iron`);
+  check('a pod always fits the hold of a pilot equipped to be there',
+    WILD.every(k => worstPod(DROPS[k]) <= HOLD[k]),
+    WILD.map(k => `${k} ${worstPod(DROPS[k])}/${HOLD[k]}`).join('  '));
+  check('ore is about a fifth of the kill, until the hold stops it',
+    ['drifter', 'harrier', 'ironhusk', 'bandit', 'leviathan']
+      .every(k => oreOf(DROPS[k]) > ORE_RATE * effectiveHp(k) * 0.75
+               && oreOf(DROPS[k]) < ORE_RATE * effectiveHp(k) * 1.25),
+    `at ${ORE_RATE} cr per ehp — the Hive is exempt because 47 Ore Tenders of platinum is not a reward`);
+  check('and the Hive is the one the ceiling binds on',
+    worstPod(DROPS.hive) === HOLD.hive && oreOf(DROPS.hive) < ORE_RATE * effectiveHp('hive'),
+    `exactly one Ore Tender, and the other ${Math.round(ORE_RATE * effectiveHp('hive') - oreOf(DROPS.hive))} cr stays in the bounty`);
+  check('the rung never runs off the end of the metals',
+    oreRung(1e12) === TOP_RUNG && oreRung(1) === 1 && oreRung(BASE_HP) === 1,
+    'clamped at platinum — a table with one row left is a fixed drop, not a table');
+  check('a table that starts higher up still sums to 1',
+    [1, 2, 3, 4, 5].every(r => Math.abs(husk(r, 1).reduce((s, x) => s + x.p, 0) - 1) < 1e-9),
+    'renormalised — rollDrop walks the weights and falls off the end otherwise');
+}
 
 {
   const rand = rng(9), tally = {};
@@ -66,13 +104,22 @@ check('a bigger husk drops more of the same, not rarer',
 
 console.log('\nholds');
 const caps = Object.keys(HULLS).filter(h => HULLS[h].price > 0).map(h => [h, resolve(h).cargo]);
+const bareFit = { weapon: [], generator: [], tech: [] };
 caps.forEach(([h, c]) => console.log(`     ${h.padEnd(9)} ${String(c).padStart(4)}` +
-  `   with a Hold Expander ${Math.round(resolve(h, { weapon: [], generator: [], tech: ['expander'] }).cargo)}`));
+  `   with an Ore Tender ${Math.round(resolve(h, bareFit, ['collect3']).cargo)}` +
+  `   with an Ore Foundry ${Math.round(resolve(h, { ...bareFit, tech: ['foundry'] }).cargo)}`));
 check('a bigger hull carries more', caps[0][1] < caps[1][1] && caps[1][1] < caps[2][1]);
-check('cargo is a normal attribute, so a module can change it',
-  resolve('kestrel', { weapon: [], generator: [], tech: ['expander'] }).cargo > resolve('kestrel').cargo && !!ATTRS.cargo);
-check('and the expander costs speed',
-  resolve('kestrel', { weapon: [], generator: [], tech: ['expander'] }).speed < resolve('kestrel').speed);
+// A hold is GROWN by collector rigs, which add to it, and only ever SHRUNK by the
+// technology shelf. That is the same split every other slot obeys — racks fill a
+// hull out, technology changes its shape — and it is why the Hold Expander and
+// the Refinery Bulkhead are gone: "+65% of your hold for 12% of your speed" was a
+// second, worse cargo ladder wearing the costume of a decision.
+check('cargo is a normal attribute, and a rig is how a hold gets bigger',
+  resolve('kestrel', bareFit, ['collect3']).cargo > resolve('kestrel').cargo && !!ATTRS.cargo,
+  `kestrel ${resolve('kestrel').cargo} -> ${resolve('kestrel', bareFit, ['collect3']).cargo} with an Ore Tender`);
+check('and the one technology that touches a hold takes room out of it',
+  resolve('kestrel', { ...bareFit, tech: ['foundry'] }).cargo < resolve('kestrel').cargo,
+  'an Ore Foundry is a furnace, and a furnace has to stand somewhere');
 
 const h = {};
 check('stow reports what it actually took', stow(h, 'iron', 4, 30) === 4 && holdVol(h) === 12, 'iron is 3 per unit');
@@ -193,6 +240,12 @@ check('a kill is worth more than its own drop, but not by much', (() => {
   const avg = DROPS.drifter.reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
   return ALIENS.drifter.bounty > avg && ALIENS.drifter.bounty < avg * 6;
 })(), 'so cargo is worth hauling, and killing is worth doing');
+check('and that holds all the way up the ladder, not just at the bottom',
+  WILD.every(k => {
+    const avg = DROPS[k].reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
+    return ALIENS[k].bounty > avg;
+  }),
+  'a hostile that paid better in salvage than in bounty would make the scoop the weapon');
 
 console.log('\nwhen the hold is full');
 {

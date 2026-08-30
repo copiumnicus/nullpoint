@@ -118,11 +118,20 @@ export function sanitiseAmmo(raw) {
   return out;
 }
 
-export function sanitiseUsing(raw, stock = {}) {
+// The one funnel a selection passes through, on load and on every refit. Passing a
+// fit is optional so a bare sanitise still works, but the server always passes one:
+// a grade the ship may no longer fire has to drop to something it can, or a pilot
+// who sells one emitter finds their guns silently dead.
+export function sanitiseUsing(raw, stock = {}, ctx = null) {
   const out = {};
   for (const f of FEEDS) {
     const want = raw?.[f];
-    out[f] = AMMO[want]?.for === f ? want : DEFAULT_AMMO[f];
+    let key = AMMO[want]?.for === f ? want : DEFAULT_AMMO[f];
+    // Down to the best grade this ship may actually fire, not straight to the
+    // cheapest. Dropping a Fusion pilot to Standard because one drone slipped a
+    // rung would be a bigger punishment than the rule is asking for.
+    if (ctx && whyNotLoad(key, ctx)) key = loadable(f, ctx)[0] ?? DEFAULT_AMMO[f];
+    out[f] = key;
   }
   return out;
 }
@@ -152,6 +161,67 @@ export function bestTierFor(feed, fit, drones = [], EQUIPMENT) {
   }
   return best;
 }
+
+// Spoken, not spelled: MK is "em-kay", so it is an MK-I and a Swarm Rack.
+const an = w => /^[aeiou]/i.test(w) || /^(mk|f|h|l|m|n|r|s|x)[^a-z]/i.test(w) ? 'an' : 'a';
+
+// The WEAKEST gun of the right sort you are carrying, and where it is. Buying asks
+// for the best one you own; loading asks for the worst, and they are different
+// questions with different answers.
+//
+// Empty slots do not count. A Kestrel flying two of its three racks is not carrying
+// a tier 1 emitter, it is carrying nothing, and nothing cannot be underfed.
+export function lowestGun(feed, fit, drones = [], EQUIPMENT) {
+  const wants = feed === 'rocket' ? 'rocket' : 'laser';
+  let low = null;
+  const look = (keys, where) => {
+    for (const k of keys) {
+      const e = EQUIPMENT[k];
+      if (!e || e.slot !== 'weapon') continue;
+      if ((e.kind === 'rocket' ? 'rocket' : 'laser') !== wants) continue;
+      if (!low || (e.tier ?? 0) < low.tier) low = { tier: e.tier ?? 0, key: k, name: e.name, where };
+    }
+  };
+  look((fit?.weapon ?? []).filter(Boolean), 'rack');
+  look((drones ?? []).filter(Boolean), 'escort');
+  return low;
+}
+
+// Why this pilot cannot LOAD a grade, as opposed to buy one.
+//
+// Owning one tier 3 emitter was enough to fire Fusion Cells out of every gun on the
+// ship, which made the top grade a single purchase rather than a decision — bolt
+// one MK-V onto the escort and eight MK-Is upstairs all fire the hot rounds. The
+// rounds are calibrated for the gun. Every gun that fires them has to be that gun.
+//
+// So: buying is gated on the best weapon you own, because owning one is proof you
+// have reached that rung and the crate keeps until the rest of the ship catches up.
+// Loading is gated on the worst, because the worst is what would be firing it.
+//
+// This does mean fitting a spare MK-I into an empty slot can cost you your ammunition,
+// which reads as a punishment for adding a gun. It is the honest reading of the rule
+// and there is now somewhere to put the spare — the INVENTORY tab breaks it up — so
+// the fix is one click rather than a mystery.
+//
+// A pilot with no weapon of that sort at all is not blocked. There is nothing to
+// underfeed, nothing will fire, and refusing them a menu choice they cannot act on
+// would only be a sentence they have to decode.
+export function whyNotLoad(key, { fit, drones = [], EQUIPMENT } = {}) {
+  const a = AMMO[key];
+  if (!a) return 'no such grade';
+  const need = NEEDS[key] ?? 1;
+  if (need <= 1) return null;
+  const low = lowestGun(a.for, fit, drones, EQUIPMENT);
+  if (!low || low.tier >= need) return null;
+  const what = a.for === 'rocket' ? 'launcher' : 'emitter';
+  return `every ${what} must be tier ${need} — your ${low.where === 'escort' ? 'escort flies' : 'rack holds'} `
+       + `${an(low.name)} ${low.name} (tier ${low.tier})`;
+}
+
+// Which grades this pilot may actually load, best first. The menu draws from this
+// and the server sanitises against it, so the two cannot offer different lists.
+export const loadable = (feed, ctx) =>
+  forWeapon(feed).filter(k => !whyNotLoad(k, ctx)).sort((a, b) => AMMO[b].tier - AMMO[a].tier);
 
 // Why this grade is not for sale to this pilot, or null if it is.
 //

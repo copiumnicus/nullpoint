@@ -73,7 +73,14 @@ export const shownAt = (aspect, now, seed = 0) => presenceAt(aspect, now, seed) 
 // Everything the client needs to draw one, in one call. The alpha already has
 // the fade folded in, so a caller that just multiplies by it gets the whole
 // effect without knowing there are two parts to it.
-export function seenAs(alien, viewer, now, seed = 0) {
+//
+// `clear` is an illuminator on the viewer's ship — the Aspect Filter. Camouflage
+// is a question about what comes back, and something loud enough gets an answer
+// from every angle, so the whole curve collapses to tail-on. It is a flag rather
+// than a scale because that is what the thing is: the shaping either works on you
+// or it does not.
+export function seenAs(alien, viewer, now, seed = 0, clear = false) {
+  if (clear) return { aspect: 1, presence: 1, alpha: MAX_ALPHA, shown: true };
   const aspect = aspectOf(alien, viewer);
   const presence = presenceAt(aspect, now, seed);
   return { aspect, presence, alpha: alphaAt(aspect) * presence, shown: presence > 0.02 };

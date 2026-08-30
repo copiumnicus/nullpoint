@@ -39,6 +39,48 @@ export const ALIENS = {
     xp: 140,          // and what the kill is worth toward your rank
   },
 
+  // The rung between a Drifter and an Ironhusk, and the reason the frontier is
+  // worth visiting before you can fight what lives there.
+  //
+  // The bestiary is a ladder of tens — 650, 6500, 65000, 650000 — so the step in
+  // between is not a number anyone had to choose: it is one half rung, x sqrt(10),
+  // which puts it at 2055 effective hit points. Bounty and experience follow from
+  // that the way every other hostile's do.
+  //
+  // 2060 rather than 2055.5, and the rounding is not a slip. A bounty is
+  // whole credits and BOUNTY_RATE is 0.70, so effective hit points have to be a
+  // multiple of ten or `bounty = ehp x rate` stops being exactly true — 2055 pays
+  // 1438.5, which cannot be a bounty. So it is the nearest ten to x sqrt(10), which
+  // is 2060. Every hostile before this one happened to be
+  // a round multiple of 650 and nobody had to notice. test/balance.mjs asserts the
+  // identity to 1e-6 across every hostile and every stage, and it caught this.
+  //
+  // What it is FOR is the dynamic at the frontier. Bandits hold those sectors and
+  // will kill anyone who arrives able to afford the trip, which made the whole
+  // frontier a wall rather than a place. Harriers give a pilot something to farm
+  // out there while a Bandit is somewhere else — and because a Bandit is faster
+  // than anything but a Kestrel, noticing one and getting out is the game being
+  // played in between the kills.
+  //
+  // So it is fast, and that is the whole character: 380, quicker than every hull
+  // but a Kestrel's 430. You cannot outrun a Harrier, you have to fight it — while
+  // watching for the thing you CAN'T fight. It is not tough: 2055 next to a
+  // Bandit's 30000, and its 560 range is under every hull's, so it dies to the
+  // same kiting a Drifter does once you have committed to it.
+  harrier: {
+    name: 'Harrier', cls: 'Skirmisher', r: 14, colour: '#8fa8ff', shape: 'blade',
+    attrs: { hull: 1420, shield: 640, shieldRegen: 55, shieldDelay: 4,
+             speed: 380, accel: 1400, signature: 3,
+             damage: 50, fireRate: 1.2, weaponRange: 560 },
+    aggro: 480,       // inside SIGHT_R, so it is on screen before it decides
+    leash: 1900,
+    patience: 3.0,
+    flee: 0.08,       // it commits; something this quick running would never die
+    respawn: 20,      // between a Drifter's 14 and an Ironhusk's 30, like the rest of it
+    bounty: 1442,     // 2060 ehp at BOUNTY_RATE, exactly
+    xp: 444,          // and the same at XP_RATE, to the nearest point
+  },
+
   // Ten Drifters welded into one hull, and deliberately exactly that: 6500 ehp
   // is 10 x 650, the 4550 bounty is 10 x 455 because bounty is ehp x BOUNTY_RATE,
   // and 1400 xp is 10 x 140. One number was chosen — the multiple — and the rest
@@ -254,6 +296,12 @@ export const SHAPES = {
     const a = (i / 16) * Math.PI * 2, rr = R * (i % 2 ? 0.62 : 1.2);
     return [Math.cos(a) * rr, Math.sin(a) * rr];
   }),
+  // Swept hard back from a fine nose, with nothing in the middle. It should read as
+  // speed at a glance, because speed is the only thing about it that matters.
+  blade: R => [
+    [1.55, 0], [0.10, 0.30], [-0.85, 0.95], [-0.55, 0.16],
+    [-1.00, 0], [-0.55, -0.16], [-0.85, -0.95], [0.10, -0.30],
+  ].map(([x, y]) => [x * R, y * R]),
   // A knobbly disc: twelve shallow lobes, no nose and no spikes. It reads as a
   // structure rather than a ship, which is what it is.
   hive: R => Array.from({ length: 24 }, (_, i) => {
@@ -504,7 +552,11 @@ export function stepAlienAI(a, map, contenders, dt) {
     for (const c of contenders) {
       if (!alive(c)) continue;
       const angry = a.provoked.has(c.id), d = dist(c);
-      if (angry ? d > a.def.leash : (c.haven || d > a.def.aggro)) continue;
+      // `loud` is what the candidate is doing to be noticed — 1 for everyone
+      // except a ship running an Aspect Filter, which is an active illuminator
+      // and is therefore heard from further off than it can be seen from. The
+      // caller supplies it, so this file needs no opinion about the shop.
+      if (angry ? d > a.def.leash : (c.haven || d > a.def.aggro * (c.loud ?? 1))) continue;
       if (d < bestD) { bestD = d; best = c; }
     }
     if (best) { a.target = best.id; t = best; a.lost = 0; }

@@ -54,7 +54,7 @@ export const STORE_PAGES = [
   { key: 'weapon',    name: 'Lasers',      hint: 'Emitters. Each adds flat damage to every bolt you fire.' },
   { key: 'rocket',    name: 'Launchers',   hint: 'Rockets that chase. Three racks per ship, never on a drone.' },
   { key: 'generator', name: 'Generators',  hint: 'Shields and capacitor, paid for in speed.' },
-  { key: 'tech',      name: 'Technology',  hint: 'One of each per ship, and every one trades a stat away.' },
+  { key: 'tech',      name: 'Technology',  hint: 'One of each per ship. Each one lets you do something.' },
   { key: 'techx',     name: 'Deep Tech',   hint: 'The top rungs. Sold only at an outpost bay you rent.' },
   { key: 'ammo',      name: 'Ammunition',  hint: 'Cells and warheads by the crate. The one thing sold anywhere.' },
   { key: 'utility',   name: 'Utilities',   hint: 'One use each. Repair drones mend hull; beacons fold you home.' },

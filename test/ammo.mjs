@@ -574,6 +574,60 @@ console.log('\nthe playlist');
     LIVE_MOODS.join(' '));
 }
 
+// --- who may LOAD a grade, as opposed to buy one -----------------------------
+//
+// Owning one tier 3 emitter used to be enough to fire Fusion Cells out of every
+// gun on the ship, so the top grade was a single purchase rather than a decision:
+// bolt one MK-V onto the escort and eight MK-Is upstairs all fired the hot rounds.
+{
+  const { whyNotLoad, whyNotBuy, lowestGun, loadable, NEEDS } = await import('../shared/ammo.js');
+  const { EQUIPMENT } = await import('../shared/gear.js');
+  const gun = t => Object.keys(EQUIPMENT).find(k =>
+    EQUIPMENT[k].slot === 'weapon' && EQUIPMENT[k].kind !== 'rocket' && EQUIPMENT[k].tier === t);
+  const lo = gun(1), hi = gun(NEEDS.cell3), mid = gun(NEEDS.cell2);
+  const ctx = (weapon, drones = []) => ({ fit: { weapon }, drones, EQUIPMENT });
+
+  check('buying asks for the best gun you own, and loading asks for the worst',
+    !whyNotBuy('cell3', ctx([hi, lo])) && !!whyNotLoad('cell3', ctx([hi, lo])),
+    whyNotLoad('cell3', ctx([hi, lo])));
+  check('the escort counts, because a drone is a gun',
+    !!whyNotLoad('cell3', ctx([hi, hi], [lo])),
+    whyNotLoad('cell3', ctx([hi, hi], [lo])));
+  check('a ship specced all the way through may load the top grade',
+    !whyNotLoad('cell3', ctx([hi, hi], [hi, hi])),
+    `every emitter at tier ${NEEDS.cell3}`);
+  check('and the refusal names the gun that is holding you back',
+    /MK-I/.test(whyNotLoad('cell3', ctx([hi, hi], [lo]))) &&
+    /escort/.test(whyNotLoad('cell3', ctx([hi, hi], [lo]))),
+    'a pilot should not have to audit their own fit to find it');
+  check('an empty slot is not a tier 1 gun',
+    !whyNotLoad('cell3', ctx([hi, null, undefined], [hi])),
+    'a Kestrel flying two of three racks is carrying nothing, and nothing cannot be underfed');
+  check('the standard grade is never gated, whatever you fly',
+    !whyNotLoad('cell1', ctx([])) && !whyNotLoad('cell1', ctx([lo], [lo])) && !whyNotLoad('head1', ctx([])),
+    'running dry with no way back is a walk home, not a mechanic');
+  check('a pilot with no gun of that sort at all is not blocked',
+    !whyNotLoad('head3', ctx([hi], [hi])),
+    'there is nothing to underfeed and nothing will fire');
+  check('lowestGun finds the weakest of the right kind and says where it is',
+    lowestGun('laser', { weapon: [hi, mid] }, [lo], EQUIPMENT).where === 'escort' &&
+    lowestGun('laser', { weapon: [hi, mid] }, [], EQUIPMENT).where === 'rack' &&
+    lowestGun('laser', { weapon: [] }, [], EQUIPMENT) === null);
+
+  // A refit that breaks the rule must drop you to the best grade you CAN fire,
+  // not to the cheapest — losing a rung because one drone slipped one is a
+  // bigger punishment than the rule is asking for.
+  check('selling one emitter drops you a rung, not to the bottom',
+    sanitiseUsing({ laser: 'cell3' }, {}, ctx([hi, mid], [mid])).laser === 'cell2',
+    `an all-MK-III ship falls from Fusion to ${AMMO[sanitiseUsing({ laser: 'cell3' }, {}, ctx([mid], [mid])).laser].name}`);
+  check('and a ship that can fire what it loaded keeps it',
+    sanitiseUsing({ laser: 'cell3' }, {}, ctx([hi], [hi])).laser === 'cell3');
+  check('loadable lists the best first, and never lies to the menu',
+    loadable('laser', ctx([mid], [mid]))[0] === 'cell2' &&
+    loadable('laser', ctx([mid], [mid])).every(k => !whyNotLoad(k, ctx([mid], [mid]))),
+    loadable('laser', ctx([mid], [mid])).join(' > '));
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`
                                : `PASS — ${AMMO_KEYS.length} grades`}\n`);
 process.exit(fails.length ? 1 : 0);

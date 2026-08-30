@@ -8,7 +8,8 @@ import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHe
          broodReady, BROOD_R, shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
-import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy } from './shared/ammo.js';
+import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy,
+         whyNotLoad, loadable } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
 import { nameProblem, cleanName } from './shared/signup.js';
 import { MUSIC_DIRS, pickDir } from './config.js';
@@ -29,8 +30,12 @@ import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
 import { whyNotBerth, whyNotBuyBerth, berthPrice, BERTH_RANK,
-         respawnAt, isHangar } from './shared/berth.js';
+         respawnAt, isHangar, homePorts, foldTo } from './shared/berth.js';
 import { splitKill, shareOut } from './shared/reward.js';
+// What the fitted technologies actually DO. gear.js says it in a sentence and
+// this says it in numbers; nothing about a capability is decided here.
+import { holdShear, foundryBurn, wakeTap, platingArmed, platingBack, loudOf,
+         PLATE_BACK, FOUNDRY_QUIET } from './shared/tech.js';
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from './shared/scrap.js';
 import { refineStep, applyRefine, refinePeriod } from './shared/refine.js';
 import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
@@ -202,7 +207,12 @@ for (const h of HOMES) {
   seed(co + '2', 'ironhusk', 3);                  // one hop out: the first thing that outclasses you
   seed(co + '3', 'leviathan', 2);                 // the other hop out: the first that needs a friend
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
-  seed(co + '4', 'drifter', 3);
+  // Harriers, not Drifters. The frontier was a wall: Bandits hold it, and a pilot
+  // who could afford the trip could not survive the welcome, so the only reason to
+  // go was the shop. Something farmable out here means you can work the sector at
+  // the edge of your ability and leave when a Bandit notices — which is the fight
+  // worth having, and the Drifters that used to stand here were not it.
+  seed(co + '4', 'harrier', 4);
 }
 // One Hive on each gate sector — the first contested ground past your own
 // frontier, and the first place three companies can arrive at once. Nullpoint
@@ -276,6 +286,11 @@ const killAlien = (mapId, a, byId = null) => {
     paid.credits += cut.credits;
     paid.xp += cut.xp;
     const now2 = levelFor(paid.xp);
+    // A Wake Tap hands back the seconds of reactor the fight took. Your share of
+    // the bounty IS those seconds — see wakeSeconds, which does the division that
+    // balance.js's identity makes exact — so it is settled here, on the same
+    // ledger that pays the credits, rather than by whoever fired last.
+    wakeTap(paid.ship, cut.credits);
     touch(paid);                                  // credits and rank banked immediately
     if (paid.ws.readyState === 1) paid.ws.send(JSON.stringify(
       { t: 'award', amount: cut.credits, xp: cut.xp, what: a.def.name,
@@ -381,8 +396,14 @@ wss.on('connection', (ws, req) => {
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
                     devices: { ...acct.devices }, device: acct.device, folding: null,
+                    foldTo: acct.foldTo ?? null,
                     berths: [...(acct.berths ?? [])], lastDock: acct.lastDock ?? null,
                     scoop: null, want: null, dead: false, lobby,
+                    // Composite Plating starts seated. You sign in at a dock or a
+                    // hangar either way, and the tick would re-seat it a frame
+                    // later — starting it false would only mean one frame where
+                    // the readout lied about it.
+                    plate: true,
                     acted: Date.now(), banked: Date.now() });
   // A line back to this pilot only. Lives out here rather than inside the chat
   // handler because anything that refuses a request owes an explanation, and the
@@ -395,13 +416,26 @@ wss.on('connection', (ws, req) => {
     if (ws.readyState !== 1) return;
     ws.send(JSON.stringify({ t: 'bought', what, cost, note, credits: players.get(id).credits }));
   };
-  const outfit = () => (touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
+  // What a grade is allowed to be loaded into, right now. Rebuilt on every refit
+  // rather than remembered, because the answer changes when the ship does.
+  const feeding = () => ({ fit: ship.fit, drones: ship.drones, EQUIPMENT });
+  // Every refit funnels through outfit(), so this is where an illegal load is
+  // caught: sell the one emitter that was holding your Fusion Cells legal and the
+  // guns must drop to something they can fire, not go quietly silent.
+  const regrade = P => {
+    const was = { ...P.using };
+    P.using = sanitiseUsing(P.using, P.ammo, feeding());
+    for (const f of FEEDS) if (was[f] !== P.using[f])
+      tell(`${AMMO[was[f]].name} unloaded — ${whyNotLoad(was[f], feeding())}`);
+  };
+  const outfit = () => (regrade(players.get(id)), touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
                                                 drones: ship.drones, rig: ship.rig ?? null, formation: ship.formation,
                                                 formations: players.get(id).formations,
                                                 ammo: players.get(id).ammo, using: players.get(id).using,
                                                 armed: players.get(id).armed,
                                                 kits: players.get(id).kits, kit: players.get(id).kit,
                                                 devices: players.get(id).devices, device: players.get(id).device,
+                                                foldTo: players.get(id).foldTo,
                                                 berths: players.get(id).berths,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
@@ -413,6 +447,7 @@ wss.on('connection', (ws, req) => {
                            ammo: acct.ammo, using: acct.using, armed: acct.armed,
                            kits: acct.kits, kit: acct.kit,
                            devices: acct.devices, device: acct.device, berths: acct.berths ?? [],
+                           foldTo: acct.foldTo ?? null,
                            rig: acct.rig ?? null, played: acct.played ?? 0 }));
 
   // Who the sides are and how full each is, so somebody choosing can see whether
@@ -667,6 +702,16 @@ wss.on('connection', (ws, req) => {
       touch(P);
       return outfit();
     }
+    if (m.t === 'foldto') {                       // and where it puts you down
+      if (typeof m.map !== 'string') return;
+      // Stored as asked, not as resolved. If they rent a bay, sell it and buy it
+      // back, the beacon should still be pointed at it — resolving here would have
+      // quietly moved them home in between and never moved them back.
+      if (!homePorts(P, MAPS).some(h => h.map === m.map)) return tell('no hangar of yours there');
+      P.foldTo = m.map;
+      touch(P);
+      return outfit();
+    }
     if (m.t === 'recall') {
       const why = whyNotDevice({ devices: P.devices, using: P.device,
                                  docked: !!P.docked, busy: !!P.folding });
@@ -697,7 +742,13 @@ wss.on('connection', (ws, req) => {
       return outfit();
     }
     if (m.t === 'ammo') {                         // which grade feeds which weapon
-      const want = sanitiseUsing({ ...P.using, ...(AMMO[m.key] ? { [AMMO[m.key].for]: m.key } : {}) });
+      // Refused out loud, not silently downgraded. sanitiseUsing would have
+      // quietly handed back the grade they were already on, and a menu that
+      // does nothing when clicked is worse than one that says why.
+      const why = AMMO[m.key] && whyNotLoad(m.key, feeding());
+      if (why) return tell(why);
+      const want = sanitiseUsing({ ...P.using, ...(AMMO[m.key] ? { [AMMO[m.key].for]: m.key } : {}) },
+                                 P.ammo, feeding());
       P.using = want;
       touch(P);
       return outfit();
@@ -978,7 +1029,10 @@ setInterval(() => {
   for (const [id, p] of players) {
     if (p.lobby) continue;                        // still choosing a name
     step(p.ship, dt);
-    stepDrift(p.ship, dt);
+    // A Shear Compensator nulls the first half of the drift margin and charges the
+    // reactor for it, so how far out you can hold is how much tank you have left.
+    // Nothing fitted and holdShear returns 0, which is the curve sim.js always had.
+    stepDrift(p.ship, dt, holdShear(p.ship, dt));
     const map = MAPS[p.mapId];
     p.docked = canDock(map, p.co, p.ship);
     // The last hangar you actually stood in, which is where a wreck comes back.
@@ -988,6 +1042,23 @@ setInterval(() => {
       if (p.lastDock !== p.mapId) { p.lastDock = p.mapId; touch(p); }
     }
     stepVitals(p.ship, dt, p.docked);
+    // Composite Plating is re-seated whenever you are standing at a dock, which is
+    // what makes the save once per OUTING rather than once per life: a pilot who
+    // never goes home never gets a second one.
+    if (p.docked) p.plate = true;
+
+    // An Ore Foundry mends hull out of the hold while you fly. It is the only
+    // thing in the game that puts hull back in the field without a kit, and it
+    // charges for it in the one currency a pilot out here already has.
+    const forged = foundryBurn(p.ship, p.hold, dt);
+    if (forged) {
+      touch(p);
+      // Said out loud for the same reason the refinery says its batches: a hold
+      // quietly emptying itself is indistinguishable from a bug.
+      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'chat', from: '',
+        text: `foundry burned ${forged.units} ${MATERIALS[forged.mat]?.name ?? forged.mat} ` +
+              `into ${Math.round(forged.healed)} of hull` }));
+    }
 
     // A repair drone works while nothing is shooting at you. Take a hit and it
     // stops, and the kit is gone — standing still for five seconds in open
@@ -1006,7 +1077,7 @@ setInterval(() => {
           const key = p.folding.key;
           p.folding = null;
           if (--p.devices[key] <= 0) delete p.devices[key];
-          const home = p.co + '1', b = MAPS[home].base;
+          const b = foldTo(p, MAPS, p.foldTo), home = b.map;
           p.mapId = home; p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
           Object.assign(p.ship, { x: b.x, y: b.y, vx: 0, vy: 0, tx: null, ty: null,
                                   dx: null, dy: null, charge: 0, chargeTo: null });
@@ -1019,6 +1090,7 @@ setInterval(() => {
               drones: p.ship.drones, rig: p.ship.rig ?? null, formation: p.ship.formation,
               formations: p.formations, ammo: p.ammo, using: p.using, armed: p.armed,
               kits: p.kits, kit: p.kit, devices: p.devices, device: p.device,
+              foldTo: p.foldTo, berths: p.berths,
               gear: p.gear, hulls: p.hulls, credits: p.credits }));
           }
         }
@@ -1038,6 +1110,19 @@ setInterval(() => {
 
 
     if (p.dead) continue;                         // a wreck does not fly, shoot or scoop
+
+    // Composite Plating takes the killing blow instead of you, once, and is gone
+    // until you next stand at a dock. It has to be tested BEFORE the wreck below,
+    // because everything down there is irreversible — the hold is on the floor and
+    // the toll is off your balance by the time anyone could ask.
+    if (p.ship.hp <= 0 && platingArmed(p.ship, p.plate)) {
+      p.plate = false;
+      p.ship.hp = platingBack(p.ship);
+      p.ship.sinceHit = 0;                        // it took the hit; the shields stay down
+      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'chat', from: '',
+        text: `the plating took it — ${Math.round(PLATE_BACK * 100)}% of your hull left, and no more plating until you dock` }));
+      touch(p);
+    }
 
     if (p.ship.hp <= 0) {                         // destroyed: the hold goes with it
       boom(p.mapId, p.ship, false, id);
@@ -1077,7 +1162,12 @@ setInterval(() => {
     const here = [];
     const born = [];                              // escorts launched this tick
     for (const [id, p] of players)
-      if (p.mapId === mapId && !p.dead) here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
+      // `loud` is what this pilot is doing to be noticed. It is 1 for everybody
+      // except a ship running an Aspect Filter, which is an active illuminator and
+      // is heard from further off than it can see — the price of seeing a Bandit
+      // from the front, paid in every hostile opening on you sooner.
+      if (p.mapId === mapId && !p.dead)
+        here.push({ id, ship: p.ship, haven: inHaven(map, p.ship), loud: loudOf(p.ship) });
     for (const a of list) {
       if (a.dead > 0) { a.dead -= dt;
         // An escort is not a fixture of the sector: when one dies it is gone, and
@@ -1361,6 +1451,11 @@ setInterval(() => {
                lv: Object.fromEntries(SYSTEMS.map(sy =>
                  [sy, Math.round(100 * levelOf(V.ship.power, sy, V.ship.stats))])) },
       shieldNow: Math.round(V.ship.shield), shieldMax: Math.round(shieldMax(V.ship)),
+      // Whether the plating is still there to catch a death. Nobody else can see
+      // it, so it rides in the viewer's own bag rather than on the ship row —
+      // and it has to be visible at all, or you find out you already spent it by
+      // dying.
+      plate: V.plate ? 1 : 0,
       scoop: V.scoop ? { id: V.scoop.id, p: +(1 - V.scoop.t / (V.scoop.secs ?? SCOOP_TIME)).toFixed(2) } : undefined,
       want: V.want ?? undefined };
     // A keyframe when this connection has no baseline, or has one built for a

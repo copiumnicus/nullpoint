@@ -142,5 +142,43 @@ console.log('\nthe panel that sells it');
     S.panel.x >= 0 && S.panel.x + S.panel.w <= 420);
 }
 
+// --- where a beacon puts you down --------------------------------------------
+//
+// It always went to your company ring, which was right while the ring was the only
+// place you could dock and useless the moment it was not: a pilot working a
+// frontier they rent a bay on was paying 3400 credits to be sent four sectors from
+// where they wanted to be.
+{
+  const { homePorts, foldTo, respawnAt } = await import('../shared/berth.js');
+  const { MAPS } = await import('../shared/maps.js');
+  const bare  = { co: 'm' };
+  const renting = { co: 'm', berths: ['m4'] };
+
+  check('a pilot who rents nothing has exactly their own ring to fold to',
+    homePorts(bare, MAPS).length === 1 && homePorts(bare, MAPS)[0].map === 'm1',
+    homePorts(bare, MAPS).map(h => h.name).join(', '));
+  check('and a rented bay is a second one, named and placed',
+    homePorts(renting, MAPS).some(h => h.map === 'm4' && h.kind === 'bay' && h.x > 0 && h.name),
+    homePorts(renting, MAPS).map(h => `${h.name} (${h.kind})`).join(' | '));
+  check('a company dock and a rented bay are not the same offer',
+    homePorts(renting, MAPS).find(h => h.map === 'm1').kind === 'dock' &&
+    homePorts(renting, MAPS).find(h => h.map === 'm4').kind === 'bay',
+    'the bay does not repair you, and the menu says so');
+  check('folding goes where you asked', foldTo(renting, MAPS, 'm4').map === 'm4');
+  check('and to a sector you do not rent, it goes home instead',
+    foldTo(renting, MAPS, 'm3').map === 'm1' && foldTo(bare, MAPS, 'm4').map === 'm1',
+    'a berth can be sold and a save can be edited, so it is re-checked at the moment of use');
+  check('a pilot who never chose still folds somewhere real',
+    foldTo(bare, MAPS, null).map === 'm1' && foldTo(bare, MAPS, undefined).x > 0);
+  check('every company gets the same deal, not just the first one',
+    ['m', 'v', 'x'].filter(co => MAPS[co + '1']).every(co => foldTo({ co }, MAPS, null).map === co + '1'),
+    'the fallback is derived from your company, not hardcoded to one ring');
+  // Respawn is the same question, so it is now literally the same function.
+  check('and a wreck comes back through the very same list',
+    respawnAt({ ...renting, lastDock: 'm4' }, MAPS).map === 'm4' &&
+    respawnAt({ ...renting, lastDock: 'm3' }, MAPS).map === 'm1',
+    'two copies of "which hangars are mine" disagreed once already');
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — a berth is ${berthPrice()} cr`}\n`);
 process.exit(fails.length ? 1 : 0);

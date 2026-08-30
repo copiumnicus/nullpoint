@@ -19,6 +19,7 @@ import { AMMO, NEEDS, bestTierFor } from './ammo.js';
 import { KITS, KIT_QUIET } from './repair.js';
 import { DEVICES } from './devices.js';
 import { ABILITIES, VEIL_DEPTH, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_REACH } from './ability.js';
+import { SPENDS, PLATE_BACK, FOUNDRY_QUIET, SHEAR_GRACE, LOUD } from './tech.js';
 
 const round = v => Math.abs(v) >= 100 ? Math.round(v)
                  : Math.abs(v) >= 10  ? Math.round(v * 10) / 10
@@ -92,6 +93,19 @@ const withItem = (fit, item) => {
   return next;
 };
 
+// The second line of a technology row, and the only one that is not a number.
+// What an entry LETS YOU DO is the thing being sold; `spends` names the cost when
+// that cost is not an attribute, and a per-entry line spells out the one number
+// that makes it concrete. Read off tech.js's own constants, so the shop cannot
+// end up quoting a rate somebody has since moved.
+const DETAIL = {
+  plating:     () => `The plating takes it, you keep ${Math.round(PLATE_BACK * 100)}% of your hull, and it is spent until you dock.`,
+  foundry:     () => `A full hold mends a full hull. Needs ${FOUNDRY_QUIET}s clear of fire.`,
+  waketap:     () => 'A kill hands back the seconds of reactor the fight took.',
+  compensator: () => `Holds off ${SHEAR_GRACE}px of shear at a full tank, less as it empties.`,
+  filter:      () => `Aspect stops hiding anything — and every hostile opens on you ${Math.round((LOUD - 1) * 100)}% further out.`,
+};
+
 // Said the same way everywhere, because "where can I buy this" is one question
 // and two answers to it is how a pilot ends up flying to the wrong ring.
 const SOLD_FRONTIER = 'Sold only at an outpost bay you rent.';
@@ -113,6 +127,10 @@ export function tipFor(kind, key, ctx) {
     const bays = drones.filter(d => d === null).length;
     return {
       title: e.name, price: e.price, blurb: e.blurb,
+      // The sentence the shelf is now built around. Drawn on its own line and in
+      // its own colour, above the numbers, because on this shop what a thing
+      // LETS YOU DO is the purchase and the numbers are the receipt.
+      does: e.does ?? null,
       sub: onADrone(key) ? 'goes in the rig bay, on a drone' : `goes in a ${e.slot} slot`,
       lines: capped ? []
            : onADrone(key) ? diffLines(now, resolve(hull, fit, [...drones, key], formation))
@@ -125,6 +143,8 @@ export function tipFor(kind, key, ctx) {
           return [HULLS[hull]?.ability === need ? `Retunes your ${ab.name}.`
                                                 : `Nothing on this hull — only the ${flyer.name} has a ${ab.name}.`];
         })(),
+        DETAIL[key] ? DETAIL[key]() : null,
+        e.spends ? `Costs you ${SPENDS[e.spends]}.` : null,
         dupe ? 'Already fitted. One of each technology per ship.'
         : capped ? `Full: ${MAX_LAUNCHERS} launchers to a ship. Strip one first.`
         : e.kind === 'rocket' ? `${launcherRoom(fit)} of ${MAX_LAUNCHERS} launcher slots left. Not on a drone.`
@@ -134,7 +154,7 @@ export function tipFor(kind, key, ctx) {
         : room > 0 ? `${room} ${e.slot} slot${room === 1 ? '' : 's'} free on this hull.`
         : 'No slot free. Strip one, or hang this on a drone.',
         frontierOnly(key) ? SOLD_FRONTIER : SOLD_STATION,
-      ],
+      ].filter(Boolean),
       owned: ctx.gear?.[key] ?? 0,
     };
   }

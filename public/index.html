@@ -8,7 +8,8 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET } from '/shared/berth.js';
+import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
+         homePorts, foldTo } from '/shared/berth.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
@@ -41,6 +42,7 @@ import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateVa
 import { ALIENS, outlineOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
 import { seenAs } from '/shared/stealth.js';
+import { techSet, has as hasTech, seesClear, SPENDS, SHEAR_GRACE } from '/shared/tech.js';
 import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT, QUIET } from '/shared/music.js';
@@ -51,7 +53,7 @@ import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, devicePrice, whyNotDevice } from '/shared/devices.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
-         barLayout, feedMenu, gradeColour, whyNotBuy } from '/shared/ammo.js';
+         barLayout, feedMenu, gradeColour, whyNotBuy, whyNotLoad } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
@@ -98,6 +100,10 @@ const readToken = () => {
 let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
+// What the ship you are flying can DO, as opposed to what its numbers are. Kept
+// beside the fit rather than recomputed per frame, and refreshed by exactly the
+// two messages that can change a fit — see refreshTech below.
+let myTech = new Set(), myPlate = true;
 let myRig = null;                 // the collector, which is not one of the bays
 let myPlayed = 0;                 // seconds flown, idle time already taken off
 let myOnline = 1;                 // pilots in the world, including you
@@ -106,6 +112,16 @@ let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
 let myKits = {}, myKit = DEFAULT_KIT;
 let myDevices = {}, myDevice = DEFAULT_DEVICE;
 let myBerths = [];                // outposts you rent a bay at
+let myFoldTo = null;              // and which hangar a beacon takes you to
+// Every hangar this pilot could fold to, and the one they have chosen. Both from
+// shared/berth.js, because the server decides the same question with the same two
+// functions — a menu offering a bay the server would refuse is the bug this shape
+// exists to prevent.
+// The ship as the ammunition rules see it. Same object the server builds, so the
+// menu can never offer a grade the server would refuse to load.
+const feeding = () => ({ fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT });
+const foldPorts = () => homePorts({ co: myCo, berths: myBerths }, MAPS);
+const foldDest  = () => foldTo({ co: myCo, berths: myBerths }, MAPS, myFoldTo);
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -354,7 +370,8 @@ ws.onmessage = e => {
     myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
     myKits = m.kits ?? {}; myKit = m.kit ?? DEFAULT_KIT;
     myDevices = m.devices ?? {}; myDevice = m.device ?? DEFAULT_DEVICE;
-    myBerths = m.berths ?? [];
+    myBerths = m.berths ?? []; myFoldTo = m.foldTo ?? null;
+    refreshTech();
     myName = m.name ?? '';
     signup = null; joinSaid = '';                 // whoever you are, you are in now
     // Written and then read back. A storage write that silently fails loses the
@@ -383,8 +400,9 @@ ws.onmessage = e => {
     if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
     myKits = m.kits ?? myKits; myKit = m.kit ?? myKit;
     myDevices = m.devices ?? myDevices; myDevice = m.device ?? myDevice;
-    myBerths = m.berths ?? myBerths;
+    myBerths = m.berths ?? myBerths; if ('foldTo' in m) myFoldTo = m.foldTo;
     if (typeof m.credits === 'number') credits = m.credits;
+    refreshTech();
     return;
   }
   if (m.t === 'reset') {                          // the account is gone; become a stranger
@@ -460,10 +478,14 @@ ws.onmessage = e => {
   if (m.devices) myDevices = m.devices;
   if (m.device) myDevice = m.device;
   if (m.berths) myBerths = m.berths;
+  if ('foldTo' in m) myFoldTo = m.foldTo;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
-  if (m.drones) myDrones = m.drones;
+  if (m.drones) { myDrones = m.drones; refreshTech(); }
   if ('rig' in m) myRig = m.rig;
+  // Whether the plating is still there to take a hit for you. It rides in the
+  // viewer's own bag rather than on the ship row because nobody else can see it.
+  if (typeof m.plate === 'number') myPlate = !!m.plate;
   if (typeof m.played === 'number') myPlayed = m.played;
   if (typeof m.online === 'number') myOnline = m.online;
   if (m.rank) { myRank = m.rank; myXp = m.xp ?? myXp; }
@@ -986,6 +1008,16 @@ const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
 
 // The ship as the rules see it. The reactor ceiling lives in here now, so the
 // readout has to ask the ship rather than a constant.
+// One place the fitted technologies are resolved, called by the two messages that
+// can change a fit. Recomputing it per frame would be a fresh Set sixty times a
+// second for something that changes when you press a button in the station.
+function refreshTech() { myTech = techSet(myFit, myDrones); }
+// How much of the drift margin the compensator is currently nulling, in px. The
+// server has the ship and calls shearGrace; here the capacitor arrives as a
+// percentage in the power payload, which is the same fraction shearGrace scales
+// SHEAR_GRACE by — one constant, two ways in, and no second opinion about where
+// the wall is.
+const shearHeld = () => (hasTech(myTech, 'compensator') ? SHEAR_GRACE * (power.cap ?? 0) / 100 : 0);
 const myStats = () => resolve(myHull, myFit, escortOf(myDrones, myRig), myForm);
 const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, myRig), formation: myForm,
                          gear: myGear, hulls: myHulls, formations: myForms, credits,
@@ -1143,10 +1175,11 @@ function drawTip(tip, at) {
   const notes = tip.notes ?? [];
   const widest = Math.max(g.measureText(tip.title).width + 90,
                           g.measureText(tip.blurb ?? '').width,
+                          g.measureText(tip.does ?? '').width,
                           ...notes.map(n => g.measureText(n).width),
                           ...lines.map(l => g.measureText(`${l.label}  ${l.from} → ${l.to}${l.unit}`).width + 54));
   const w = Math.min(340, Math.max(190, widest + 24));
-  const h = 40 + (tip.blurb ? 15 : 0) + lines.length * 15 + (cut ? 14 : 0)
+  const h = 40 + (tip.blurb ? 15 : 0) + (tip.does ? 15 : 0) + lines.length * 15 + (cut ? 14 : 0)
           + (notes.length ? 6 + notes.length * 14 : 0);
   const x = Math.min(at.x + 18, VIEW_W - w - 8), y = Math.min(at.y + 14, VIEW_H - h - 8);
 
@@ -1162,6 +1195,10 @@ function drawTip(tip, at) {
   g.font = '10px ui-monospace, monospace'; g.fillStyle = '#66748c';
   g.fillText(tip.sub ?? '', x + 10, ty); ty += tip.blurb ? 15 : 6;
   if (tip.blurb) { g.fillStyle = '#8ea3bd'; g.fillText(tip.blurb, x + 10, ty); ty += 8; }
+  // What it lets you do, in the colour the readouts use for a gain. It is above
+  // the numbers on purpose: on the technology shelf the sentence is the thing
+  // being sold and the percentages are what it cost.
+  if (tip.does) { ty += 15; g.fillStyle = '#7de08a'; g.fillText(tip.does, x + 10, ty); }
 
   g.font = '11px ui-monospace, monospace';
   for (const l of lines) {
@@ -1444,7 +1481,13 @@ function drawBay() {
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
                 : it.kind === 'device' ? `${DEVICES[it.k].blurb}   ${DEVICES[it.k].secs}s to fold`
-                                      : EQUIPMENT[it.k].blurb;
+                // A technology row leads with what it lets you DO and then what
+                // that costs, because on this shelf the sentence IS the purchase
+                // and the percentages are the receipt. Everything else keeps its
+                // blurb — a generator really is its numbers.
+                : EQUIPMENT[it.k].does
+                  ? `${EQUIPMENT[it.k].does}   ${modSummary(EQUIPMENT[it.k].mods) || SPENDS[EQUIPMENT[it.k].spends] || ''}`
+                  : EQUIPMENT[it.k].blurb;
     const afford = credits >= price;
     const sells = sellsAt(G.page, home);
     if (over(r)) tip = tipFor(it.kind, it.k, shipCtx());
@@ -2007,8 +2050,17 @@ function barClick(v) {
     const M = feedMenu(box, heldGrades(feedOpen));
     for (const row of M.rows) if (inside(row.r)) {
       if (feedOpen === 'repair') { if (row.k !== myKit) send({ t: 'kit', key: row.k }); }
-      else if (feedOpen === 'device') { if (row.k !== myDevice) send({ t: 'device', key: row.k }); }
-      else if (row.k !== myUsing[feedOpen]) send({ t: 'ammo', key: row.k });
+      else if (feedOpen === 'device') {
+        // row.k is a sector, not a grade. There is one kind of beacon and the strip
+        // above the box used to pick between them, which meant it never opened at
+        // all; what a pilot actually needs to choose is where the thing puts them.
+        if (row.k !== foldDest().map) send({ t: 'foldto', map: row.k });
+      }
+      else if (row.k !== myUsing[feedOpen]) {
+        const why = whyNotLoad(row.k, feeding());
+        if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); feedOpen = null; return true; }
+        send({ t: 'ammo', key: row.k });
+      }
       feedOpen = null;
       return true;
     }
@@ -2033,7 +2085,7 @@ function barClick(v) {
     }
     const held = heldGrades(b.feed);
     if (b.feed === 'device') {
-      if (v.y < b.r.y + PICK_STRIP && held.length > 1) {
+      if (v.y < b.r.y + PICK_STRIP && foldPorts().length > 1) {
         feedOpen = feedOpen === b.feed ? null : b.feed;
         return true;
       }
@@ -2041,7 +2093,7 @@ function barClick(v) {
       const why = recallBlocked();
       if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
       send({ t: 'recall' });
-      say('Folding home — hold still', '#8ab4e6');
+      say(`Folding to ${foldDest().name} — hold still`, '#8ab4e6');
       return true;
     }
     if (b.feed === 'repair') {
@@ -2110,6 +2162,29 @@ function drawSpacePrompt() {
 
 // The repair rack. Amber when it will work, dim when it will not, and the reason
 // is one hover away rather than something you learn by clicking.
+// One hangar in the beacon's menu: where it is and what it is. A rented bay and a
+// company dock are not the same offer — the bay does not repair you — so they do
+// not read the same either.
+function drawPortRow(row) {
+  const h = foldPorts().find(p => p.map === row.k) ?? { name: row.k, kind: 'dock' };
+  const on = foldDest().map === row.k;
+  const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
+                    && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
+  g.fillStyle = on ? 'rgba(125,224,138,0.14)' : hot ? 'rgba(122,180,240,0.16)' : 'rgba(255,255,255,0.02)';
+  g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+  g.textAlign = 'left';
+  g.font = '11px ui-monospace, monospace'; g.fillStyle = on ? '#cfe4ff' : '#a8bcd4';
+  g.fillText(h.name, row.r.x + 12, row.r.y + row.r.h / 2 - 1);
+  g.font = '9px ui-monospace, monospace';
+  g.fillStyle = h.kind === 'bay' ? '#e0a53f' : '#66748c';
+  g.fillText(h.kind === 'bay' ? 'rented bay · no repairs' : 'company dock · repairs you',
+             row.r.x + 12, row.r.y + row.r.h / 2 + 10);
+  g.textAlign = 'right';
+  if (on) { g.fillStyle = '#7de08a'; g.font = '11px ui-monospace, monospace';
+            g.fillText('\u2713', row.r.x + row.r.w - 10, row.r.y + row.r.h / 2 + 3); }
+  g.textAlign = 'left';
+}
+
 // The way home. Drawn as a ring closing rather than a bar, because what it is
 // counting down is a window in which nothing may touch you.
 function drawDeviceBox(b) {
@@ -2139,12 +2214,21 @@ function drawDeviceBox(b) {
   g.fillStyle = folding ? '#7fd4ff' : n ? (ready ? '#cfe4ff' : '#e0a53f') : '#66748c';
   g.fillText(folding ? `${Math.max(0, Math.ceil(d.secs * (1 - me.wrp / 100)))}s` : String(n),
              cx, r.y + r.h - 10);
-  if (heldGrades('device').length > 1) {
-    g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
+  // The arrow means there is somewhere else to go, so it appears when a pilot
+  // rents a bay and not before. A pilot with one hangar has nothing to choose.
+  const ports = foldPorts(), dest = foldDest();
+  if (ports.length > 1) {
+    g.fillStyle = over ? '#8ab4e6' : '#3d4757'; g.font = '9px ui-monospace, monospace';
     g.fillText('\u25b2', r.x + r.w - 9, r.y + 12);
+    // And the destination is written on the box rather than hidden in the menu.
+    // Spending 3400 to find out where you were pointed is the whole complaint.
+    g.font = '8px ui-monospace, monospace'; g.fillStyle = folding ? '#7fd4ff' : '#7f8fa6';
+    g.fillText(dest.name.split(' · ').pop().slice(0, 9), cx, r.y + 12);
   }
   if (over && !feedOpen) {
-    const t = folding ? 'folding — one hit ends it' : (why ?? `${d.name} · ${d.secs}s, and one hit ends it`);
+    const t = folding ? `folding to ${dest.name} — one hit ends it`
+      : (why ?? `${d.name} · ${d.secs}s to ${dest.name}` +
+                (ports.length > 1 ? ', and one hit ends it — click the top to change where' : ', and one hit ends it'));
     g.font = '11px ui-monospace, monospace';
     const w = g.measureText(t).width + 18;
     const x = Math.max(6, Math.min(VIEW_W - w - 6, cx - w / 2));
@@ -2247,7 +2331,11 @@ function drawBar() {
       g.fillText('▲', r.x + r.w - 9, r.y + 12);
     }
     if (over(r) && !feedOpen) {                  // name of what is loaded
-      const t = `${a.name}  x${a.mult.toFixed(2)}`;
+      // If something better is in the hold and cannot go in the guns, the box says
+      // so here rather than making a pilot open the menu to find out.
+      const stuck = forWeapon(b.feed).filter(k => (myAmmo[k] ?? 0) > 0 && whyNotLoad(k, feeding()));
+      const t = `${a.name}  x${a.mult.toFixed(2)}`
+        + (stuck.length ? `   ·   ${AMMO[stuck.at(-1)].name} held: ${whyNotLoad(stuck.at(-1), feeding())}` : '');
       g.fillStyle = grade;
       g.font = '11px ui-monospace, monospace';
       const w = g.measureText(t).width + 18;
@@ -2265,26 +2353,34 @@ function drawBar() {
 
   if (feedOpen) {
     const box = L.boxes.find(b => b.feed === feedOpen);
-    const held = heldGrades(feedOpen);
+    const held = feedOpen === 'device' ? foldPorts().map(h => h.map) : heldGrades(feedOpen);
     const M = feedMenu(box, held);
     g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(M.box.x, M.box.y, M.box.w, M.box.h);
     g.strokeStyle = '#5a86b8'; g.lineWidth = 1.4;
     g.strokeRect(M.box.x + .5, M.box.y + .5, M.box.w - 1, M.box.h - 1);
     for (const row of M.rows) {
+      if (feedOpen === 'device') { drawPortRow(row); continue; }
       const kit = feedOpen === 'repair';
       const a = kit ? KITS[row.k] : AMMO[row.k];
       const on = kit ? myKit === row.k : myUsing[feedOpen] === row.k;
       const hot = over(row.r);
       g.fillStyle = on ? 'rgba(125,224,138,0.14)' : hot ? 'rgba(122,180,240,0.16)' : 'rgba(255,255,255,0.02)';
       g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+      // A grade you own but may not load is drawn, not hidden. Hiding it means a
+      // pilot who bought Fusion Cells sees them vanish from the menu and concludes
+      // the purchase was lost; the point of the row is to say what is missing.
+      const lock = kit ? null : whyNotLoad(row.k, feeding());
+      g.globalAlpha = lock ? 0.55 : 1;
       if (!kit) roundIcon(feedOpen, row.r.x + 14, row.r.y + row.r.h / 2, a.colour ?? '#8fa8c4', 0.6);
       g.font = '11px ui-monospace, monospace';
-      g.fillStyle = on ? '#cfe4ff' : '#a8bcd4';
+      g.fillStyle = lock ? '#7f8fa6' : on ? '#cfe4ff' : '#a8bcd4';
       g.fillText(a.name, row.r.x + (kit ? 12 : 28), row.r.y + row.r.h / 2 - 1);
       g.font = '9px ui-monospace, monospace'; g.fillStyle = '#66748c';
-      g.fillStyle = kit ? '#66748c' : (a.colour ?? '#66748c');
-      g.fillText(kit ? `+${Math.round(a.heal * 100)}% over ${a.secs}s` : `x${a.mult.toFixed(2)}`,
+      g.fillStyle = lock ? '#e0a53f' : kit ? '#66748c' : (a.colour ?? '#66748c');
+      g.fillText(lock ? lock.split(' — ')[0]
+                      : kit ? `+${Math.round(a.heal * 100)}% over ${a.secs}s` : `x${a.mult.toFixed(2)}`,
                  row.r.x + (kit ? 12 : 28), row.r.y + row.r.h / 2 + 10);
+      g.globalAlpha = 1;
       g.textAlign = 'right';
       g.fillStyle = on ? '#7de08a' : '#8ea3bd'; g.font = '11px ui-monospace, monospace';
       g.fillText(String((kit ? myKits : myAmmo)[row.k] ?? 0), row.r.x + row.r.w - 10, row.r.y + row.r.h / 2 + 3);
@@ -2666,8 +2762,12 @@ function drawFrame(now) {
     // The server sends it either way — this is what your eyes can pick out of
     // the dark, not what the sensors know.
     const hides = foe && ALIENS[s.hull]?.stealth && me && id !== myId;
+    // An Aspect Filter is an illuminator: it stops asking what comes back and
+    // starts shouting, so the shaping that hides a Bandit from the front stops
+    // working at every angle. Same call, one flag — the rule lives in stealth.js
+    // so the seeker and your eyes can never end up disagreeing about it.
     const veil = hides ? seenAs({ x: s.rx, y: s.ry, heading: s.heading },
-                                { x: me.rx, y: me.ry }, now, id) : null;
+                                { x: me.rx, y: me.ry }, now, id, seesClear(myTech)) : null;
     if (veil && !veil.shown) continue;
 
     g.save();
@@ -3084,7 +3184,8 @@ function drawFrame(now) {
       // A Bandit is as faint on the plot as it is out the window, and drops off
       // it entirely at the aspects where you cannot see it either.
       const hid = ALIENS[s.hull]?.stealth && me
-        ? seenAs({ x: s.rx, y: s.ry, heading: s.heading }, { x: me.rx, y: me.ry }, now, id) : null;
+        ? seenAs({ x: s.rx, y: s.ry, heading: s.heading }, { x: me.rx, y: me.ry }, now, id,
+                 seesClear(myTech)) : null;
       if (hid && !hid.shown) continue;
       const ph = ((now / 900) + id * 0.31) % 1;
       g.globalAlpha = (s.vis === FRESH ? 0.5 + 0.5 * (1 - ph) : 0.35) * (hid ? hid.alpha : 1);
@@ -3240,6 +3341,13 @@ function drawFrame(now) {
     g.fillStyle = '#26402c'; g.fillRect(18, 64, w - 4, 8);
     g.fillStyle = hp > st.hull / 3 ? '#7de08a' : '#e05a5a';
     g.fillRect(18, 64, (w - 4) * hp / st.hull, 8);
+    // Composite Plating, and whether it is still there. A once-per-outing save
+    // you cannot see the state of is a save you cannot plan around — you would
+    // find out you had already spent it by dying.
+    if (hasTech(myTech, 'plating')) {
+      g.fillStyle = myPlate ? '#ffd479' : '#4a3f28';
+      g.beginPath(); g.arc(16 + w - 4, 68, 3, 0, Math.PI * 2); g.fill();
+    }
     g.fillStyle = '#5b6b85';
     g.fillText(`SH ${sh}/${shMax | 0}${boosted ? ' ↑' : ''}   HU ${hp}/${st.hull | 0}` +
                (myFit.length ? `   fit ${myFit.length}/${st.slots}` : ''), 16 + w + 10, 68);
@@ -3276,15 +3384,24 @@ function drawFrame(now) {
       g.fillStyle = COMPANIES[myCo].color;
       g.fillText('docked — press I to stow cargo', 16 + 96, 124);
     }
-    g.fillStyle = depth > 0 ? '#ff5c6b' : '#5b6b85';
-    g.fillText(depth > 0 ? `SHEAR ${driftDps(depth) | 0}/s` :
+    // What a Shear Compensator is holding off right now. `power.cap` is the
+    // capacitor as a percentage, which is exactly what shearGrace scales by — so
+    // the margin on screen shrinks as the tank does, which is the whole mechanic.
+    const grace = shearHeld();
+    g.fillStyle = depth > 0 ? (driftDps(depth, grace) > 0 ? '#ff5c6b' : '#7de08a') : '#5b6b85';
+    g.fillText(depth > 0 ? (driftDps(depth, grace) > 0 ? `SHEAR ${driftDps(depth, grace) | 0}/s`
+                                                       : `COMPENSATING ${depth | 0}/${grace | 0}m`) :
                `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
   g.fillText('TAB engage · TAB TAB break off · click cargo to haul it in · ' +
              'I cargo · H station · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
 
-  if (depth > 0 && !sysOpen && !bayOpen) {
+  // Compensated, the margin is somewhere you are meant to be, so it must stop
+  // screaming at you — a permanent red vignette over ground you bought the right
+  // to fly on reads as a bug, and the pilot learns to ignore the one warning that
+  // still matters. It comes straight back the moment the grace runs short.
+  if (driftDps(depth, shearHeld()) > 0 && !sysOpen && !bayOpen) {
     const t = Math.min(1, depth / DRIFT_MARGIN);
     const vig = g.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.28,
                                        VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.78);
@@ -3298,7 +3415,7 @@ function drawFrame(now) {
     g.fillText('⚠  BEACON LATTICE LOST  ⚠', VIEW_W / 2, VIEW_H * 0.22);
     g.globalAlpha = 0.6 + pulse * 0.4;
     g.font = '15px ui-monospace, monospace'; g.fillStyle = '#ff8a95';
-    g.fillText(`UNCOMPENSATED HULL SHEAR — ${driftDps(depth) | 0}/s`, VIEW_W / 2, VIEW_H * 0.22 + 28);
+    g.fillText(`UNCOMPENSATED HULL SHEAR — ${driftDps(depth, shearHeld()) | 0}/s`, VIEW_W / 2, VIEW_H * 0.22 + 28);
     g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffc4ca';
     g.fillText(`${depth | 0}m OUTSIDE CHARTED SPACE — COME ABOUT`, VIEW_W / 2, VIEW_H * 0.22 + 52);
     g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';

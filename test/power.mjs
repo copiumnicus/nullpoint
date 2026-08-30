@@ -4,6 +4,9 @@ import { newShip, step, stepVitals, applyDamage, shieldMax } from '../shared/sim
 import { resolve, HULLS, slotsOf } from '../shared/ships.js';
 import { boltWidth, fire, salvoOf, stepsOf, MAX_VOLLEY_STEPS } from '../shared/combat.js';
 
+import { wakeSeconds, sustainedDps } from '../shared/tech.js';
+import { bountyFor, farmHp } from '../shared/aliens.js';
+
 const fails = [];
 const check = (name, ok, detail = '') => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  — ${detail}` : ''}`);
@@ -176,28 +179,42 @@ console.log('\nships and technology');
   const caps = Object.keys(HULLS).map(h => [h, resolve(h).capacitor]);
   caps.forEach(([h, c]) => console.log(`     ${h.padEnd(9)} ${c}s`));
   check('every hull carries a usable capacitor', caps.every(([, c]) => c >= 30 && c <= 60));
-  const wheel = resolve('vanguard', { weapon: [], generator: [], tech: ['flywheel'] });
-  check('a technology can change it', wheel.capacitor > resolve('vanguard').capacitor,
-    `${resolve('vanguard').capacitor}s -> ${Math.round(wheel.capacitor)}s`);
-  // This used to read "it costs you shieldRegen", which the old Flywheel did — and
-  // the old Flywheel also did nothing, because the capacitor cancels out of the
-  // duty cycle of a boost you cycle. It buys one long hold now and charges for it
-  // in the refill, which is the only price that makes a bigger tank a decision.
-  check('and it costs you the refill', wheel.recharge < resolve('vanguard').recharge,
-    `recharge ${resolve('vanguard').recharge} -> ${wheel.recharge.toFixed(2)}`);
-  // The measurement the reshape came from: a capacitor is how long ONE hold lasts,
-  // never what fraction of the time you get to hold it.
+  // The measurement three technologies were deleted over: a capacitor is how long
+  // ONE hold lasts, never what fraction of the time you get to hold it. The duty
+  // cycle of a boost you cycle is recharge/(1+recharge), and the capacitor CANCELS
+  // OUT of it — so the Reactor Flywheel, the Fast-Cycle Exciter and Cold-Running
+  // Trim were three arrangements of a number that could not move.
   const duty = st => st.recharge / (1 + st.recharge);
   check('a bigger tank alone would not have bought any more uptime', (() => {
     const bare = resolve('vanguard');
     const onlyCap = { ...bare, capacitor: bare.capacitor * 2 };
     return Math.abs(duty(onlyCap) - duty(bare)) < 1e-9;
   })(), 'the capacitor cancels out of recharge/(1+recharge) — doubling it changes nothing');
-  check('so the technologies that move uptime move the RATE instead', (() => {
-    const fast = resolve('vanguard', { weapon: [], generator: [], tech: ['exciter'] });
-    const slow = resolve('vanguard', { weapon: [], generator: [], tech: ['flywheel'] });
-    return duty(fast) > duty(resolve('vanguard')) && duty(slow) < duty(resolve('vanguard'));
-  })(), 'a Fast-Cycle Exciter buys uptime and a Flywheel sells it for one long hold');
+  // So the reactor shelf is one entry now, and it is not an arrangement of the
+  // duty cycle at all: it changes where the charge COMES FROM. This claim used to
+  // read "the technologies that move uptime move the RATE instead", which was true
+  // and still left three items nobody wanted. Standing still is the rate, and the
+  // Wake Tap sells it.
+  const tap = resolve('vanguard', { weapon: [], generator: [], tech: ['waketap'] });
+  check('the one reactor technology sells you the refill itself', duty(tap) < duty(resolve('vanguard')),
+    `recharge ${resolve('vanguard').recharge} -> ${tap.recharge.toFixed(2)}/s, ` +
+    `duty ${(100 * duty(resolve('vanguard'))).toFixed(0)}% -> ${(100 * duty(tap)).toFixed(0)}%`);
+  // And what you get back for it, which is the whole point: a kill hands back the
+  // seconds the fight took. Not a chosen number — balance.js states the identity
+  // it falls out of, credits per second of fight = dps x BOUNTY_RATE, so dividing
+  // your share of the bounty by that rate IS the length of the fight. And draw is
+  // normalised so a fully powered system empties the tank in exactly `capacitor`
+  // seconds, which makes one point of charge one second of full boost.
+  check('and a kill hands back exactly the seconds of reactor the fight took', (() => {
+    const anchorStats = resolve('hauler', { weapon: ['emitter1'], generator: [], tech: ['waketap'] });
+    const secs = wakeSeconds(bountyFor('drifter'), anchorStats);
+    return Math.abs(secs - farmHp('drifter') / sustainedDps(anchorStats)) < 1e-9;
+  })(), (() => {
+    const a = resolve('hauler', { weapon: ['emitter1'], generator: [], tech: ['waketap'] });
+    return `a Drifter is ${bountyFor('drifter')} cr, which off ${sustainedDps(a).toFixed(1)} cold dps is ` +
+           `${wakeSeconds(bountyFor('drifter'), a).toFixed(2)}s — the fight it would have been with the reactor ` +
+           'idle, so a pilot who spent the charge on the guns gets back more than they used';
+  })());
   const gen = resolve('vanguard', { weapon: [], generator: ['cellC', 'cellC'], tech: [] });
   check('generators raise the free trickle', gen.sustain > resolve('vanguard').sustain,
     `+${Math.round(BOOST * resolve('vanguard').sustain * 100)}% -> +${Math.round(BOOST * gen.sustain * 100)}% forever`);

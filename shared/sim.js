@@ -4,7 +4,7 @@
 import { MAP_W, MAP_H, PORTAL_R } from './maps.js';
 import { resolve, radiusOf, gunsOf, DEFAULT_HULL, HULLS } from './ships.js';
 import { DEFAULT_FORMATION } from './formation.js';
-import { emptyFit } from './gear.js';
+import { emptyFit, techSet } from './gear.js';
 import { newPower, stepPower, boostOf, levelOf, BOOST } from './power.js';
 import { swellOf, dragOf, reachOf, cloakOf } from './ability.js';
 
@@ -38,9 +38,16 @@ export const WORLD = { x0: -DRIFT_MARGIN, y0: -DRIFT_MARGIN,
                        x1: MAP_W + DRIFT_MARGIN, y1: MAP_H + DRIFT_MARGIN };
 
 export const driftDepth = (x, y) => Math.max(0, -x, x - MAP_W, -y, y - MAP_H);
-export function driftDps(depth) {
-  if (depth <= 0) return 0;
-  const t = Math.min(1, depth / DRIFT_MARGIN);
+// `grace` is how much of the margin something aboard is nulling for you, in px.
+// It is a plain argument rather than a lookup because this file deliberately
+// knows nothing about the shop: shared/tech.js decides who gets any and what it
+// costs them, and hands the answer in. With nothing fitted it is 0 and this is
+// the same curve it has always been, which is the only way to add a mitigation
+// to a wall without quietly moving the wall.
+export function driftDps(depth, grace = 0) {
+  const past = depth - Math.max(0, grace);
+  if (past <= 0) return 0;
+  const t = Math.min(1, past / DRIFT_MARGIN);
   return DRIFT_MIN + (DRIFT_MAX - DRIFT_MIN) * t * t;
 }
 
@@ -80,6 +87,10 @@ export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit =
   const s = newBody(x, y, resolve(hull, fit, escortOf(drones, rig), formation), radiusOf(hull));
   s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
   s.guns = gunsOf(fit, drones);                     // ship rack plus whatever the escort carries
+  // What this ship can DO, as opposed to what its numbers are. Resolved once here
+  // and once in refit, because a capability is asked about every tick by things
+  // that must not be walking a fit list to find out — see shared/tech.js.
+  s.tech = techSet(fit, drones);
   return s;
 }
 
@@ -93,6 +104,7 @@ export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.forma
   s.stats = resolve(hull, fit, escortOf(drones, rig), formation);
   s.r = radiusOf(hull);
   s.guns = gunsOf(fit, drones);
+  s.tech = techSet(fit, drones);
   s.volley = 0; s.volleyCool = 0;
   s.hp = s.stats.hull;
   s.shieldMult = 1;
@@ -238,8 +250,8 @@ export function applyDamage(s, amount) {
 
 // Shear is ordinary damage: it eats shields first and, because applyDamage resets
 // the timer every tick, they never start coming back while you are still out there.
-export function stepDrift(s, dt) {
-  const dps = driftDps(driftDepth(s.x, s.y));
+export function stepDrift(s, dt, grace = 0) {
+  const dps = driftDps(driftDepth(s.x, s.y), grace);
   return dps > 0 ? applyDamage(s, dps * dt) : null;
 }
 

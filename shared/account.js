@@ -36,7 +36,7 @@ export function newAccount(token, seq, now) {
     formation: DEFAULT_FORMATION, formations: [DEFAULT_FORMATION],
     ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     kits: {}, kit: DEFAULT_KIT,
-    devices: {}, device: DEFAULT_DEVICE,
+    devices: {}, device: DEFAULT_DEVICE, foldTo: null,
     berths: [],                                   // outposts you rent a bay at
     lastDock: null,                               // the hangar a wreck comes back to
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
@@ -77,6 +77,10 @@ export function sanitiseAccount(a, seq, now) {
     ammo: sanitiseAmmo(a?.ammo), using: sanitiseUsing(a?.using), armed: sanitiseArmed(a?.armed),
     kits: sanitiseKits(a?.kits), kit: sanitiseKit(a?.kit),
     devices: sanitiseDevices(a?.devices), device: sanitiseDevice(a?.device),
+    // Where a beacon puts you. Not checked here: a bay can be sold and a sector
+    // can stop having an outpost, so it is re-checked against homePorts at the
+    // moment of use rather than trusted from disk.
+    foldTo: typeof a?.foldTo === 'string' ? a.foldTo : null,
     berths: [...new Set((Array.isArray(a?.berths) ? a.berths : []).filter(id => MAPS[id]?.outpost))],
     lastDock: MAPS[a?.lastDock] ? a.lastDock : null,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
@@ -108,6 +112,7 @@ export function capture(account, p, now) {
   account.devices = { ...p.devices };
   account.kit = p.kit;
   account.device = p.device;
+  account.foldTo = p.foldTo ?? null;
   account.berths = [...(p.berths ?? [])];   // a player built before berths existed has none
   account.lastDock = p.lastDock ?? null;
   account.xp = p.xp;
