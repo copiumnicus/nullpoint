@@ -140,6 +140,29 @@ console.log('\nwhat a grade is worth');
     `— it was 34x for 1.25x, which is why the shop's top two shelves went untouched`);
 }
 
+// A grade you can only tell apart in the HUD is a grade you cannot tell apart in
+// a fight. The round itself carries what loaded it, all the way to the wire.
+console.log('\nseeing what is loaded');
+{
+  const { packBolt, unpackBolt, packRocket, unpackRocket } = await import('../shared/net.js');
+  const { gradeColour, GRADE_COLOUR, magazine } = await import('../shared/ammo.js');
+  check('a magazine says which grade it is, not just how strong',
+    magazine({ cell3: 10 }, { laser: 'cell3' }, 'laser').tier === AMMO.cell3.tier);
+  check('every grade has a colour and no two share one',
+    Object.keys(GRADE_COLOUR).length === 3 &&
+    new Set(Object.values(GRADE_COLOUR)).size === 3, Object.values(GRADE_COLOUR).join(' '));
+  check('the bar and the round in flight read the same table',
+    forWeapon('laser').every(k => AMMO[k].colour === gradeColour(AMMO[k].tier)),
+    'one table, so the HUD and the sky cannot disagree about what is loaded');
+  const b = unpackBolt(packBolt({ sx: 0, sy: 0, ax: 10, ay: 0, t: 0.1, ttl: 0.2, foe: false, w: 40, gr: 3 }));
+  check('a bolt carries its grade over the wire', b.gr === 3);
+  const r = unpackRocket(packRocket({ x: 0, y: 0, heading: 0, foe: false, w: 90, gr: 2 }));
+  check('and so does a rocket', r.gr === 2);
+  check('a shot fired with no magazine is still drawable',
+    unpackBolt(packBolt({ sx: 0, sy: 0, ax: 1, ay: 0, t: 0, ttl: 1, foe: true, w: 1 })).gr === 0,
+    'aliens have no ammunition and must not come out undefined');
+}
+
 console.log('\npaying for itself');
 {
   // The rule the whole economy hangs on: a fight has to return more than it

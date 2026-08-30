@@ -93,7 +93,7 @@ export function fire(a, b, dt, mag = null) {
     out.push({
       sx: m.x, sy: m.y,
       ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
-      dmg: each, target: b, foe: !!a.isAlien, w: Math.round(each),
+      dmg: each, target: b, foe: !!a.isAlien, w: Math.round(each), gr: mag?.tier ?? 0,
       t: travel, ttl: Math.max(0.001, travel),
     });
   }

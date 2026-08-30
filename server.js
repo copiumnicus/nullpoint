@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
@@ -28,7 +28,8 @@ import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
-         POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL, mayScoop } from './shared/cargo.js';
+         POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL, mayScoop,
+         pirateValue, PIRATE_RATE, claimLapsed, CLAIM_TIME } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
@@ -722,6 +723,18 @@ wss.on('connection', (ws, req) => {
       if (process.env.DEBUG_SCOOP) console.log(`scoop order id=${m.id} accepted=${P.want !== null}`);
       return;
     }
+    // Ore straight to credits, at the pirates' rate, without flying home. The
+    // hold is what it empties — the company hangar is none of their business.
+    if (m.t === 'fence') {
+      if (!inOutpost(MAPS[P.mapId], ship)) return tell('No outpost in range');
+      const paid = pirateValue(P.hold);
+      const units = Object.values(P.hold).reduce((t, n) => t + n, 0);
+      if (!units) return tell('Nothing in the hold to sell');
+      P.hold = {};
+      P.credits += paid;
+      receipt('Pirate outpost', -paid, `${units} of ore, at ${Math.round(PIRATE_RATE * 100)}%`);
+      return outfit();
+    }
     if (m.t === 'stash') {                        // ship -> company hangar, at the dock only
       if (!P.docked) return;
       const n = P.hold[m.mat] ?? 0;
@@ -850,7 +863,9 @@ setInterval(() => {
     for (const [id, p] of players)
       if (p.mapId === mapId && !p.dead) here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
     for (const a of list) {
-      if (a.dead > 0) { a.dead -= dt; if (a.dead <= 0) respawnAlien(a, map); continue; }
+      if (a.dead > 0) { a.dead -= dt;
+        // Come back somewhere nobody is looking, not on top of whoever killed it.
+        if (a.dead <= 0) respawnAlien(a, map, here.map(c => c.ship)); continue; }
       const tgt = stepAlienAI(a, map, here, dt);
       // Anything in the air with this one's name on it. Rockets first: they are
       // the shots that will not simply go past on their own.
@@ -903,7 +918,14 @@ setInterval(() => {
 
   // --- cargo ----------------------------------------------------------------
   for (const [, list] of pods)
-    for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const c = list[i];
+      if ((c.t -= dt) <= 0) { list.splice(i, 1); continue; }
+      // A share stops being reserved long before the pod disperses, so ore nobody
+      // came back for goes to whoever is still out there instead of sitting on the
+      // field visible and untouchable until it evaporates.
+      if (c.own && claimLapsed(c)) c.own = 0;
+    }
 
   for (const [, p] of players) {                  // outstanding fetch orders
     if (p.want === null || p.scoop) continue;

@@ -1,4 +1,6 @@
-import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME, canDock } from '../shared/sim.js';
+import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME, canDock,
+         inOutpost, inHaven } from '../shared/sim.js';
+import { pirateValue, PIRATE_RATE, holdValue } from '../shared/cargo.js';
 import { MAPS, GALAXY, HOMES, COMPANIES, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { chartLayout } from '../shared/chart.js';
 
@@ -247,6 +249,38 @@ check('every connector ends on its portal marker', stranded === 0, `worst gap ${
 check('no routed segment is buried under a node', buried === 0);
 check('no connector doubles back past a corner', spurs === 0);
 check('no two connectors run along the same line', sideBySide === 0);
+
+// --- the pirate outpost ------------------------------------------------------
+// A long run into the third sector used to be governed by how much your hold
+// could carry: fill it and the only move is to fly all the way home.
+console.log('\nthe pirate outpost');
+{
+  const withPost = Object.entries(MAPS).filter(([, m2]) => m2.outpost);
+  check('every third sector has one', withPost.length === 3 &&
+    withPost.every(([id]) => id.endsWith('3')), withPost.map(([id]) => id).join(' '));
+  for (const [id, m2] of withPost) {
+    const o = m2.outpost;
+    check(`${id}'s outpost is clear of both gates`,
+      m2.portals.every(p2 => Math.hypot(p2.x - o.x, p2.y - o.y) > o.r + PORTAL_R + 400),
+      `${Math.round(Math.min(...m2.portals.map(p2 => Math.hypot(p2.x - o.x, p2.y - o.y))))}px to the nearest`);
+    check(`${id}'s outpost is inside the sector`,
+      o.x - o.r > 0 && o.x + o.r < MAP_W && o.y - o.r > 0 && o.y + o.r < MAP_H);
+    const at = { x: o.x, y: o.y };
+    check(`${id}'s outpost is somewhere you can trade`, inOutpost(m2, at));
+    // The whole point of it. If any of these ever start being true it has quietly
+    // become a second home base, which is not what it is for.
+    check(`${id}'s outpost is not shelter`, !inHaven(m2, at),
+      'it buys ore, and it does not hide you while you fight');
+    check(`${id}'s outpost is not a dock`, !canDock(m2, m2.owner, at),
+      'no repairs, no refit, no station panel');
+  }
+  const hold = { iron: 10, iridium: 2 };
+  const full = holdValue(hold);
+  check('a pirate pays a stated cut, not the hangar price',
+    pirateValue(hold) === Math.floor(full * PIRATE_RATE) && PIRATE_RATE < 1,
+    `${pirateValue(hold)} against ${full} at the dock — the cut is the price of not flying home`);
+  check('and an empty hold is worth nothing rather than NaN', pirateValue({}) === 0);
+}
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${ids.length} maps, ${links.size} links`}\n`);
 process.exit(fails.length ? 1 : 0);

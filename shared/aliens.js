@@ -316,11 +316,23 @@ export function alienStats(kind) {
 }
 
 // Somewhere to drift to: inside charted space, and never through a base ring.
-export function roamPoint(map, rand) {
-  for (let i = 0; i < 40; i++) {
-    const x = 700 + rand() * (MAP_W - 1400), y = 700 + rand() * (MAP_H - 1400);
-    if (map.base && Math.hypot(map.base.x - x, map.base.y - y) < map.base.r + 800) continue;
-    return { x, y };
+// How far a respawn keeps away from anybody already out there. A hostile that
+// materialises inside your radar — or worse, inside its own aggro radius of you —
+// reads as the game cheating rather than as a sector repopulating. Set from the
+// starter hull's radar, so nothing ever appears out of nothing on your screen.
+export const SPAWN_CLEAR = 2400;
+
+// `away` is the ships to keep clear of. Tried first with the clearance and then,
+// if the sector is too crowded to honour it, without — a hostile that refuses to
+// come back at all would be worse than one that comes back nearer than ideal.
+export function roamPoint(map, rand, away = []) {
+  for (const clear of [SPAWN_CLEAR, 0]) {
+    for (let i = 0; i < 40; i++) {
+      const x = 700 + rand() * (MAP_W - 1400), y = 700 + rand() * (MAP_H - 1400);
+      if (map.base && Math.hypot(map.base.x - x, map.base.y - y) < map.base.r + 800) continue;
+      if (clear && away.some(s => Math.hypot(s.x - x, s.y - y) < clear)) continue;
+      return { x, y };
+    }
   }
   return { x: 1200, y: 1200 };
 }
@@ -362,14 +374,16 @@ export function stepAlienRepair(a, dt) {
   a.hp = Math.min(a.stats.hull, a.hp + a.stats.hull * REPAIR_RATE * dt);
 }
 
-export function respawnAlien(a, map) {
-  const at = a.post ?? roamPoint(map, a.rand);
+export function respawnAlien(a, map, away = []) {
+  // A posted alien belongs to its slot on the firing range and goes back to it
+  // whoever is standing there; everything in the wild comes back out of the way.
+  const at = a.post ?? roamPoint(map, a.rand, away);
   a.x = at.x; a.y = at.y; a.vx = a.vy = 0;
   a.hp = a.stats.hull; a.shield = a.stats.shield;
   a.sinceHit = 1e9; a.shieldHit = 0; a.cool = 0; a.shotFlash = 0;
   a.target = null; a.provoked.clear(); a.lost = 0; a.dead = 0;
   a.crowd = null; a.crowdT = 0; a.threat = null; a.threatT = 0;   // no grudges carried over
-  a.way = a.post ?? roamPoint(map, a.rand);
+  a.way = a.post ?? roamPoint(map, a.rand, away);
   a.tx = a.ty = a.dx = a.dy = null;
 }
 

@@ -21,17 +21,20 @@ export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', '
 // A bolt in flight: where it started, where it is aimed, how far along it is,
 // whether a hostile fired it, and how much damage it carries — which is what the
 // client draws its thickness from.
-export const BOLT_FIELDS = ['sx', 'sy', 'ax', 'ay', 'p', 'foe', 'w'];
+// `gr` is the ammunition grade the shot was fired with, so a round is drawn in
+// the colour of what loaded it. Nothing on the wire says which pilot fired it,
+// and it does not need to: the grade is the thing you can see.
+export const BOLT_FIELDS = ['sx', 'sy', 'ax', 'ay', 'p', 'foe', 'w', 'gr'];
 export const packBolt   = o   => [Math.round(o.sx), Math.round(o.sy), Math.round(o.ax), Math.round(o.ay),
-                                  +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0, o.w ?? 1];
+                                  +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0, o.w ?? 1, o.gr ?? 0];
 export const unpackBolt = arr => { const o = {}; for (let i = 0; i < BOLT_FIELDS.length; i++) o[BOLT_FIELDS[i]] = arr[i]; return o; };
 
 // A rocket in flight. Unlike a bolt this is a body, not a line: it has a place
 // and a facing that both change every tick, so the client draws where it is now
 // rather than interpolating a segment.
-export const ROCKET_FIELDS = ['x', 'y', 'h', 'foe', 'w'];
+export const ROCKET_FIELDS = ['x', 'y', 'h', 'foe', 'w', 'gr'];
 export const packRocket   = o   => [Math.round(o.x), Math.round(o.y), +o.heading.toFixed(2),
-                                    o.foe ? 1 : 0, o.w ?? 100];
+                                    o.foe ? 1 : 0, o.w ?? 100, o.gr ?? 0];
 export const unpackRocket = arr => { const o = {}; for (let i = 0; i < ROCKET_FIELDS.length; i++) o[ROCKET_FIELDS[i]] = arr[i]; return o; };
 
 // A kill flash: where it happened, how big the thing was, how far along the

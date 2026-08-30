@@ -123,7 +123,7 @@ export function launch(a, b, dt, mag = null) {
     out.push({
       x: m.x, y: m.y, heading: h,
       vx: Math.cos(h) * ROCKET_SPEED, vy: Math.sin(h) * ROCKET_SPEED,
-      dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, age: 0, w: Math.round(each),
+      dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, age: 0, w: Math.round(each), gr: mag?.tier ?? 0,
       seed: (a.rocketSeed = ((a.rocketSeed ?? 0) + 1) % 97) + i,   // each seeker blinks its own way
     });
   }

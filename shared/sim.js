@@ -137,6 +137,13 @@ export function inBase(map, s) {
 // happy to take the money and the client would not draw the counter.
 export const canDock = (map, co, s) => (map.owner === co || !!map.dev) && inBase(map, s);
 
+// A pirate outpost. Anyone may trade there, whatever company they fly for, and it
+// grants nothing else: it is not a haven, it does not repair, and there is no
+// station panel behind it. Deliberately NOT folded into inHaven — the whole point
+// of somewhere you can empty your hold mid-run is that it is still the open sky.
+export const inOutpost = (map, s) =>
+  !!map.outpost && Math.hypot(map.outpost.x - s.x, map.outpost.y - s.y) < map.outpost.r;
+
 // Base rings and portal mouths are both sanctuary. An alien will not start a fight
 // with anyone standing in one — but provocation overrides it, and that check lives
 // in the alien's own logic, not here.

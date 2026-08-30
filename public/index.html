@@ -8,7 +8,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, driftDepth, driftDps,
+import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
@@ -21,6 +21,7 @@ import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
+import { VERSION, PATCHES, patchIcon, patchPanel } from '/shared/patch.js';
 import { audioReady, setThrust, laser, rocket, explosion,
          toggleAudio, toggleSfx, toggleMusic, audioOn, sfxOnly, musicOnly,
          setSfxVolume, sfxVolume, setMusicVolume, musicVolume,
@@ -28,7 +29,7 @@ import { audioReady, setThrust, laser, rocket, explosion,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
-import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop,
+import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
 import { ALIENS, outlineOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
@@ -41,7 +42,7 @@ import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
-         barLayout, feedMenu } from '/shared/ammo.js';
+         barLayout, feedMenu, gradeColour } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
@@ -68,6 +69,7 @@ addEventListener('resize', resize); resize();
 const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 let sysOpen = false;
+let patchOpen = false;      // the changelog, top right
 
 let myId = null, myCo = 'm', myName = '', mapId = 'm1', status = 'connecting…';
 document.title = GAME;
@@ -135,6 +137,49 @@ const toast = (what, cost, note) => {
   toasts = toasts.slice(0, TOAST_KEEP);
 };
 
+// The changelog. A version number is a small promise that the thing is being
+// worked on, and it costs one icon to keep.
+function drawPatch() {
+  const b = patchIcon(VIEW_W);
+  const hot = hover && hover.x > b.x && hover.x < b.x + b.w && hover.y > b.y && hover.y < b.y + b.h;
+  g.fillStyle = patchOpen ? 'rgba(122,180,240,0.18)' : hot ? 'rgba(255,255,255,0.08)' : 'rgba(6,10,16,0.72)';
+  g.fillRect(b.x, b.y, b.w, b.h);
+  g.strokeStyle = patchOpen || hot ? '#5a86b8' : '#243448'; g.lineWidth = 1;
+  g.strokeRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1);
+  g.strokeStyle = patchOpen || hot ? '#cfe4ff' : '#5b6b85'; g.lineWidth = 1.4;
+  for (let i = 0; i < 3; i++) {                     // three lines: a note, not a menu
+    const ly = b.y + 9 + i * 4.5;
+    g.beginPath(); g.moveTo(b.x + 7, ly); g.lineTo(b.x + b.w - 7 - (i === 2 ? 5 : 0), ly); g.stroke();
+  }
+  g.textAlign = 'right'; g.font = '9px ui-monospace, monospace';
+  g.fillStyle = hot || patchOpen ? '#8ea3bd' : '#3d4757';
+  g.fillText(`v${VERSION}`, b.x - 6, b.y + 17);
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  if (!patchOpen) return;
+
+  const L = patchPanel(VIEW_W, VIEW_H), P = L.panel;
+  g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(P.x, P.y, P.w, P.h);
+  g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+  g.font = '11px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
+  g.fillText('WHAT CHANGED', P.x + 14, P.y + 20);
+  g.textAlign = 'right'; g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
+  g.fillText('click anywhere to close', P.x + P.w - 12, P.y + 20);
+  g.textAlign = 'left';
+  for (const ln of L.lines) {
+    if (ln.kind === 'ver') {
+      g.font = '11px ui-monospace, monospace'; g.fillStyle = '#ffd479';
+      g.fillText(ln.v === 'earlier' ? 'earlier' : `v${ln.v}`, ln.x, ln.y);
+      const tw = g.measureText(ln.v === 'earlier' ? 'earlier' : `v${ln.v}`).width;
+      g.strokeStyle = 'rgba(61,71,87,0.4)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(ln.x + tw + 8, ln.y - 4); g.lineTo(P.x + P.w - 14, ln.y - 4); g.stroke();
+    } else {
+      g.font = '10px ui-monospace, monospace'; g.fillStyle = '#8ea3bd';
+      g.fillText(ln.text.length > 62 ? ln.text.slice(0, 61) + '\u2026' : ln.text, ln.x, ln.y);
+    }
+  }
+  g.font = '12px ui-monospace, monospace';
+}
+
 function drawToasts(now) {
   toasts = toasts.filter(t => now - t.at < TOAST_LIFE);
   toasts.forEach((t, i) => {
@@ -168,6 +213,10 @@ function drawToasts(now) {
 function spaceAction() {
   const me2 = ships.get(myId);
   if (!me2 || dead) return { kind: 'none' };
+  // The gate outranks everything. Sitting in a portal mouth with ore under you,
+  // the thing you came to the gate to do is leave — and hauling a pod first, then
+  // pressing again, was a fight with the key rather than with anything in space.
+  if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump' };
   const pod = pods.filter(pd => Math.hypot(pd.x - me2.rx, pd.y - me2.ry) <= SCOOP_R)
                   .sort((a, b) => Math.hypot(a.x - me2.rx, a.y - me2.ry)
                                 - Math.hypot(b.x - me2.rx, b.y - me2.ry))[0];
@@ -177,7 +226,10 @@ function spaceAction() {
     const n = mats.reduce((t, mt) => t + hold[mt], 0);
     return { kind: 'stow', mats, label: `stow ${n} of ore into the company hangar` };
   }
-  if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump' };
+  if (mats.length && inOutpost(MAPS[mapId], { x: me2.x, y: me2.y })) {
+    const n = mats.reduce((t, mt) => t + hold[mt], 0);
+    return { kind: 'fence', label: `sell ${n} of ore to the outpost for ${pirateValue(hold)} ${CURRENCY.short}` };
+  }
   return { kind: 'none' };
 }
 
@@ -468,12 +520,14 @@ addEventListener('keydown', e => {
       return say(`Stowed ${act.mats.length} stack${act.mats.length === 1 ? '' : 's'}`, '#7de08a');
     }
     if (act.kind === 'jump') return send({ t: 'jump' });
+    if (act.kind === 'fence') return send({ t: 'fence' });
     return say(atDock ? 'Hold is empty' : 'Nothing in reach', '#66748c');
   }
   if (e.key === 'Escape') {
     // Escape closes whatever is on top, and once there is nothing left to close
     // it opens the menu — which is where anything that is not flying the ship
     // ends up living.
+    if (patchOpen) { patchOpen = false; return; }
     if (leaving()) { cancelLeaving('Staying'); return; }
     if (setOpen) { setOpen = false; return; }
     if (feedOpen) { feedOpen = null; return; }
@@ -498,6 +552,15 @@ c.addEventListener('pointerdown', e => {
     return;
   }
   if (signup) { joinClick(v); return; }
+  // The changelog is hit-tested before anything else, because it is drawn over
+  // everything else. Anywhere off it closes it, so it never needs its own button.
+  {
+    const pb = patchIcon(VIEW_W);
+    if (v.x > pb.x && v.x < pb.x + pb.w && v.y > pb.y && v.y < pb.y + pb.h) {
+      patchOpen = !patchOpen; return;
+    }
+    if (patchOpen) { patchOpen = false; return; }
+  }
   if (leaving()) { cancelLeaving('Staying'); return; }
   if (setOpen) { settingsClick(v); return; }
   if (sysOpen) { sysOpen = false; return; }
@@ -1948,6 +2011,33 @@ function drawFrame(now) {
     g.restore();
   }
 
+  if (map.outpost) {
+    // Not a base and drawn so it cannot be mistaken for one: no company colour, no
+    // approach ticks, a broken ring instead of a sweep. It buys ore. That is all
+    // it does, and nothing about it should promise otherwise.
+    const o = map.outpost, near = me && Math.hypot(o.x - me.rx, o.y - me.ry) < o.r;
+    g.strokeStyle = near ? '#e0a53f' : '#8a6a3a'; g.lineWidth = 1.5;
+    g.setLineDash([8, 14]); g.lineDashOffset = now / 220;
+    g.beginPath(); g.arc(o.x, o.y, o.r, 0, 7); g.stroke();
+    g.setLineDash([]); g.lineDashOffset = 0;
+    g.save(); g.translate(o.x, o.y); g.rotate(-now / 14000);
+    g.strokeStyle = near ? '#ffd479' : '#8a6a3a'; g.lineWidth = 2.5;
+    g.beginPath();                                    // a lopsided hulk, not a station
+    for (let i = 0; i < 5; i++) {
+      const a2 = (i / 5) * Math.PI * 2, rr = 46 + (i % 2 ? 16 : 0);
+      i ? g.lineTo(Math.cos(a2) * rr, Math.sin(a2) * rr) : g.moveTo(Math.cos(a2) * rr, Math.sin(a2) * rr);
+    }
+    g.closePath(); g.stroke();
+    g.fillStyle = '#0a0f16'; g.fill(); g.stroke();
+    g.restore();
+    g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
+    g.fillStyle = near ? '#ffd479' : '#6a5a3a';
+    g.fillText('PIRATE OUTPOST', o.x, o.y - 76);
+    g.font = '9px ui-monospace, monospace'; g.fillStyle = '#6a5a3a';
+    g.fillText(`buys ore at ${Math.round(PIRATE_RATE * 100)}% · no repairs, no shelter`, o.x, o.y + 84);
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+
   if (map.base) {
     const b = map.base, col = COMPANIES[map.owner ?? myCo].color, mine = (map.owner ?? myCo) === myCo;
     const grd = g.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
@@ -2093,13 +2183,18 @@ function drawFrame(now) {
     const x0 = b.sx + (b.ax - b.sx) * p0, y0 = b.sy + (b.ay - b.sy) * p0;
     const x1 = b.sx + (b.ax - b.sx) * p1, y1 = b.sy + (b.ay - b.sy) * p1;
     const thick = boltWidth(b.w);                 // a better emitter throws a heavier bolt
-    g.strokeStyle = b.foe ? '#ff7a5c' : '#8fe7ff';
+    // And a better ROUND throws a differently coloured one. Knowing what is
+    // loaded mattered least in the HUD and most out the window, where you can
+    // see at a glance whether the expensive cells are actually going downrange.
+    const shot = b.foe ? '#ff7a5c' : b.gr > 1 ? gradeColour(b.gr) : '#8fe7ff';
+    g.strokeStyle = shot;
     g.globalAlpha = 0.22; g.lineWidth = thick + 3.5;
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     g.globalAlpha = 1; g.lineWidth = thick;
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     if (thick > 3.2) {                            // heavy rounds run white hot down the middle
-      g.strokeStyle = b.foe ? '#ffd6c8' : '#e8fbff'; g.lineWidth = thick * 0.34;
+      g.strokeStyle = b.foe ? '#ffd6c8' : b.gr > 1 ? '#ffffff' : '#e8fbff';
+      g.lineWidth = thick * 0.34;
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     }
   }
@@ -2117,13 +2212,14 @@ function drawFrame(now) {
       // exhaust first, so the body sits on top of it
       const flame = 12 + Math.sin(now / 40 + x) * 4;
       const grd = g.createLinearGradient(-len, 0, -len - flame, 0);
-      grd.addColorStop(0, r.foe ? 'rgba(255,170,120,0.85)' : 'rgba(150,225,255,0.85)');
+      grd.addColorStop(0, r.foe ? 'rgba(255,170,120,0.85)'
+                       : r.gr > 1 ? gradeColour(r.gr) + 'd9' : 'rgba(150,225,255,0.85)');
       grd.addColorStop(1, 'rgba(255,255,255,0)');
       g.fillStyle = grd;
       g.beginPath();
       g.moveTo(-len, -2.2); g.lineTo(-len - flame, 0); g.lineTo(-len, 2.2);
       g.closePath(); g.fill();
-      g.fillStyle = r.foe ? '#ff8a6b' : '#cfe9ff';
+      g.fillStyle = r.foe ? '#ff8a6b' : r.gr > 1 ? gradeColour(r.gr) : '#cfe9ff';
       g.beginPath();
       g.moveTo(len, 0); g.lineTo(-len * 0.5, -2.8); g.lineTo(-len, -1.6);
       g.lineTo(-len, 1.6); g.lineTo(-len * 0.5, 2.8);
@@ -2412,6 +2508,12 @@ function drawFrame(now) {
   const sx = MM_W / MAP_W, sy = MM_H / MAP_H;
   g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(MM_X, MM_Y, MM_W, MM_H);
   g.strokeStyle = map.tint + '99'; g.lineWidth = 1; g.strokeRect(MM_X + .5, MM_Y + .5, MM_W - 1, MM_H - 1);
+  if (map.outpost) {                               // a ring on the plot, so it can be found
+    const o = map.outpost;
+    g.strokeStyle = '#8a6a3a'; g.lineWidth = 1; g.setLineDash([2, 3]);
+    g.beginPath(); g.arc(MM_X + o.x * sx, MM_Y + o.y * sy, Math.max(3, o.r * sx), 0, 7); g.stroke();
+    g.setLineDash([]);
+  }
   if (map.base) {
     const b = map.base, col = COMPANIES[map.owner ?? myCo].color;
     g.strokeStyle = col + 'cc'; g.lineWidth = 1;
@@ -2703,6 +2805,7 @@ function drawFrame(now) {
   if (bayOpen) drawBay();
   if (invOpen) drawInventory();
   if (dead) drawWreck(now);
+  if (!signup) drawPatch();
   // Receipts go on top of the panels. Drawn under them, the station's own
   // backdrop dimmed the confirmation for the purchase you just made in it.
   if (!dead) drawToasts(now);

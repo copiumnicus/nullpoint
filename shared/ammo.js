@@ -25,27 +25,33 @@
 // So better rounds still cost more per point — they have to, or the plain grade
 // would be pointless — but the premium buys real dps rather than punishing you
 // for wanting it. Warheads run the same ladder at their own base.
+// One colour per grade, so the bar, the chooser and the round itself in flight
+// cannot disagree about what is loaded. Telling grades apart by counting pips in
+// the HUD was no help at all in the middle of a fight.
+export const GRADE_COLOUR = { 1: '#c2a24f', 2: '#e05a5a', 3: '#7de08a' };
+export const gradeColour = tier => GRADE_COLOUR[tier] ?? GRADE_COLOUR[1];
+
 export const AMMO = {
   // For emitters. Consumed one round per bolt, so a big rack eats them fast.
   cell1: { name: 'Standard Cells', for: 'laser', tier: 1, mult: 1.00, pack: 2000, price:  400,
-           colour: '#c2a24f',
+           colour: GRADE_COLOUR[1],
            blurb: 'What the racks are calibrated for.' },
   cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 3.00, pack: 1000, price:  720,
-           colour: '#e05a5a',
+           colour: GRADE_COLOUR[2],
            blurb: 'Three times the bolt, for a fifth more per point of damage.' },
   cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: 5.00, pack:  500, price:  700,
-           colour: '#7de08a',
+           colour: GRADE_COLOUR[3],
            blurb: 'Five times the bolt. The most damage a rack can throw at once.' },
 
   // For launchers. One warhead per rocket, so a Swarm Rack is fifteen a volley.
   head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, pack: 400, price:  600,
-           colour: '#c2a24f',
+           colour: GRADE_COLOUR[1],
            blurb: 'Shaped charge, mass produced.' },
   head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 3.00, pack: 200, price: 1100,
-           colour: '#e05a5a',
+           colour: GRADE_COLOUR[2],
            blurb: 'Two stages. Three times through shielding that shrugs off one.' },
   head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: 5.00, pack: 100, price: 1050,
-           colour: '#7de08a',
+           colour: GRADE_COLOUR[3],
            blurb: 'Rare, unstable, and worth every credit when it lands.' },
 };
 
@@ -98,7 +104,9 @@ export function sanitiseUsing(raw, stock = {}) {
 // writes the remainder back to the pilot's stock.
 export function magazine(stock, using, feed) {
   const key = AMMO[using?.[feed]]?.for === feed ? using[feed] : DEFAULT_AMMO[feed];
-  return { key, n: Math.max(0, Math.floor(stock?.[key] ?? 0)), mult: AMMO[key].mult };
+  // `tier` rides along so a round in flight can be drawn in its own colour —
+  // combat.js never has to know what a grade is, only what it was handed.
+  return { key, n: Math.max(0, Math.floor(stock?.[key] ?? 0)), mult: AMMO[key].mult, tier: AMMO[key].tier };
 }
 
 // True if this pilot could fire that weapon at all right now.

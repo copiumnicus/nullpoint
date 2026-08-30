@@ -68,6 +68,15 @@ export const DROPS = {
 export const mayScoop = (pod, id) => !pod || !pod.own || pod.own === id;
 
 export const POD_LIFE   = 120;  // s before a pod disperses
+
+// How long a share stays reserved. A claim that held for the pod's whole life
+// meant a pilot who took a hit and left, or simply did not want the iron, left
+// something on the field that everyone else could see and nobody could touch.
+// After this it is ordinary salvage — still theirs to come back for first, but no
+// longer nailed down. Kept well under POD_LIFE so the reservation lapses long
+// before the pod does, and ore is released rather than wasted.
+export const CLAIM_TIME = 40;
+export const claimLapsed = pod => (pod?.t ?? 0) <= POD_LIFE - CLAIM_TIME;
 export const SCOOP_R    = 260;  // px you must be inside to start hauling one in
 export const SCOOP_TIME = 0.9;  // s the tractor takes — you are stationary prey while it runs
 
@@ -110,6 +119,14 @@ export function rigAt(scoop, ship) {
            y: ship.y + (scoop.py - ship.y) * along,
            work: phase === 'work' ? Math.min(1, (elapsed - out) / DWELL) : 0 };
 }
+
+// What a pirate pays for ore, against what your own company's hangar pays. They
+// take a quarter, and that quarter is the price of not flying home: a full hold
+// that would otherwise stop the run cold is worth more emptied at 75% than
+// carried at 100%. Selling at your own dock is still the thrifty way to do it.
+export const PIRATE_RATE = 0.75;
+export const pirateValue = hold =>
+  Math.floor(Object.entries(hold).reduce((s, [m, n]) => s + n * (MATERIALS[m]?.value ?? 0), 0) * PIRATE_RATE);
 
 export const CURRENCY = { name: 'credits', short: 'cr' };
 

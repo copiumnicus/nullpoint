@@ -1,11 +1,11 @@
 import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
-         farmHp, XP_RATE, BOUNTY_RATE } from '../shared/aliens.js';
+         farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR } from '../shared/aliens.js';
 import { WILD, ALIENS, ALIENS_PER_MAP, effectiveHp, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
          forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
-import { HULLS, resolve } from '../shared/ships.js';
+import { HULLS, resolve, DEFAULT_HULL } from '../shared/ships.js';
 import { BOOST } from '../shared/power.js';
 import { topTier } from '../shared/gear.js';
 
@@ -379,6 +379,38 @@ check('only one of them hides', WILD.filter(k => ALIENS[k].stealth).length === 1
     hulls.every(x => x.st.speed > L.attrs.speed),
     `${L.attrs.speed} against the slowest hull at ${Math.min(...hulls.map(x => x.st.speed))}`);
   check('and it does not chase you home', L.leash < 3000 && L.flee === 0);
+}
+
+// --- where they come back ----------------------------------------------------
+// A hostile that materialises inside your radar — or inside its own aggro radius
+// of you — reads as the game cheating rather than a sector repopulating.
+console.log('\nrespawning');
+{
+  const map = MAPS.m1;
+  const crowd = [{ x: 6000, y: 4000 }, { x: 3000, y: 3000 }];
+  let worst = Infinity;
+  for (let i = 0; i < 300; i++) {
+    const pt = roamPoint(map, rng(i), crowd);
+    worst = Math.min(worst, ...crowd.map(c => Math.hypot(c.x - pt.x, c.y - pt.y)));
+  }
+  check('nothing respawns on top of anybody', worst >= SPAWN_CLEAR,
+    `closest of 300 respawns was ${Math.round(worst)}px, clearance is ${SPAWN_CLEAR}`);
+  check('and that clearance is past a starter hull\'s radar',
+    SPAWN_CLEAR >= resolve(DEFAULT_HULL).radar * 0.9,
+    `${SPAWN_CLEAR} against ${resolve(DEFAULT_HULL).radar}px of radar — it appears out of sight, not out of nothing`);
+  check('a crowded sector still repopulates rather than stalling', (() => {
+    // Ships everywhere: the clearance cannot be honoured and must be given up
+    // rather than leaving the sector permanently empty.
+    const packed = [];
+    for (let x = 1000; x < 11000; x += 900) for (let y = 1000; y < 7000; y += 900) packed.push({ x, y });
+    const pt = roamPoint(map, rng(7), packed);
+    return Number.isFinite(pt.x) && Number.isFinite(pt.y);
+  })(), 'a hostile that refuses to come back at all would be the worse bug');
+  check('a posted alien still goes back to its post, whoever is standing there', (() => {
+    const a = newAlien('drifter', 1, map, 3, { x: 7000, y: 3000 });
+    a.hp = 0; respawnAlien(a, map, [{ x: 7000, y: 3000 }]);
+    return a.x === 7000 && a.y === 3000;
+  })(), 'the firing range is a range, not a sector');
 }
 
 // --- what a kill is worth ----------------------------------------------------

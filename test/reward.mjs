@@ -1,5 +1,5 @@
 import { splitKill, shareOut, potFor, SHARE_FLOOR, GROUP_STEP, MAX_CLAIMS, MAX_POT } from '../shared/reward.js';
-import { mayScoop } from '../shared/cargo.js';
+import { mayScoop, claimLapsed, CLAIM_TIME, POD_LIFE } from '../shared/cargo.js';
 import { ALIENS, WILD, effectiveHp, BOUNTY_RATE } from '../shared/aliens.js';
 
 const fails = [];
@@ -133,6 +133,15 @@ check('a pod belongs to the pilot it was dropped for',
 check('and an unclaimed pod is anyone\'s',
   mayScoop({ own: 0 }, 8) && mayScoop({}, 8) && mayScoop(null, 8),
   'ore already lying around, or a kill with no ledger behind it');
+// A claim that held for the pod's whole life left ore on the field that everyone
+// could see and nobody could touch.
+check('a share stops being reserved well before the pod disperses',
+  !claimLapsed({ t: POD_LIFE }) && !claimLapsed({ t: POD_LIFE - CLAIM_TIME + 1 })
+  && claimLapsed({ t: POD_LIFE - CLAIM_TIME }),
+  `reserved for ${CLAIM_TIME}s of a ${POD_LIFE}s life, then it is ordinary salvage`);
+check('and the reservation always lapses with time to spare',
+  CLAIM_TIME < POD_LIFE / 2,
+  `${POD_LIFE - CLAIM_TIME}s left to pick it up after it opens to everyone`);
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — shared rewards'}\n`);
 process.exit(fails.length ? 1 : 0);

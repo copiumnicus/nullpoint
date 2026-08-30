@@ -13,6 +13,7 @@ import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS } from '../shared/aliens.js';
 import { SIGHT_R } from '../shared/sim.js';
+import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -399,6 +400,34 @@ const dismiss = () => {
     else console.log(`a plotted course lands under the cursor: at ${innerWidth}x${innerHeight} the `
       + `view zooms to ${z.toFixed(3)}, so clicks ${B.x - A.x}px apart plot ${wantX.toFixed(1)} apart`);
   }
+}
+
+// The changelog. An icon that does nothing when clicked is worse than no icon,
+// and the panel is drawn over every other panel so it has to be hit-tested first.
+{
+  const b = patchIcon(innerWidth);
+  const hitPatch = () => evt('pointerdown', { clientX: b.x + b.w / 2, clientY: b.y + b.h / 2 });
+  dismiss();
+  frame(t += 16); frames++;
+  hitPatch();
+  frame(t += 16); frames++;
+  const L = patchPanel(innerWidth, innerHeight);
+  if (!L.lines.length) errs.push('the changelog panel laid out no lines at all');
+  if (!L.lines.some(l => l.kind === 'ver')) errs.push('the changelog showed notes with no version over them');
+  if (!L.lines.some(l => l.kind === 'note')) errs.push('the changelog showed versions with nothing under them');
+  // Every version placed must have at least one note under it — a header alone
+  // reads as a bug rather than as a short release.
+  for (let i = 0; i < L.lines.length; i++)
+    if (L.lines[i].kind === 'ver' && L.lines[i + 1]?.kind !== 'note')
+      errs.push(`changelog version ${L.lines[i].v} was laid out with nothing under it`);
+  if (L.lines.every(l => l.y < L.panel.y || l.y > L.panel.y + L.panel.h))
+    errs.push('changelog lines fell outside their own panel');
+  evt('pointerdown', { clientX: 300, clientY: 300 });     // anywhere else closes it
+  frame(t += 16); frames++;
+  hitPatch(); evt('keydown', { key: 'Escape' });          // and so does Escape
+  frame(t += 16); frames++;
+  console.log(`changelog: v${VERSION}, ${PATCHES.length} entries, ` +
+    `${L.lines.length} lines laid out; opens, closes on a click and on Escape`);
 }
 
 // Flying without the mouse, driven through the real key handlers and the real
