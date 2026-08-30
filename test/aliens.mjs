@@ -318,6 +318,41 @@ check('a Drifter is the one you meet first, and the softest',
 check('only one of them hides', WILD.filter(k => ALIENS[k].stealth).length === 1,
   'stealth is a thing the Bandit does, not the baseline');
 
+// --- the Ironhusk, one hop out ------------------------------------------------
+// It exists to be the first thing that does not die to the guns you left home
+// with. Everything about it is derived from the Drifter times ten, and its
+// difficulty is meant to be positional rather than a wall of hit points.
+{
+  const D = ALIENS.drifter, I = ALIENS.ironhusk;
+  const empty = { weapon: [], generator: [], tech: [] };
+  const hulls = Object.keys(HULLS).map(h => ({ h, st: resolve(h, empty) }));
+
+  check('an Ironhusk is exactly ten Drifters',
+    effectiveHp('ironhusk') === effectiveHp('drifter') * 10,
+    `${effectiveHp('ironhusk')} ehp against ${effectiveHp('drifter')}`);
+  check('and it pays exactly ten Drifters, because bounty is derived not picked',
+    I.bounty === D.bounty * 10 && I.xp === D.xp * 10,
+    `${I.bounty} credits and ${I.xp} xp`);
+
+  // The whole design. If either of these ever stops holding, the Ironhusk has
+  // quietly turned into something you cannot decline, which is not what it is for.
+  check('no hull can be caught by it — you can always leave',
+    hulls.every(x => x.st.speed > I.attrs.speed),
+    `${I.attrs.speed} against ` + hulls.map(x => `${x.h} ${x.st.speed}`).join(', '));
+  check('and no hull can be out-ranged by it — kiting always works',
+    hulls.every(x => x.st.weaponRange > I.attrs.weaponRange),
+    `${I.attrs.weaponRange} against ` + hulls.map(x => `${x.h} ${x.st.weaponRange}`).join(', '));
+  check('it is slower and shorter-ranged than the Drifter it replaces',
+    I.attrs.speed < D.attrs.speed && I.attrs.weaponRange < D.attrs.weaponRange,
+    'the trade for ten times the armour is that it cannot make you fight it');
+  check('but standing still in front of one is a real loss',
+    I.attrs.damage * I.attrs.fireRate > D.attrs.damage * D.attrs.fireRate * 1.3,
+    `${(I.attrs.damage * I.attrs.fireRate).toFixed(0)} dps against the Drifter's ` +
+    `${(D.attrs.damage * D.attrs.fireRate).toFixed(0)} — into an 1100-hull Hauler`);
+  check('it does not run, so the fight ends when you decide it does',
+    I.flee === 0);
+}
+
 // A posted alien belongs to a slot on the firing range and goes back to it.
 {
   const post = { x: 7000, y: 3000 };

@@ -157,9 +157,11 @@ setInterval(persistAll, 15000);   // positions drift without changing anything
 for (const sig of ['SIGINT', 'SIGTERM'])
   process.on(sig, () => { persistAll(); console.log('accounts saved'); process.exit(0); });
 
-// Where each hostile lives. Drifters hold the home maps; Bandits are one hop
-// out, so the first thing you meet that you cannot see is also the first reason
-// to leave home. Seeded per map so a restart replays the same field.
+// Where each hostile lives. Drifters hold the home maps; Ironhusks stand one hop
+// out, so the first sector past home is also the first thing that does not die to
+// the guns you left home with; Bandits are at the frontier, so the first thing you
+// cannot see is the last reason to go further. Seeded per map so a restart
+// replays the same field.
 const aliens = new Map();
 let alienId = 1_000_000;
 const seed = (mapId, kind, n) => {
@@ -173,6 +175,7 @@ for (const h of HOMES) {
   seed(h, 'drifter', ALIENS_PER_MAP);
   const co = h[0];
   for (const mid of [co + '2', co + '3']) seed(mid, 'drifter', 4);
+  seed(co + '2', 'ironhusk', 3);                  // one hop out: the first thing that outclasses you
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
   seed(co + '4', 'drifter', 3);
 }

@@ -39,6 +39,47 @@ export const ALIENS = {
     xp: 140,          // and what the kill is worth toward your rank
   },
 
+  // Ten Drifters welded into one hull, and deliberately exactly that: 6500 ehp
+  // is 10 x 650, the 4550 bounty is 10 x 455 because bounty is ehp x BOUNTY_RATE,
+  // and 1400 xp is 10 x 140. One number was chosen — the multiple — and the rest
+  // follow from rules already written down.
+  //
+  // It sits one hop out from home because that is the first place you arrive
+  // having outgrown Drifters, and a husk that takes real work is the cheapest
+  // possible way to say so.
+  //
+  // The important part is that it is NOT a bigger health bar you stand in front
+  // of. Measured against the build most players have at that point — one emitter,
+  // one launcher, one drone, 145 dps — trading blows with it is a loss: 45s to
+  // chew through it while it returns 72 dps into 1100 hull. It is meant to teach
+  // the thing the Drifter never had to. Every answer is positional, and all of
+  // them are available on day one:
+  //
+  //   speed 190  — slower than every hull in the game, the Bulwark included at
+  //                250, so you can always leave and always come back
+  //   range 500  — under all four hulls (620-820), so kiting costs it everything
+  //   accel 420  — ponderous, so a turn buys you distance rather than a trade
+  //
+  // Fight it properly and it never touches you; stand still and it removes you.
+  // A pilot who has moved up to two emitters and a better rack kills it in 13s,
+  // which is the progression this is here to make visible.
+  ironhusk: {
+    name: 'Ironhusk', cls: 'Husk', r: 26, colour: '#d0563f',
+    attrs: { hull: 4500, shield: 2000, shieldRegen: 130, shieldDelay: 5,
+             speed: 190, accel: 420, signature: 6,
+             damage: 90, fireRate: 0.8, weaponRange: 500 },
+    // Aggro inside SIGHT_R like the Drifter's, so it is on screen before it
+    // decides anything. Short leash: something this slow has no business
+    // following you across a sector, and being able to break off is the lesson.
+    aggro: 460,
+    leash: 1500,
+    patience: 3.0,
+    flee: 0,          // armour is its whole answer; it has nowhere to run to
+    respawn: 30,
+    bounty: 4550,     // 6500 ehp at BOUNTY_RATE, which is 10 x the Drifter's 455
+    xp: 1400,         // likewise 10 x 140
+  },
+
   // A raider that you mostly cannot see. Its signature is shaped rather than
   // sized: nose-on it returns almost nothing, from the beam it comes and goes,
   // and from behind it is just a ship. The catch is that a Bandit engaging you
