@@ -955,6 +955,8 @@ setInterval(() => {
           kid.target = a.target;
           kid.provoked.add(a.target);
           born.push(kid);
+          if (process.env.DEBUG_BROOD)
+            console.log(`brood: hive ${a.id} launched ${kid.id}, now ${a.brood.length + 1}/${a.def.broods.max}`);
           a.brood.push(kid.id);
         }
       }
@@ -1180,6 +1182,9 @@ setInterval(() => {
       ammo: V.ammo, using: V.using, armed: V.armed, kits: V.kits, kit: V.kit,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
       played: (V.acct.played ?? 0) + sessionSeconds(V.banked ?? V.acted, V.acted),
+      // Who else is out there. A world with nobody in it should say so rather
+      // than leave you wondering whether the game is empty or just quiet.
+      online: [...players.values()].filter(q => !q.lobby).length,
       // effective levels as whole percent, so the readout cannot jitter between
       // 29 and 30 from a float that is a hair under one
       power: { to: V.ship.power.to, cap: Math.round(100 * chargePct(V.ship.power, V.ship.stats)),

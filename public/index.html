@@ -92,6 +92,7 @@ let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } }
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
 let myRig = null;                 // the collector, which is not one of the bays
 let myPlayed = 0;                 // seconds flown, idle time already taken off
+let myOnline = 1;                 // pilots in the world, including you
 let myForm = 'line', myForms = ['line'];
 let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
 let myKits = {}, myKit = DEFAULT_KIT;
@@ -156,7 +157,13 @@ function drawPatch() {
   }
   g.textAlign = 'right'; g.font = '9px ui-monospace, monospace';
   g.fillStyle = hot || patchOpen ? '#8ea3bd' : '#3d4757';
-  g.fillText(`v${VERSION}`, b.x - 6, b.y + 17);
+  const vtag = `v${VERSION}`;
+  g.fillText(vtag, b.x - 6, b.y + 17);
+  // Who else is out there, beside the version. Alone reads grey; anybody else at
+  // all reads green, because "is anyone playing this" is the actual question.
+  const crowd = `${myOnline} online`;
+  g.fillStyle = myOnline > 1 ? '#7de08a' : '#3d4757';
+  g.fillText(crowd, b.x - 14 - g.measureText(vtag).width, b.y + 17);
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   if (!patchOpen) return;
 
@@ -375,6 +382,7 @@ ws.onmessage = e => {
   if (m.drones) myDrones = m.drones;
   if ('rig' in m) myRig = m.rig;
   if (typeof m.played === 'number') myPlayed = m.played;
+  if (typeof m.online === 'number') myOnline = m.online;
   if (m.rank) { myRank = m.rank; myXp = m.xp ?? myXp; }
   const seen = new Set();
   for (const raw of m.ships) {

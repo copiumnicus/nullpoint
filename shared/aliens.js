@@ -137,7 +137,12 @@ export const ALIENS = {
     attrs: { hull: 450000, shield: 200000, shieldRegen: 1200, shieldDelay: 4,
              speed: 110, accel: 180, signature: 10,
              damage: 220, fireRate: 0.5, weaponRange: 1100 },
-    broods: { kind: 'bandit', every: 18, first: 4, max: 4 },
+    // Escorts are the fight, so there have to be enough of them for that to be
+    // true. Four every eighteen seconds was a trickle you could ignore between
+    // volleys. One every five now, up to twelve alive — which means a hive left
+    // alone for a minute has a dozen raiders around it, and the pressure comes
+    // from what you did not clean up rather than from any single one of them.
+    broods: { kind: 'bandit', every: 5, first: 2, max: 12 },
     aggro: 540,       // still inside SIGHT_R, so you see it before it decides
     leash: 2600,
     patience: 5.0,

@@ -400,8 +400,14 @@ console.log('\nthe mothership');
 
   // What actually makes it a fight. Its own guns are nearly beside the point.
   check('it launches Bandits, and they are what hurts you',
-    H.broods?.kind === 'bandit' && H.broods.max >= 3,
+    H.broods?.kind === 'bandit' && H.broods.max >= 8,
     `${H.broods.max} at a time, one every ${H.broods.every}s`);
+  // The pressure is meant to come from what you did not clean up, not from any
+  // single raider. A trickle you can ignore between volleys is not a mechanic.
+  check('a hive left alone for a minute is surrounded', (() => {
+    const inAMinute = Math.min(H.broods.max, Math.floor((60 - H.broods.first) / H.broods.every) + 1);
+    return inAMinute >= 10;
+  })(), `${Math.min(H.broods.max, Math.floor((60 - H.broods.first) / H.broods.every) + 1)} raiders after 60s of being ignored`);
   check('its own guns are the least of it',
     H.attrs.damage * H.attrs.fireRate < ALIENS.bandit.attrs.damage * ALIENS.bandit.attrs.fireRate * H.broods.max,
     `${H.attrs.damage * H.attrs.fireRate} dps against ${H.broods.max} Bandits' ` +
@@ -417,10 +423,14 @@ console.log('\nthe mothership');
     return ticks > 0;      // the timer itself runs; the gate is the server's
   })(), 'the timer is honest — the engagement gate is at the call site');
   check('and it launches on a stated cadence once it has', (() => {
-    const a2 = newAlien('hive', 10, MAPS.x0, 4, { x: 6000, y: 4000 });
+    // Derived from the def rather than hard-coded, so retuning the cadence does
+    // not turn this into an arithmetic puzzle for whoever changes it next.
+    const secs = 40, b = ALIENS.hive.broods;
+    const want = Math.floor((secs - b.first) / b.every) + 1;
+    const a2 = newAlien('hive', 10, MAPS.g1, 4, { x: 6000, y: 4000 });
     let n = 0;
-    for (let i = 0; i < 30 * 40; i++) if (broodReady(a2, 1 / 30)) n++;
-    return n >= 2 && n <= 3;
+    for (let i = 0; i < 30 * secs; i++) if (broodReady(a2, 1 / 30)) n++;
+    return Math.abs(n - want) <= 1;
   })(), `first at ${ALIENS.hive.broods.first}s, then every ${ALIENS.hive.broods.every}s`);
 }
 

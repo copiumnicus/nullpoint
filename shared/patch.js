@@ -8,9 +8,13 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.14';
+export const VERSION = '0.15';
 
 export const PATCHES = [
+  { v: '0.15', notes: [
+    'Corsair Hives launch a raider every 5s and hold twelve — ignore them and they pile up',
+    'The number of pilots online is shown beside the patch notes',
+  ] },
   { v: '0.14', notes: [
     'Pirate outposts moved to the frontier sectors, where a full hold actually ends a run',
     'Corsair Hives now hold the three gate sectors instead of Nullpoint, so they get met',
