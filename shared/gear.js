@@ -110,11 +110,17 @@ export const EQUIPMENT = {
               mods: [['capacitor', 'mul', 0.55], ['shieldRegen', 'mul', -0.22]] },
 };
 
-// How far the best collector aboard can reach, or 0 if none is fitted. Only the
-// best counts — two rigs do not pull twice as far.
+// A collector lives in its own bay, not in a combat one. It used to sit in the
+// drone rack, which meant buying a Scavenger Rig cost you a gun even with ten
+// empty bays left — and since the reach below is a max rather than a sum, a
+// second collector was never worth anything anyway. One rig, its own bay.
+//
+// It cannot simply be a free drone bay either: dronePrice(2) is 8200 and a
+// Scavenger Rig is 5200, so a bay that came with a rig would be the cheap way to
+// buy bays. This one only ever holds a collector.
 export const isCollector = k => EQUIPMENT[k]?.kind === 'collector';
-export const collectorReach = (drones = []) =>
-  drones.reduce((r, k) => Math.max(r, isCollector(k) ? EQUIPMENT[k].reach : 0), 0);
+export const sanitiseRig = k => (isCollector(k) ? k : null);
+export const collectorReach = rig => (isCollector(rig) ? EQUIPMENT[rig].reach : 0);
 
 export const priceOf = key => EQUIPMENT[key]?.price ?? Infinity;
 
@@ -178,6 +184,7 @@ export function sanitiseDrones(list, fit, max = MAX_DRONES) {
   for (const k of (Array.isArray(list) ? list : []).slice(0, max)) {
     if (k === null || !EQUIPMENT[k]) { out.push(null); continue; }
     if (EQUIPMENT[k].kind === 'rocket') { out.push(null); continue; }   // no rockets on a drone
+    if (isCollector(k)) { out.push(null); continue; }                  // a rig has its own bay
     if (EQUIPMENT[k].slot === 'tech' && techs.has(k)) { out.push(null); continue; }
     if (EQUIPMENT[k].slot === 'tech') techs.add(k);
     out.push(k);

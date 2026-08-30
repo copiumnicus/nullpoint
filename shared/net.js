@@ -6,8 +6,13 @@
 // visibility as an impact flash. The order is declared once, here, and both sides
 // go through pack/unpack, so drifting apart is no longer possible.
 
+// rig/rgx/rgy/rgp carry the collector: whether there is one, where its drone is,
+// and how far through a lift it is. They are on the ship record rather than in the
+// viewer's own payload because the whole point is that OTHER people can see it —
+// before this, a pod being hauled away just vanished off everyone else's screen.
 export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', 'hp', 'sh', 'flash',
-                            'tgt', 'shot', 'rk', 'fix', 'guns', 'psys', 'plvl', 'lvl', 'drones', 'form', 'dmask', 'vis'];
+                            'tgt', 'shot', 'rk', 'fix', 'guns', 'psys', 'plvl', 'lvl', 'drones', 'form', 'dmask', 'vis',
+                            'rig', 'rgx', 'rgy', 'rgp'];
 
 // A bolt in flight: where it started, where it is aimed, how far along it is,
 // whether a hostile fired it, and how much damage it carries — which is what the

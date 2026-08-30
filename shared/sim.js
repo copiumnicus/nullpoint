@@ -53,9 +53,14 @@ export function newBody(x, y, stats, r) {
   };
 }
 
-export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION) {
-  const s = newBody(x, y, resolve(hull, fit, drones, formation), radiusOf(hull));
-  s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation;
+// The rig rides along for stats — its hold is real cargo — but it is not a combat
+// bay and is never counted as one. Everywhere the escort is resolved, it is
+// `[...drones, rig]`; everywhere bays are counted, it is `drones`.
+export const escortOf = (drones = [], rig = null) => (rig ? [...drones, rig] : drones);
+
+export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION, rig = null) {
+  const s = newBody(x, y, resolve(hull, fit, escortOf(drones, rig), formation), radiusOf(hull));
+  s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
   s.guns = gunsOf(fit, drones);                     // ship rack plus whatever the escort carries
   return s;
 }
@@ -65,9 +70,9 @@ export const shieldMax = s => s.stats.shield * (s.shieldMult ?? 1);
 
 // Re-fit in place. Vitals are restored, so this must only be allowed somewhere
 // safe — swapping to a tanky hull mid-fight would otherwise be free.
-export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.formation ?? DEFAULT_FORMATION) {
-  s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation;
-  s.stats = resolve(hull, fit, drones, formation);
+export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.formation ?? DEFAULT_FORMATION, rig = s.rig ?? null) {
+  s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
+  s.stats = resolve(hull, fit, escortOf(drones, rig), formation);
   s.r = radiusOf(hull);
   s.guns = gunsOf(fit, drones);
   s.volley = 0; s.volleyCool = 0;

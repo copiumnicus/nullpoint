@@ -14,7 +14,7 @@ import { MUSIC_DIRS, pickDir } from './config.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
-         MAX_DRONES, dronePrice, sanitiseDrones, topTier, collectorReach } from './shared/gear.js';
+         MAX_DRONES, dronePrice, sanitiseDrones, sanitiseRig, isCollector, topTier, collectorReach } from './shared/gear.js';
 import { levelFor } from './shared/level.js';
 import { COMMANDS, parse, amount, MAX_LEN } from './shared/chat.js';
 import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
@@ -27,7 +27,7 @@ import { splitKill } from './shared/reward.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
-         POD_LIFE, SCOOP_R, SCOOP_TIME, DRONE_SPEED } from './shared/cargo.js';
+         POD_LIFE, SCOOP_R, SCOOP_TIME, DRONE_SPEED, rigAt, DWELL } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
@@ -188,7 +188,8 @@ const PROP_ROWS = PROPS.map(p2 => {
            hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0,
            guns: s2.guns, lvl: 0, drones: s2.drones.length,
            form: Math.max(0, FORMATION_KEYS.indexOf(p2.formation)),
-           dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY };
+           dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY,
+           rig: 0, rgx: 0, rgy: 0, rgp: -1 };
 });
 
 const bolts  = new Map();    // mapId -> bolts in flight
@@ -290,7 +291,7 @@ wss.on('connection', (ws, req) => {
     acct.x = MAPS[acct.mapId].base.x; acct.y = MAPS[acct.mapId].base.y;
   }
 
-  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation);
+  const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation, acct.rig);
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
                     hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
@@ -311,7 +312,7 @@ wss.on('connection', (ws, req) => {
     ws.send(JSON.stringify({ t: 'bought', what, cost, note, credits: players.get(id).credits }));
   };
   const outfit = () => (touch(players.get(id)), ws.send(JSON.stringify({ t: 'fit', hull: ship.hull, fit: ship.fit,
-                                                drones: ship.drones, formation: ship.formation,
+                                                drones: ship.drones, rig: ship.rig ?? null, formation: ship.formation,
                                                 formations: players.get(id).formations,
                                                 ammo: players.get(id).ammo, using: players.get(id).using,
                                                 armed: players.get(id).armed,
@@ -490,7 +491,7 @@ wss.on('connection', (ws, req) => {
           P.hold = {}; P.vault = {};
           P.targetId = null; P.want = null; P.scoop = null; P.fixing = null;
           P.contacts.clear();
-          refit(ship, acct.hull, acct.fit, [], acct.formation);
+          refit(ship, acct.hull, acct.fit, [], acct.formation, null);
           Object.assign(ship, { x: b2.x, y: b2.y, vx: 0, vy: 0, tx: null, ty: null,
                                 dx: null, dy: null, charge: 0, chargeTo: null });
           store.save(db);
@@ -612,6 +613,22 @@ wss.on('connection', (ws, req) => {
       if (clean[i] !== m.item) return;              // refused, e.g. a duplicate technology
       if (--P.gear[m.item] <= 0) delete P.gear[m.item];
       refit(ship, ship.hull, ship.fit, clean);
+      return outfit();
+    }
+    // The rig bay. Its own handlers rather than an index into the drone rack,
+    // because it is not a drone bay and must never be spendable as one.
+    if (m.t === 'rigfit') {
+      const item = EQUIPMENT[m.item];
+      if (!atStation() || !item || !isCollector(m.item) || !(P.gear[m.item] > 0)) return;
+      if (ship.rig) return;                         // strip the one you have first
+      if (--P.gear[m.item] <= 0) delete P.gear[m.item];
+      refit(ship, ship.hull, ship.fit, ship.drones, ship.formation, sanitiseRig(m.item));
+      return outfit();
+    }
+    if (m.t === 'rigstrip') {
+      if (!atStation() || !ship.rig) return;
+      P.gear[ship.rig] = (P.gear[ship.rig] ?? 0) + 1;
+      refit(ship, ship.hull, ship.fit, ship.drones, ship.formation, null);
       return outfit();
     }
     if (m.t === 'dronestrip') {
@@ -882,7 +899,7 @@ setInterval(() => {
   // still wins — a rig is not allowed to hijack a beam you started.
   for (const [, p] of players) {
     if (p.dead || p.scoop || p.want !== null) continue;
-    const reach = collectorReach(p.ship.drones);
+    const reach = collectorReach(p.ship.rig);
     if (!reach) continue;
     // Nearest first, but keep going down the list — it fills to the brim rather
     // than stopping at the closest pod. Metals differ in volume, so three units
@@ -932,6 +949,19 @@ setInterval(() => {
   for (const [, list] of hits)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
 
+  // Where a player's collector drone is this tick, in absolute coordinates, so any
+  // client that can see the ship can draw the lift — the pod itself may be out of
+  // the watcher's radar range and the drone still has to be somewhere.
+  const rigRow = p => {
+    const tier = EQUIPMENT[p.ship.rig]?.tier ?? 0;
+    if (!tier) return { rig: 0, rgx: 0, rgy: 0, rgp: -1 };
+    const pod = p.scoop ? (pods.get(p.mapId) ?? []).find(c => c.id === p.scoop.id) : null;
+    const at = rigAt(p.scoop, p.ship, pod);
+    if (!at) return { rig: tier, rgx: 0, rgy: 0, rgp: -1 };
+    return { rig: tier, rgx: Math.round(at.x), rgy: Math.round(at.y),
+             rgp: Math.round(100 * at.work) };
+  };
+
   // Snapshots are per player, not per map. Radar means two ships sitting in the
   // same sector legitimately see different things, and an enemy you have not
   // detected must never reach the wire at all.
@@ -950,7 +980,11 @@ setInterval(() => {
       form: Math.max(0, FORMATION_KEYS.indexOf(p.ship.formation)),
       dmask: p.ship.drones.reduce((m2, k, i) => m2 | (EQUIPMENT[k]?.slot === 'weapon' ? 1 << i : 0), 0),
       psys: p.ship.power.to ? SYSTEMS.indexOf(p.ship.power.to) + 1 : 0,
-      plvl: p.ship.power.to ? Math.round(100 * levelOf(p.ship.power, p.ship.power.to, p.ship.stats)) : 0 });
+      plvl: p.ship.power.to ? Math.round(100 * levelOf(p.ship.power, p.ship.power.to, p.ship.stats)) : 0,
+      // The collector, for everyone rather than just its owner. rgp is -1 when the
+      // drone is flying with the escort and 0..100 while it is holding station over
+      // a pod, which is the only part anybody else could previously not see.
+      ...rigRow(p) });
     if (p.dead || p.lobby) continue;
     if (!byMap.has(p.mapId)) byMap.set(p.mapId, []);
     byMap.get(p.mapId).push({ id, co: p.co, ship: p.ship });
@@ -963,7 +997,8 @@ setInterval(() => {
       sh: Math.round(100 * a.shield / Math.max(1, shieldMax(a))),
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
-      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0 });
+      guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0,
+      rig: 0, rgx: 0, rgy: 0, rgp: -1 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

@@ -22,17 +22,38 @@ export const MATERIALS = {
 };
 
 // Weights must sum to 1. A test enforces that, and that rarer never beats commoner.
+// Quantities carry the weight rather than rarities: the shape of what a husk is
+// made of should not change just because the payroll did. So there is one shape,
+// and a bigger husk drops more of the same rather than better.
+const HUSK = [
+  { mat: 'iron',     p: 0.44, min: 3, max: 9 },
+  { mat: 'nickel',   p: 0.26, min: 2, max: 7 },
+  { mat: 'cobalt',   p: 0.16, min: 2, max: 5 },
+  { mat: 'rhodium',  p: 0.09, min: 1, max: 4 },
+  { mat: 'platinum', p: 0.04, min: 1, max: 3 },
+  { mat: 'iridium',  p: 0.01, min: 1, max: 2 },
+];
+const scaled = (table, k) => table.map(r => ({ ...r, min: r.min * k, max: r.max * k }));
+
+// Every alien drops. The Ironhusk and the Bandit shipped without a table at all,
+// which rollDrop reads as "nothing", so the two biggest kills in the game paid
+// their bounty and left nothing on the floor.
+//
+// The multiple is not the alien's ehp multiple, and cannot be: bounty scales
+// linearly with ehp because credits have nowhere to overflow, but ore has to fit
+// in a hold. So each is scaled so its commonest drop is about one hold-full for a
+// pilot equipped to be in that sector:
+//
+//   drifter  x1  — 9 iron is 27 volume, into a starter's 60
+//   ironhusk x4  — 36 iron is 108 volume, against 100 with a Scavenger Rig
+//   bandit   x8  — 72 iron is 216 volume, against 240 with an Ore Tender
+//
+// Past that the reward stays in the bounty, which is where it can grow without
+// asking anyone to make three trips.
 export const DROPS = {
-  // Quantities carry the weight rather than rarities: the shape of what a husk
-  // is made of should not change just because the payroll did.
-  drifter: [
-    { mat: 'iron',     p: 0.44, min: 3, max: 9 },
-    { mat: 'nickel',   p: 0.26, min: 2, max: 7 },
-    { mat: 'cobalt',   p: 0.16, min: 2, max: 5 },
-    { mat: 'rhodium',  p: 0.09, min: 1, max: 4 },
-    { mat: 'platinum', p: 0.04, min: 1, max: 3 },
-    { mat: 'iridium',  p: 0.01, min: 1, max: 2 },
-  ],
+  drifter:  HUSK,
+  ironhusk: scaled(HUSK, 4),
+  bandit:   scaled(HUSK, 8),
 };
 
 export const POD_LIFE   = 120;  // s before a pod disperses
@@ -45,10 +66,33 @@ export const SCOOP_TIME = 0.9;  // s the tractor takes — you are stationary pr
 // hull, which read as teleporting rather than fetching.
 export const DRONE_SPEED = 420; // px/s
 
-// How long a pull takes: the tractor itself, plus the round trip if something
-// has to go and get it. `speed` of 0 is your own arm, which does not travel.
+// A rig has to hold station over what it is lifting. It used to be one number —
+// travel plus a flat tractor time — which meant the ore simply vanished at the
+// end of a flight, and nothing about it read as work being done.
+export const DWELL = 1.4;   // s the drone sits over the pod, lifting
+
+// How long a pull takes. `speed` of 0 is your own arm, which does not travel and
+// does not hover: out, hold station, back.
 export const pullTime = (dist, speed = 0) =>
-  SCOOP_TIME + (speed > 0 ? (2 * dist) / speed : 0);
+  speed > 0 ? (2 * dist) / speed + DWELL : SCOOP_TIME;
+
+// Where the drone is and what it is doing, derived from the scoop state alone so
+// that the server and every watching client agree without another message. The
+// legs are measured against the ship's position now rather than where it was when
+// the order went out, because the ship keeps flying and a drone tethered to a
+// stale point looked like it was falling behind.
+export function rigAt(scoop, ship, pod) {
+  if (!scoop || !pod || !(scoop.out > 0)) return null;      // your own arm has no drone
+  const elapsed = scoop.secs - scoop.t, out = scoop.out;
+  const phase = elapsed < out ? 'out' : elapsed < out + DWELL ? 'work' : 'back';
+  const along = phase === 'out'  ? elapsed / out
+              : phase === 'work' ? 1
+              : Math.max(0, 1 - (elapsed - out - DWELL) / out);
+  return { phase, along,
+           x: ship.x + (pod.x - ship.x) * along,
+           y: ship.y + (pod.y - ship.y) * along,
+           work: phase === 'work' ? Math.min(1, (elapsed - out) / DWELL) : 0 };
+}
 
 export const CURRENCY = { name: 'credits', short: 'cr' };
 
@@ -94,7 +138,9 @@ export function beginScoop(ship, hold, pod, reach = SCOOP_R, speed = 0) {
   if (away > reach) return 'far';
   if (stow({ ...hold }, pod.mat, 1, ship.stats.cargo) === 0) return 'full';
   const t = pullTime(away, speed);
-  return { id: pod.id, t, secs: t, reach };
+  // `out` is the outbound leg, and it is what tells rigAt whether there is a drone
+  // in this pull at all. Your own tractor beam has none.
+  return { id: pod.id, t, secs: t, reach, out: speed > 0 ? away / speed : 0 };
 }
 
 // Clicking cargo is an ORDER, not a request. If it is out of reach the ship flies

@@ -1,8 +1,9 @@
 import { MATERIALS, DROPS, rollDrop, stow, unload, holdVol, holdValue, volOf,
          POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY } from '../shared/cargo.js';
-import { beginScoop, stepScoop, approachPod, load } from '../shared/cargo.js';
+import { beginScoop, stepScoop, approachPod, load, rigAt, DWELL, pullTime, DRONE_SPEED } from '../shared/cargo.js';
+import { EQUIPMENT, sanitiseDrones, sanitiseRig, collectorReach, isCollector } from '../shared/gear.js';
 import { WILD, ALIENS } from '../shared/aliens.js';
-import { newShip } from '../shared/sim.js';
+import { newShip, escortOf } from '../shared/sim.js';
 import { HULLS, ATTRS, resolve } from '../shared/ships.js';
 import { rng } from '../shared/aliens.js';
 
@@ -40,6 +41,16 @@ for (const [kind, table] of Object.entries(DROPS)) {
   check(`${kind} gets rarer as the tier climbs`,
     table.every((r, i) => i === 0 || r.p < table[i - 1].p) && t.every((v, i) => i === 0 || v > t[i - 1]));
 }
+// The Ironhusk shipped with no table and paid nothing but its bounty. rollDrop
+// reads a missing kind as "drops nothing", so this fails loudly rather than
+// quietly the next time an alien is added.
+check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
+  WILD.map(k => `${k} ${DROPS[k] ? `x${DROPS[k][0].max / 9}` : 'NOTHING'}`).join(', '));
+check('a bigger husk drops more of the same, not rarer',
+  WILD.filter(k => DROPS[k]).every(k =>
+    DROPS[k].every((r, i) => r.p === DROPS.drifter[i].p && r.mat === DROPS.drifter[i].mat)),
+  'one shape, scaled — the composition of a husk does not change with the payroll');
+
 {
   const rand = rng(9), tally = {};
   for (let i = 0; i < 40000; i++) { const d = rollDrop('drifter', rand); tally[d.mat] = (tally[d.mat] ?? 0) + 1; }
@@ -236,15 +247,25 @@ console.log('\ncollector rigs');
   check('a rig only goes on a drone', rigs.every(k =>
     sanitiseFit(slotsOf('bulwark'), fit({ weapon: [k], generator: [k], tech: [k] }))
       .weapon.length === 0));
-  check('and a drone will take one', sanitiseDrones([rigs[0]], {}).join() === rigs[0]);
-  check('a bay carrying one is not a gun',
+  // This used to read "and a drone will take one". It did, and that was the bug:
+  // fitting a rig cost you a gun even with ten empty bays left. The rack refuses
+  // them now and the rig has a bay of its own.
+  check('but a combat bay will not take one', sanitiseDrones([rigs[0]], {})[0] === null,
+    'a rig in a gun bay was a gun you paid for and did not get');
+  check('a rig carrying is still not a gun',
     resolve('bulwark', fit(), [rigs[2]]).damage === resolve('bulwark', fit(), []).damage);
-  check('two rigs carry twice but do not reach twice',
-    resolve('bulwark', fit(), [rigs[0], rigs[0]]).cargo
-      === resolve('bulwark', fit(), []).cargo + EQUIPMENT[rigs[0]].mods[0][2] * 2
-    && collectorReach([rigs[0], rigs[0]]) === EQUIPMENT[rigs[0]].reach,
-    'the best one reaches, and only the best');
-  check('no rig, no reach', collectorReach(['emitter1', null]) === 0);
+  // And this used to say "two rigs carry twice but do not reach twice". Carrying
+  // twice was the only reason to fit a second, and reach — the thing a rig is
+  // actually for — never stacked at all. There is one bay because there was only
+  // ever one rig worth having.
+  check('a rig still adds its hold to the ship',
+    resolve('bulwark', fit(), escortOf([], rigs[0])).cargo
+      === resolve('bulwark', fit(), []).cargo + EQUIPMENT[rigs[0]].mods[0][2]);
+  check('and reach is the rig you carry, never a sum',
+    collectorReach(rigs[0]) === EQUIPMENT[rigs[0]].reach
+    && collectorReach(rigs[2]) === EQUIPMENT[rigs[2]].reach,
+    'which is why one bay is the right number of bays');
+  check('no rig, no reach', collectorReach(null) === 0 && collectorReach('emitter1') === 0);
 
   // The tractor takes a reach now, so a rig can pull what an arm cannot.
   const ship = { x: 0, y: 0, hp: 100, stats: { cargo: 500 } };
@@ -283,3 +304,44 @@ console.log('\ncollector rigs');
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
 process.exit(fails.length ? 1 : 0);
+
+// --- the collector rig -------------------------------------------------------
+// It used to sit in a combat bay, so buying one cost you a gun even with ten
+// empty bays left, and since reach is a max rather than a sum a second one was
+// never worth anything. It has its own bay now.
+console.log('\nthe collector rig');
+check('a collector cannot be put in a combat bay',
+  sanitiseDrones(['collect1', 'emitter1'], { tech: [] })[0] === null,
+  'the rack refuses it, so an old save cannot keep one there');
+check('and the rig bay takes nothing else',
+  sanitiseRig('emitter1') === null && sanitiseRig('collect2') === 'collect2');
+check('reach comes from the rig, not from the rack',
+  collectorReach('collect3') === EQUIPMENT.collect3.reach && collectorReach('emitter1') === 0);
+check('a second collector was always worthless anyway',
+  Math.max(collectorReach('collect1'), collectorReach('collect1')) === collectorReach('collect1'),
+  'reach is a max — which is why one bay is the right number of bays');
+
+console.log('\nholding station over a pod');
+{
+  const ship = { x: 0, y: 0, hp: 100, stats: { cargo: 600 } };
+  const pod = { id: 1, x: 420, y: 0, mat: 'iron', n: 5 };
+  const sc = beginScoop(ship, {}, pod, 520, DRONE_SPEED);
+  const out = 420 / DRONE_SPEED;
+  check('a pull is out, hold station, and back',
+    Math.abs(sc.secs - (2 * out + DWELL)) < 1e-9,
+    `${out.toFixed(2)}s each way around ${DWELL}s of work`);
+  check('your own arm has no drone and no dwell',
+    rigAt(beginScoop(ship, {}, pod, 520, 0), ship, pod) === null &&
+    pullTime(420, 0) === 0.9);
+
+  const at = t => { const c = { ...sc, t: sc.secs - t }; return rigAt(c, ship, pod); };
+  check('it sets out from the ship', at(0).x === 0 && at(0).phase === 'out');
+  check('and arrives over the pod', Math.abs(at(out).x - pod.x) < 1e-6 && at(out).phase === 'work');
+  check('then it holds still while it lifts', (() => {
+    const a = at(out + 0.1), b = at(out + DWELL - 0.1);
+    return a.phase === 'work' && b.phase === 'work' && a.x === b.x && a.y === b.y;
+  })(), `${DWELL}s in one place — the ore no longer just vanishes`);
+  check('and the lift reads 0 to 1 across that hold',
+    at(out + 0.01).work < 0.05 && at(out + DWELL - 0.01).work > 0.95);
+  check('then it comes home', Math.abs(at(sc.secs).x) < 1e-6 && at(sc.secs).phase === 'back');
+}

@@ -66,9 +66,13 @@ export function fitsIn(target, { gear = {}, fit = emptyFit(), drones = [] } = {}
     .filter(k => EQUIPMENT[k]?.slot === 'tech'));
   return Object.keys(EQUIPMENT)
     .filter(k => held(k))
-    .filter(k => (target === 'drone'
-      // A drone takes anything the ship itself could carry, minus rockets.
-      ? EQUIPMENT[k].kind !== 'rocket'
+    .filter(k => (target === 'rig'
+      // The rig bay takes collectors and nothing else.
+      ? EQUIPMENT[k].kind === 'collector'
+      : target === 'drone'
+      // A drone takes anything the ship itself could carry, minus rockets and
+      // the collectors, which have a bay of their own.
+      ? EQUIPMENT[k].kind !== 'rocket' && EQUIPMENT[k].kind !== 'collector'
       : EQUIPMENT[k].slot === target))
     .filter(k => !(EQUIPMENT[k].slot === 'tech' && takenTech.has(k)))
     .filter(k => !(EQUIPMENT[k].kind === 'rocket' && launcherRoom(fit) <= 0))
@@ -112,7 +116,7 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     const counts = slotsOf(hullKey) ?? { weapon: 0, generator: 0, tech: 0 };
     const rackRows = SLOTS.reduce((n, sl) => n + (counts[sl] ?? 0), 0) + SLOTS.length;
     const bays = Math.min(MAX_DRONES, droneCount);
-    const escortRows = 1 + bays + 1 + formations.length;
+    const escortRows = 1 + bays + 2 + 1 + formations.length;   // + the rig header and its one bay
     // Each column is stepped to fit itself, so a six-drone Bulwark no longer
     // squeezes the weapon rack down with it.
     const push = (list, col, rows) => {
@@ -129,6 +133,8 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     const addEsc = push(out.racks, 2, escortRows);
     addEsc({ slot: 'drone', header: true });
     for (let i = 0; i < bays; i++) addEsc({ slot: 'drone', index: i });
+    addEsc({ slot: 'rig', header: true });
+    addEsc({ slot: 'rig', index: 0 });
     addEsc({ slot: 'form', header: true });
     for (const k of formations) addEsc({ slot: 'form', key: k });
     return out;

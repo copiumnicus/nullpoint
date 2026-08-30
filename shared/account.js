@@ -5,7 +5,7 @@
 // without a server or a file.
 
 import { DEFAULT_HULL, sanitiseFit, slotsOf, HULLS } from './ships.js';
-import { EQUIPMENT, emptyFit, sanitiseDrones } from './gear.js';
+import { EQUIPMENT, emptyFit, sanitiseDrones, sanitiseRig, isCollector } from './gear.js';
 import { FORMATIONS, DEFAULT_FORMATION } from './formation.js';
 import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
          DEFAULT_AMMO, STARTING_AMMO } from './ammo.js';
@@ -34,7 +34,7 @@ export function newAccount(token, seq, now) {
     formation: DEFAULT_FORMATION, formations: [DEFAULT_FORMATION],
     ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     kits: {}, kit: DEFAULT_KIT,
-    credits: 0, xp: 0, drones: [], vault: {}, hold: {}, admin: false,
+    credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
   };
@@ -61,6 +61,10 @@ export function sanitiseAccount(a, seq, now) {
     token: a.token, seq, co, name: typeof a?.name === 'string' ? a.name : callsign(seq),
     hull: flying, fit: sanitiseFit(flying, a?.fit), gear, hulls,
     drones: sanitiseDrones(a?.drones, sanitiseFit(flying, a?.fit)),
+    // Collectors used to live in a combat bay. Anyone who fitted one before this
+    // keeps it — it moves into the rig bay rather than being dropped on the floor,
+    // and sanitiseDrones has already refused to leave it in the rack.
+    rig: sanitiseRig(a?.rig ?? (Array.isArray(a?.drones) ? a.drones.find(isCollector) : null)),
     xp: Number.isFinite(a?.xp) ? Math.max(0, Math.floor(a.xp)) : 0,
     admin: a?.admin === true,
     formations: forms, formation: forms.includes(a?.formation) ? a.formation : DEFAULT_FORMATION,
@@ -83,6 +87,7 @@ export function capture(account, p, now) {
   account.gear = { ...p.gear };
   account.hulls = [...p.hulls];
   account.drones = [...p.ship.drones];
+  account.rig = p.ship.rig ?? null;
   account.formation = p.ship.formation;
   account.formations = [...p.formations];
   account.ammo = { ...p.ammo };

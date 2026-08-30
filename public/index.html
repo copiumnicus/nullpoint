@@ -8,7 +8,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, driftDepth, driftDps,
+import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
@@ -85,6 +85,7 @@ const readToken = () => {
 let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
+let myRig = null;                 // the collector, which is not one of the bays
 let myForm = 'line', myForms = ['line'];
 let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
 let myKits = {}, myKit = DEFAULT_KIT;
@@ -197,7 +198,7 @@ ws.onmessage = e => {
   if (m.t === 'welcome') {
     myId = m.id; myCo = m.co; mapId = m.map; myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? {}; myHulls = m.hulls ?? [myHull]; credits = m.credits ?? 0;
-    myDrones = m.drones ?? []; myXp = m.xp ?? 0; amAdmin = !!m.admin;
+    myDrones = m.drones ?? []; myRig = m.rig ?? null; myXp = m.xp ?? 0; amAdmin = !!m.admin;
     myForm = m.formation ?? 'line'; myForms = m.formations ?? ['line'];
     myAmmo = m.ammo ?? {}; myUsing = { ...DEFAULT_AMMO, ...(m.using ?? {}) };
     myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
@@ -224,7 +225,7 @@ ws.onmessage = e => {
     myHull = m.hull; myFit = m.fit;
     myGear = m.gear ?? myGear;
     myHulls = m.hulls ?? myHulls;
-    myDrones = m.drones ?? myDrones;
+    myDrones = m.drones ?? myDrones; myRig = 'rig' in m ? m.rig : myRig;
     myForm = m.formation ?? myForm; myForms = m.formations ?? myForms;
     myAmmo = m.ammo ?? myAmmo; myUsing = m.using ? { ...DEFAULT_AMMO, ...m.using } : myUsing;
     if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
@@ -296,6 +297,7 @@ ws.onmessage = e => {
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
   if (m.drones) myDrones = m.drones;
+  if ('rig' in m) myRig = m.rig;
   if (m.rank) { myRank = m.rank; myXp = m.xp ?? myXp; }
   const seen = new Set();
   for (const raw of m.ships) {
@@ -725,7 +727,7 @@ const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
   tab: bayTab, page: bayPage, hull: myHull, drones: myDrones.length,
   hulls: myHulls, formations: myForms, gear: myGear });
 
-const shipCtx = () => ({ hull: myHull, fit: myFit, drones: myDrones, formation: myForm,
+const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, myRig), formation: myForm,
                          gear: myGear, hulls: myHulls, formations: myForms, credits });
 
 function bayClick(v) {
@@ -740,7 +742,8 @@ function bayClick(v) {
       const to = picking;
       picking = null;
       return to.slot === 'drone' ? send({ t: 'dronefit', index: to.index, item: k })
-                                 : send({ t: 'install', item: k });
+           : to.slot === 'rig'     ? send({ t: 'rigfit', item: k })
+                                   : send({ t: 'install', item: k });
     }
     picking = null;
     if (inside(P0.box)) return;
@@ -773,6 +776,14 @@ function bayClick(v) {
         return send({ t: 'formation', key: row.key });
       }
       if (row.slot === 'drone' && myDrones[row.index]) return send({ t: 'dronestrip', index: row.index });
+      if (row.slot === 'rig') {
+        if (myRig) return send({ t: 'rigstrip' });
+        const rigs = lockerFor('rig');
+        if (!rigs.length) return say('No collector in the locker — the rigs are on the drones page', '#8ab4e6');
+        if (rigs.length === 1) return send({ t: 'rigfit', item: rigs[0] });
+        picking = { slot: 'rig', index: 0 };
+        return;
+      }
       if (row.slot !== 'drone' && (myFit[row.slot] ?? [])[row.index])
         return send({ t: 'uninstall', slot: row.slot, index: row.index });
       // Empty: ask, do not guess. Guessing meant a pilot holding MK-Vs got MK-Is.
@@ -889,7 +900,7 @@ function drawTip(tip, at) {
 
 function drawBay() {
   const G = bayGeom(), P = G.panel;
-  const stats = resolve(myHull, myFit, myDrones, myForm), bare = resolve(myHull, emptyFit());
+  const stats = resolve(myHull, myFit, escortOf(myDrones, myRig), myForm), bare = resolve(myHull, emptyFit());
   const home = docked();
   const at = hover && hover.x > P.x && hover.x < P.x + P.w && hover.y > P.y && hover.y < P.y + P.h ? hover : null;
   const over = r => at && at.x > r.x && at.x < r.x + r.w && at.y > r.y && at.y < r.y + r.h;
@@ -969,6 +980,7 @@ function drawBay() {
       if (row.header) {
         g.fillStyle = '#3d4757'; g.font = '10px ui-monospace, monospace';
         g.fillText(row.slot === 'drone' ? `DRONE BAYS  ${myDrones.length}/${MAX_DRONES}`
+                 : row.slot === 'rig'   ? 'COLLECTOR RIG  (its own bay)'
                  : row.slot === 'form'  ? `FORMATION${myDrones.length ? '' : '  (needs drones)'}`
                                         : row.slot.toUpperCase(),
                    r.x + 2, r.y + r.h - 4);
@@ -1003,7 +1015,9 @@ function drawBay() {
         g.font = '11px ui-monospace, monospace';
         continue;
       }
-      const held = row.slot === 'drone' ? myDrones[row.index] : (myFit[row.slot] ?? [])[row.index];
+      const held = row.slot === 'drone' ? myDrones[row.index]
+                 : row.slot === 'rig'   ? myRig
+                 : (myFit[row.slot] ?? [])[row.index];
       const item = EQUIPMENT[held];
       const stock = item ? [] : lockerFor(row.slot);
       if (over(r) && held) tip = tipFor('item', held, shipCtx());
@@ -2231,31 +2245,25 @@ function drawFrame(now) {
 
     // Escort, in whatever formation it is flying. Armed drones are drawn with a
     // barrel, because they are genuinely where some of your bolts come from.
-    const nD = s.drones ?? 0;
+    // Bays plus, if there is one, the rig — which is not a bay and rides one slot
+    // further out. Both the rig and what it is doing are on the wire now, so a
+    // hauling drone is drawn for anybody you can see, not only for yourself. It
+    // used to be owner-only, which is why a pod someone else lifted simply
+    // vanished off your screen with nothing to explain it.
+    const bays = s.drones ?? 0, hasRig = (s.rig ?? 0) > 0;
+    const nD = bays + (hasRig ? 1 : 0);
     if (nD) {
       const layout = formSlots(FORMATION_KEYS[s.form ?? 0] ?? 'line', nD);
       const c0 = Math.cos(s.heading), s0 = Math.sin(s.heading), dr = Math.max(5, R * 0.52);
       const mine2 = id === myId;
       const stuffed = mine2 && holdVol(hold) >= cargoCap;
-      // The bay that goes and gets it. A rig does not sit in formation while a
-      // pod is being pulled in — it flies out, takes it, and comes back.
-      const fetching = mine2 && scoop ? pods.find(pd => pd.id === scoop.id) : null;
-      const rigBay = fetching ? myDrones.findIndex(isCollector) : -1;
-      // Out over the first stretch, back over the rest.
-      const reach = fetching ? (scoop.p < 0.6 ? scoop.p / 0.6 : 1 - (scoop.p - 0.6) / 0.4) : 0;
+      const lifting = hasRig && (s.rgp ?? -1) >= 0;   // out of formation, on a pod
       layout.forEach((pt, d) => {
+        const rig = hasRig && d === nD - 1;
         let dx = s.rx + (c0 * pt.fwd - s0 * pt.lat) * R;
         let dy = s.ry + (s0 * pt.fwd + c0 * pt.lat) * R;
-        if (d === rigBay) {                        // out to the pod and back
-          const k = reach * reach * (3 - 2 * reach);   // ease, so it does not jerk off the mark
-          dx += (fetching.x - dx) * k;
-          dy += (fetching.y - dy) * k;
-          rigAt = { x: dx, y: dy };
-        }
-        const armed = ((s.dmask ?? 0) >> d) & 1;
-        // Only your own bays are on the wire by name, so only your own rigs get
-        // drawn as rigs. Somebody else's escort is just an escort.
-        const rig = mine2 && isCollector(myDrones[d]);
+        if (rig && lifting) { dx = s.rgx; dy = s.rgy; rigAt = mine2 ? { x: dx, y: dy } : rigAt; }
+        const armed = !rig && (((s.dmask ?? 0) >> d) & 1);
         g.save(); g.translate(dx, dy); g.rotate(s.heading);
         g.globalAlpha = lost ? 0.3 : 0.95;
         g.fillStyle = '#0a0f16'; g.fillRect(-dr - 1, -dr - 1, dr * 2 + 2, dr * 2 + 2);
@@ -2273,6 +2281,20 @@ function drawFrame(now) {
         }
         g.fillStyle = '#0a0f16'; g.fillRect(-dr * 0.35, -dr * 0.35, dr * 0.7, dr * 0.7);
         g.globalAlpha = 1; g.restore();
+        if (rig && lifting) {
+          // Holding station over the pod. A ring closing as the lift runs, and a
+          // slow pulse under the hull — enough that a watcher can see the ore is
+          // being taken rather than disappearing, which is the whole complaint.
+          const done = Math.max(0, Math.min(1, (s.rgp ?? 0) / 100));
+          const pulse = 0.5 + 0.5 * Math.sin(now / 110);
+          g.globalAlpha = 0.18 + 0.22 * pulse;
+          g.fillStyle = '#ffd479';
+          g.beginPath(); g.arc(dx, dy, dr * (1.25 + 0.55 * pulse), 0, 7); g.fill();
+          g.globalAlpha = 0.95; g.strokeStyle = '#ffd479'; g.lineWidth = 1.8;
+          g.beginPath(); g.arc(dx, dy, dr * 2.1, -Math.PI / 2, -Math.PI / 2 + done * Math.PI * 2);
+          g.stroke();
+          g.globalAlpha = 1;
+        }
         if (rig && stuffed) {                      // it has stopped, and says so
           g.textAlign = 'center'; g.font = 'bold 9px ui-monospace, monospace';
           g.fillStyle = 'rgba(224,90,90,0.16)'; g.fillRect(dx - 17, dy - dr - 17, 34, 13);
