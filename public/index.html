@@ -1389,10 +1389,6 @@ function drawBay() {
                 : it.kind === 'form' ? FORMATIONS[it.k].blurb
                 : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
-                : it.kind === 'item' && frontierOnly(it.k) && berthWhy()
-                  ? 'frontier stock — a pirate outpost, and a bay there'
-                : it.kind === 'ammo' && whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
-                  ? whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
                 : it.kind === 'device' ? `${DEVICES[it.k].blurb}`
                                       : EQUIPMENT[it.k].blurb;
@@ -1400,15 +1396,27 @@ function drawBay() {
     const sells = sellsAt(G.page, home);
     if (over(r)) tip = tipFor(it.kind, it.k, shipCtx());
 
-    g.globalAlpha = (it.owned || afford ? 1 : 0.5) * (sells ? 1 : 0.45);
+    // Why you cannot buy this, if you cannot. It used to be written into the
+    // blurb line, which reads exactly like a description — the row looked normal,
+    // said something odd where its description should be, and refused the click.
+    // A locked row now looks locked.
+    const locked = it.kind === 'item' && frontierOnly(it.k) && berthWhy()
+        ? 'Sold only at a pirate outpost, and only if you rent a bay there'
+      : it.kind === 'ammo'
+        ? whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
+      : null;
+
+    g.globalAlpha = (it.owned || afford ? 1 : 0.5) * (sells ? 1 : 0.45) * (locked ? 0.55 : 1);
     g.fillStyle = it.owned ? 'rgba(125,224,138,0.10)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
     g.fillRect(r.x, r.y, r.w, r.h);
     g.strokeStyle = it.owned ? '#2c3d55' : afford ? '#3d5876' : '#2c3d55'; g.lineWidth = 1;
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
-    g.fillStyle = '#cfe4ff'; g.font = '12px ui-monospace, monospace';
-    g.fillText(name, r.x + 12, r.y + 20);
-    g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
-    g.fillText(blurb, r.x + 12, r.y + 35);
+    g.fillStyle = locked ? '#8a93a3' : '#cfe4ff'; g.font = '12px ui-monospace, monospace';
+    g.fillText(locked ? '\u{1F512} ' + name : name, r.x + 12, r.y + 20);
+    // A locked row says the reason where its description would be, in the colour
+    // the game uses for "no", not the colour it uses for prose.
+    g.fillStyle = locked ? '#e0a53f' : '#66748c'; g.font = '10px ui-monospace, monospace';
+    g.fillText(locked ?? blurb, r.x + 12, r.y + 35);
     g.textAlign = 'right';
     if (it.owned) { g.fillStyle = '#7de08a'; g.font = '11px ui-monospace, monospace';
                     g.fillText((it.kind === 'hull' ? it.k === myHull : it.k === myForm) ? 'FLYING' : 'owned — fly it',

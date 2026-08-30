@@ -8,9 +8,12 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.24';
+export const VERSION = '0.25';
 
 export const PATCHES = [
+  { v: '0.25', notes: [
+    'Anything you cannot buy yet now looks locked and says why, instead of just refusing',
+  ] },
   { v: '0.24', notes: [
     'Store shelves scroll instead of squeezing every row shorter as they grow',
   ] },
