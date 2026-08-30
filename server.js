@@ -747,7 +747,7 @@ wss.on('connection', (ws, req) => {
       if (!atStation() || !item || !(P.gear[m.item] > 0)) return;
       if (!(i >= 0 && i < ship.drones.length) || ship.drones[i]) return;
       const next = [...ship.drones]; next[i] = m.item;
-      const clean = sanitiseDrones(next, ship.fit);
+      const clean = sanitiseDrones(next, ship.fit, undefined, slotsOf(ship.hull).tech);
       if (clean[i] !== m.item) return;              // refused, e.g. a duplicate technology
       if (--P.gear[m.item] <= 0) delete P.gear[m.item];
       refit(ship, ship.hull, ship.fit, clean);

@@ -179,7 +179,25 @@ console.log('\nships and technology');
   const wheel = resolve('vanguard', { weapon: [], generator: [], tech: ['flywheel'] });
   check('a technology can change it', wheel.capacitor > resolve('vanguard').capacitor,
     `${resolve('vanguard').capacitor}s -> ${Math.round(wheel.capacitor)}s`);
-  check('and it costs you something', wheel.shieldRegen < resolve('vanguard').shieldRegen);
+  // This used to read "it costs you shieldRegen", which the old Flywheel did — and
+  // the old Flywheel also did nothing, because the capacitor cancels out of the
+  // duty cycle of a boost you cycle. It buys one long hold now and charges for it
+  // in the refill, which is the only price that makes a bigger tank a decision.
+  check('and it costs you the refill', wheel.recharge < resolve('vanguard').recharge,
+    `recharge ${resolve('vanguard').recharge} -> ${wheel.recharge.toFixed(2)}`);
+  // The measurement the reshape came from: a capacitor is how long ONE hold lasts,
+  // never what fraction of the time you get to hold it.
+  const duty = st => st.recharge / (1 + st.recharge);
+  check('a bigger tank alone would not have bought any more uptime', (() => {
+    const bare = resolve('vanguard');
+    const onlyCap = { ...bare, capacitor: bare.capacitor * 2 };
+    return Math.abs(duty(onlyCap) - duty(bare)) < 1e-9;
+  })(), 'the capacitor cancels out of recharge/(1+recharge) — doubling it changes nothing');
+  check('so the technologies that move uptime move the RATE instead', (() => {
+    const fast = resolve('vanguard', { weapon: [], generator: [], tech: ['exciter'] });
+    const slow = resolve('vanguard', { weapon: [], generator: [], tech: ['flywheel'] });
+    return duty(fast) > duty(resolve('vanguard')) && duty(slow) < duty(resolve('vanguard'));
+  })(), 'a Fast-Cycle Exciter buys uptime and a Flywheel sells it for one long hold');
   const gen = resolve('vanguard', { weapon: [], generator: ['cellC', 'cellC'], tech: [] });
   check('generators raise the free trickle', gen.sustain > resolve('vanguard').sustain,
     `+${Math.round(BOOST * resolve('vanguard').sustain * 100)}% -> +${Math.round(BOOST * gen.sustain * 100)}% forever`);

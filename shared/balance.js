@@ -519,8 +519,18 @@ export function report() {
 // gear.js already enforces that every technology costs something, so this should
 // always come back empty. It is here so that if one ever slips in, the report
 // names it rather than the model quietly pricing it like an ordinary purchase.
+// Anything that multiplies and surrenders nothing — the one case where nerfing is
+// the right answer rather than raising the content it beats.
+//
+// This used to test the SIGN of every mod, which is only the same question when
+// high is better. A cost paid in a low-is-better attribute is a positive number:
+// `shieldDelay 'mul' +0.5` means your shields take half again as long to start,
+// which is a real price, and the old check called it free and would have refused
+// every technology that charged in one. What makes a mod a benefit is whether it
+// moves the attribute the way the attribute wants to go.
+const helps = ([attr, , v]) => (ATTRS[attr]?.better === 'high') === (v > 0);
 export const freeMultipliers = () => Object.entries(EQUIPMENT)
-  .filter(([, e]) => e.mods.some(([, op]) => op === 'mul') && e.mods.every(([, , v]) => v >= 0))
+  .filter(([, e]) => e.mods.some(([, op]) => op === 'mul') && e.mods.every(helps))
   .map(([k, e]) => ({ key: k, name: e.name }));
 
 // Kits and devices are reported separately only because they are priced in a

@@ -30,6 +30,7 @@ export const STORE_PAGES = [
   { key: 'rocket',    name: 'Launchers',   hint: 'rockets — slower, and they follow you' },
   { key: 'generator', name: 'Generators',  hint: 'reactor and shield capacity' },
   { key: 'tech',      name: 'Technology',  hint: 'one of each, every one a trade' },
+  { key: 'techx',     name: 'Deep Tech',   hint: 'the frontier rungs — a pirate hulk stocks these' },
   { key: 'ammo',      name: 'Ammunition',  hint: 'sold by the crate, carried without limit' },
   { key: 'kits',      name: 'Repair',      hint: 'single use, and only sold at a dock' },
   { key: 'devices',   name: 'Beacons',     hint: 'single use, and the way home' },
@@ -55,6 +56,15 @@ export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}
     case 'ammo':   return AMMO_KEYS.map(k => ({ kind: 'ammo', k, owned: false }));
     case 'kits':   return KIT_KEYS.map(k => ({ kind: 'kit', k, owned: false }));
     case 'devices': return DEVICE_KEYS.map(k => ({ kind: 'device', k, owned: false }));
+    // The technology shelf outgrew one page: fifteen rows on a 30.5px step drew a
+    // 22.5px row and the blurb underneath it clipped. Split at the frontier rung,
+    // which is the line the shelf already has.
+    case 'tech':    return Object.keys(EQUIPMENT)
+                      .filter(k => EQUIPMENT[k].slot === 'tech' && (EQUIPMENT[k].tier ?? 1) < 3)
+                      .map(k => ({ kind: 'item', k, owned: false }));
+    case 'techx':   return Object.keys(EQUIPMENT)
+                      .filter(k => EQUIPMENT[k].slot === 'tech' && (EQUIPMENT[k].tier ?? 1) >= 3)
+                      .map(k => ({ kind: 'item', k, owned: false }));
     default:       return Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === page)
                      .map(k => ({ kind: 'item', k, owned: false }));
   }
@@ -87,12 +97,22 @@ export function fitsIn(target, { gear = {}, fit = emptyFit(), drones = [] } = {}
 // it, flipped upward when it would run off the bottom of the panel.
 export const PICK_ROW = 30;
 export function pickerLayout(G, row, items) {
-  const w = G.colW + 40, h = 8 + items.length * PICK_ROW;
+  const w = G.colW + 40;
   const x = Math.min(row.r.x, G.panel.x + G.panel.w - w - 8);
+  // The chooser used to be as tall as its list, which was fine at four
+  // technologies and ran clean off the panel at fifteen. It takes as many as fit
+  // and no more — `fitsIn` already hands them over best first, so what is cut is
+  // the bottom of the list rather than the part you wanted.
+  const room = G.panel.h - 16;
+  const most = Math.max(1, Math.floor((room - 8) / PICK_ROW));
+  const shown = items.slice(0, most);
+  const h = 8 + shown.length * PICK_ROW;
   const below = row.r.y + row.r.h + 4;
-  const y = below + h > G.panel.y + G.panel.h - 8 ? Math.max(G.panel.y + 8, row.r.y - h - 4) : below;
-  return { box: { x, y, w, h },
-           rows: items.map((k, i) => ({ k, r: { x: x + 6, y: y + 4 + i * PICK_ROW, w: w - 12, h: PICK_ROW - 4 } })) };
+  const y = below + h > G.panel.y + G.panel.h - 8
+    ? Math.max(G.panel.y + 8, Math.min(row.r.y - h - 4, G.panel.y + G.panel.h - h - 8))
+    : below;
+  return { box: { x, y, w, h }, cut: items.length - shown.length,
+           rows: shown.map((k, i) => ({ k, r: { x: x + 6, y: y + 4 + i * PICK_ROW, w: w - 12, h: PICK_ROW - 4 } })) };
 }
 
 export function bayLayout(VIEW_W, VIEW_H, s = {}) {

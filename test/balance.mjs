@@ -138,16 +138,30 @@ console.log('\nmoving an anchor moves everything downstream of it');
 // points means dividing by the base rate, so raising the base rate cannot make a
 // Scavenger Rig dearer — it only changes how many points those credits buy. That
 // is correct and it is worth having a test say so, because it looks like a bug.
-check('double the base rate and every price the model reads in hit points doubles', (() => {
+// This used to split modules into "has cargo" and "does not" and demand each be
+// exactly unchanged or exactly doubled. That held while nothing mixed the two, and
+// the Refinery Bulkhead mixes them — cargo up, hull down — so its price is part
+// credits and part hit points and lands honestly between. The claim was never
+// really about cargo: it is that raising what a hit point costs raises the
+// hit-point half of every price and touches nothing else.
+// This used to split modules into "has cargo" and "does not" and demand each be
+// exactly unchanged or exactly doubled, which held only while nothing mixed the
+// two. The Refinery Bulkhead does — cargo up, hull DOWN — and its price falls when
+// hit points get dearer, because the hit-point half of it is a subtraction. Both
+// earlier attempts at this rule were wrong about that. Stated exactly: the ore
+// half is fixed in credits and the hit-point half scales, whichever sign it has.
+check('double the base rate and only the hit-point half of a price moves', (() => {
   const A = { ...ANCHORS, base: ANCHORS.base * 2 };
-  for (const [k, e] of Object.entries(EQUIPMENT)) {
+  for (const [, e] of Object.entries(EQUIPMENT)) {
     const a = priceFor(e.mods, e.tier ?? 1).price, b = priceFor(e.mods, e.tier ?? 1, { A }).price;
-    const want = e.mods.some(([at]) => at === 'cargo') ? a : a * 2;
-    if (a > 0 && !near(b, want, 1e-9)) return false;
+    if (!(a > 0)) continue;
+    const ore = e.mods.filter(([at]) => at === 'cargo');
+    const orePart = ore.length ? priceFor(ore, e.tier ?? 1).price : 0;
+    if (!near(b, 2 * a - orePart, 1e-6)) return false;
   }
   return true;
-})(), `all ${Object.keys(EQUIPMENT).length} modules, exactly — except the three collector rigs, ` +
-      'which are priced in the ore they will lift and do not care what hit points cost');
+})(), `all ${Object.keys(EQUIPMENT).length} modules — the collector rigs are pure ore and do not ` +
+      'move, and a Refinery Bulkhead gets CHEAPER, because the hull it tears out costs more too');
 check('flatten the premium and the ladder stops climbing, without anything going negative', (() => {
   const A = { ...ANCHORS, premium: 0 };
   const at = t => priceFor([['damage', 'add', 100]], t, { A }).price;
@@ -260,10 +274,17 @@ check('every attribute a ship has is either priced or named as unpriceable', (()
 })(), `${Object.keys(WORTH).length} priced, ${Object.keys(UNPRICED).length} named as gaps, ${Object.keys(ATTRS).length} attributes in all`);
 check('and every gap says why, not just that', Object.values(UNPRICED).every(v => v.length > 40),
   Object.keys(UNPRICED).join(', '));
+// The count used to be hard-coded at two, which was the Signal Damper's mod count
+// on the day it was written. What matters is that a module the model cannot read
+// says so and names every attribute it could not read, however many that is —
+// silence scored as zero is the failure this guards against.
 check('a module the model can read nothing on reports that, rather than reporting zero', (() => {
   const c = capabilityOf(EQUIPMENT.damper.mods);
-  return c.points === 0 && c.unpriced.length === 2;
-})(), `Signal Damper scores nothing and names signature and radar as the reason`);
+  const attrs = EQUIPMENT.damper.mods.map(([a]) => a);
+  return c.points === 0 && c.unpriced.length === attrs.length
+      && attrs.every(a => c.unpriced.includes(a));
+})(), `Signal Damper scores nothing and names all ${EQUIPMENT.damper.mods.length} of ` +
+      `${EQUIPMENT.damper.mods.map(([a]) => a).join(', ')} as the reason`);
 check('nothing that has a price is missing from the report', (() => {
   const seen = new Set([...report(), ...consumableReport(KITS, DEVICES)].map(r => r.key));
   return [...Object.keys(HULLS), ...Object.keys(EQUIPMENT), ...Object.keys(AMMO),

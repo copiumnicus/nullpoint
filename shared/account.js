@@ -65,7 +65,7 @@ export function sanitiseAccount(a, seq, now) {
   return {
     token: a.token, seq, co, name: typeof a?.name === 'string' ? a.name : callsign(seq),
     hull: flying, fit: sanitiseFit(flying, a?.fit), gear, hulls,
-    drones: sanitiseDrones(a?.drones, sanitiseFit(flying, a?.fit)),
+    drones: sanitiseDrones(a?.drones, sanitiseFit(flying, a?.fit), undefined, slotsOf(flying).tech),
     // Collectors used to live in a combat bay. Anyone who fitted one before this
     // keeps it — it moves into the rig bay rather than being dropped on the floor,
     // and sanitiseDrones has already refused to leave it in the rack.

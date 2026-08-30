@@ -64,9 +64,18 @@ check('a bare hull sees what a damped one cannot',
   stepContacts(blind, [blind, bogey], dt).get(5) === FRESH
   && !stepContacts(scout, [scout, bogey], dt).has(5), '1800px out, kestrel radar 2000 vs 1500 damped');
 const quiet = resolve('bulwark', fit({ tech: ['damper'] }));
-check('a damper halves your signature and costs you range',
-  quiet.signature === HULLS.bulwark.attrs.signature / 2 && quiet.radar < HULLS.bulwark.attrs.radar,
-  `${quiet.signature}s, radar ${quiet.radar}`);
+const bare = resolve('bulwark', fit());
+// This used to demand the damper halve your signature exactly. It buys more than
+// signature now, because signature alone was worth nothing outside PvP: nothing an
+// alien does reads it, so against every hostile in the game the old damper was a
+// quarter of your radar for no return at all. It still makes you quiet, and it now
+// also gets your shields started again sooner — which is what a ship breaking
+// contact is actually trying to do.
+check('a damper makes you quieter and mends you sooner, and costs you sight',
+  quiet.signature < bare.signature && quiet.shieldDelay < bare.shieldDelay
+  && quiet.radar < bare.radar,
+  `signature ${bare.signature} -> ${quiet.signature.toFixed(2)}, ` +
+  `delay ${bare.shieldDelay} -> ${quiet.shieldDelay.toFixed(2)}s, radar ${bare.radar} -> ${quiet.radar}`);
 
 console.log('\nsector isolation');
 const other = mk(6, 'h', 'bulwark', 10, 10);                   // same spot, different map: not in the list

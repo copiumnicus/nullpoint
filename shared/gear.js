@@ -131,18 +131,95 @@ export const EQUIPMENT = {
   // Tiered like every other shelf, because "which technology" was the only choice
   // in the shop with no ladder behind it: four things at one rung, and nothing to
   // climb toward. Tier 3 and up is frontier stock — see FRONTIER below.
-  plating:  { name: 'Composite Plating', slot: 'tech', tier: 1, price: 2600,
+  // A technology may multiply UP only an attribute a rack cannot already run away
+  // with, and may multiply DOWN anything. Measured spans: a rack moves hull, speed,
+  // radar, signature, range and rate by x1.00 and shield by x3.00 — but it moves
+  // DAMAGE by x68. A benefit that grows sixty-eight times with your guns cannot
+  // keep a fixed price: a `damage x1.22` technology prices at 462 cr against a new
+  // pilot and hands a finished ship 71,445 cr of capability. That is why there is
+  // no damage technology and no rocketVolley technology on this shelf, and why the
+  // rocket entry below buys DELIVERY instead. All four of the originals already
+  // obeyed this; nobody had written it down.
+
+  // --- hull and hold ---------------------------------------------------------
+  plating:  { name: 'Composite Plating', slot: 'tech', tier: 1, price: 6700,
               blurb: 'A third more hull, and slower with it.',
               mods: [['hull', 'mul', 0.35], ['speed', 'mul', -0.09]] },
-  damper:   { name: 'Signal Damper', slot: 'tech', tier: 2, price: 3400,
-              blurb: 'Hard to track, and half blind.',
-              mods: [['signature', 'mul', -0.5], ['radar', 'mul', -0.25]] },
-  expander: { name: 'Hold Expander', slot: 'tech', tier: 1, price: 2200,
+  expander: { name: 'Hold Expander', slot: 'tech', tier: 1, price: 10100,
               blurb: 'Room for more ore, and slower with it.',
               mods: [['cargo', 'mul', 0.65], ['speed', 'mul', -0.12]] },
-  flywheel: { name: 'Reactor Flywheel', slot: 'tech', tier: 2, price: 4200,
-              blurb: 'A far bigger capacitor, and slower shields.',
-              mods: [['capacitor', 'mul', 0.55], ['shieldRegen', 'mul', -0.22]] },
+  bulkhead: { name: 'Refinery Bulkhead', slot: 'tech', tier: 2, price: 11100,
+              blurb: 'Room made by taking out the frames that were holding you together.',
+              mods: [['cargo', 'mul', 0.90], ['hull', 'mul', -0.25]] },
+  lattice:  { name: 'Ablative Lattice', slot: 'tech', tier: 3, price: 14600,
+              blurb: 'Half again as much ship, and it does not heal.',
+              mods: [['hull', 'mul', 0.55], ['shieldRegen', 'mul', -0.60]] },
+
+  // --- the reactor -----------------------------------------------------------
+  // power.js normalises draw, so the duty cycle of a boost you cycle is
+  // recharge/(1+recharge) — the CAPACITOR CANCELS OUT of it. The old Flywheel sold
+  // a bigger tank as though that were more power; measured, a 55% larger capacitor
+  // moved every hull's duty cycle by about one point. These three are the only
+  // honest reactor trades there are: the floor, the period, and one long hold.
+  trim:     { name: 'Cold-Running Trim', slot: 'tech', tier: 2, price: 8000,
+              blurb: 'The reactor never quite lets go. It never quite fills, either.',
+              mods: [['sustain', 'mul', 0.55], ['capacitor', 'mul', -0.40]] },
+  exciter:  { name: 'Fast-Cycle Exciter', slot: 'tech', tier: 2, price: 8000,
+              blurb: 'Half the tank, filled twice as often.',
+              mods: [['recharge', 'mul', 0.60], ['capacitor', 'mul', -0.45]] },
+  flywheel: { name: 'Reactor Flywheel', slot: 'tech', tier: 2, price: 8000,
+              blurb: 'One very long hold, and a very long wait for the next.',
+              mods: [['capacitor', 'mul', 0.90], ['recharge', 'mul', -0.40]] },
+
+  // --- the shield clock ------------------------------------------------------
+  // Not more shield: WHEN. Which of these two is right is arithmetic on the gap
+  // between hits — regen x (gap - delay) — so they cross over, and where they cross
+  // depends on the hull. Snap wins under about 6.7s of quiet on a Kestrel and
+  // 13.4s on a Bulwark; the Exchanger wins above 9.2s and 18.4s.
+  snap:      { name: 'Snap Regulator', slot: 'tech', tier: 2, price: 8000,
+               blurb: 'It starts again the moment they look away. It just never hurries.',
+               mods: [['shieldDelay', 'mul', -0.55], ['shieldRegen', 'mul', -0.45]] },
+  exchanger: { name: 'Deep-Bank Exchanger', slot: 'tech', tier: 3, price: 9300,
+               blurb: 'Twice the flow, once it has decided to start.',
+               mods: [['shieldRegen', 'mul', 0.85], ['shieldDelay', 'mul', 0.60]] },
+
+  // --- reach against legs ----------------------------------------------------
+  // The two poles of kiting, and each is the other's price.
+  spars:     { name: 'Kinetic Braking Spars', slot: 'tech', tier: 3, price: 9300,
+               blurb: 'You reach further because you have stopped going anywhere.',
+               mods: [['weaponRange', 'mul', 0.35], ['speed', 'mul', -0.28]] },
+  interdict: { name: 'Interdiction Trim', slot: 'tech', tier: 3, price: 9300,
+               blurb: 'You will get there first. You will have to.',
+               mods: [['speed', 'mul', 0.22], ['weaponRange', 'mul', -0.35]] },
+  // A bolt is LED, and displacement goes with the square of time — so acceleration
+  // is the stat that dodges one and top speed is the stat that runs from it.
+  vanes:     { name: 'Gravitic Vanes', slot: 'tech', tier: 2, price: 8000,
+               blurb: 'You will not outrun it. You will not be where the bolt was, either.',
+               mods: [['accel', 'mul', 0.50], ['speed', 'mul', -0.14]] },
+
+  // --- rockets ---------------------------------------------------------------
+  // launch() divides the volley across the count, so multiplying the COUNT alone
+  // conserves total damage and splits it into more, lighter seekers. More of them
+  // survive a Bandit's dropout; each one hurts less; and you burn half again as
+  // many warheads. Delivery, not damage — which is the only rocket lever a fixed
+  // price can hold.
+  reloads:   { name: 'Racked Reloads', slot: 'tech', tier: 3, price: 11000,
+               blurb: 'More of them, thrown from closer.',
+               mods: [['rockets', 'mul', 0.50], ['weaponRange', 'mul', -0.20]] },
+
+  // --- what you can see, and what can see you --------------------------------
+  array:     { name: 'Long-Baseline Array', slot: 'tech', tier: 2, price: 8000,
+               blurb: 'You will see them a long way off. They will still be a long way off.',
+               mods: [['radar', 'mul', 0.55], ['weaponRange', 'mul', -0.25],
+                      ['signature', 'mul', 0.60]] },
+  // The old Damper bought a stat nothing in the game reads outside PvP and charged
+  // a quarter of your radar for it — which also costs you salvage, since the server
+  // filters pods by radar reach. It keeps the quiet and now also buys the thing a
+  // quiet ship is actually doing: breaking contact and coming back whole.
+  damper:    { name: 'Signal Damper', slot: 'tech', tier: 2, price: 8000,
+               blurb: 'Hard to hold, quick to mend, and half blind.',
+               mods: [['signature', 'mul', -0.55], ['shieldDelay', 'mul', -0.35],
+                      ['radar', 'mul', -0.40]] },
 };
 
 // A collector lives in its own bay, not in a combat one. It used to sit in the
@@ -213,15 +290,27 @@ export const fitList = fit => SLOTS.flatMap(s => fit?.[s] ?? []);
 // Only real items, only as many as there are drones. A drone may hold anything,
 // including a second of something the ship already has — except a technology,
 // which stays unique across the whole ship-and-escort.
-export function sanitiseDrones(list, fit, max = MAX_DRONES) {
+// `techCap` is how many technologies the SHIP may run in total, hull and escort
+// together — normally slotsOf(hull).tech.
+//
+// It used to be uncapped, and only duplicates were refused. That made the escort a
+// second technology rack: a Bulwark the shop says has one tech slot flew all four
+// at once, and a twelve-drone Kestrel could have flown sixteen. Tech slots are
+// meant to be the thing that makes an interceptor an interceptor, and they
+// differentiated nothing at all. It is the same bug sanitiseFit already names one
+// level down — "an interceptor with three plating slots out-tanks a cruiser" —
+// and the answer is the same: the hull says how many, wherever they are mounted.
+export function sanitiseDrones(list, fit, max = MAX_DRONES, techCap = Infinity) {
   const out = [];
   const techs = new Set(fit?.tech ?? []);
   for (const k of (Array.isArray(list) ? list : []).slice(0, max)) {
     if (k === null || !EQUIPMENT[k]) { out.push(null); continue; }
     if (EQUIPMENT[k].kind === 'rocket') { out.push(null); continue; }   // no rockets on a drone
     if (isCollector(k)) { out.push(null); continue; }                  // a rig has its own bay
-    if (EQUIPMENT[k].slot === 'tech' && techs.has(k)) { out.push(null); continue; }
-    if (EQUIPMENT[k].slot === 'tech') techs.add(k);
+    if (EQUIPMENT[k].slot === 'tech') {
+      if (techs.has(k) || techs.size >= techCap) { out.push(null); continue; }
+      techs.add(k);
+    }
     out.push(k);
   }
   return out;

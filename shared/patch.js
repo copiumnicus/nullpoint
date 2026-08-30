@@ -8,9 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.22';
+export const VERSION = '0.23';
 
 export const PATCHES = [
+  { v: '0.23', notes: [
+    'Eleven new technologies, and the shelf is tiered — Deep Tech is its own page',
+    'The Reactor Flywheel did nothing: a bigger tank cannot buy you more uptime',
+    'So the reactor shelf is three real trades now — the floor, the rate, or one long hold',
+    'Shield technologies buy WHEN, not how much: Snap starts sooner, Deep-Bank pours harder',
+    'The Signal Damper mends you sooner too — signature alone was worth nothing to aliens',
+    'Your hull decides how many technologies you fly. Drones were a second tech rack',
+    'Composite Plating and Hold Expander cost what they are worth now',
+  ] },
   { v: '0.22', notes: [
     'MK-III emitters and up, and Tandem launchers and up, are frontier stock now',
     'Your company issues the starter kit — the rest comes off a pirate hulk',
