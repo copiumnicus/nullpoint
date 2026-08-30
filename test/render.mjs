@@ -12,7 +12,7 @@ import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS } from '../shared/cargo.js';
-import { ALIENS } from '../shared/aliens.js';
+import { ALIENS, WILD } from '../shared/aliens.js';
 import { SIGHT_R } from '../shared/sim.js';
 import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
 import { NAME_MAX } from '../shared/signup.js';
@@ -493,6 +493,23 @@ const dismiss = () => {
     `${L.maxScroll} to scroll; wheel, click-away and Escape all drive it`);
 }
 
+// Every hostile in the bestiary, drawn. The harness has only ever fed `drifter` and
+// `bandit` rows, so a new outline could ship having never once reached a canvas —
+// and an outline is exactly the kind of thing that produces a NaN from a bad point
+// list. One of each, spread across the field, put through the real draw path.
+{
+  dismiss();
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: WILD.map((kind, i) => packShip({
+    id: 1_000_000 + i, x: 4200 + (i % 4) * 700, y: 3400 + Math.floor(i / 4) * 700,
+    heading: i * 0.7, charge: 0, co: 'x', hull: kind,
+    hp: 100 - i * 6, sh: 90 - i * 5, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 1, name: '',
+  })) });
+  frame(t += 16); frames++;
+  frame(t += 16); frames++;
+  console.log(`bestiary: all ${WILD.length} hostile outlines drawn — ${WILD.join(' ')}`);
+}
+
 // The safe-zone badge. Sanctuary has been in the game since the beginning and had
 // never once said so — you learned the base ring by noticing nothing shot you, and
 // the portal mouth you never learned at all, because nothing draws that 288px
@@ -580,16 +597,40 @@ const dismiss = () => {
   // No station, standing at the dock, plenty of money: it must offer the plot.
   feed({ t: 'map', map: 'm1' });
   feed({ t: 's', ships: [me(ring.x, ring.y)], credits: 9_000_000, docked: true, labs: [], lab: null });
+  // Before opening anything: a pilot who has never heard of a research station has
+  // to find out it exists. The HUD says so once it is a goal rather than a nag.
+  trace = []; frame(t += 16); frames++;
+  const hud = trace; trace = null;
+  if (!hud.some(c => /^fillText R — research station/.test(c)))
+    errs.push('a pilot with the money for a research station was never told one existed');
   evt('keydown', { key: 'r' });
   trace = []; frame(t += 16); frames++;
   let out = trace; trace = null;
   if (!out.some(c => /^fillText Stake a plot/.test(c)))
     errs.push('pressing R with no research station offered no way to get one');
+  // Staking is permanent and costs 500,000, so one click is not the transaction.
   sent.length = 0;
   click(L.rows[0].r); frame(t += 16); frames++;
+  if (sent.some(m => m.t === 'stake'))
+    errs.push('one click spent 500,000 credits on a permanent thing with no confirmation');
+  trace = []; frame(t += 16); frames++;
+  const asked = trace; trace = null;
+  if (!asked.some(c => /permanent/i.test(c)))
+    errs.push('the research panel asked for confirmation without saying it was permanent');
+  if (!asked.some(c => /research/i.test(c)))
+    errs.push('the confirmation never said what a research station is for');
+  // Clicking away takes the offer back off the table rather than leaving it armed.
+  click({ x: 4, y: 4, w: 1, h: 1 }); frame(t += 16); frames++;
+  evt('keydown', { key: 'r' }); frame(t += 16); frames++;          // reopen
+  sent.length = 0;
+  click(L.rows[0].r); frame(t += 16); frames++;
+  if (sent.some(m => m.t === 'stake'))
+    errs.push('a confirmation survived the panel being closed, so a stray click bought a plot');
+  // Twice, deliberately, is the transaction.
+  click(L.rows[0].r); frame(t += 16); frames++;
   if (!sent.some(m => m.t === 'stake'))
-    errs.push('clicking the only row in an empty research panel did not stake a plot');
-  else console.log(`research: R offers the plot for ${LAB_PRICE} and the row buys it`);
+    errs.push('confirming the plot twice still did not stake it');
+  else console.log(`research: the plot costs ${LAB_PRICE} and takes two deliberate clicks to place`);
 
   // With a station, the panel is three ladders — and it will not sell you a rung
   // while you are sitting at the dock rather than at the station itself.

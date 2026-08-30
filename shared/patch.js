@@ -8,9 +8,17 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.35';
+export const VERSION = '0.36';
 
 export const PATCHES = [
+  { v: '0.36', notes: [
+    'The deep sectors past the gates were empty. A Thresher holds each one now',
+    'It is a mirror: everything you put into it comes back out of it',
+    'Standing still costs you 88% of your ship. Sidestepping costs 35%',
+    'The first fight whose difficulty is set by your gun rather than by its hull',
+    'Staking a research plot asks twice now, and says what it is for and why it sticks',
+    'The HUD tells you a research station exists once you are halfway to affording one',
+  ] },
   { v: '0.35', notes: [
     'Research stations: stake a plot in your own ring for 500k, with your name on it',
     'Everyone can see everyone\'s. Only yours opens, and it grows as you build on it',

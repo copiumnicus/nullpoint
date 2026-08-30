@@ -120,6 +120,10 @@ let myFoldTo = null;              // and which hangar a beacon takes you to
 let labs = new Map();             // every research station in this sector
 let myLab = null;                 // { mods, income } if you have one
 let labOpen = false;              // the research panel
+// Staking is permanent and costs 500,000, and a pilot doing it for the first time
+// has no idea the plot is for good. One click was the whole transaction, which is
+// the wrong shape for the most expensive irreversible thing in the game.
+let labConfirm = false;
 // The balance the server last told us, and when. The counter runs UP from that
 // at the rate the server also told us — it never invents money, it only shows
 // the money that is already accruing between one bank and the next. Server truth
@@ -220,11 +224,27 @@ function drawLab() {
     g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
     g.strokeStyle = why ? '#243448' : '#4a6785'; g.lineWidth = 1;
     g.strokeRect(row.r.x + .5, row.r.y + .5, row.r.w - 1, row.r.h - 1);
-    g.font = '12px ui-monospace, monospace'; g.fillStyle = why ? '#66748c' : '#cfe4ff';
-    g.fillText('Stake a plot in the yard', row.r.x + 12, row.r.y + 22);
-    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
-    g.fillText(why ?? 'a bay of your own, in your company ring, with your name on it',
-               row.r.x + 12, row.r.y + 42);
+    g.font = '12px ui-monospace, monospace';
+    g.fillStyle = why ? '#66748c' : labConfirm ? '#ffd479' : '#cfe4ff';
+    g.fillText(labConfirm && !why ? 'Place it here? This is permanent'
+                                  : 'Stake a plot in the yard', row.r.x + 12, row.r.y + 22);
+    g.font = '10px ui-monospace, monospace';
+    g.fillStyle = labConfirm && !why ? '#ffd479' : '#7f8fa6';
+    // Two lines on the confirm, because a pilot doing this the first time knows
+    // none of it: what the thing is FOR, and that the spot cannot be moved.
+    if (why) {
+      g.fillText(why, row.r.x + 12, row.r.y + 42);
+    } else if (labConfirm) {
+      g.fillText('Where you research everything past the shops — hull, shields, mining.',
+                 row.r.x + 12, row.r.y + 40);
+      g.fillText('The spot is permanent, so pick somewhere safe and easy to get back to.',
+                 row.r.x + 12, row.r.y + 52);
+    } else {
+      g.fillText('Researches what the shops cannot sell — and pays you while you are away.',
+                 row.r.x + 12, row.r.y + 40);
+      g.fillText('Placed in your company ring, with your name on it, for good.',
+                 row.r.x + 12, row.r.y + 52);
+    }
     g.textAlign = 'right'; g.font = '12px ui-monospace, monospace';
     g.fillStyle = why ? '#66748c' : '#ffd479';
     g.fillText(`${fmtCredits(LAB_PRICE)} ${CURRENCY.short}`, row.r.x + row.r.w - 12, row.r.y + 26);
@@ -272,12 +292,20 @@ function drawLab() {
 function labClick(v) {
   const L = labPanel(VIEW_W, VIEW_H);
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
-  if (inside(L.close) || !inside(L.panel)) { labOpen = false; return true; }
+  if (inside(L.close) || !inside(L.panel)) { labOpen = false; labConfirm = false; return true; }
   const mask = myLab?.mods ?? 0, near = atMyLab();
   if (!myLab) {
-    if (!inside(L.rows[0].r)) return true;
+    // Anywhere but the row takes the offer back off the table, so a stray click
+    // cannot be the second half of a confirmation the pilot has forgotten about.
+    if (!inside(L.rows[0].r)) { labConfirm = false; return true; }
     const why = whyNotStake({ credits, docked: atDock, has: false });
-    if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+    if (why) { labConfirm = false; say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+    if (!labConfirm) {
+      labConfirm = true;
+      say('Permanent — your station keeps this spot for good. Click again to place it', '#ffd479');
+      return true;
+    }
+    labConfirm = false;
     send({ t: 'stake' });
     return true;
   }
@@ -889,7 +917,7 @@ addEventListener('keydown', e => {
   if (k === 'i') { invOpen = !invOpen; sysOpen = false; bayOpen = false; }
   // R for research. Its own key rather than a SPACE action, because SPACE is
   // whatever you are standing on and this is a place you go to on purpose.
-  if (k === 'r') { labOpen = !labOpen; sysOpen = false; bayOpen = false; invOpen = false; }
+  if (k === 'r') { labOpen = !labOpen; labConfirm = false; sysOpen = false; bayOpen = false; invOpen = false; }
   if (k === 'o') { setOpen = !setOpen; sysOpen = bayOpen = invOpen = false; }
   if (k === 'n') { nextTrack(); }
   if (e.key === '[' || e.key === ']') {
@@ -3658,6 +3686,20 @@ function drawFrame(now) {
     const rank = myRank ?? levelFor(myXp);
     g.fillStyle = '#cfe4ff';
     g.fillText(`LVL ${rank.level}`, 16 + 96, 124);
+    // Nobody buys a 500,000 credit thing they have never heard of. The research
+    // station is the whole back half of the game and it lives behind a key nothing
+    // else mentions, so the HUD says it exists — but only once you are close enough
+    // for it to be a goal rather than a nag. Half the price is about two hours of
+    // flying away, which is when it starts being a thing you are saving for.
+    if (!myLab && credits >= LAB_PRICE * 0.5) {
+      const near = credits >= LAB_PRICE;
+      g.fillStyle = near ? '#7de08a' : '#5b6b85';
+      g.font = '11px ui-monospace, monospace';
+      g.fillText(near ? `R — research station, ${fmtCredits(LAB_PRICE)} ${CURRENCY.short}`
+                      : `R — research station at ${fmtCredits(LAB_PRICE)} ${CURRENCY.short}`,
+                 16 + 152 + 60 + 12, 124);
+      g.font = '12px ui-monospace, monospace';
+    }
     const bx = 16 + 152, bw2 = 60;
     g.fillStyle = '#1b222d'; g.fillRect(bx, 117, bw2, 6);
     g.fillStyle = '#8ab4e6'; g.fillRect(bx, 117, bw2 * progress(myXp), 6);

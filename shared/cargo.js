@@ -89,6 +89,7 @@ export const husk = (rung, k) => {
 //   harrier      2   Nickel        2    42 of a 60      ~260 cr
 //   ironhusk     3   Cobalt        4    60 of a 100     ~832 cr
 //   bandit       4   Rhodium      12    96 of a 240     ~4290 cr
+//   thresher     5   Platinum     48   144 of a 240     ~28600 cr
 //   leviathan    5   Platinum     15    45 of a 240     ~8940 cr
 //   hive         5   Platinum     80   240 of a 240     ~47680 cr   (capped)
 //
@@ -100,6 +101,7 @@ export const DROPS = {
   harrier:   husk(2, 2),
   ironhusk:  husk(3, 4),
   bandit:    husk(4, 12),
+  thresher:  husk(5, 48),
   leviathan: husk(5, 15),
   hive:      husk(5, 80),
 };

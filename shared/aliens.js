@@ -39,6 +39,51 @@ export const ALIENS = {
     xp: 140,          // and what the kill is worth toward your rank
   },
 
+  // A mirror. It returns what you put into it, and that is the whole design.
+  //
+  // Every other hostile is a wall of hit points, and the research ladder is about to
+  // make walls of hit points irrelevant: a finished ship at x32 takes 4,558 seconds
+  // to die to a Drifter and deletes anything under 100,000 effective hit points in
+  // under two seconds. Content whose only tool is damage is finished.
+  //
+  // So the difficulty of this fight is set by YOUR gun rather than by its hull, and
+  // it cannot be bought past. `returns: 1` is the fiction rather than a dial — a
+  // mirror returns what it is given — and it produces an identity nothing else in
+  // the game has:
+  //
+  //   total damage returned over the fight = returns x effective hp = 205,550,
+  //   exactly, whatever you fly.
+  //
+  // You have to deal its hit points to kill it, and it hands them back.
+  //
+  // 205,550 is 650 x 10^2.5 to the nearest ten — half a rung under the Corsair Hive,
+  // the same relation the Harrier has to the Ironhusk. Measured against a finished
+  // Bulwark it dies at x16 research and is survivable at x32, which reproduces the
+  // research ladder's own argument for x32 from an independent derivation with
+  // nothing tuned to fit.
+  //
+  // And the answer to it is a behaviour, not a purchase. Standing still costs 88% of
+  // a x32 ship over the fight; sidestepping 80px across the line of fire costs 35%.
+  // It is the first hostile that makes "hold range and hold the trigger" wrong.
+  //
+  // Speed 200 is under every hull, like a Leviathan: it can kill you but it can
+  // never trap you. Reach 900 is over every hull, also like a Leviathan, so you
+  // cannot simply out-range the problem.
+  thresher: {
+    name: 'Thresher', cls: 'Revenant', r: 46, colour: '#e4e4e4', shape: 'facet',
+    returns: 1,
+    attrs: { hull: 175550, shield: 30000, shieldRegen: 400, shieldDelay: 6,
+             speed: 200, accel: 320, signature: 9,
+             damage: 80, fireRate: 1.0, weaponRange: 900 },
+    aggro: 540,       // inside SIGHT_R, so it is on screen before it decides
+    leash: 2600,
+    patience: 5.0,
+    flee: 0,          // it does not run. It has nowhere to be.
+    respawn: 120,
+    bounty: 143885,   // 205550 ehp at BOUNTY_RATE, exactly
+    xp: 44272,
+  },
+
   // The rung between a Drifter and an Ironhusk, and the reason the frontier is
   // worth visiting before you can fight what lives there.
   //
@@ -302,6 +347,13 @@ export const SHAPES = {
     [1.55, 0], [0.10, 0.30], [-0.85, 0.95], [-0.55, 0.16],
     [-1.00, 0], [-0.55, -0.16], [-0.85, -0.95], [0.10, -0.30],
   ].map(([x, y]) => [x * R, y * R]),
+  // Pointed the wrong way round. Everything else in the bestiary has a nose; this
+  // has a plate, and the broad flat face is what it aims at you. You are looking at
+  // a mirror, which is the only warning you get.
+  facet: R => [
+    [0.95, 1.15], [1.10, 0.38], [1.10, -0.38], [0.95, -1.15],
+    [-0.45, -0.85], [-1.30, 0], [-0.45, 0.85],
+  ].map(([x, y]) => [x * R, y * R]),
   // A knobbly disc: twelve shallow lobes, no nose and no spikes. It reads as a
   // structure rather than a ship, which is what it is.
   hive: R => Array.from({ length: 24 }, (_, i) => {
@@ -497,6 +549,38 @@ export function stepAlienRepair(a, dt) {
   if (a.target !== null || a.sinceHit < REPAIR_QUIET || a.hp >= a.stats.hull) return;
   a.hp = Math.min(a.stats.hull, a.hp + a.stats.hull * REPAIR_RATE * dt);
 }
+
+// --- a mirror's chamber ---------------------------------------------------------
+//
+// What has been fed into it and not yet given back. Three seconds, so a pilot who
+// breaks off still eats what they already dealt, but a fight abandoned two sectors
+// ago is not still in the chamber waiting.
+//
+// The payload IS the alien's damage stat while it is loaded, which is why none of
+// combat.js, net.js or the client needs to know this exists: boltWidth() already
+// fattens a bolt from its damage and the floating damage number already says how
+// hard it landed, so the tell is free three times over.
+export const LOAD_HOLD = 3;
+
+export function storeHit(a, amount) {
+  if (!a?.def?.returns || !(amount > 0)) return;
+  a.load = (a.load ?? 0) + amount * a.def.returns;
+  a.loadT = LOAD_HOLD;
+}
+
+// Called before it fires. Returns the payload, so the caller can decide whether
+// anything was worth spending.
+export function stepMirror(a, dt) {
+  if (!a?.def?.returns) return 0;
+  if (a.loadT > 0) { a.loadT -= dt; if (a.loadT <= 0) { a.load = 0; a.loadT = 0; } }
+  // The base damage is read off the definition rather than off the live stats,
+  // because the live stats are what this function is writing to. Reading them back
+  // would compound the payload every tick into an unbounded number.
+  a.stats.damage = (a.def.attrs.damage ?? 0) + (a.load ?? 0);
+  return a.load ?? 0;
+}
+
+export const spendMirror = a => { if (a) { a.load = 0; a.loadT = 0; } };
 
 export function respawnAlien(a, map, away = []) {
   // A posted alien belongs to its slot on the firing range and goes back to it

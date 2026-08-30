@@ -57,7 +57,8 @@ check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
   const worstPod = t => Math.max(...t.map(r => r.max * MATERIALS[r.mat].vol));
   const oreOf    = t => t.reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
   // The hold of a pilot who has any business being in that sector.
-  const HOLD = { drifter: 60, harrier: 60, ironhusk: 100, bandit: 240, leviathan: 240, hive: 240 };
+  const HOLD = { drifter: 60, harrier: 60, ironhusk: 100, bandit: 240, leviathan: 240,
+                 thresher: 240, hive: 240 };
 
   for (const k of WILD) {
     const ehp = effectiveHp(k), rung = oreRung(ehp), t = DROPS[k];
@@ -75,7 +76,7 @@ check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
     WILD.every(k => worstPod(DROPS[k]) <= HOLD[k]),
     WILD.map(k => `${k} ${worstPod(DROPS[k])}/${HOLD[k]}`).join('  '));
   check('ore is about a fifth of the kill, until the hold stops it',
-    ['drifter', 'harrier', 'ironhusk', 'bandit', 'leviathan']
+    ['drifter', 'harrier', 'ironhusk', 'bandit', 'leviathan', 'thresher']
       .every(k => oreOf(DROPS[k]) > ORE_RATE * effectiveHp(k) * 0.75
                && oreOf(DROPS[k]) < ORE_RATE * effectiveHp(k) * 1.25),
     `at ${ORE_RATE} cr per ehp — the Hive is exempt because 47 Ore Tenders of platinum is not a reward`);

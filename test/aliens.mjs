@@ -1,3 +1,4 @@
+import { storeHit, stepMirror, spendMirror, LOAD_HOLD } from '../shared/aliens.js';
 import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
          farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR,
          broodReady, shoveFromBase, BASE_KEEPOUT } from '../shared/aliens.js';
@@ -392,9 +393,17 @@ console.log('\nthe mothership');
     effectiveHp('hive') === effectiveHp('leviathan') * 10, `${effectiveHp('hive')} ehp`);
   check('and pays ten of them, by the same derivation',
     H.bounty === L.bounty * 10 && H.xp === L.xp * 10, `${H.bounty} cr, ${H.xp} xp`);
-  check('it is the biggest thing in the game and nothing is close',
-    WILD.every(k => k === 'hive' || farmHp(k) * 4 < farmHp('hive')),
-    WILD.map(k => `${ALIENS[k].name} ${Math.round(farmHp(k))}`).join(', '));
+  // This used to be "nothing is close", at x4. A Thresher is deliberately close: half
+// a rung under the Hive, which is exactly the relation a Harrier has to an Ironhusk
+// and a Jackdaw would have to a Drifter. The ladder is tens, and the half rungs are
+// where the interesting fights live — so the claim is now about the SHAPE of the
+// ladder rather than about a gap, which is a stronger thing to be able to say.
+check('the Hive is the top of the ladder, and the next thing down is half a rung below it',
+    WILD.every(k => k === 'hive' || effectiveHp(k) * 3 <= effectiveHp('hive')) &&
+    Math.abs(effectiveHp('thresher') - effectiveHp('hive') / Math.sqrt(10)) <= 10,
+    WILD.map(k => `${ALIENS[k].name} ${Math.round(effectiveHp(k))}`).sort().join(', ') +
+    ` — a Thresher is ${(effectiveHp('hive') / effectiveHp('thresher')).toFixed(2)}x below the Hive, ` +
+    'and sqrt(10) is what half a rung means');
   check('it notices you no further out than you can see it',
     H.aggro <= SIGHT_R, `${H.aggro} against ${SIGHT_R}px of sight`);
 
@@ -621,6 +630,47 @@ check('and an unknown alien still draws something rather than nothing',
   check('and a Bandit still catches it, which is why you leave',
     ALIENS.bandit.attrs.speed > H.attrs.speed,
     `Bandit ${ALIENS.bandit.attrs.speed} against Harrier ${H.attrs.speed}`);
+}
+
+// A mirror, and the first hostile whose difficulty is set by your gun rather than
+// by its hull. That is the whole reason it exists: the research ladder multiplies
+// hull and shield by 32, so a wall of hit points is about to stop being content.
+{
+  const T = ALIENS.thresher;
+  check('everything you put into a Thresher comes back out',
+    T.returns === 1,
+    `returns x effective hp = ${effectiveHp('thresher').toLocaleString('en-US')} damage over the fight, ` +
+    'whatever you fly — you have to deal its hit points to kill it, and it hands them back');
+  check('a mirror loads what it is hit with and gives it back on its next shot', (() => {
+    const a = newAlien('thresher', 1, map, 3);
+    const base = T.attrs.damage;
+    storeHit(a, 5000); stepMirror(a, 0.03);
+    const loaded = a.stats.damage;
+    spendMirror(a); stepMirror(a, 0.03);
+    return loaded === base + 5000 && a.stats.damage === base;
+  })(), `${T.attrs.damage} base becomes ${T.attrs.damage + 5000} carrying a 5,000 hit, and ${T.attrs.damage} again once spent`);
+  check('a payload it never fired bleeds away rather than waiting for you',
+    (() => {
+      const a = newAlien('thresher', 2, map, 3);
+      storeHit(a, 9000);
+      for (let i = 0; i < 40; i++) stepMirror(a, 0.1);   // 4s, past LOAD_HOLD
+      return a.stats.damage === T.attrs.damage;
+    })(), `${LOAD_HOLD}s — break off and it forgets, so a fight abandoned two sectors ago is not still in the chamber`);
+  check('and the chamber cannot compound itself into an unbounded number',
+    (() => {
+      const a = newAlien('thresher', 3, map, 3);
+      storeHit(a, 1000);
+      for (let i = 0; i < 60; i++) stepMirror(a, 0.001);  // many ticks, one payload
+      return a.stats.damage === T.attrs.damage + 1000;
+    })(), 'the base is read off the definition, not off the stats this is writing to');
+  check('it can kill you but it can never trap you',
+    Object.keys(HULLS).filter(h => HULLS[h].price > 0)
+      .every(h => resolve(h).speed > T.attrs.speed),
+    `${T.attrs.speed} against every hull — the same promise a Leviathan makes`);
+  check('and you cannot out-range the problem either',
+    Object.keys(HULLS).filter(h => HULLS[h].price > 0)
+      .every(h => resolve(h, { weapon: [topTier('weapon')], generator: [], tech: [] }).weaponRange < T.attrs.weaponRange),
+    `it reaches ${T.attrs.weaponRange}, which is past every gun in the game`);
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(ALIENS).length} hostile, ${ALIENS_PER_MAP}/map`}\n`);

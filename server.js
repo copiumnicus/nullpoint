@@ -29,6 +29,7 @@ import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab } from './shared/net.js';
+import { storeHit, stepMirror, spendMirror } from './shared/aliens.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -301,6 +302,13 @@ for (const h of HOMES) {
 // map put it where almost nobody would meet it, and the point of the thing is to
 // be met. The Bandits at every frontier come from these.
 for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'hive', 1);
+
+// The deeps were seeded with nothing at all — three sectors past the gates that a
+// pilot could only reach by beating a Hive, and there was nothing there when they
+// arrived. One Thresher each. It is the right teaching order: past the gate, before
+// Nullpoint, and it asks a question no shop can answer, which is what the deeps are
+// for now that the research ladder exists.
+for (const d of GALAXY.filter(id => MAPS[id].deep)) seed(d, 'thresher', 1);
 
 // The hull and formation galleries, resolved once at boot. They never move, take
 // damage or shoot, so there is nothing to step — just rows to hand out.
@@ -1371,7 +1379,14 @@ setInterval(() => {
       // camouflage and the evasion are the same mechanic from two sides.
       if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = jinkHeading(a, victim?.ship);
       else faceTarget(a, victim?.ship);
-      for (const shot of fire(a, victim?.ship ?? null, dt)) bolts.get(mapId).push(shot);
+      // A mirror loads what it was hit with and gives it back on its next shot. The
+      // payload IS its damage stat while it is loaded, so fire() needs no idea this
+      // exists — and it is spent on firing rather than on time, so breaking off does
+      // not empty the chamber, it only stops you filling it.
+      stepMirror(a, dt);
+      const spat = fire(a, victim?.ship ?? null, dt);
+      for (const shot of spat) bolts.get(mapId).push(shot);
+      if (spat.length) spendMirror(a);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
       // Not while it is chasing somebody: a provoked alien follows you in.
       if (a.target === null) shoveFromBase(a, map);
@@ -1497,6 +1512,7 @@ setInterval(() => {
                              n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
                              by: h.rocket.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
       tally(h.target, h.rocket.owner ?? null, h.split.shield + h.split.hull);
+      storeHit(h.target, h.split.shield + h.split.hull);
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.rocket.owner ?? null);
     }
   }
@@ -1506,6 +1522,7 @@ setInterval(() => {
                              n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
                              by: h.bolt.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
       tally(h.target, h.bolt.owner ?? null, h.split.shield + h.split.hull);
+      storeHit(h.target, h.split.shield + h.split.hull);
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.bolt.owner ?? null);
     }
     for (const a of aliens.get(mapId) ?? []) if (a.hp <= 0) killAlien(mapId, a);
