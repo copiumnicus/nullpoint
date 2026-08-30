@@ -8,9 +8,12 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.23';
+export const VERSION = '0.24';
 
 export const PATCHES = [
+  { v: '0.24', notes: [
+    'Store shelves scroll instead of squeezing every row shorter as they grow',
+  ] },
   { v: '0.23', notes: [
     'Eleven new technologies, and the shelf is tiered — Deep Tech is its own page',
     'The Reactor Flywheel did nothing: a bigger tank cannot buy you more uptime',

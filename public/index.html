@@ -765,9 +765,16 @@ c.addEventListener('pointermove', e => {
 // The changelog is the only thing in the game long enough to need scrolling, so
 // the wheel is claimed only while it is open and left alone otherwise.
 addEventListener('wheel', e => {
-  if (!patchOpen) return;
-  e.preventDefault?.();
-  patchScroll = Math.max(0, patchScroll + (e.deltaY > 0 ? 3 : -3));
+  // Two things scroll, and the changelog is drawn over everything, so it wins.
+  if (patchOpen) {
+    e.preventDefault?.();
+    patchScroll = Math.max(0, patchScroll + (e.deltaY > 0 ? 3 : -3));
+    return;
+  }
+  if (bayOpen && bayTab === 'store') {
+    e.preventDefault?.();
+    bayScroll = Math.max(0, bayScroll + (e.deltaY > 0 ? 2 : -2));
+  }
 }, { passive: false });
 addEventListener('keyup', e => steerDown.delete(e.key.toLowerCase()));
 addEventListener('blur', () => steerDown.clear());
@@ -966,9 +973,10 @@ const pickGeom = () => {
   return row && items.length ? { G, row, ...pickerLayout(G, row, items) } : null;
 };
 
+let bayScroll = 0;                        // how far down the current shelf we are
 const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
   tab: bayTab, page: bayPage, hull: myHull, drones: myDrones.length,
-  hulls: myHulls, formations: myForms, gear: myGear });
+  hulls: myHulls, formations: myForms, gear: myGear, scroll: bayScroll });
 
 // The ship as the rules see it. The reactor ceiling lives in here now, so the
 // readout has to ask the ship rather than a constant.
@@ -1002,7 +1010,7 @@ function bayClick(v) {
   // when you were not docked, which also meant the panel stuck on whichever tab
   // you happened to be on when you left the ring.
   for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; picking = null; return; }
-  for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; return; }
+  for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; bayScroll = 0; return; }
 
   // Spending and fitting are not free.
   const atRing = docked();
@@ -1347,6 +1355,18 @@ function drawBay() {
     g.fillStyle = on ? '#cfe4ff' : '#8ea3bd'; g.font = '12px ui-monospace, monospace';
     g.fillText(p.name, r.x + 12, r.y + r.h / 2 + 4);
     g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
+  }
+
+  // A shelf longer than the panel says so, and says how much of it you are seeing.
+  if (G.bar) {
+    g.fillStyle = 'rgba(90,134,184,0.16)';
+    g.fillRect(G.bar.track.x, G.bar.track.y, G.bar.track.w, G.bar.track.h);
+    g.fillStyle = '#5a86b8';
+    g.fillRect(G.bar.x, G.bar.y, G.bar.w, G.bar.h);
+    g.textAlign = 'right'; g.font = '9px ui-monospace, monospace'; g.fillStyle = '#3d4757';
+    g.fillText(`${G.scroll.at + 1}-${Math.min(G.scroll.total, G.scroll.at + G.scroll.per)} of ${G.scroll.total}  ·  scroll`,
+               G.bar.track.x - 8, G.panel.y + G.panel.h - 16);
+    g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   }
 
   for (const it of G.store) {

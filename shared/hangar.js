@@ -95,6 +95,10 @@ export function fitsIn(target, { gear = {}, fit = emptyFit(), drones = [] } = {}
 
 // The chooser that drops out of an empty slot. Anchored to the row that opened
 // it, flipped upward when it would run off the bottom of the panel.
+// A store row is this tall, always. See the note in bayLayout about what happens
+// when rows share out the room instead.
+export const STORE_ROW = 58;
+
 export const PICK_ROW = 30;
 export function pickerLayout(G, row, items) {
   const w = G.colW + 40;
@@ -117,7 +121,7 @@ export function pickerLayout(G, row, items) {
 
 export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   const { tab = 'hangar', page = 'ships', hull: hullKey, drones: droneCount = 0,
-          hulls = [], formations = [], gear = {} } = s;
+          hulls = [], formations = [], gear = {}, scroll = 0 } = s;
   const w = Math.min(980, VIEW_W - 50), h = Math.min(600, VIEW_H - 50);
   const x = (VIEW_W - w) / 2, y = (VIEW_H - h) / 2;
   const colW = (w - 60) / 3, top = y + 96;
@@ -168,9 +172,26 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   const catW = colW * 0.78;
   out.pages = STORE_PAGES.map((p, i) => ({ ...p, r: { x: x + 20, y: top + i * pStep, w: catW, h: pStep - 6 } }));
 
+  // Rows are a fixed height and the list scrolls. They used to divide the room
+  // between however many items there were, so every new thing on a shelf made
+  // every row on it shorter — the technology page went from four rows at 58px to
+  // fifteen at 22.5px, and the client draws each blurb at y+35, so it clipped.
+  // A shelf should not get harder to read every time something is added to it.
   const items = pageItems(page, { hulls, formations, drones: droneCount });
   const iX = x + 30 + catW, iW = w - 50 - catW;
-  const iStep = Math.min(58, room / Math.max(1, items.length));
-  out.store = items.map((it, i) => ({ ...it, r: { x: iX, y: top + i * iStep, w: iW, h: iStep - 8 } }));
+  const iStep = STORE_ROW;
+  const per = Math.max(1, Math.floor(room / iStep));
+  const max = Math.max(0, items.length - per);
+  const at = Math.max(0, Math.min(max, Math.round(scroll)));
+  out.store = items.slice(at, at + per)
+    .map((it, i) => ({ ...it, r: { x: iX, y: top + i * iStep, w: iW, h: iStep - 8 } }));
+  // Only when there is something below the fold, so a short shelf grows no
+  // control it does not need.
+  out.scroll = { at, per, total: items.length, max };
+  out.bar = max > 0 ? {
+    x: iX + iW + 6, y: top + (at / items.length) * room,
+    w: 3, h: Math.max(20, (per / items.length) * room),
+    track: { x: iX + iW + 6, y: top, w: 3, h: room },
+  } : null;
   return out;
 }

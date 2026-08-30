@@ -544,15 +544,29 @@ const dismiss = () => {
   // STORE: every page, every row on it. A page whose rows are never drawn or
   // never clickable is how the old rack quietly stopped working.
   let storeRows = 0;
+  // Shelves scroll now, so walking only the first screenful would quietly stop
+  // covering the shop the moment a page outgrew the panel — which the technology
+  // shelf did the day it went from four entries to fifteen. Every page is scrolled
+  // to the bottom and every row on it is hovered and clicked.
   for (const page of STORE_PAGES.map(p2 => p2.key)) {
-    const S = bayLayout(innerWidth, innerHeight, { ...state, tab: 'store', page });
-    click(S.tabs.find(x => x.key === 'store').r);
-    click(S.pages.find(x => x.key === page).r);
+    const first = bayLayout(innerWidth, innerHeight, { ...state, tab: 'store', page });
+    click(first.tabs.find(x => x.key === 'store').r);
+    click(first.pages.find(x => x.key === page).r);
     frame(t += 16); frames++;
-    for (const it of S.store) {
-      hoverAt(it.r); frame(t += 16); frames++; storeRows++;
-      click(it.r);
+    const seen = new Set();
+    for (let at = 0; at <= (first.scroll?.max ?? 0); at++) {
+      const S = bayLayout(innerWidth, innerHeight, { ...state, tab: 'store', page, scroll: at });
+      for (const it of S.store) {
+        if (seen.has(it.k)) continue;
+        seen.add(it.k);
+        hoverAt(it.r); frame(t += 16); frames++; storeRows++;
+        click(it.r);
+      }
+      if (at < (first.scroll?.max ?? 0)) { evt('wheel', { deltaY: 120 }); frame(t += 16); frames++; }
     }
+    const want = first.scroll?.total ?? first.store.length;
+    if (seen.size !== want)
+      errs.push(`the ${page} shelf has ${want} rows and only ${seen.size} were reachable`);
     frame(t += 16); frames++;
   }
   const kinds = new Set(sent.map(m => m.t));
