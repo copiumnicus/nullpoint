@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.39';
+export const VERSION = '0.40';
 
 export const PATCHES = [
+  { v: '0.40', notes: [
+    'Fixed: dying at a rented bay put you in the corner of the map, unable to move',
+    'Dying again did not help. Respawning has been landing nowhere since 0.33',
+    'Anyone stuck is put back at their own dock the moment they reconnect',
+  ] },
   { v: '0.39', notes: [
     'A Censer holds the other hop out: a reactor with no containment and no gun',
     'Its ring is the fight — it widens as you kill it, and you are standing in it',

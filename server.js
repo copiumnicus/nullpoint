@@ -1025,7 +1025,12 @@ wss.on('connection', (ws, req) => {
       // interesting minute in the game, and a pilot who paid for a bay has already
       // said where they want to be.
       const at = respawnAt(P, MAPS);
-      const ang = Math.random() * 7, dist = Math.random() * at.r * 0.6;
+      // Belt and braces on a bug that stranded people. A hangar without a radius
+      // scatters you by NaN, and a NaN position is unrecoverable from inside the
+      // game: you cannot fly out of it and dying again puts you back in it. If the
+      // ring has no size, come back on the exact spot rather than nowhere.
+      const spread = Number.isFinite(at.r) ? at.r * 0.6 : 0;
+      const ang = Math.random() * 7, dist = Math.random() * spread;
       P.mapId = at.map; P.dead = false; P.contacts.clear();
       refit(ship, ship.hull, ship.fit);           // rebuilt and repaired at your own dock
       Object.assign(ship, { x: at.x + Math.cos(ang) * dist, y: at.y + Math.sin(ang) * dist,

@@ -102,9 +102,16 @@ export function berthPanel(VIEW_W, VIEW_H) {
 export function homePorts(acct, MAPS) {
   const co = acct?.co ?? 'm', berths = acct?.berths ?? [], out = [];
   for (const [id, m] of Object.entries(MAPS)) {
-    if (m.base && m.owner === co) out.push({ map: id, x: m.base.x, y: m.base.y,
+    // `r` rides along because a hangar is a RING, not a point, and the respawn
+    // scatters you inside it. It was dropped when this became one list and nothing
+    // noticed: `Math.random() * undefined` is NaN, a NaN position never moves and
+    // never renders anywhere real, and pilots came back stuck in the corner of the
+    // map with no way out — including by dying again. Anything reading a hangar
+    // needs its size as much as its middle.
+    if (m.base && m.owner === co) out.push({ map: id, x: m.base.x, y: m.base.y, r: m.base.r,
                                              name: m.name ?? id, kind: 'dock' });
     else if (m.outpost && berths.includes(id)) out.push({ map: id, x: m.outpost.x, y: m.outpost.y,
+                                                         r: m.outpost.r,
                                                          name: m.name ?? id, kind: 'bay' });
   }
   return out;

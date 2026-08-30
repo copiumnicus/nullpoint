@@ -173,6 +173,31 @@ console.log('\nthe panel that sells it');
   check('every company gets the same deal, not just the first one',
     ['m', 'v', 'x'].filter(co => MAPS[co + '1']).every(co => foldTo({ co }, MAPS, null).map === co + '1'),
     'the fallback is derived from your company, not hardcoded to one ring');
+  // The bug this whole block exists for, and it was live for six versions.
+  //
+  // A pilot who died at a rented bay came back in the top-left corner of the map,
+  // unable to move, and dying again put them straight back there. The respawn
+  // scatters you inside the ring — `Math.random() * at.r * 0.6` — and when this
+  // became one shared list the radius was dropped from it. `Math.random() *
+  // undefined` is NaN; a NaN position never moves, never renders anywhere real,
+  // and cannot be escaped from inside the game.
+  //
+  // Every assertion here checked `.map` and not one of them checked where in it, so
+  // the whole suite was green while respawning was broken for everybody — the home
+  // dock too, not just a berth.
+  for (const acct of [{ co: 'h', berths: ['h4'], lastDock: 'h4' },
+                      { co: 'h' }, { co: 'm', lastDock: 'm1' }, { co: 'k', lastDock: 'nonsense' }]) {
+    const at = respawnAt(acct, MAPS);
+    const ang = 1.1, dist = 0.9 * at.r * 0.6;          // what server.js does
+    const x = at.x + Math.cos(ang) * dist, y = at.y + Math.sin(ang) * dist;
+    check(`a pilot coming back at ${at.map} lands somewhere real`,
+      Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(at.r) && at.r > 0,
+      `${at.kind} r=${at.r} -> ${Math.round(x)},${Math.round(y)}`);
+    check('and inside the ring they came back to, not beside it',
+      Math.hypot(x - at.x, y - at.y) <= at.r,
+      `${Math.round(Math.hypot(x - at.x, y - at.y))}px of ${at.r}`);
+  }
+
   // Respawn is the same question, so it is now literally the same function.
   check('and a wreck comes back through the very same list',
     respawnAt({ ...renting, lastDock: 'm4' }, MAPS).map === 'm4' &&
