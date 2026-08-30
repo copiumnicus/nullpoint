@@ -21,7 +21,8 @@ import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
 import { tipFor } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
-import { VERSION, PATCHES, patchIcon, patchPanel } from '/shared/patch.js';
+import { VERSION, PATCHES, patchIcon, patchPanel,
+         PAD as PATCH_PAD, HEAD_H as PATCH_HEAD } from '/shared/patch.js';
 import { audioReady, setThrust, laser, rocket, explosion,
          toggleAudio, toggleSfx, toggleMusic, audioOn, sfxOnly, musicOnly,
          setSfxVolume, sfxVolume, setMusicVolume, musicVolume,
@@ -69,7 +70,7 @@ addEventListener('resize', resize); resize();
 const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 let sysOpen = false;
-let patchOpen = false;      // the changelog, top right
+let patchOpen = false, patchScroll = 0;   // the changelog, top right
 
 let myId = null, myCo = 'm', myName = '', mapId = 'm1', status = 'connecting…';
 document.title = GAME;
@@ -157,25 +158,39 @@ function drawPatch() {
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   if (!patchOpen) return;
 
-  const L = patchPanel(VIEW_W, VIEW_H), P = L.panel;
+  const L = patchPanel(VIEW_W, VIEW_H, patchScroll);
+  patchScroll = L.at;                               // clamped by the layout, not here
+  const P = L.panel;
   g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(P.x, P.y, P.w, P.h);
   g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
   g.font = '11px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
-  g.fillText('WHAT CHANGED', P.x + 14, P.y + 20);
+  g.fillText('WHAT CHANGED', P.x + PATCH_PAD, P.y + 20);
   g.textAlign = 'right'; g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
-  g.fillText('click anywhere to close', P.x + P.w - 12, P.y + 20);
+  g.fillText(L.maxScroll ? 'scroll to read · click away to close' : 'click away to close',
+             P.x + P.w - 12, P.y + 20);
   g.textAlign = 'left';
+
   for (const ln of L.lines) {
+    if (ln.kind === 'gap') continue;
     if (ln.kind === 'ver') {
       g.font = '11px ui-monospace, monospace'; g.fillStyle = '#ffd479';
-      g.fillText(ln.v === 'earlier' ? 'earlier' : `v${ln.v}`, ln.x, ln.y);
-      const tw = g.measureText(ln.v === 'earlier' ? 'earlier' : `v${ln.v}`).width;
+      const tag = ln.v === 'earlier' ? 'earlier' : `v${ln.v}`;
+      g.fillText(tag, ln.x, ln.y);
+      const tw = g.measureText(tag).width;
       g.strokeStyle = 'rgba(61,71,87,0.4)'; g.lineWidth = 1;
-      g.beginPath(); g.moveTo(ln.x + tw + 8, ln.y - 4); g.lineTo(P.x + P.w - 14, ln.y - 4); g.stroke();
+      g.beginPath(); g.moveTo(ln.x + tw + 8, ln.y - 4); g.lineTo(P.x + P.w - PATCH_PAD - 6, ln.y - 4); g.stroke();
     } else {
+      // Whole lines. The layout wrapped them to fit, so nothing here has to cut
+      // anything off — reading half a sentence was the complaint.
       g.font = '10px ui-monospace, monospace'; g.fillStyle = '#8ea3bd';
-      g.fillText(ln.text.length > 62 ? ln.text.slice(0, 61) + '\u2026' : ln.text, ln.x, ln.y);
+      g.fillText(ln.text, ln.x, ln.y);
     }
+  }
+  if (L.bar) {
+    g.fillStyle = 'rgba(90,134,184,0.18)';
+    g.fillRect(L.bar.x, P.y + PATCH_HEAD, L.bar.w, P.h - PATCH_HEAD - 10);
+    g.fillStyle = '#5a86b8';
+    g.fillRect(L.bar.x, L.bar.y, L.bar.w, L.bar.h);
   }
   g.font = '12px ui-monospace, monospace';
 }
@@ -557,9 +572,14 @@ c.addEventListener('pointerdown', e => {
   {
     const pb = patchIcon(VIEW_W);
     if (v.x > pb.x && v.x < pb.x + pb.w && v.y > pb.y && v.y < pb.y + pb.h) {
-      patchOpen = !patchOpen; return;
+      patchOpen = !patchOpen; patchScroll = 0; return;
     }
-    if (patchOpen) { patchOpen = false; return; }
+    if (patchOpen) {
+      // A click inside is somebody reading it, not somebody dismissing it.
+      const pp = patchPanel(VIEW_W, VIEW_H, patchScroll).panel;
+      if (!(v.x > pp.x && v.x < pp.x + pp.w && v.y > pp.y && v.y < pp.y + pp.h)) patchOpen = false;
+      return;
+    }
   }
   if (leaving()) { cancelLeaving('Staying'); return; }
   if (setOpen) { settingsClick(v); return; }
@@ -616,6 +636,13 @@ c.addEventListener('pointermove', e => {
 // key held at the moment the window lost focus, which is what alt-tabbing mid-burn
 // does. A ship that flies off on its own with nothing touching the keyboard is
 // the single worst bug this input can have.
+// The changelog is the only thing in the game long enough to need scrolling, so
+// the wheel is claimed only while it is open and left alone otherwise.
+addEventListener('wheel', e => {
+  if (!patchOpen) return;
+  e.preventDefault?.();
+  patchScroll = Math.max(0, patchScroll + (e.deltaY > 0 ? 3 : -3));
+}, { passive: false });
 addEventListener('keyup', e => steerDown.delete(e.key.toLowerCase()));
 addEventListener('blur', () => steerDown.clear());
 c.addEventListener('pointerleave', () => hover = null);

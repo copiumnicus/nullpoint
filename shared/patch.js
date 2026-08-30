@@ -8,15 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '7.24';
+export const VERSION = '0.11';
 
 export const PATCHES = [
-  { v: '7.24', notes: [
+  { v: '0.11', notes: [
+    'Patch notes wrap and scroll instead of cutting every line off halfway',
+  ] },
+  { v: '0.10', notes: [
     'Pirate outposts in every third sector: sell ore mid-run at 75%, no repairs and no shelter',
     'SPACE at a gate now jumps instead of hauling in whatever is under you',
     'Hostiles respawn clear of anybody already in the sector, not on top of them',
   ] },
-  { v: '7.23', notes: [
+  { v: '0.9', notes: [
     'Ore from a shared kill is split like the credits — one pod each, no race',
     'The Leviathan holds the third sector: it cannot be kited, and it cannot be soloed',
     'Aliens switch target if you crowd them for 3s, or out-damage whoever they are on',
@@ -24,31 +27,31 @@ export const PATCHES = [
     'Ammunition is x1 / x3 / x5 and priced to be worth loading — it was a trap before',
     'Bandits pay 79800: they take 17x as long to kill as an Ironhusk and paid 4.6x',
   ] },
-  { v: '7.22', notes: [
+  { v: '0.8', notes: [
     'A collector finishes its pull if you fly off, and comes to you instead of aborting',
     'Drone speed is 1.3x your ship, so it neither teleports nor gets left behind',
     'Fixed the tractor beam flashing for one frame at the start of every pull',
   ] },
-  { v: '7.21', notes: [
+  { v: '0.7', notes: [
     'Collector rigs have their own bay and no longer cost you a gun',
     'A pull holds station over the pod for 1.4s, and everyone can see it happen',
     'Every alien drops loot — the Ironhusk and the Bandit had no drop table at all',
   ] },
-  { v: '7.20', notes: [
+  { v: '0.6', notes: [
     'Time flown is tracked, in the ESC menu — idle time before an auto sign-out is not counted',
   ] },
-  { v: '7.19', notes: [
+  { v: '0.5', notes: [
     'Bounties are shared by damage: a tenth of the work pays, and the pot grows with the party',
     'Arrow keys steer as well as WASD',
     'Friendly ships are blue on the plot instead of your company colour',
   ] },
-  { v: '7.18', notes: [
+  { v: '0.4', notes: [
     'WASD flies the ship, so farming does not need the mouse',
   ] },
-  { v: '7.17', notes: [
+  { v: '0.3', notes: [
     'Plotted courses land under the cursor — they were short by a fifth on most window sizes',
   ] },
-  { v: '7.16', notes: [
+  { v: '0.2', notes: [
     'The game is deployed, and the music streams from the server',
   ] },
   { v: 'earlier', notes: [
@@ -64,29 +67,65 @@ export const ICON = 26;
 // that spends half its life underneath a purchase notification is not a button.
 export const patchIcon = VIEW_W => ({ x: VIEW_W - ICON - 16, y: 14, w: ICON, h: ICON });
 
-export const ROW_H = 15, HEAD_H = 30, VER_H = 22, PAD = 14;
+export const ROW_H = 15, HEAD_H = 32, PAD = 14, FOOT = 10;
 
-export function patchPanel(VIEW_W, VIEW_H) {
-  const w = Math.min(430, VIEW_W - 40);
-  const rows = PATCHES.reduce((n, p) => n + 1 + p.notes.length, 0);
-  const h = Math.min(VIEW_H - 80, HEAD_H + PAD + rows * ROW_H + PATCHES.length * (VER_H - ROW_H) + PAD);
-  const x = VIEW_W - w - 16, y = 14 + ICON + 8;
-  const panel = { x, y, w, h };
+// The notes are set in 10px ui-monospace, so a character is a known width and the
+// wrap can be computed here rather than measured in the client. That matters:
+// this file decides both what is drawn and what is scrolled through, and a wrap
+// that disagreed between the two would scroll past lines nobody ever saw.
+export const CHAR_W = 6;
 
-  // Laid out until it runs out of room rather than clipped mid-line: a version
-  // header with nothing under it reads as a bug, so a version is only placed if
-  // at least its first note fits too.
-  const lines = [];
-  let cy = y + HEAD_H;
-  for (const p of PATCHES) {
-    if (cy + VER_H + ROW_H > y + h - PAD) break;
-    lines.push({ kind: 'ver', v: p.v, x: x + PAD, y: cy + 14 });
-    cy += VER_H;
-    for (const n of p.notes) {
-      if (cy + ROW_H > y + h - PAD) break;
-      lines.push({ kind: 'note', text: n, x: x + PAD + 10, y: cy + 11 });
-      cy += ROW_H;
-    }
+// Anybody who opens a changelog wants to read it. Cutting each line off at the
+// panel edge with an ellipsis was the worst of both — it took the space and gave
+// back half a sentence.
+export function wrapNote(text, cols) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const out = [];
+  let line = '';
+  for (const w of words) {
+    if (!line) { line = w; continue; }
+    if (line.length + 1 + w.length <= cols) line += ' ' + w;
+    else { out.push(line); line = w; }
   }
-  return { panel, lines };
+  if (line) out.push(line);
+  return out.length ? out : [''];
+}
+
+// Every line the changelog has, wrapped. One flat list, so scrolling is an index
+// into it rather than a second layout pass that could disagree with the first.
+export function patchLines(cols) {
+  const out = [];
+  for (const p of PATCHES) {
+    out.push({ kind: 'ver', v: p.v });
+    for (const n of p.notes) for (const seg of wrapNote(n, cols)) out.push({ kind: 'note', text: seg });
+    out.push({ kind: 'gap' });
+  }
+  return out;
+}
+
+export function patchPanel(VIEW_W, VIEW_H, scroll = 0) {
+  // Wide enough to read a sentence on one line where it fits, and happy to take
+  // most of the screen for it — the notes are short, the reading is the point.
+  const w = Math.max(280, Math.min(820, VIEW_W - 40));
+  // Tall enough that the whole log fits on an ordinary screen and the scrollbar
+  // is for small windows rather than for everybody.
+  const h = Math.max(140, Math.min(VIEW_H - 90, 780));
+  const x = VIEW_W - w - 16, y = 14 + ICON + 8;
+  const cols = Math.max(24, Math.floor((w - PAD * 2 - 14) / CHAR_W));
+
+  const all = patchLines(cols);
+  const per = Math.max(1, Math.floor((h - HEAD_H - FOOT) / ROW_H));
+  const maxScroll = Math.max(0, all.length - per);
+  const at = Math.max(0, Math.min(maxScroll, Math.round(scroll)));
+  const lines = all.slice(at, at + per).map((l, i) => ({
+    ...l, x: x + PAD + (l.kind === 'note' ? 12 : 0), y: y + HEAD_H + i * ROW_H + 11,
+  }));
+
+  // The bar is only drawn when there is something below the fold, so a changelog
+  // short enough to fit does not grow a control that does nothing.
+  const bar = maxScroll > 0 ? {
+    x: x + w - 7, y: y + HEAD_H + (at / all.length) * (h - HEAD_H - FOOT),
+    w: 3, h: Math.max(18, (per / all.length) * (h - HEAD_H - FOOT)),
+  } : null;
+  return { panel: { x, y, w, h }, lines, bar, at, per, cols, total: all.length, maxScroll };
 }

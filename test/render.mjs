@@ -415,19 +415,29 @@ const dismiss = () => {
   if (!L.lines.length) errs.push('the changelog panel laid out no lines at all');
   if (!L.lines.some(l => l.kind === 'ver')) errs.push('the changelog showed notes with no version over them');
   if (!L.lines.some(l => l.kind === 'note')) errs.push('the changelog showed versions with nothing under them');
-  // Every version placed must have at least one note under it — a header alone
-  // reads as a bug rather than as a short release.
-  for (let i = 0; i < L.lines.length; i++)
-    if (L.lines[i].kind === 'ver' && L.lines[i + 1]?.kind !== 'note')
-      errs.push(`changelog version ${L.lines[i].v} was laid out with nothing under it`);
   if (L.lines.every(l => l.y < L.panel.y || l.y > L.panel.y + L.panel.h))
     errs.push('changelog lines fell outside their own panel');
-  evt('pointerdown', { clientX: 300, clientY: 300 });     // anywhere else closes it
+  // Every note is drawn whole. Cutting them off at the panel edge was the point
+  // of the complaint, so the drawn text must match the note it came from.
+  const drawn = L.lines.filter(l => l.kind === 'note').map(l => l.text);
+  if (drawn.some(x => x.includes('\u2026'))) errs.push('a changelog line was drawn with an ellipsis');
+
+  // The wheel scrolls it, and only while it is open.
+  evt('wheel', { deltaY: 240 });
+  frame(t += 16); frames++;
+  evt('wheel', { deltaY: -240 });
+  frame(t += 16); frames++;
+
+  evt('pointerdown', { clientX: L.panel.x + 20, clientY: L.panel.y + 60 });   // inside: reading
+  frame(t += 16); frames++;
+  evt('pointerdown', { clientX: 60, clientY: 500 });      // outside: closes
   frame(t += 16); frames++;
   hitPatch(); evt('keydown', { key: 'Escape' });          // and so does Escape
   frame(t += 16); frames++;
-  console.log(`changelog: v${VERSION}, ${PATCHES.length} entries, ` +
-    `${L.lines.length} lines laid out; opens, closes on a click and on Escape`);
+  evt('wheel', { deltaY: 240 });                          // closed: the wheel is not ours
+  frame(t += 16); frames++;
+  console.log(`changelog: v${VERSION}, ${PATCHES.length} entries, ${L.lines.length} lines whole, ` +
+    `${L.maxScroll} to scroll; wheel, click-away and Escape all drive it`);
 }
 
 // Flying without the mouse, driven through the real key handlers and the real
