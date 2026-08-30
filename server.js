@@ -23,6 +23,7 @@ import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
+import { splitKill } from './shared/reward.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
@@ -218,24 +219,38 @@ const BLAST_TIME = 0.8;
 const boom = (mapId, e, foe, who) =>
   blasts.get(mapId).push({ x: e.x, y: e.y, r: e.r, foe, who, t: BLAST_TIME, ttl: BLAST_TIME });
 
+// Every point a player lands on an alien is remembered, because the bounty is
+// settled on the ledger and not on whoever fires last.
+const tally = (target, by, amount) => {
+  if (by === null || amount <= 0) return;
+  if (!target.isAlien || !players.has(by)) return;
+  target.dealt.set(by, (target.dealt.get(by) ?? 0) + amount);
+};
+
 // One place that kills an alien, so the flash can never be forgotten at a call site.
 const killAlien = (mapId, a, byId = null) => {
   if (a.dead > 0) return;
-  const killer = byId !== null ? players.get(byId) : null;
-  if (killer) {                                   // your company pays out on confirmation
-    const was = levelFor(killer.xp).level;
-    killer.credits += a.def.bounty;
-    killer.xp += a.def.xp ?? a.def.bounty;
-    const now2 = levelFor(killer.xp);
-    touch(killer);                                // credits and rank banked immediately
-    if (killer.ws.readyState === 1) killer.ws.send(JSON.stringify(
-      { t: 'award', amount: a.def.bounty, xp: a.def.xp ?? a.def.bounty, what: a.def.name,
-        total: killer.credits, level: now2.level, promoted: now2.level > was }));
+  // A kill with an empty ledger still pays whoever finished it: shear, a dev
+  // command, anything that damages an alien without a bolt of its own.
+  if (!a.dealt.size && byId !== null) a.dealt.set(byId, 1);
+  const cuts = splitKill(a.dealt, a.def.bounty, a.def.xp ?? a.def.bounty);
+  for (const cut of cuts) {                       // your company pays out on confirmation
+    const paid = players.get(cut.id);
+    if (!paid) continue;                          // signed off between the last hit and the kill
+    const was = levelFor(paid.xp).level;
+    paid.credits += cut.credits;
+    paid.xp += cut.xp;
+    const now2 = levelFor(paid.xp);
+    touch(paid);                                  // credits and rank banked immediately
+    if (paid.ws.readyState === 1) paid.ws.send(JSON.stringify(
+      { t: 'award', amount: cut.credits, xp: cut.xp, what: a.def.name,
+        total: paid.credits, level: now2.level, promoted: now2.level > was,
+        with: cuts.length - 1, share: cut.share }));
   }
   boom(mapId, a, true, a.id);
   const loot = rollDrop(a.kind, a.rand);          // seeded, so drops replay with the alien
   if (loot) drop(mapId, a.x, a.y, loot.mat, loot.n);
-  a.dead = a.def.respawn; a.target = null; a.provoked.clear();
+  a.dead = a.def.respawn; a.target = null; a.provoked.clear(); a.dealt.clear();
 };
 
 const wss = new WebSocketServer({ server });
@@ -895,6 +910,7 @@ setInterval(() => {
       hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
                              n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
                              by: h.rocket.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
+      tally(h.target, h.rocket.owner ?? null, h.split.shield + h.split.hull);
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.rocket.owner ?? null);
     }
   }
@@ -903,6 +919,7 @@ setInterval(() => {
       hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
                              n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
                              by: h.bolt.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
+      tally(h.target, h.bolt.owner ?? null, h.split.shield + h.split.hull);
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.bolt.owner ?? null);
     }
     for (const a of aliens.get(mapId) ?? []) if (a.hp <= 0) killAlien(mapId, a);

@@ -26,7 +26,7 @@ import { audioReady, setThrust, laser, rocket, explosion,
          setSfxVolume, sfxVolume, setMusicVolume, musicVolume,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
-import { ALLY, FRESH, STALE } from '/shared/radar.js';
+import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
@@ -250,10 +250,14 @@ ws.onmessage = e => {
   }
   if (m.t === 'award') {
     credits = m.total;
+    // A shared bounty that reads exactly like a solo one teaches nobody the system
+    // is there, and the first thing you want to know when a stranger joins your
+    // fight is whether their help cost you or paid you.
+    const split = m.with ? ` — shared ${m.with + 1} ways on ${Math.round(m.share * 100)}% of the damage` : '';
     say(m.promoted
-        ? `${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short} — and promotes you to level ${m.level}`
+        ? `${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short} — and promotes you to level ${m.level}${split}`
         : `${COMPANIES[myCo].tag} awards you ${m.amount} ${CURRENCY.short}` +
-          (m.xp ? ` and ${m.xp} XP` : '') + ` for a ${m.what}`,
+          (m.xp ? ` and ${m.xp} XP` : '') + ` for a ${m.what}${split}`,
         m.promoted ? '#7de08a' : '#ffd479');
     return;
   }
@@ -413,7 +417,8 @@ addEventListener('keydown', e => {
   if (e.key === 'Enter' && !dead) { e.preventDefault(); chatOpen = true; chatLine = ''; steerDown.clear(); return; }
 
   const k = e.key.toLowerCase();
-  if (!dead && STEER_KEYS[k]) steerDown.add(k);
+  // preventDefault or the arrows scroll the page out from under the canvas.
+  if (!dead && STEER_KEYS[k]) { steerDown.add(k); e.preventDefault(); }
   if (k === 'v') say(toggleAudio() ? 'Sound on' : 'Sound off', '#8ab4e6');
   if (k === 'm') { sysOpen = !sysOpen; bayOpen = false; }
   if (k === 'h') { if (picking) { picking = null; return; }        // back out of the chooser first
@@ -2419,7 +2424,7 @@ function drawFrame(now) {
       continue;
     }
     if (s.vis === ALLY) {
-      g.fillStyle = off ? '#ff5c6b' : (COMPANIES[s.co]?.color ?? '#8899aa');
+      g.fillStyle = off ? '#ff5c6b' : ALLY_DOT;
       const w = id === myId ? 5 : 3;
       g.fillRect(mx - w / 2, my - w / 2, w, w);
       continue;

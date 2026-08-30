@@ -211,6 +211,7 @@ export function newAlien(kind, id, map, seed, post = null) {
   return Object.assign(a, {
     id, kind, def, rand, isAlien: true, post,
     target: null, provoked: new Set(), lost: 0, dead: 0, way: post ?? roamPoint(map, rand),
+    dealt: new Map(),                 // playerId -> damage, since it last spawned
   });
 }
 

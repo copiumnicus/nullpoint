@@ -5,11 +5,20 @@
 // no second way to move a ship that could disagree with the first.
 //
 // Screen axes, y growing downward, matching every other vector the client sends.
+//
+// Both bindings are listed rather than one aliased to the other, because they are
+// not the same choice: WASD keeps a hand near 1/2/3, TAB and SPACE, and the arrows
+// free that hand entirely by moving flying to the other one. Nobody has to pick
+// in advance — holding W and ArrowUp at once is just up, since the sum is
+// normalised like any other pair.
+//
+// e.key for an arrow is 'ArrowUp', and the handler lower-cases before it looks
+// here, so these are the lower-cased names.
 export const STEER_KEYS = {
-  w: [ 0, -1],
-  a: [-1,  0],
-  s: [ 0,  1],
-  d: [ 1,  0],
+  w: [ 0, -1],  arrowup:    [ 0, -1],
+  a: [-1,  0],  arrowleft:  [-1,  0],
+  s: [ 0,  1],  arrowdown:  [ 0,  1],
+  d: [ 1,  0],  arrowright: [ 1,  0],
 };
 
 export const isSteerKey = k => Object.hasOwn(STEER_KEYS, k);

@@ -8,6 +8,13 @@ import { MAPS } from './maps.js';
 
 export const ALLY = 2, FRESH = 1, STALE = 0;
 
+// Friendly is blue, hostile is red, and neither is up for negotiation by company.
+// The plot used to paint allies in their company's colour, which told you nothing
+// — ALLY is only ever set for your own company, so it was your own colour every
+// time — and it meant KVR pilots read their own wingmen in the same purple the
+// game uses for a threat everywhere else.
+export const ALLY_DOT = '#4fc3f7';
+
 // Allies are always visible: they transmit their position to you, no scanning
 // involved. Enemies have to be found — and once found, they stay on your plot for
 // their own signature duration after leaving your radius, so a Bulwark is far

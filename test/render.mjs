@@ -446,13 +446,20 @@ const dismiss = () => {
   // own: alt-tab mid-burn and the ship would fly until something else stopped it.
   for (const k of ['Escape']) evt('keydown', { key: k });   // close the chat
   sent.length = 0;
+  evt('keydown', { key: 'ArrowUp' }); flush();      // the other hand's binding
+  const up = only();
+  if (!up) errs.push('ArrowUp did not steer the ship');
+  else if (up.dx !== 0 || up.dy !== -1) errs.push(`ArrowUp steered ${up.dx},${up.dy}, not 0,-1`);
+  evt('keyup', { key: 'ArrowUp' });
+
+  sent.length = 0;
   evt('keydown', { key: 'w' }); flush();
   if (!dirs().length) errs.push('W did not steer once the chat was closed again');
   sent.length = 0;
   evt('blur'); flush(); flush();
   if (dirs().length) errs.push('a key held when the window lost focus kept flying the ship');
-  console.log('steering: WASD flies, diagonals hold one throttle, opposites stop, '
-    + 'typing and blur release');
+  console.log('steering: WASD and the arrows fly, diagonals hold one throttle, '
+    + 'opposites stop, typing and blur release');
 }
 
 // The hangar's APPLY button: does clicking it actually ask the server for a refit?
