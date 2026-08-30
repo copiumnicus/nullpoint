@@ -13,6 +13,7 @@ import { isTrack, typeOf, servable } from './shared/music.js';
 import { nameProblem, cleanName } from './shared/signup.js';
 import { MUSIC_DIRS, pickDir } from './config.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
+import { DEVICES, devicePrice, sanitiseDevice, whyNotDevice } from './shared/devices.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones, sanitiseRig, isCollector, topTier, collectorReach } from './shared/gear.js';
@@ -199,7 +200,7 @@ const PROP_ROWS = PROPS.map(p2 => {
            guns: s2.guns, lvl: 0, drones: s2.drones.length,
            form: Math.max(0, FORMATION_KEYS.indexOf(p2.formation)),
            dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY,
-           rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1 };
+           rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0 };
 });
 
 const bolts  = new Map();    // mapId -> bolts in flight
@@ -318,6 +319,7 @@ wss.on('connection', (ws, req) => {
                     formations: [...acct.formations],
                     ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
+                    devices: { ...acct.devices }, device: acct.device, folding: null,
                     scoop: null, want: null, dead: false, lobby,
                     acted: Date.now(), banked: Date.now() });
   // A line back to this pilot only. Lives out here rather than inside the chat
@@ -337,6 +339,7 @@ wss.on('connection', (ws, req) => {
                                                 ammo: players.get(id).ammo, using: players.get(id).using,
                                                 armed: players.get(id).armed,
                                                 kits: players.get(id).kits, kit: players.get(id).kit,
+                                                devices: players.get(id).devices, device: players.get(id).device,
                                                 gear: players.get(id).gear, hulls: players.get(id).hulls,
                                                 credits: players.get(id).credits })));
   const sendWelcome = () => ws.send(JSON.stringify({ t: 'welcome', id, token, name: acct.name,
@@ -346,6 +349,7 @@ wss.on('connection', (ws, req) => {
                            formation: acct.formation, formations: acct.formations,
                            ammo: acct.ammo, using: acct.using, armed: acct.armed,
                            kits: acct.kits, kit: acct.kit,
+                           devices: acct.devices, device: acct.device,
                            rig: acct.rig ?? null, played: acct.played ?? 0 }));
 
   // Who the sides are and how full each is, so somebody choosing can see whether
@@ -567,6 +571,33 @@ wss.on('connection', (ws, req) => {
       P.kit = sanitiseKit(m.key);
       touch(P);
       return outfit();
+    }
+    if (m.t === 'buydevice') {                    // beacons are a dock purchase, like kits
+      const d = DEVICES[m.key];
+      if (!atStation() || !d || P.credits < devicePrice(m.key)) return;
+      P.credits -= devicePrice(m.key);
+      P.devices[m.key] = (P.devices[m.key] ?? 0) + 1;
+      if (!(P.devices[P.device] > 0)) P.device = m.key;
+      receipt(d.name, devicePrice(m.key), `${P.devices[m.key]} aboard`);
+      touch(P);
+      return outfit();
+    }
+    if (m.t === 'device') {                       // choose which one is loaded
+      if (!DEVICES[m.key]) return;
+      P.device = sanitiseDevice(m.key);
+      touch(P);
+      return outfit();
+    }
+    if (m.t === 'recall') {
+      const why = whyNotDevice({ devices: P.devices, using: P.device,
+                                 docked: !!P.docked, busy: !!P.folding });
+      if (why) return tell(why);
+      const d = DEVICES[P.device];
+      // Nothing is spent here. Being interrupted is already the punishment, and
+      // charging for the attempt would mean the only safe time to press it is a
+      // time you did not need it.
+      P.folding = { key: P.device, left: d.secs, secs: d.secs, mark: ship.sinceHit };
+      return;
     }
     if (m.t === 'repair') {
       const why = whyNotRepair({ kits: P.kits, using: P.kit, docked: !!P.docked,
@@ -818,6 +849,38 @@ setInterval(() => {
     // A repair drone works while nothing is shooting at you. Take a hit and it
     // stops, and the kit is gone — standing still for five seconds in open
     // space is the whole cost of not flying home.
+    // Folding home. Any hit at all ends it — sinceHit only ever counts UP unless
+    // something lands, so a drop in it is a hit and needs no separate signal.
+    if (p.folding) {
+      if (p.ship.sinceHit < p.folding.mark || p.ship.hp <= 0) {
+        p.folding = null;
+        if (p.ws.readyState === 1) p.ws.send(JSON.stringify(
+          { t: 'chat', from: '', text: 'recall broken off — the beacon is still yours' }));
+      } else {
+        p.folding.mark = p.ship.sinceHit;
+        p.folding.left -= dt;
+        if (p.folding.left <= 0) {
+          const key = p.folding.key;
+          p.folding = null;
+          if (--p.devices[key] <= 0) delete p.devices[key];
+          const home = p.co + '1', b = MAPS[home].base;
+          p.mapId = home; p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
+          Object.assign(p.ship, { x: b.x, y: b.y, vx: 0, vy: 0, tx: null, ty: null,
+                                  dx: null, dy: null, charge: 0, chargeTo: null });
+          touch(p);
+          // The beacon is spent here, so the bar has to be told — touch() saves it
+          // but says nothing, and the box went on reading the old count.
+          if (p.ws.readyState === 1) {
+            p.ws.send(JSON.stringify({ t: 'map', map: home }));
+            p.ws.send(JSON.stringify({ t: 'fit', hull: p.ship.hull, fit: p.ship.fit,
+              drones: p.ship.drones, rig: p.ship.rig ?? null, formation: p.ship.formation,
+              formations: p.formations, ammo: p.ammo, using: p.using, armed: p.armed,
+              kits: p.kits, kit: p.kit, devices: p.devices, device: p.device,
+              gear: p.gear, hulls: p.hulls, credits: p.credits }));
+          }
+        }
+      }
+    }
     if (p.fixing) {
       if (p.ship.sinceHit < KIT_QUIET * 0.25 || p.ship.hp <= 0) {
         p.fixing = null;
@@ -1056,6 +1119,7 @@ setInterval(() => {
       flash: Math.round(100 * p.ship.shieldHit / SHIELD_FLASH),
       tgt: p.targetId ?? 0, shot: Math.round(100 * p.ship.shotFlash / SHOT_FLASH),
       fix: p.fixing ? Math.round(100 * (1 - p.fixing.left / p.fixing.secs)) : 0,
+      wrp: p.folding ? Math.round(100 * (1 - p.folding.left / p.folding.secs)) : 0,
       rk: Math.round(100 * (p.ship.rocketFlash ?? 0) / LAUNCH_FLASH),
       guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.drones.length,
       form: Math.max(0, FORMATION_KEYS.indexOf(p.ship.formation)),
@@ -1079,7 +1143,7 @@ setInterval(() => {
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
       guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0,
-      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1 });
+      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

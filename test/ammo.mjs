@@ -142,6 +142,43 @@ console.log('\nwhat a grade is worth');
 
 // A grade you can only tell apart in the HUD is a grade you cannot tell apart in
 // a fight. The round itself carries what loaded it, all the way to the wire.
+// --- single-use devices ------------------------------------------------------
+// The taskbar's second consumable slot. Repair drones buy you hull without flying
+// home; this buys you the flying home.
+console.log('\nthe way home');
+{
+  const { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, whyNotDevice, devicePrice } =
+    await import('../shared/devices.js');
+  const { BAR_SLOTS } = await import('../shared/ammo.js');
+
+  check('there is a slot for it beside the repair rack',
+    BAR_SLOTS.includes('device') && BAR_SLOTS.length === 4, BAR_SLOTS.join(' '));
+  check('every device has a name, a price and a window',
+    DEVICE_KEYS.every(k => DEVICES[k].name && DEVICES[k].price > 0 && DEVICES[k].secs > 0),
+    DEVICE_KEYS.map(k => `${DEVICES[k].name} ${DEVICES[k].secs}s ${DEVICES[k].price}cr`).join(', '));
+  check('the default is one you can actually name', !!DEVICES[DEFAULT_DEVICE]);
+
+  const have = { recall: 1 };
+  check('with one aboard and clear of a dock, it goes',
+    whyNotDevice({ devices: have, using: 'recall' }) === null);
+  check('with none aboard it says so',
+    /no /.test(whyNotDevice({ devices: {}, using: 'recall' })));
+  check('at a dock it is pointless and says that instead',
+    /dock/.test(whyNotDevice({ devices: have, using: 'recall', docked: true })));
+  check('and it will not stack on itself',
+    /already/.test(whyNotDevice({ devices: have, using: 'recall', busy: true })));
+
+  // The one that matters. A recall you cannot START under fire is a recall that
+  // is no use on the only occasion you want one — being interrupted is the cost,
+  // not being forbidden.
+  check('being shot at does not stop you trying',
+    whyNotDevice({ devices: have, using: 'recall' }) === null,
+    'there is no under-fire clause here on purpose — the tick decides, not the button');
+  check('and the fold is worth more than a repair drone, because it is a whole trip',
+    devicePrice('recall') > 0 && DEVICES.recall.secs >= 4,
+    `${devicePrice('recall')} cr for ${DEVICES.recall.secs}s of holding still`);
+}
+
 console.log('\nseeing what is loaded');
 {
   const { packBolt, unpackBolt, packRocket, unpackRocket } = await import('../shared/net.js');

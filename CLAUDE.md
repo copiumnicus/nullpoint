@@ -175,6 +175,38 @@ thing itself until it is asked for.
 
 ---
 
+## Rule eight: the change ships with the note
+
+`shared/patch.js` is the changelog the game shows about itself, top right. Every
+change a player can notice gets a line in it, in the same commit that makes the
+change — not afterwards, not in a batch.
+
+This is enforced. `test/patch.mjs` compares the working tree against HEAD: if
+anything under `server.js`, `store.js`, `config.js`, `shared/` or `public/` has
+changed and `shared/patch.js` has not, `npm test` fails and names the files. A
+clean tree passes, so it is safe in CI, and it clears the moment a note is
+written. It exists because two batches shipped without a line and the deployed
+game claimed nothing had happened.
+
+Add the entry at the **top** and bump `VERSION` with it — the client draws
+`VERSION` beside the icon, so the two drifting apart is visible immediately, and
+a test asserts they match.
+
+Notes are for players, not for reviewers. Two or three lines a version, each one
+a thing somebody would notice while flying:
+
+    'Generators raise the reactor ceiling by what they cost you in speed'
+
+not "refactored boostOf to read stats.boost". The reasoning belongs in the commit
+message; the changelog is what changed, from the cockpit. Keep them under about
+90 characters — there is a test for that too, because a note nobody finishes
+reading is the same as no note.
+
+Versions are `0.<n>` and the minor climbs once per shipped batch. The game is
+early; it is not on version 7.
+
+---
+
 ## Working habits
 
 - **Assert the anchor before writing.** Editing with `python .replace()` fails

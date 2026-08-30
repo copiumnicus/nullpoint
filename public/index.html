@@ -42,6 +42,7 @@ import { settingsLayout, valueAt } from '/shared/settings.js';
 import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
+import { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, devicePrice, whyNotDevice } from '/shared/devices.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
          barLayout, feedMenu, gradeColour } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
@@ -94,6 +95,7 @@ let myPlayed = 0;                 // seconds flown, idle time already taken off
 let myForm = 'line', myForms = ['line'];
 let myAmmo = {}, myUsing = { ...DEFAULT_AMMO }, myArmed = { ...ARMED_ALL };
 let myKits = {}, myKit = DEFAULT_KIT;
+let myDevices = {}, myDevice = DEFAULT_DEVICE;
 let bayOpen = false;
 // Blue is shields wherever it appears — the bar, the impact bubble, damage the
 // shields caught, and the reactor feeding them. Thrusters take engine amber
@@ -273,6 +275,7 @@ ws.onmessage = e => {
     myAmmo = m.ammo ?? {}; myUsing = { ...DEFAULT_AMMO, ...(m.using ?? {}) };
     myArmed = { ...ARMED_ALL, ...(m.armed ?? {}) };
     myKits = m.kits ?? {}; myKit = m.kit ?? DEFAULT_KIT;
+    myDevices = m.devices ?? {}; myDevice = m.device ?? DEFAULT_DEVICE;
     myName = m.name ?? '';
     signup = null; joinSaid = '';                 // whoever you are, you are in now
     // Written and then read back. A storage write that silently fails loses the
@@ -300,6 +303,7 @@ ws.onmessage = e => {
     myAmmo = m.ammo ?? myAmmo; myUsing = m.using ? { ...DEFAULT_AMMO, ...m.using } : myUsing;
     if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
     myKits = m.kits ?? myKits; myKit = m.kit ?? myKit;
+    myDevices = m.devices ?? myDevices; myDevice = m.device ?? myDevice;
     if (typeof m.credits === 'number') credits = m.credits;
     return;
   }
@@ -364,6 +368,8 @@ ws.onmessage = e => {
   if (m.armed) myArmed = { ...ARMED_ALL, ...m.armed };
   if (m.kits) myKits = m.kits;
   if (m.kit) myKit = m.kit;
+  if (m.devices) myDevices = m.devices;
+  if (m.device) myDevice = m.device;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
   if (m.drones) myDrones = m.drones;
@@ -947,6 +953,11 @@ function bayClick(v) {
       return credits >= k.price ? send({ t: 'buykit', key: it.k })
         : say(`A ${k.name} costs ${k.price} ${CURRENCY.short}`, '#e0a53f');
     }
+    if (it.kind === 'device') {
+      const d = DEVICES[it.k];
+      return credits >= d.price ? send({ t: 'buydevice', key: it.k })
+        : say(`A ${d.name} costs ${d.price} ${CURRENCY.short}`, '#e0a53f');
+    }
     return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
       : say(`Not enough credits for a ${EQUIPMENT[it.k].name}`, '#e0a53f');
   }
@@ -1221,18 +1232,21 @@ function drawBay() {
                 : it.kind === 'drone' ? dronePrice(myDrones.length)
                 : it.kind === 'ammo' ? AMMO[it.k].price
                 : it.kind === 'kit' ? KITS[it.k].price
+                : it.kind === 'device' ? DEVICES[it.k].price
                                       : EQUIPMENT[it.k].price;
     const name = it.kind === 'hull' ? HULLS[it.k].name
                : it.kind === 'form' ? FORMATIONS[it.k].name
                : it.kind === 'drone' ? `Drone ${myDrones.length + 1}`
                : it.kind === 'ammo' ? `${AMMO[it.k].name}   crate of ${AMMO[it.k].pack}`
                : it.kind === 'kit' ? KITS[it.k].name
+               : it.kind === 'device' ? DEVICES[it.k].name
                                      : EQUIPMENT[it.k].name;
     const blurb = it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}`
                 : it.kind === 'form' ? FORMATIONS[it.k].blurb
                 : it.kind === 'drone' ? 'Flies escort. One slot, anything you like in it.'
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
+                : it.kind === 'device' ? `${DEVICES[it.k].blurb}`
                                       : EQUIPMENT[it.k].blurb;
     const afford = credits >= price;
     const sells = sellsAt(G.page, home);
@@ -1255,10 +1269,11 @@ function drawBay() {
            g.fillText(`${price} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
     const stock = it.kind === 'item' ? (myGear[it.k] ?? 0)
                 : it.kind === 'ammo' ? (myAmmo[it.k] ?? 0)
-                : it.kind === 'kit' ? (myKits[it.k] ?? 0) : 0;
+                : it.kind === 'kit' ? (myKits[it.k] ?? 0)
+                : it.kind === 'device' ? (myDevices[it.k] ?? 0) : 0;
     if (stock) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
                  g.fillText(it.kind === 'ammo' ? `${stock} rounds held`
-                          : it.kind === 'kit' ? `${stock} aboard` : `${stock} in locker`,
+                          : it.kind === 'kit' || it.kind === 'device' ? `${stock} aboard` : `${stock} in locker`,
                             r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';
   }
@@ -1720,7 +1735,17 @@ let lastBox = { feed: null, t: -Infinity };     // for spotting a double click o
 
 const heldGrades = feed => feed === 'repair'
   ? KIT_KEYS.filter(k => (myKits[k] ?? 0) > 0)
+  : feed === 'device'
+  ? DEVICE_KEYS.filter(k => (myDevices[k] ?? 0) > 0)
   : forWeapon(feed).filter(k => (myAmmo[k] ?? 0) > 0);
+
+// Same shape as repairBlocked: the button, its tooltip and the server all ask
+// one function, so the box never offers what the server will refuse.
+function recallBlocked() {
+  const me = ships.get(myId);
+  return whyNotDevice({ devices: myDevices, using: myDevice,
+                        docked: docked(), busy: (me?.wrp ?? 0) > 0 });
+}
 
 // Why the repair button is not available, or null. The button, its tooltip and
 // the server all ask the same function, so it never offers what it will refuse.
@@ -1745,6 +1770,7 @@ function barClick(v) {
     const M = feedMenu(box, heldGrades(feedOpen));
     for (const row of M.rows) if (inside(row.r)) {
       if (feedOpen === 'repair') { if (row.k !== myKit) send({ t: 'kit', key: row.k }); }
+      else if (feedOpen === 'device') { if (row.k !== myDevice) send({ t: 'device', key: row.k }); }
       else if (row.k !== myUsing[feedOpen]) send({ t: 'ammo', key: row.k });
       feedOpen = null;
       return true;
@@ -1769,6 +1795,18 @@ function barClick(v) {
       return true;
     }
     const held = heldGrades(b.feed);
+    if (b.feed === 'device') {
+      if (v.y < b.r.y + PICK_STRIP && held.length > 1) {
+        feedOpen = feedOpen === b.feed ? null : b.feed;
+        return true;
+      }
+      if (!held.length) { say('No beacon aboard — they are sold at a dock', '#e0a53f'); return true; }
+      const why = recallBlocked();
+      if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+      send({ t: 'recall' });
+      say('Folding home — hold still', '#8ab4e6');
+      return true;
+    }
     if (b.feed === 'repair') {
       // The strip along the top opens the rack; the rest of the box spends one.
       // Repairing is what you want most of the time so it keeps the big target,
@@ -1835,6 +1873,51 @@ function drawSpacePrompt() {
 
 // The repair rack. Amber when it will work, dim when it will not, and the reason
 // is one hover away rather than something you learn by clicking.
+// The way home. Drawn as a ring closing rather than a bar, because what it is
+// counting down is a window in which nothing may touch you.
+function drawDeviceBox(b) {
+  const r = b.r, d = DEVICES[myDevice], n = myDevices[myDevice] ?? 0;
+  const me = ships.get(myId), folding = (me?.wrp ?? 0) > 0;
+  const why = recallBlocked(), ready = !why;
+  const over = hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
+
+  g.fillStyle = 'rgba(6,10,16,0.82)'; g.fillRect(r.x, r.y, r.w, r.h);
+  g.strokeStyle = folding ? '#7fd4ff' : ready ? '#8ab4e6' : over ? '#4a6785' : '#243448';
+  g.lineWidth = folding || ready ? 2 : 1;
+  g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+
+  const cx = r.x + r.w / 2, cy = r.y + 24;
+  g.globalAlpha = n ? (ready || folding ? 1 : 0.4) : 0.25;
+  g.strokeStyle = folding ? '#7fd4ff' : '#cfe9ff'; g.lineWidth = 2;
+  g.beginPath(); g.arc(cx, cy, 8.5, 0, 7); g.stroke();       // a gate, opening
+  g.beginPath(); g.arc(cx, cy, 4, 0, 7); g.stroke();
+  g.globalAlpha = 1;
+  if (folding) {                                  // the window you have to survive
+    g.strokeStyle = '#7fd4ff'; g.lineWidth = 2.5;
+    g.beginPath();
+    g.arc(cx, cy, 13, -Math.PI / 2, -Math.PI / 2 + (me.wrp / 100) * Math.PI * 2);
+    g.stroke();
+  }
+  g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
+  g.fillStyle = folding ? '#7fd4ff' : n ? (ready ? '#cfe4ff' : '#e0a53f') : '#66748c';
+  g.fillText(folding ? `${Math.max(0, Math.ceil(d.secs * (1 - me.wrp / 100)))}s` : String(n),
+             cx, r.y + r.h - 10);
+  if (heldGrades('device').length > 1) {
+    g.fillStyle = '#3d4757'; g.font = '9px ui-monospace, monospace';
+    g.fillText('\u25b2', r.x + r.w - 9, r.y + 12);
+  }
+  if (over && !feedOpen) {
+    const t = folding ? 'folding — one hit ends it' : (why ?? `${d.name} · ${d.secs}s, and one hit ends it`);
+    g.font = '11px ui-monospace, monospace';
+    const w = g.measureText(t).width + 18;
+    const x = Math.max(6, Math.min(VIEW_W - w - 6, cx - w / 2));
+    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - 24, w, 20);
+    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - 23.5, w - 1, 19);
+    g.fillStyle = '#cfe4ff'; g.fillText(t, x + w / 2, r.y - 10);
+  }
+  g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+}
+
 function drawRepairBox(b) {
   const r = b.r, k = KITS[myKit], n = myKits[myKit] ?? 0;
   const me = ships.get(myId), busy = (me?.fix ?? 0) > 0;
@@ -1889,6 +1972,7 @@ function drawBar() {
 
   for (const b of L.boxes) {
     if (b.feed === 'repair') { drawRepairBox(b); continue; }
+    if (b.feed === 'device') { drawDeviceBox(b); continue; }
     const key = myUsing[b.feed], a = AMMO[key], n = myAmmo[key] ?? 0;
     const r = b.r, safed = !myArmed[b.feed], dry = !safed && n === 0;
     const low = !dry && !safed && n < (b.feed === 'rocket' ? 60 : 300);

@@ -8,9 +8,19 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.11';
+export const VERSION = '0.13';
 
 export const PATCHES = [
+  { v: '0.13', notes: [
+    'Recall Beacons: a single-use device that folds you home over five seconds',
+    'One hit breaks the fold — and the beacon is not spent, so you can try again',
+  ] },
+  { v: '0.12', notes: [
+    'Generators raise the reactor ceiling by what they cost you in speed',
+    'The Corsair Hive at Nullpoint: ten Leviathans, and it launches the Bandits',
+    'Aliens keep out of your docking ring unless they are already chasing you',
+    'Pirate outposts are marked on the star chart, not just the sector plot',
+  ] },
   { v: '0.11', notes: [
     'Patch notes wrap and scroll instead of cutting every line off halfway',
   ] },

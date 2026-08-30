@@ -16,7 +16,10 @@
 // before this, a pod being hauled away just vanished off everyone else's screen.
 export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', 'hp', 'sh', 'flash',
                             'tgt', 'shot', 'rk', 'fix', 'guns', 'psys', 'plvl', 'lvl', 'drones', 'form', 'dmask', 'vis',
-                            'rig', 'rgx', 'rgy', 'rgp', 'rgf'];
+                            'rig', 'rgx', 'rgy', 'rgp', 'rgf',
+                            // how far through a recall, so a fold is something
+                            // other people watch happen rather than a vanishing
+                            'wrp'];
 
 // A bolt in flight: where it started, where it is aimed, how far along it is,
 // whether a hostile fired it, and how much damage it carries — which is what the

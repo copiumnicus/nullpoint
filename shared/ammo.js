@@ -120,7 +120,9 @@ export const BAR_BOX = 64, BAR_GAP = 12, BAR_SPLIT = 26;
 
 // Two weapons and the repair rack, in that order, always. The gap before the
 // repair box says it is a different kind of thing — that one is spent, not fired.
-export const BAR_SLOTS = [...FEEDS, 'repair'];
+// Two consumables ride beside the weapons: the one that fixes the ship and the
+// one that takes it home.
+export const BAR_SLOTS = [...FEEDS, 'repair', 'device'];
 
 export function barLayout(VIEW_W, VIEW_H) {
   const n = BAR_SLOTS.length;
