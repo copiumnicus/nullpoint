@@ -10,6 +10,7 @@ import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
 import { nameProblem, cleanName } from './shared/signup.js';
+import { MUSIC_DIRS, pickDir } from './config.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
@@ -44,9 +45,10 @@ const SFX_TYPE = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: '
 // Whatever is sitting in public/music right now, one subfolder deep. Read fresh
 // each time so a track dropped in during a session shows up on the next reload
 // without restarting the server. What counts as a track is in shared/music.js.
-// Configurable so the tracks can live on the same mounted volume as the save
-// file in production — they are deliberately not in the repo.
-const MUSIC_DIR = process.env.MUSIC_DIR || 'public/music';
+// The tracks are deliberately not in the repo, so in production they live on the
+// mounted volume beside the save file. Resolved per call rather than at boot, so
+// uploading music to a running service works without a redeploy.
+const musicDir = () => pickDir(MUSIC_DIRS, d => fs.existsSync(d));
 function listMusic() {
   const out = [];
   const scan = (dir, prefix) => {
@@ -57,7 +59,7 @@ function listMusic() {
       else if (e.isFile() && isTrack(e.name)) out.push(prefix + e.name);
     }
   };
-  scan(MUSIC_DIR, '');
+  scan(musicDir(), '');
   return out.sort();
 }
 const SAFE_DIR = /^[\w][\w -]*$/;
@@ -83,7 +85,7 @@ const server = http.createServer((req, res) => {
     const name = decodeURIComponent(url.slice(7));
     // It has to be one we actually listed. Membership, not string surgery.
     if (!servable(name, listMusic())) return res.writeHead(404).end();
-    const type = typeOf(name), file = `${MUSIC_DIR}/${name}`;
+    const type = typeOf(name), file = `${musicDir()}/${name}`;
     const size = fs.statSync(file).size;
     const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
     if (range) {                                  // browsers seek in audio; let them

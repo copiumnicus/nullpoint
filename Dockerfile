@@ -10,10 +10,11 @@ COPY . .
 
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV DATA_DIR=/data
 EXPOSE 3000
 
-# /data should be a mounted volume; without one, accounts reset on every deploy.
-VOLUME ["/data"]
+# No VOLUME directive: Railway rejects a Dockerfile that declares one and fails
+# the build outright. Mount the volume at /data on the service instead — config.js
+# looks there first and falls back to the repo's own folders, so this image runs
+# the same from a checkout as it does from a mount.
 
 CMD ["node", "server.js"]

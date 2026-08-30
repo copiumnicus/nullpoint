@@ -5,10 +5,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { DATA_DIRS, pickDir } from './config.js';
 
-// DATA_DIR lets a host point this at a mounted volume; without one the file is
+// A mounted volume at /data wins; without one the file is
 // wiped on every deploy and everybody loses their ship.
-const DIR = process.env.DATA_DIR || 'data';
+const DIR = pickDir(DATA_DIRS, d => fs.existsSync(d));
 const FILE = path.join(DIR, 'accounts.json');
 
 export function load() {
