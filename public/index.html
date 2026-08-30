@@ -1597,7 +1597,6 @@ function nowPlaying() {
 // Where the hauling rig is right now, when one is out fetching. Set while the
 // escort is drawn and read by the tractor beam a few lines later, so the beam
 // leaves the drone that is actually doing the work rather than the hull.
-let rigAt = null;
 
 const PICK_STRIP = 20;                          // the top of a box opens its rack
 let feedOpen = null;                            // which box has its menu up
@@ -2049,31 +2048,33 @@ function drawFrame(now) {
 
   if (scoop && me) {                               // tractor beam
     const pod = pods.find(p => p.id === scoop.id);
-    if (pod) {
-      const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
-      if (rigAt) {
-        // No beam. The drone flying out and back IS the animation — a line
-        // stretched between the two was just clutter drawn over it. It carries
-        // the ore home instead, once it has hold of it.
-        if (scoop.p > 0.55) {
-          g.fillStyle = col;
-          g.beginPath(); g.arc(rigAt.x, rigAt.y, 4.5, 0, 7); g.fill();
-          g.globalAlpha = 0.35;
-          g.beginPath(); g.arc(rigAt.x, rigAt.y, 8, 0, 7); g.fill();
-          g.globalAlpha = 1;
-        }
-      } else {                                     // your own arm: a proper beam
-        const px = pod.x + (me.rx - pod.x) * scoop.p, py = pod.y + (me.ry - pod.y) * scoop.p;
-        g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 10;
-        g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
-        g.globalAlpha = 0.9; g.lineWidth = 2;
-        g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
-        g.fillStyle = col; g.globalAlpha = 1;      // the cargo itself, sliding in
-        g.beginPath(); g.arc(px, py, 7 * (1 - scoop.p * 0.6), 0, 7); g.fill();
+    // Which kind of pull this is comes off the wire. It used to be read from a
+    // variable the escort pass sets — and the escort is drawn AFTER this block,
+    // so the first frame of every drone pull found it still null and flashed the
+    // arm's beam across the screen for one frame before correcting itself.
+    const leg = me.rgf ?? -1;
+    if (leg >= 0) {
+      // No beam. The drone flying out and back IS the animation. It carries the
+      // ore home on the return leg, which the wire now names rather than guesses.
+      if (leg === 2) {
+        const col = MATERIALS[pod?.mat]?.colour ?? '#c2a24f';
+        g.fillStyle = col;
+        g.beginPath(); g.arc(me.rgx, me.rgy, 4.5, 0, 7); g.fill();
+        g.globalAlpha = 0.35;
+        g.beginPath(); g.arc(me.rgx, me.rgy, 8, 0, 7); g.fill();
+        g.globalAlpha = 1;
       }
+    } else if (pod) {                              // your own arm: a proper beam
+      const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+      const px = pod.x + (me.rx - pod.x) * scoop.p, py = pod.y + (me.ry - pod.y) * scoop.p;
+      g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 10;
+      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+      g.globalAlpha = 0.9; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
+      g.fillStyle = col; g.globalAlpha = 1;        // the cargo itself, sliding in
+      g.beginPath(); g.arc(px, py, 7 * (1 - scoop.p * 0.6), 0, 7); g.fill();
     }
   }
-  rigAt = null;                                    // one frame only
 
   for (const b of bolts) {                         // bolts first, so hulls sit on top
     const p1 = Math.min(1, b.p), p0 = Math.max(0, b.p - 0.22);
@@ -2265,12 +2266,12 @@ function drawFrame(now) {
       const c0 = Math.cos(s.heading), s0 = Math.sin(s.heading), dr = Math.max(5, R * 0.52);
       const mine2 = id === myId;
       const stuffed = mine2 && holdVol(hold) >= cargoCap;
-      const lifting = hasRig && (s.rgp ?? -1) >= 0;   // out of formation, on a pod
+      const lifting = hasRig && (s.rgf ?? -1) >= 0;   // out of formation, on a pod
       layout.forEach((pt, d) => {
         const rig = hasRig && d === nD - 1;
         let dx = s.rx + (c0 * pt.fwd - s0 * pt.lat) * R;
         let dy = s.ry + (s0 * pt.fwd + c0 * pt.lat) * R;
-        if (rig && lifting) { dx = s.rgx; dy = s.rgy; rigAt = mine2 ? { x: dx, y: dy } : rigAt; }
+        if (rig && lifting) { dx = s.rgx; dy = s.rgy; }
         const armed = !rig && (((s.dmask ?? 0) >> d) & 1);
         g.save(); g.translate(dx, dy); g.rotate(s.heading);
         g.globalAlpha = lost ? 0.3 : 0.95;
@@ -2289,7 +2290,7 @@ function drawFrame(now) {
         }
         g.fillStyle = '#0a0f16'; g.fillRect(-dr * 0.35, -dr * 0.35, dr * 0.7, dr * 0.7);
         g.globalAlpha = 1; g.restore();
-        if (rig && lifting) {
+        if (rig && (s.rgf ?? -1) === 1) {                 // only while it is actually lifting
           // Holding station over the pod. A ring closing as the lift runs, and a
           // slow pulse under the hull — enough that a watcher can see the ore is
           // being taken rather than disappearing, which is the whole complaint.

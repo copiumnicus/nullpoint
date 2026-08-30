@@ -28,7 +28,7 @@ import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
-         POD_LIFE, SCOOP_R, SCOOP_TIME, DRONE_SPEED, rigAt, DWELL } from './shared/cargo.js';
+         POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
@@ -190,7 +190,7 @@ const PROP_ROWS = PROPS.map(p2 => {
            guns: s2.guns, lvl: 0, drones: s2.drones.length,
            form: Math.max(0, FORMATION_KEYS.indexOf(p2.formation)),
            dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY,
-           rig: 0, rgx: 0, rgy: 0, rgp: -1 };
+           rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1 };
 });
 
 const bolts  = new Map();    // mapId -> bolts in flight
@@ -920,7 +920,7 @@ setInterval(() => {
       .filter(o => o.d <= reach)
       .sort((a, b) => a.d - b.d);
     for (const { c } of near) {
-      const s2 = beginScoop(p.ship, p.hold, c, reach, DRONE_SPEED);
+      const s2 = beginScoop(p.ship, p.hold, c, reach, droneSpeed(p.ship));
       if (typeof s2 === 'object') { p.scoop = s2; break; }   // anything else: try the next one
     }
   }
@@ -930,9 +930,11 @@ setInterval(() => {
     const list = pods.get(p.mapId) ?? [];
     const pod = list.find(c => c.id === p.scoop.id);
     const r = stepScoop(p.scoop, pod, p.ship, p.hold, dt);
-    if (r.running) continue;
-    if (r.emptied) list.splice(list.indexOf(pod), 1);
-    p.scoop = null;
+    // The pod goes the moment the lift lands, which is now before the drone is
+    // home — so this cannot wait on the pull being finished the way it used to.
+    if (r.emptied && pod) list.splice(list.indexOf(pod), 1);
+    if (r.took) touch(p);
+    if (!r.running) p.scoop = null;
   }
 
   for (const [mapId, list] of rockets) {
@@ -964,12 +966,12 @@ setInterval(() => {
   // the watcher's radar range and the drone still has to be somewhere.
   const rigRow = p => {
     const tier = EQUIPMENT[p.ship.rig]?.tier ?? 0;
-    if (!tier) return { rig: 0, rgx: 0, rgy: 0, rgp: -1 };
-    const pod = p.scoop ? (pods.get(p.mapId) ?? []).find(c => c.id === p.scoop.id) : null;
-    const at = rigAt(p.scoop, p.ship, pod);
-    if (!at) return { rig: tier, rgx: 0, rgy: 0, rgp: -1 };
+    if (!tier) return { rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1 };
+    const at = rigAt(p.scoop, p.ship);
+    if (!at) return { rig: tier, rgx: 0, rgy: 0, rgp: -1, rgf: -1 };
     return { rig: tier, rgx: Math.round(at.x), rgy: Math.round(at.y),
-             rgp: Math.round(100 * at.work) };
+             rgp: Math.round(100 * at.work),
+             rgf: at.phase === 'out' ? 0 : at.phase === 'work' ? 1 : 2 };
   };
 
   // Snapshots are per player, not per map. Radar means two ships sitting in the
@@ -1008,7 +1010,7 @@ setInterval(() => {
       flash: Math.round(100 * a.shieldHit / SHIELD_FLASH),
       tgt: a.target ?? 0, shot: Math.round(100 * a.shotFlash / SHOT_FLASH),
       guns: 1, psys: 0, plvl: 0, lvl: 0, drones: 0, form: 0, dmask: 0, rk: 0, fix: 0,
-      rig: 0, rgx: 0, rgy: 0, rgp: -1 });
+      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1 });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

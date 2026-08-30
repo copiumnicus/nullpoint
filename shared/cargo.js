@@ -60,11 +60,14 @@ export const POD_LIFE   = 120;  // s before a pod disperses
 export const SCOOP_R    = 260;  // px you must be inside to start hauling one in
 export const SCOOP_TIME = 0.9;  // s the tractor takes — you are stationary prey while it runs
 
-// How fast a hauling drone actually moves. It has to fly out and back, so a pull
-// from the far edge of an Ore Tender's reach takes real seconds — a flat time
-// whatever the distance had the drone crossing 2000px/s, five times the fastest
-// hull, which read as teleporting rather than fetching.
-export const DRONE_SPEED = 420; // px/s
+// How fast a hauling drone moves: always a bit quicker than the ship it belongs
+// to. A flat 420 was faster than some hulls and slower than others, so on a
+// Kestrel the drone could never catch up and on a Bulwark it shot off like it had
+// been fired. Tying it to the ship means there is no hull it reads wrong on, and
+// no number to retune when a new hull is added — it is faster than you, always,
+// and that is the only property it actually needs.
+export const DRONE_SPEED_MULT = 1.3;
+export const droneSpeed = ship => Math.max(60, (ship?.stats?.speed ?? 300) * DRONE_SPEED_MULT);
 
 // A rig has to hold station over what it is lifting. It used to be one number —
 // travel plus a flat tractor time — which meant the ore simply vanished at the
@@ -81,16 +84,19 @@ export const pullTime = (dist, speed = 0) =>
 // legs are measured against the ship's position now rather than where it was when
 // the order went out, because the ship keeps flying and a drone tethered to a
 // stale point looked like it was falling behind.
-export function rigAt(scoop, ship, pod) {
-  if (!scoop || !pod || !(scoop.out > 0)) return null;      // your own arm has no drone
+export function rigAt(scoop, ship) {
+  if (!scoop || !(scoop.out > 0)) return null;             // your own arm has no drone
   const elapsed = scoop.secs - scoop.t, out = scoop.out;
   const phase = elapsed < out ? 'out' : elapsed < out + DWELL ? 'work' : 'back';
   const along = phase === 'out'  ? elapsed / out
               : phase === 'work' ? 1
               : Math.max(0, 1 - (elapsed - out - DWELL) / out);
+  // Against the pod's remembered place, not the live pod: the pod is spliced out
+  // of the world the moment the lift completes, and the drone still has to fly
+  // home from somewhere. Pods do not move, so remembering it costs nothing.
   return { phase, along,
-           x: ship.x + (pod.x - ship.x) * along,
-           y: ship.y + (pod.y - ship.y) * along,
+           x: ship.x + (scoop.px - ship.x) * along,
+           y: ship.y + (scoop.py - ship.y) * along,
            work: phase === 'work' ? Math.min(1, (elapsed - out) / DWELL) : 0 };
 }
 
@@ -140,7 +146,8 @@ export function beginScoop(ship, hold, pod, reach = SCOOP_R, speed = 0) {
   const t = pullTime(away, speed);
   // `out` is the outbound leg, and it is what tells rigAt whether there is a drone
   // in this pull at all. Your own tractor beam has none.
-  return { id: pod.id, t, secs: t, reach, out: speed > 0 ? away / speed : 0 };
+  return { id: pod.id, t, secs: t, reach, out: speed > 0 ? away / speed : 0,
+           px: pod.x, py: pod.y, done: false };
 }
 
 // Clicking cargo is an ORDER, not a request. If it is out of reach the ship flies
@@ -155,15 +162,35 @@ export function approachPod(ship, hold, pod) {
 }
 
 // Advances a beam. Drifting out of reach or dying cancels it and the cargo stays put.
+// The lift lands at the end of the dwell, and the flight home afterwards is only
+// a flight home. Two things used to go wrong here, both because the pull was one
+// undivided timer that cancelled on distance:
+//
+//   - flying off mid-pull abandoned the ore on the floor, which punished you for
+//     doing the exact thing a FETCHING drone exists to let you do
+//   - and it cancelled against `reach`, so a rig could never work at its own
+//     stated range while the ship was moving away at all
+//
+// Once a pull has started it is committed. The drone finishes it and then comes
+// to wherever you now are — rigAt measures the legs against the ship's current
+// position, so it chases rather than returning to a stale point.
 export function stepScoop(scoop, pod, ship, hold, dt) {
   if (!scoop) return { running: false, took: 0 };
-  if (!pod || ship.hp <= 0 || Math.hypot(pod.x - ship.x, pod.y - ship.y) > (scoop.reach ?? SCOOP_R))
-    return { running: false, took: 0, cancelled: true };
+  if (ship.hp <= 0) return { running: false, took: 0, cancelled: true };
+  // Before the lift the pod has to still be there; after it, the pod is gone by
+  // definition and there is nothing left to check.
+  if (!pod && !scoop.done) return { running: false, took: 0, cancelled: true };
   scoop.t -= dt;
-  if (scoop.t > 0) return { running: true, took: 0 };
-  const took = stow(hold, pod.mat, pod.n, ship.stats.cargo);
-  pod.n -= took;
-  return { running: false, took, emptied: pod.n <= 0 };
+  const elapsed = scoop.secs - scoop.t;
+  const liftAt = scoop.out > 0 ? scoop.out + DWELL : scoop.secs;
+  if (!scoop.done && elapsed >= liftAt) {
+    const took = stow(hold, pod.mat, pod.n, ship.stats.cargo);
+    pod.n -= took;
+    scoop.done = true;
+    // An arm has no drone to fly home, so for it the lift IS the end.
+    return { running: scoop.out > 0, took, emptied: pod.n <= 0 };
+  }
+  return { running: scoop.t > 0, took: 0 };
 }
 
 // The other direction: hangar back onto the ship, as much of the stack as fits.

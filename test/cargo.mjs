@@ -1,6 +1,7 @@
 import { MATERIALS, DROPS, rollDrop, stow, unload, holdVol, holdValue, volOf,
          POD_LIFE, SCOOP_R, SCOOP_TIME, CURRENCY } from '../shared/cargo.js';
-import { beginScoop, stepScoop, approachPod, load, rigAt, DWELL, pullTime, DRONE_SPEED } from '../shared/cargo.js';
+import { beginScoop, stepScoop, approachPod, load, rigAt, DWELL, pullTime,
+         droneSpeed, DRONE_SPEED_MULT } from '../shared/cargo.js';
 import { EQUIPMENT, sanitiseDrones, sanitiseRig, collectorReach, isCollector } from '../shared/gear.js';
 import { WILD, ALIENS } from '../shared/aliens.js';
 import { newShip, escortOf } from '../shared/sim.js';
@@ -103,12 +104,16 @@ console.log('\ntractor beam');
   check('it takes the stated time', Math.abs(t - SCOOP_TIME) < 0.05, `${t.toFixed(2)}s`);
   check('and the whole pod comes aboard', h1.platinum === 3 && p1.n === 0 && r.emptied);
 
+  // This used to read "drifting out of reach cancels it", and it did — which
+  // meant a fetching drone lost its cargo the moment you did the thing a fetching
+  // drone is for. A pull is committed once it starts.
   const s2 = ship(), h2 = {}, p2 = near(), sc2 = beginScoop(s2, h2, p2);
   for (let i = 0; i < 10; i++) stepScoop(sc2, p2, s2, h2, dt);
   s2.x = SCOOP_R + 400;                            // drift out mid-haul
-  const r2 = stepScoop(sc2, p2, s2, h2, dt);
-  check('drifting out of reach cancels it', r2.cancelled && !r2.running && holdVol(h2) === 0,
-    'and the cargo stays put');
+  let r2; do { r2 = stepScoop(sc2, p2, s2, h2, dt); } while (r2.running);
+  check('drifting out of reach no longer throws the cargo away',
+    !r2.cancelled && holdVol(h2) > 0,
+    'the pull is committed — it finishes and the drone comes to you');
   const s3 = ship(), h3 = {}, p3 = near(), sc3 = beginScoop(s3, h3, p3);
   for (let i = 0; i < 10; i++) stepScoop(sc3, p3, s3, h3, dt);
   s3.hp = 0;
@@ -278,32 +283,34 @@ console.log('\ncollector rigs');
   })(), 'a beam that cancels the moment it starts is no beam at all');
   // A drone has to fly out and back. A flat pull time whatever the distance had
   // the Ore Tender crossing 2000px/s — five times the fastest hull.
-  const { pullTime, DRONE_SPEED, SCOOP_TIME } = await import('../shared/cargo.js');
+  const { pullTime, SCOOP_TIME } = await import('../shared/cargo.js');
   const { HULLS } = await import('../shared/ships.js');
-  const fastest = Math.max(...Object.values(HULLS).map(h => h.attrs.speed));
-  const apparent = k => EQUIPMENT[k].reach / (pullTime(EQUIPMENT[k].reach, DRONE_SPEED) * 0.6);
-  console.log('     ' + rigs.map(k =>
-    `${EQUIPMENT[k].name} ${pullTime(EQUIPMENT[k].reach, DRONE_SPEED).toFixed(1)}s ` +
-    `(${Math.round(apparent(k))}px/s)`).join('   '));
-  check('a hauling drone is slower than the fastest hull',
-    rigs.every(k => apparent(k) < fastest), `the quickest ship does ${fastest}`);
-  check('a longer reach takes longer to use',
+  const hulls = Object.keys(HULLS).map(h => ({ h, st: resolve(h, { weapon: [], generator: [], tech: [] }) }));
+  // This used to read "a hauling drone is slower than the fastest hull", against
+  // a flat 420px/s. That was the wrong property to hold: it made the drone slower
+  // than a Kestrel, which could fly away from its own rig, and much faster than a
+  // Bulwark, which is what read as teleporting. Speed is the ship's now.
+  console.log('     ' + hulls.map(x => `${x.h} ${x.st.speed} -> drone ${Math.round(droneSpeed({ stats: x.st }))}`).join('   '));
+  check('a drone is always faster than the ship it belongs to',
+    hulls.every(x => droneSpeed({ stats: x.st }) > x.st.speed),
+    `every hull, by ${DRONE_SPEED_MULT}x — so it can always catch up, whatever you fly`);
+  check('and there is no hull it reads wrong on',
+    hulls.every(x => droneSpeed({ stats: x.st }) / x.st.speed === DRONE_SPEED_MULT),
+    'one ratio rather than one number, so a new hull needs no retuning');
+  check('a longer reach still takes longer to use',
     rigs.every((k, i) => i === 0 ||
-      pullTime(EQUIPMENT[k].reach, DRONE_SPEED) > pullTime(EQUIPMENT[rigs[i - 1]].reach, DRONE_SPEED)),
+      pullTime(EQUIPMENT[k].reach, 400) > pullTime(EQUIPMENT[rigs[i - 1]].reach, 400)),
     'reach is a trade, not free');
   check('your own arm still takes no time to fly anywhere',
     pullTime(260) === SCOOP_TIME, 'it does not travel — it just pulls');
   check('and the pull carries how long it was given',
-    beginScoop(ship, {}, far, 900, DRONE_SPEED).secs > SCOOP_TIME,
+    beginScoop(ship, {}, far, 900, 400).secs > SCOOP_TIME,
     'so the progress the client draws is against the right clock');
 
   check('a full hold stops it picking anything up',
     beginScoop({ ...ship, stats: { cargo: 1 } }, { iron: 99 }, { ...far, x: 100 }, 900) === 'full',
     'which is what the FULL tag over the drone is saying');
 }
-
-console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
-process.exit(fails.length ? 1 : 0);
 
 // --- the collector rig -------------------------------------------------------
 // It used to sit in a combat bay, so buying one cost you a gun even with ten
@@ -320,23 +327,22 @@ check('reach comes from the rig, not from the rack',
 check('a second collector was always worthless anyway',
   Math.max(collectorReach('collect1'), collectorReach('collect1')) === collectorReach('collect1'),
   'reach is a max — which is why one bay is the right number of bays');
-
 console.log('\nholding station over a pod');
 {
-  const ship = { x: 0, y: 0, hp: 100, stats: { cargo: 600 } };
+  const ship = { x: 0, y: 0, hp: 100, stats: { cargo: 600, speed: 300 } };
   const pod = { id: 1, x: 420, y: 0, mat: 'iron', n: 5 };
-  const sc = beginScoop(ship, {}, pod, 520, DRONE_SPEED);
-  const out = 420 / DRONE_SPEED;
+  const SPD = droneSpeed(ship);
+  const sc = beginScoop(ship, {}, pod, 520, SPD);
+  const out = 420 / SPD;
   check('a pull is out, hold station, and back',
     Math.abs(sc.secs - (2 * out + DWELL)) < 1e-9,
     `${out.toFixed(2)}s each way around ${DWELL}s of work`);
   check('your own arm has no drone and no dwell',
-    rigAt(beginScoop(ship, {}, pod, 520, 0), ship, pod) === null &&
+    rigAt(beginScoop(ship, {}, pod, 520, 0), ship) === null &&
     pullTime(420, 0) === 0.9);
-
-  const at = t => { const c = { ...sc, t: sc.secs - t }; return rigAt(c, ship, pod); };
+  const at = t => { const c = { ...sc, t: sc.secs - t }; return rigAt(c, ship); };
   check('it sets out from the ship', at(0).x === 0 && at(0).phase === 'out');
-  check('and arrives over the pod', Math.abs(at(out).x - pod.x) < 1e-6 && at(out).phase === 'work');
+  check('and arrives over the pod', Math.abs(at(out + 1e-6).x - pod.x) < 1e-6 && at(out + 1e-6).phase === 'work');
   check('then it holds still while it lifts', (() => {
     const a = at(out + 0.1), b = at(out + DWELL - 0.1);
     return a.phase === 'work' && b.phase === 'work' && a.x === b.x && a.y === b.y;
@@ -345,3 +351,44 @@ console.log('\nholding station over a pod');
     at(out + 0.01).work < 0.05 && at(out + DWELL - 0.01).work > 0.95);
   check('then it comes home', Math.abs(at(sc.secs).x) < 1e-6 && at(sc.secs).phase === 'back');
 }
+// --- a pull, once started, is committed ---------------------------------------
+// It used to cancel the moment the ship left the rig's reach, which abandoned the
+// ore on the floor and punished you for doing the one thing a FETCHING drone
+// exists to let you do.
+console.log('\nflying off mid-pull');
+{
+  const ship = { x: 0, y: 0, hp: 100, stats: { cargo: 600, speed: 300 } };
+  const pod = { id: 1, x: 400, y: 0, mat: 'iron', n: 5 };
+  const hold = {};
+  const sc = beginScoop(ship, hold, pod, 520, droneSpeed(ship));
+  let alive = true, took = 0, emptied = false;
+  for (let i = 0; i < 400 && alive; i++) {
+    ship.x -= 40;                                  // fly away, hard, the whole time
+    const r = stepScoop(sc, emptied ? null : pod, ship, hold, 1 / 30);
+    took += r.took ?? 0; emptied = emptied || !!r.emptied;
+    alive = r.running;
+    if (r.cancelled) break;
+  }
+  check('flying away does not abandon the ore', took === 5 && emptied,
+    `${took} iron lifted while the ship ran ${Math.abs(ship.x)}px in the other direction`);
+  check('and the hold really has it', hold.iron === 5);
+  check('the pull ends on its own once the drone is home', !alive);
+}
+{
+  // The drone chases: the legs are measured against where the ship is NOW, so a
+  // ship that keeps moving is still where the drone is heading.
+  const ship = { x: 0, y: 0, hp: 100, stats: { cargo: 600, speed: 300 } };
+  const pod = { id: 2, x: 300, y: 0, mat: 'iron', n: 2 };
+  const sc = beginScoop(ship, {}, pod, 520, droneSpeed(ship));
+  const home = rigAt({ ...sc, t: 0 }, ship);       // fully returned, ship at origin
+  ship.x = 900;
+  const chased = rigAt({ ...sc, t: 0 }, ship);     // same instant, ship elsewhere
+  check('a returning drone comes to where you are, not where you were',
+    Math.abs(home.x - 0) < 1e-6 && Math.abs(chased.x - 900) < 1e-6);
+  check('and it no longer needs the pod to exist to fly home',
+    rigAt({ ...sc, t: sc.secs * 0.1 }, ship) !== null,
+    'the pod is spliced out the moment the lift lands');
+}
+
+console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
+process.exit(fails.length ? 1 : 0);
