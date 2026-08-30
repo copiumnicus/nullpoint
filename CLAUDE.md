@@ -189,6 +189,67 @@ thing itself until it is asked for.
 - Run `npm test` before every commit. It is fast and it has never been the
   slower option.
 
+---
+
+## Deploying, and getting the music there
+
+Railway, one service, one instance — the world lives in memory, so it must never
+be scaled past `numReplicas: 1`. Push to `main` and it rebuilds. A volume is
+mounted at `/data`.
+
+**No environment variables for paths.** `config.js` lists candidate directories
+and the first that exists wins:
+
+    DATA_DIRS  = ['/data', 'data']
+    MUSIC_DIRS = ['/data/music', 'public/music']
+
+So the same image runs from a checkout and from a mounted volume without being
+told which it is. A path is a fact about the deployment, not a knob someone has
+to remember to set in a dashboard, and an unset one fails silently and late —
+the music simply absent, no error anywhere.
+
+**The Dockerfile must not declare `VOLUME`.** Railway rejects the build outright:
+`docker VOLUME at Line 17 is not supported, use Railway Volumes`. Mount the
+volume on the service instead.
+
+### Uploading the tracks
+
+The tracks are gitignored — they are not in the image, so a fresh deploy has no
+music until you put some on the volume. `railway volume files` does it, and four
+things about it will waste your time:
+
+- **Register an SSH key first.** Transfers run over SSH, and without one every
+  command dies with `SSH authentication failed`:
+
+      railway ssh keys add --key ~/.ssh/id_ed25519.pub --name "<machine>"
+
+- **`--volume` goes before the subcommand**, not after: `railway volume files
+  --volume nullpoint-volume list /`. Paths are relative to the volume root, so
+  `/music` there is `/data/music` in the container.
+- **`upload` nests when the destination already exists.** It behaves like `mv`:
+  a missing remote path is created and the contents go into it, but an existing
+  one gets the local directory placed *inside* it. `upload ./public/music /music`
+  onto an existing `/music` silently produces `/data/music/music/ambient/...`,
+  the scan finds no tracks, and nothing says so. Upload each mood folder to its
+  own path, and check the tree afterwards:
+
+      for d in ambient boss chase combat; do
+        railway volume files --volume nullpoint-volume upload "./public/music/$d" "/music/$d"
+      done
+      railway volume files --volume nullpoint-volume list /music
+
+- **Agents cannot delete volume files.** The CLI refuses and prints the command
+  for a human to run. Plan uploads so nothing needs deleting.
+
+**No redeploy is needed.** `musicDir()` resolves per call and `listMusic()`
+rescans per request, so tracks uploaded to a running service appear immediately.
+That is the whole point of the folder being the manifest. Verify from outside:
+
+    curl -s https://<host>/music/list | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))'
+
+A folder that is not a live mood — `boss/` — is listed but never drawn from, the
+same as it is locally. Empty is fine: silence, no errors.
+
 ## Commit messages
 
 Say what was wrong and why the fix is shaped the way it is, in prose. The
