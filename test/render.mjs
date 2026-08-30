@@ -569,6 +569,31 @@ const dismiss = () => {
       errs.push(`the ${page} shelf has ${want} rows and only ${seen.size} were reachable`);
     frame(t += 16); frames++;
   }
+  // The inventory tab: everything you own that is not bolted on, and the only place
+  // you can sell any of it. It had no UI at all until this, so it gets walked the
+  // same way the shop does.
+  {
+    const inv = { ...state, tab: 'inventory' };
+    const I = bayLayout(innerWidth, innerHeight, inv);
+    click(I.tabs.find(x => x.key === 'inventory').r);
+    frame(t += 16); frames++;
+    const seen = new Set();
+    for (let at = 0; at <= (I.scroll?.max ?? 0); at++) {
+      const S = bayLayout(innerWidth, innerHeight, { ...inv, scroll: at });
+      for (const it of S.store) {
+        if (seen.has(it.k)) continue;
+        seen.add(it.k);
+        hoverAt(it.r); frame(t += 16); frames++;
+        click(it.r);
+      }
+      if (at < (I.scroll?.max ?? 0)) { evt('wheel', { deltaY: 120 }); frame(t += 16); frames++; }
+    }
+    if (!seen.size) errs.push('the inventory tab laid out nothing to sell for a pilot who owns gear');
+    const sold = new Set(sent.filter(m => m.t === 'scrap' || m.t === 'scraphull').map(m => m.t));
+    if (!sold.has('scrap')) errs.push('clicking spare equipment in the inventory never offered to sell it');
+    console.log(`inventory: ${seen.size} owned things listed and clicked; sent ${[...sold].join(', ') || 'nothing'}`);
+  }
+
   const kinds = new Set(sent.map(m => m.t));
   for (const want of ['install', 'buy', 'buydrone', 'dronestrip', 'buyformation', 'buyhull', 'hull', 'formation'])
     if (!kinds.has(want)) errs.push(`clicking every station row never produced a "${want}"`);

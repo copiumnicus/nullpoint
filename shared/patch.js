@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.29';
+export const VERSION = '0.30';
 
 export const PATCHES = [
+  { v: '0.30', notes: [
+    'An INVENTORY tab: everything you own and are not flying, in one place at last',
+    'Click anything in it to break it up for 40% — spare guns, generators, whole hulls',
+    'Never the ship you are flying, and never your last one',
+  ] },
   { v: '0.29', notes: [
     'Collector rigs refine as you fly: the cheapest metal you carry packs into the next one up',
     'Value is kept and space is freed, so the rig refills the room and your hold climbs',

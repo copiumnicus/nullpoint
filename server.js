@@ -31,6 +31,7 @@ import { GAME } from './shared/brand.js';
 import { whyNotBerth, whyNotBuyBerth, berthPrice, BERTH_RANK,
          respawnAt, isHangar } from './shared/berth.js';
 import { splitKill, shareOut } from './shared/reward.js';
+import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from './shared/scrap.js';
 import { refineStep, applyRefine, refinePeriod } from './shared/refine.js';
 import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
@@ -859,6 +860,31 @@ wss.on('connection', (ws, req) => {
     }
     // Renting a bay. Rank and money both, and neither is refundable — see berth.js
     // for why standing is the gate rather than only the fee.
+    // Breaking something up. The counter that buys is the counter that sells, so
+    // this is allowed exactly where a purchase is — your own ring, or a bay you
+    // rent — and never in open space.
+    if (m.t === 'scrap') {
+      const where = canDock(MAPS[P.mapId], P.co, ship) ? 'dock' : atBerth() ? 'berth' : null;
+      const why = whyNotScrap(m.item, { held: P.gear[m.item] ?? 0, where });
+      if (why) return tell(why);
+      const paid = scrapOfItem(m.item);
+      if (--P.gear[m.item] <= 0) delete P.gear[m.item];
+      P.credits += paid;
+      receipt(EQUIPMENT[m.item].name, -paid, `broken up for ${Math.round(SCRAP_RATE * 100)}%`);
+      touch(P);
+      return outfit();
+    }
+    if (m.t === 'scraphull') {
+      const where = canDock(MAPS[P.mapId], P.co, ship) ? 'dock' : atBerth() ? 'berth' : null;
+      const why = whyNotScrapHull(m.key, { owned: P.hulls, flying: ship.hull, where });
+      if (why) return tell(why);
+      const paid = scrapOfHull(m.key);
+      P.hulls = P.hulls.filter(h => h !== m.key);
+      P.credits += paid;
+      receipt(HULLS[m.key].name, -paid, `broken up for ${Math.round(SCRAP_RATE * 100)}%`);
+      touch(P);
+      return outfit();
+    }
     if (m.t === 'buyberth') {
       const why = whyNotBuyBerth({ xp: P.xp, credits: P.credits,
                                    owned: P.berths.includes(P.mapId),

@@ -203,9 +203,14 @@ console.log('\nstation layout');
           checked++;
           if (P.x < 0 || P.y < 0 || P.x + P.w > W || P.y + P.h > H) offscreen++;
           const rows = [...L.hulls, ...L.racks.filter(r => !r.header), ...L.pages, ...L.store];
-          // Nothing to click is a dead page — the drone page legitimately empties
-          // once every bay is full, and nothing else may.
-          if (!rows.length && !(tab === 'store' && page === 'drones' && st.drones === 6)) empty++;
+          // Nothing to click is a dead page — with two honest exceptions. The drone
+          // page empties once every bay is full, and the INVENTORY is empty
+          // whenever a pilot has nothing spare, which for most pilots most of the
+          // time is the normal state of it rather than a fault. A shop shelf with
+          // nothing on it is still a bug.
+          const mayBeEmpty = (tab === 'store' && page === 'drones' && st.drones === 6)
+                          || tab === 'inventory';
+          if (!rows.length && !mayBeEmpty) empty++;
           for (const { r } of rows) {
             // a row outside the panel is read as a click on the backdrop, which
             // closes the station instead of selecting anything
@@ -249,7 +254,9 @@ console.log('\nstation layout');
         `${checked} layouts, ${tightest | 0}px of slack at the tightest`);
   check('rows never overlap each other, column by column', overlap === 0);
   check('the panel itself always fits the window', offscreen === 0);
-  check('no tab or store page is empty', empty === 0);
+  check('no shop shelf is ever empty', empty === 0,
+        'the drone page once every bay is full, and the inventory when you own nothing spare, ' +
+        'are the only two that may be — and the inventory says so in words rather than showing a void');
 
   // Everything buyable must appear on exactly one page, or it is unreachable.
   const { pageItems } = await import('../shared/hangar.js');

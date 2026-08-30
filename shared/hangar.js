@@ -17,7 +17,28 @@ import { AMMO_KEYS } from './ammo.js';
 import { KIT_KEYS } from './repair.js';
 import { DEVICE_KEYS } from './devices.js';
 
-export const TABS = [{ key: 'hangar', name: 'HANGAR' }, { key: 'store', name: 'STORE' }];
+export const TABS = [{ key: 'hangar', name: 'HANGAR' },
+                     { key: 'store', name: 'STORE' },
+                     { key: 'inventory', name: 'INVENTORY' }];
+
+// Everything you own and are not currently flying, newest ladder first. There was
+// no way to look at this at all: gear you bought and took off the ship existed
+// only as a number on a store row, and hulls you owned only as an "owned" tag on
+// the one page that sold them. You could not see what you had, let alone sell it.
+export function inventoryItems({ gear = {}, hulls = [], hull = null } = {}) {
+  const kit = Object.keys(gear)
+    .filter(k => EQUIPMENT[k] && gear[k] > 0)
+    .sort((a, b) => (EQUIPMENT[b].tier ?? 0) - (EQUIPMENT[a].tier ?? 0)
+                 || EQUIPMENT[b].price - EQUIPMENT[a].price)
+    .map(k => ({ kind: 'own', k, n: gear[k] }));
+  // A hull you own but are not flying is inventory too, and it is the most
+  // valuable thing most pilots have sitting idle.
+  const ships = hulls
+    .filter(h => h !== hull && HULLS[h] && (HULLS[h].price ?? 0) > 0)
+    .sort((a, b) => HULLS[b].price - HULLS[a].price)
+    .map(h => ({ kind: 'ownhull', k: h, n: 1 }));
+  return [...ships, ...kit];
+}
 
 // Ammunition is sold anywhere; everything else needs the ring. Declared here so
 // the client dims exactly what the server will refuse.
@@ -170,6 +191,25 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     addEsc({ slot: 'rig', index: 0 });
     addEsc({ slot: 'form', header: true });
     for (const k of formations) addEsc({ slot: 'form', key: k });
+    return out;
+  }
+
+  if (tab === 'inventory') {
+    // One column, the full width, scrolling on the same fixed row height the store
+    // uses — it is the same kind of list and should not read as a different screen.
+    const items = inventoryItems(s);
+    const iX = x + 20, iW = w - 40, iStep = STORE_ROW;
+    const per = Math.max(1, Math.floor(room / iStep));
+    const max = Math.max(0, items.length - per);
+    const at = Math.max(0, Math.min(max, Math.round(scroll)));
+    out.store = items.slice(at, at + per)
+      .map((it, i) => ({ ...it, r: { x: iX, y: top + i * iStep, w: iW, h: iStep - 8 } }));
+    out.scroll = { at, per, total: items.length, max };
+    out.bar = max > 0 ? {
+      x: iX + iW + 6, y: top + (at / items.length) * room,
+      w: 3, h: Math.max(20, (per / items.length) * room),
+      track: { x: iX + iW + 6, y: top, w: 3, h: room },
+    } : null;
     return out;
   }
 

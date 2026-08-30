@@ -13,6 +13,7 @@ import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpos
          DRIFT_MARGIN, WORLD, SIGHT_R } from '/shared/sim.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { whyNotSold, frontierOnly } from '/shared/gear.js';
+import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from '/shared/scrap.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
          isCollector, collectorReach } from '/shared/gear.js';
 import { levelFor, progress } from '/shared/level.js';
@@ -776,7 +777,7 @@ addEventListener('wheel', e => {
     patchScroll = Math.max(0, patchScroll + (e.deltaY > 0 ? 3 : -3));
     return;
   }
-  if (bayOpen && bayTab === 'store') {
+  if (bayOpen && (bayTab === 'store' || bayTab === 'inventory')) {
     e.preventDefault?.();
     bayScroll = Math.max(0, bayScroll + (e.deltaY > 0 ? 2 : -2));
   }
@@ -1015,7 +1016,7 @@ function bayClick(v) {
   // the way home and know what to fly back for — it was refusing every click
   // when you were not docked, which also meant the panel stuck on whichever tab
   // you happened to be on when you left the ring.
-  for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; picking = null; return; }
+  for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; bayScroll = 0; picking = null; return; }
   for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; bayScroll = 0; return; }
 
   // Spending and fitting are not free.
@@ -1061,7 +1062,11 @@ function bayClick(v) {
 
   for (const it of G.store) {
     if (!inside(it.r)) continue;
-    if (!sellsAt(bayPage, atRing)) return needDock();
+    // The inventory is not a shop page, so the shop's where-can-I-buy-this rule
+    // does not apply to it — bayPage is whatever shelf you last looked at, and
+    // letting that decide whether you may break up a spare emitter was an accident
+    // waiting to be a bug. Breaking up has its own rule, and it is asked below.
+    if (it.kind !== 'own' && it.kind !== 'ownhull' && !sellsAt(bayPage, atRing)) return needDock();
     if (it.kind === 'hull') {
       if (it.owned) return it.k === myHull ? undefined : send({ t: 'hull', key: it.k });
       return credits >= HULLS[it.k].price ? send({ t: 'buyhull', key: it.k })
@@ -1088,6 +1093,16 @@ function bayClick(v) {
       const k = KITS[it.k];
       return credits >= k.price ? send({ t: 'buykit', key: it.k })
         : say(`A ${k.name} costs ${fmtCredits(k.price)} ${CURRENCY.short}`, '#e0a53f');
+    }
+    if (it.kind === 'own') {
+      const why = whyNotScrap(it.k, { held: myGear[it.k] ?? 0, where: atRing ? 'dock' : null });
+      if (why) return say(why, '#e0a53f');
+      return send({ t: 'scrap', item: it.k });
+    }
+    if (it.kind === 'ownhull') {
+      const why = whyNotScrapHull(it.k, { owned: myHulls, flying: myHull, where: atRing ? 'dock' : null });
+      if (why) return say(why, '#e0a53f');
+      return send({ t: 'scraphull', key: it.k });
     }
     if (it.kind === 'device') {
       const d = DEVICES[it.k];
@@ -1356,7 +1371,14 @@ function drawBay() {
   // --- store ---------------------------------------------------------------
   g.fillStyle = '#5b6b85';
   g.fillText('DEPARTMENT', P.x + 20, G.top - 10);
-  g.fillText(STORE_PAGES.find(p => p.key === G.page)?.hint ?? '', P.x + 30 + G.pages[0].r.w, G.top - 10);
+  // The inventory has no page list, so there is no page hint and nothing to
+  // measure it against — G.pages[0] is undefined there, and reading .r off it
+  // threw inside the render loop and took the whole panel with it.
+  if (G.pages.length)
+    g.fillText(STORE_PAGES.find(p => p.key === G.page)?.hint ?? '', P.x + 30 + G.pages[0].r.w, G.top - 10);
+  else if (bayTab === 'inventory')
+    g.fillText(`Everything you own and are not flying. Click to break it up for ${Math.round(SCRAP_RATE * 100)}%.`,
+               P.x + 20, G.top - 10);
 
   for (const p of G.pages) {
     const on = p.key === G.page, r = p.r;
@@ -1370,6 +1392,13 @@ function drawBay() {
     g.fillStyle = on ? '#cfe4ff' : '#8ea3bd'; g.font = '12px ui-monospace, monospace';
     g.fillText(p.name, r.x + 12, r.y + r.h / 2 + 4);
     g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
+  }
+
+  if (bayTab === 'inventory' && !G.store.length) {
+    g.textAlign = 'center'; g.font = '12px ui-monospace, monospace'; g.fillStyle = '#66748c';
+    g.fillText('Nothing spare. Everything you own is bolted to the ship.',
+               G.panel.x + G.panel.w / 2, G.panel.y + G.panel.h / 2);
+    g.textAlign = 'left';
   }
 
   // A shelf longer than the panel says so, and says how much of it you are seeing.
@@ -1386,14 +1415,18 @@ function drawBay() {
 
   for (const it of G.store) {
     const r = it.r;
-    const price = it.kind === 'hull' ? HULLS[it.k].price
+    const price = it.kind === 'own' ? scrapOfItem(it.k)
+                : it.kind === 'ownhull' ? scrapOfHull(it.k)
+                : it.kind === 'hull' ? HULLS[it.k].price
                 : it.kind === 'form' ? FORMATIONS[it.k].price
                 : it.kind === 'drone' ? dronePrice(myDrones.length)
                 : it.kind === 'ammo' ? AMMO[it.k].price
                 : it.kind === 'kit' ? KITS[it.k].price
                 : it.kind === 'device' ? DEVICES[it.k].price
                                       : EQUIPMENT[it.k].price;
-    const name = it.kind === 'hull' ? HULLS[it.k].name
+    const name = it.kind === 'own' ? `${EQUIPMENT[it.k].name}   x${it.n}`
+               : it.kind === 'ownhull' ? `${HULLS[it.k].name}   (not flying)`
+               : it.kind === 'hull' ? HULLS[it.k].name
                : it.kind === 'form' ? FORMATIONS[it.k].name
                : it.kind === 'drone' ? `Drone ${myDrones.length + 1}`
                : it.kind === 'ammo' ? `${AMMO[it.k].name}   crate of ${AMMO[it.k].pack}`
@@ -1403,7 +1436,9 @@ function drawBay() {
     // Every row carries a sentence AND its numbers. The numbers are read off the
     // tables rather than written into the blurbs, so a rebalance cannot leave the
     // shelf advertising last week's figures — see modSummary.
-    const blurb = it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}   ${HULLS[it.k].blurb}`
+    const blurb = it.kind === 'own' ? EQUIPMENT[it.k].blurb
+                : it.kind === 'ownhull' ? `${HULLS[it.k].cls} — a hull you own and are not flying`
+                : it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}   ${HULLS[it.k].blurb}`
                 : it.kind === 'form' ? `${FORMATIONS[it.k].blurb}   ${modSummary(FORMATIONS[it.k].mods) || 'no bonus'}`
                 : it.kind === 'drone' ? `An escort ship carrying one module of yours.   bay ${myDrones.length + 1} of ${MAX_DRONES}`
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
@@ -1439,6 +1474,14 @@ function drawBay() {
     if (it.owned) { g.fillStyle = '#7de08a'; g.font = '11px ui-monospace, monospace';
                     g.fillText((it.kind === 'hull' ? it.k === myHull : it.k === myForm) ? 'FLYING' : 'owned — fly it',
                                r.x + r.w - 12, r.y + 20); }
+    else if (it.kind === 'own' || it.kind === 'ownhull') {
+      // In the inventory the number is what breaking it up PAYS, not what it cost.
+      g.fillStyle = '#7de08a'; g.font = '11px ui-monospace, monospace';
+      g.fillText(`+${fmtCredits(price)} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20);
+      g.fillStyle = '#66748c'; g.font = '9px ui-monospace, monospace';
+      g.fillText(`click to break up · ${Math.round(SCRAP_RATE * 100)}% of ${fmtCredits(
+        it.kind === 'own' ? EQUIPMENT[it.k].price : HULLS[it.k].price)}`, r.x + r.w - 12, r.y + 35);
+    }
     else { g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
            g.fillText(`${fmtCredits(price)} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
     const stock = it.kind === 'item' ? (myGear[it.k] ?? 0)
