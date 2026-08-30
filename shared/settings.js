@@ -17,7 +17,7 @@ export const ROWS = [
 // the next one is a line of data rather than a layout change.
 export const ACTIONS = [
   { key: 'signout', label: 'SIGN OUT',
-    hint: 'releases the sector — your pilot and everything on it stay yours' },
+    hint: 'ends this session — your pilot, ship and cargo are kept' },
 ];
 
 // Two lines of numbers, added to the panel's height like everything else in it.

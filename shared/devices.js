@@ -9,7 +9,7 @@
 export const DEVICES = {
   recall: {
     name: 'Recall Beacon', tier: 1, secs: 5.0, price: 3400,
-    blurb: 'Folds you back to your own dock. Five seconds, and one hit ends it.',
+    blurb: 'Folds you home to your own dock. One hit cancels it.',
   },
 };
 
@@ -37,9 +37,9 @@ export const sanitiseDevice = want => (DEVICES[want] ? want : DEFAULT_DEVICE);
 // five seconds — see the tick, not this.
 export function whyNotDevice({ devices = {}, using = DEFAULT_DEVICE,
                                docked = false, busy = false } = {}) {
-  if (busy) return 'already folding';
-  if (!(devices[using] > 0)) return `no ${DEVICES[using]?.name ?? 'device'} aboard`;
-  if (docked) return 'you are already at a dock';
+  if (busy) return 'a fold is already running';
+  if (!(devices[using] > 0)) return `no ${DEVICES[using]?.name ?? 'beacon'} aboard — buy one at a dock`;
+  if (docked) return 'you are standing at a dock already';
   return null;
 }
 

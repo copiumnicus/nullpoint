@@ -13,7 +13,7 @@ export const COMMANDS = {
   where: { admin: false, args: '',                help: 'name the sector you are in' },
   money: { admin: true,  args: '<amount>',        help: 'add credits' },
   xp:    { admin: true,  args: '<amount>',        help: 'add experience' },
-  gear:  { admin: true,  args: '<item> [count]',  help: 'put equipment in your locker' },
+  gear:  { admin: true,  args: '<item> [count]',  help: 'put equipment in your inventory' },
   ammo:  { admin: true,  args: '<grade> [count]', help: 'top up a magazine' },
   ship:  { admin: true,  args: '<hull>',          help: 'grant a hull' },
   form:  { admin: true,  args: '<formation>',     help: 'grant and fly a drone formation' },

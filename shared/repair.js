@@ -11,11 +11,11 @@
 
 export const KITS = {
   kit1: { name: 'Patch Drone',  tier: 1, heal: 0.30, secs: 4.0, price:  1800,
-          blurb: 'Welds a third of your hull back on, slowly.' },
+          blurb: 'A field patch. Cheap, and it does not fix much.' },
   kit2: { name: 'Repair Drone', tier: 2, heal: 0.60, secs: 5.5, price:  4600,
-          blurb: 'Most of the way home from most of a beating.' },
+          blurb: 'The workhorse. Enough hull left to finish a trip.' },
   kit3: { name: 'Yard Drone',   tier: 3, heal: 1.00, secs: 7.5, price: 11000,
-          blurb: 'Hull as new. Takes its time about it.' },
+          blurb: 'A full rebuild in the field, if you can stand still.' },
 };
 
 export const KIT_KEYS = Object.keys(KITS);
@@ -39,10 +39,10 @@ export const sanitiseKit = want => (KITS[want] ? want : DEFAULT_KIT);
 // function so the button, the tooltip and the server all give the same answer.
 export function whyNotRepair({ kits = {}, using = DEFAULT_KIT, docked = false,
                                sinceHit = 1e9, hurt = false, busy = false } = {}) {
-  if (busy) return 'already working';
-  if (!(kits[using] > 0)) return `no ${KITS[using]?.name ?? 'kit'} aboard`;
-  if (docked) return 'the dock does this for free';
-  if (sinceHit < KIT_QUIET) return 'not while you are being shot at';
-  if (!hurt) return 'hull is already whole';
+  if (busy) return 'a repair drone is already working';
+  if (!(kits[using] > 0)) return `no ${KITS[using]?.name ?? 'repair drone'} aboard — buy one at a dock`;
+  if (docked) return 'the dock is already mending you, free and faster';
+  if (sinceHit < KIT_QUIET) return `wait ${KIT_QUIET}s clear of fire, then it will start`;
+  if (!hurt) return 'your hull is undamaged — save it for later';
   return null;
 }

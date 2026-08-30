@@ -50,6 +50,21 @@ export const ABILITIES = {
 };
 
 // --- the dials, each derived from what the ability is for ---------------------
+//
+// These six are the SHIPPED SETTING of each ability, and nothing more. They are
+// the defaults of six rows in ATTRS (ships.js imports them from here, so there is
+// one copy), which means every one of them is fittable: a technology can deepen a
+// veil, loosen an anchor or sharpen a lock exactly the way one already raises
+// hull or cuts signature.
+//
+// They were module constants until the technology shelf was asked to cover "the
+// 4th ability like all the stats there are" and could not, because `mods` reaches
+// ATTRS and nothing else. An ability that no module can touch is the one system
+// on the ship that fitting has no opinion about.
+//
+// Every one of them has a CEILING in ATTRS as well as a default, and the ceilings
+// are the arguments below, not round numbers: a veil deeper than 0.94 is an exit
+// from the game whoever sells it.
 
 // Detection range multiplier at full veil. Not zero: a ship nothing can ever see
 // is not stealth, it is an exit from the game. At 0.12 a Kestrel is found only
@@ -77,6 +92,14 @@ export const LOCK_TIGHTEN = 1;
 // What it costs: reach. Locked on, you have to close.
 export const LOCK_REACH = 0.35;          // weapon range down to 65% at full
 
+// Reading a dial off the ship rather than off the constant. `stats` is a resolved
+// attribute set — or `{}` from anything that has no fit at all, which is why the
+// fallback is here and not at the call sites.
+const dial = (stats, key, dflt) => {
+  const v = stats?.[key];
+  return Number.isFinite(v) ? v : dflt;
+};
+
 export const abilityOf = hull => ABILITIES[hull?.ability]  ? hull.ability : null;
 
 // How hard the fourth system is being driven, 0..1. Same shape as any other
@@ -91,19 +114,27 @@ export function cloakOf(hull, power, stats, sinceShot = 1e9) {
   if (!isKind('veil', hull)) return 1;
   // Rebuilt from nothing after every shot, so the veil is an approach and a
   // withdrawal, never a firing position.
-  const rebuilt = Math.max(0, Math.min(1, sinceShot / VEIL_RECOVER));
-  return 1 - VEIL_DEPTH * driveOf(power, stats) * rebuilt;
+  const recover = Math.max(0.01, dial(stats, 'veilRecover', VEIL_RECOVER));
+  const rebuilt = Math.max(0, Math.min(1, sinceShot / recover));
+  return 1 - dial(stats, 'veilDepth', VEIL_DEPTH) * driveOf(power, stats) * rebuilt;
 }
 
 // Shield multiplier and speed multiplier, both from the same dial so they cannot
 // come apart: you never get the wall without the anchor.
 export const swellOf = (hull, power, stats) =>
-  isKind('anchor', hull) ? 1 + ANCHOR_SWELL * driveOf(power, stats) : 1;
+  isKind('anchor', hull) ? 1 + dial(stats, 'anchorSwell', ANCHOR_SWELL) * driveOf(power, stats) : 1;
 export const dragOf = (hull, power, stats) =>
-  isKind('anchor', hull) ? 1 - ANCHOR_DRAG * driveOf(power, stats) : 1;
+  isKind('anchor', hull) ? 1 - dial(stats, 'anchorDrag', ANCHOR_DRAG) * driveOf(power, stats) : 1;
 
 // 0 = seekers as they are, 1 = a perfect return. Everything between is between.
+//
+// Clamped at 1, and the clamp is the whole point of letting `lockTighten` go above
+// it: a bite of 1.8 does not buy a better-than-perfect return, it reaches a
+// perfect one at 56% of the dial and leaves the rest of the reactor for the guns.
+// Unclamped it also put `lk` over 100 on the wire, and the client colours a bolt
+// from that.
 export const lockOf = (hull, power, stats) =>
-  isKind('lock', hull) ? LOCK_TIGHTEN * driveOf(power, stats) : 0;
+  isKind('lock', hull)
+    ? Math.min(1, dial(stats, 'lockTighten', LOCK_TIGHTEN) * driveOf(power, stats)) : 0;
 export const reachOf = (hull, power, stats) =>
-  isKind('lock', hull) ? 1 - LOCK_REACH * driveOf(power, stats) : 1;
+  isKind('lock', hull) ? 1 - dial(stats, 'lockReach', LOCK_REACH) * driveOf(power, stats) : 1;

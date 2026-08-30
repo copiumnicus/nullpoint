@@ -520,7 +520,7 @@ wss.on('connection', (ws, req) => {
           if (!EQUIPMENT[a1]) return tell('items: ' + Object.keys(EQUIPMENT).join(' '));
           P.gear[a1] = (P.gear[a1] ?? 0) + amount(a2 ?? 1, 99);
           touch(P); outfit();
-          return tell(`locker: ${a1} x${P.gear[a1]}`);
+          return tell(`inventory: ${a1} x${P.gear[a1]}`);
         }
         case 'form': {
           if (!FORMATIONS[a1]) return tell('formations: ' + FORMATION_KEYS.join(' '));
@@ -533,7 +533,7 @@ wss.on('connection', (ws, req) => {
           if (!HULLS[a1]) return tell('hulls: ' + Object.keys(HULLS).join(' '));
           if (!P.hulls.includes(a1)) P.hulls.push(a1);
           touch(P); outfit();
-          return tell(`${HULLS[a1].name} is yours — switch to it at the dock`);
+          return tell(`${HULLS[a1].name} is yours — fly it from the HANGAR tab at a dock`);
         }
         case 'ore': {
           if (!MATERIALS[a1]) return tell('metals: ' + Object.keys(MATERIALS).join(' '));
@@ -603,14 +603,14 @@ wss.on('connection', (ws, req) => {
           sendWelcome();
           sendMap(P);
           console.log(`~ ${acct.name} reset to a new pilot`);
-          return tell('reset — a starter hull, no credits, and your own dock');
+          return tell('reset — a starter hull, no credits, and your own dock again');
         }
         case 'heal':
           ship.hp = ship.stats.hull;
           ship.shield = ship.stats.shield * (ship.shieldMult ?? 1);
           ship.power.charge = ship.stats.capacitor;
           ship.sinceHit = 1e9;
-          return tell('patched up');
+          return tell('hull, shields and capacitor back to full');
       }
       return;
     }
@@ -621,7 +621,7 @@ wss.on('connection', (ws, req) => {
       P.credits -= hullPrice(m.key);
       P.hulls.push(m.key);
       refit(ship, m.key, ship.fit, ship.drones, ship.formation);   // bought, and flown at once
-      receipt(HULLS[m.key].name, hullPrice(m.key), 'now flying it');
+      receipt(HULLS[m.key].name, hullPrice(m.key), 'bought, and you are flying it');
       return outfit();
     }
     if (m.t === 'hull') {
@@ -724,7 +724,7 @@ wss.on('connection', (ws, req) => {
       if (P.credits < formationPrice(m.key)) return;
       P.credits -= formationPrice(m.key);
       P.formations.push(m.key);
-      receipt(FORMATIONS[m.key].name, formationPrice(m.key), 'flying it now');
+      receipt(FORMATIONS[m.key].name, formationPrice(m.key), 'your escort is flying it');
       refit(ship, ship.hull, ship.fit, ship.drones, m.key);      // bought, and flown at once
       return outfit();
     }
@@ -739,7 +739,7 @@ wss.on('connection', (ws, req) => {
       if (P.credits < cost) return;
       P.credits -= cost;
       refit(ship, ship.hull, ship.fit, [...ship.drones, null]);
-      receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length}/${MAX_DRONES} bays`);
+      receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length} of ${MAX_DRONES} bays used`);
       return outfit();
     }
     if (m.t === 'dronefit') {
@@ -788,7 +788,7 @@ wss.on('connection', (ws, req) => {
       if (P.credits < item.price) return;
       P.credits -= item.price;
       P.gear[m.item] = (P.gear[m.item] ?? 0) + 1;
-      receipt(item.name, item.price, 'in your locker');
+      receipt(item.name, item.price, 'in your inventory');
       return outfit();
     }
     if (m.t === 'install') {
@@ -820,7 +820,7 @@ wss.on('connection', (ws, req) => {
       P.vault[m.mat] -= n;
       if (P.vault[m.mat] <= 0) delete P.vault[m.mat];
       P.credits += n * MATERIALS[m.mat].value;
-      receipt(MATERIALS[m.mat].name, -n * MATERIALS[m.mat].value, `${n} sold`);
+      receipt(MATERIALS[m.mat].name, -n * MATERIALS[m.mat].value, `${n} sold from the hangar`);
       return outfit();
     }
 
@@ -846,7 +846,7 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'scoop') {                        // an order: go get that, however far it is
       const target = (pods.get(P.mapId) ?? []).find(c => c.id === +m.id);
       if (target && !mayScoop(target, id))
-        return tell('That is another pilot\'s share of the kill');
+        return tell('that pod is another pilot\'s share of the kill');
       P.want = target ? +m.id : null;
       if (process.env.DEBUG_SCOOP) console.log(`scoop order id=${m.id} accepted=${P.want !== null}`);
       return;
@@ -860,20 +860,20 @@ wss.on('connection', (ws, req) => {
       if (why) return tell(why);
       P.credits -= berthPrice();
       P.berths = [...P.berths, P.mapId];
-      receipt('Berth · ' + MAPS[P.mapId].name, berthPrice(), 'refit and trade here');
+      receipt('Berth · ' + MAPS[P.mapId].name, berthPrice(), 'you may refit and buy here now');
       touch(P);
       return outfit();
     }
     // Ore straight to credits, at the pirates' rate, without flying home. The
     // hold is what it empties — the company hangar is none of their business.
     if (m.t === 'fence') {
-      if (!inOutpost(MAPS[P.mapId], ship)) return tell('No outpost in range');
+      if (!inOutpost(MAPS[P.mapId], ship)) return tell('no outpost in range — fly into the ring');
       const paid = pirateValue(P.hold);
       const units = Object.values(P.hold).reduce((t, n) => t + n, 0);
-      if (!units) return tell('Nothing in the hold to sell');
+      if (!units) return tell('nothing in the hold to sell them');
       P.hold = {};
       P.credits += paid;
-      receipt('Pirate outpost', -paid, `${units} of ore, at ${Math.round(PIRATE_RATE * 100)}%`);
+      receipt('Pirate outpost', -paid, `${units} of ore, at ${Math.round(PIRATE_RATE * 100)}% of value`);
       return outfit();
     }
     if (m.t === 'stash') {                        // ship -> company hangar, at the dock only

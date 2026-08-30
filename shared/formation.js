@@ -18,18 +18,18 @@ export const FORMATIONS = {
   },
   wedge: {
     name: 'Attack Wedge', price: 9000,
-    blurb: 'Pushed forward and out. Guns further from the hull, and less of it.',
+    blurb: 'Pushed out ahead of you, guns first.',
     // Both weapon systems, or the Wedge quietly reads as "fit lasers".
     mods: [['damage', 'mul', 0.12], ['rocketVolley', 'mul', 0.12], ['hull', 'mul', -0.08]],
   },
   shell: {
     name: 'Defensive Shell', price: 9000,
-    blurb: 'A ring around the ship. Heavier shields, slower with it.',
+    blurb: 'A ring around the ship, taking hits for it.',
     mods: [['shield', 'mul', 0.16], ['speed', 'mul', -0.07]],
   },
   slipstream: {
     name: 'Slipstream', price: 9000,
-    blurb: 'Tucked into your wake. Quicker off the mark, thinner shields.',
+    blurb: 'Tucked into your wake, pushing you along.',
     mods: [['speed', 'mul', 0.10], ['accel', 'mul', 0.16], ['shield', 'mul', -0.10]],
   },
 };
@@ -38,8 +38,26 @@ export const FORMATION_KEYS = Object.keys(FORMATIONS);
 export const DEFAULT_FORMATION = 'line';
 export const formationPrice = k => FORMATIONS[k]?.price ?? Infinity;
 
-// How much of the bonus an escort this size actually delivers.
+// How much of the bonus an escort this size actually delivers, before anything
+// fitted has a say. Kept as its own function because the client draws the
+// brochure figure with it.
 export const bonusScale = drones => Math.min(1, (drones ?? 0) / BONUS_AT);
+
+// What the escort ACTUALLY delivers, which is the number resolve() folds in.
+//
+// Two attributes, and they are two different questions the shelf had no way to
+// ask before. `cohesion` is how many drones the wing needs before the formation
+// pays in full — BONUS_AT is only its default. `escort` is how hard it pays once
+// it does.
+//
+// Splitting them is what makes the escort technologies opposites rather than two
+// sizes of the same thing. Cutting cohesion is worth everything to a pilot with
+// one drone and NOTHING to one with twelve, because the ramp is already finished;
+// raising `escort` is worth nothing until the ramp is finished and everything
+// afterwards. They cross where min(1, n/cohesion) x escort passes 1, which is the
+// only interesting number either of them has.
+export const escortScale = (drones, stats) =>
+  Math.min(1, (drones ?? 0) / Math.max(1, stats?.cohesion ?? BONUS_AT)) * (stats?.escort ?? 1);
 
 // How big a drone is drawn, and how far the hull really reaches — both in ship
 // radii. The hull polygon stops at 1.35R but the cannons stick out past it, so

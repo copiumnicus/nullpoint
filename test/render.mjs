@@ -918,7 +918,7 @@ const dismiss = () => {
   // A receipt for every purchase. A refused click and a successful one looked
   // identical from the outside, which is what made buying feel broken.
   {
-    feed({ t: 'bought', what: 'MK-V Emitter', cost: 34000, note: 'in your locker', credits: 66000 });
+    feed({ t: 'bought', what: 'MK-V Emitter', cost: 34000, note: 'in your inventory', credits: 66000 });
     feed({ t: 'bought', what: 'Standard Cells', cost: 400, note: '2000 rounds', credits: 65600 });
     feed({ t: 'bought', what: 'Iridium', cost: -1800, note: '3 sold', credits: 67400 });
     for (let i = 0; i < 6; i++) { frame(t += 16); frames++; }

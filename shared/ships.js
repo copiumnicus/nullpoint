@@ -6,8 +6,14 @@
 // entry in MODULES. No other file changes.
 
 import { EQUIPMENT, emptyFit, fitList, droneItems, sanitiseFit as cleanFit } from './gear.js';
-import { FORMATIONS, DEFAULT_FORMATION, bonusScale } from './formation.js';
+import { FORMATIONS, DEFAULT_FORMATION, BONUS_AT, escortScale } from './formation.js';
 import { BOOST } from './power.js';
+// The shipped setting of each ability, imported rather than restated: these are
+// the DEFAULTS of six ATTRS rows, so a technology can retune an ability the same
+// way one retunes a shield clock. ability.js argues every one of the numbers and
+// every one of the ceilings below; see its comments before moving one.
+import { VEIL_DEPTH, VEIL_RECOVER, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_TIGHTEN, LOCK_REACH }
+  from './ability.js';
 
 // One cycle rate for every hull, on purpose. Emitters add FLAT damage to a bolt
 // and the rate multiplies the lot, so a hull that fired faster multiplied every
@@ -38,6 +44,31 @@ export const ATTRS = {
   rockets:     { label: 'Rockets',      unit: '',    dflt:    0, better: 'high', min: 0 },
   rocketVolley:{ label: 'Rocket volley', unit: '',   dflt:    0, better: 'high', min: 0 },
 
+  // --- the escort ------------------------------------------------------------
+  // How many drones the formation needs before it pays in full, and how hard it
+  // pays once it does. formation.js argues the split; BONUS_AT is the default of
+  // the first and 1 is the default of the second, so a ship with nothing fitted
+  // flies exactly the escort it always did.
+  //
+  // `escort` is capped, and the cap is not decoration: the Attack Wedge multiplies
+  // DAMAGE, so an uncapped escort dial is an uncapped damage dial wearing a hat.
+  cohesion:    { label: 'Formation at', unit: ' drones', dflt: BONUS_AT, better: 'low', min: 1 },
+  escort:      { label: 'Escort bonus', unit: 'x',   dflt: 1, better: 'high', min: 0, max: 2 },
+
+  // --- the fourth system -----------------------------------------------------
+  // The hull's own ability, one row per dial. Only the hull that HAS the ability
+  // reads them — a Veil depth on a Bulwark is a number nothing looks at — which
+  // is what makes these the shelf's first class-specific technologies.
+  //
+  // Every ceiling is ability.js's argument, not a round number. 0.94 leaves a
+  // Kestrel findable at 6% of your radar instead of 12%, and a veil deeper than
+  // that is not stealth, it is an exit from the game.
+  veilDepth:   { label: 'Veil depth',   unit: '',    dflt: VEIL_DEPTH,   better: 'high', min: 0,   max: 0.94 },
+  veilRecover: { label: 'Veil rebuild', unit: 's',   dflt: VEIL_RECOVER, better: 'low',  min: 0.4 },
+  anchorSwell: { label: 'Anchor swell', unit: 'x',   dflt: ANCHOR_SWELL, better: 'high', min: 0,   max: 5 },
+  anchorDrag:  { label: 'Anchor drag',  unit: '',    dflt: ANCHOR_DRAG,  better: 'low',  min: 0.1, max: 0.95 },
+  lockTighten: { label: 'Lock bite',    unit: 'x',   dflt: LOCK_TIGHTEN, better: 'high', min: 0,   max: 2 },
+  lockReach:   { label: 'Lock cost',    unit: '',    dflt: LOCK_REACH,   better: 'low',  min: 0,   max: 0.8 },
 };
 
 // Every hull carries the same TOTAL number of slots, distributed differently.
@@ -49,6 +80,7 @@ export const HULLS = {
   // nimble, quiet and roomy enough to earn the price of a real ship.
   hauler:   { slots: { weapon: 1, generator: 1, tech: 1 }, price: 0,
               name: 'Hauler', cls: 'Tender', r: 12,
+              blurb: 'The starter. The biggest hold, the weakest guns.',
               attrs: { hull: 650, shield: 450, shieldRegen: 30, shieldDelay: 6, speed: 300, accel: 1000,
                        radar: 2200, signature: 3.5, damage: 30, fireRate: FIRE_RATE, weaponRange: 640,
                        cargo: 90, capacitor: 30, recharge: 1.5, sustain: 0.30 } },
@@ -57,16 +89,19 @@ export const HULLS = {
   // cannot shake anyone, a small one is a ghost that is half blind.
   kestrel:  { ability: 'veil', slots: { weapon: 2, generator: 2, tech: 3 }, price: 18000,
               name: 'Kestrel', cls: 'Interceptor', r: 10,
+              blurb: 'Fastest and quietest. It cannot take a beating.',
               attrs: { hull: 700, shield: 500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600,
                        radar: 2000, signature: 1.5, damage: 38, fireRate: FIRE_RATE, weaponRange: 620,
                        cargo: 30, capacitor: 45, recharge: 2.2, sustain: 0.33 } },
   vanguard: { ability: 'lock', slots: { weapon: 3, generator: 2, tech: 2 }, price: 26000,
               name: 'Vanguard', cls: 'Fighter', r: 13,
+              blurb: 'The all-rounder. Good at everything, best at none.',
               attrs: { hull: 1100, shield: 900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200,
                        radar: 2600, signature: 3.0, damage: 55, fireRate: FIRE_RATE, weaponRange: 700,
                        cargo: 60, capacitor: 45, recharge: 1.8, sustain: 0.33 } },
   bulwark:  { ability: 'anchor', slots: { weapon: 4, generator: 2, tech: 1 }, price: 40000,
               name: 'Bulwark', cls: 'Cruiser', r: 17,
+              blurb: 'The most hull and the most guns, and the slowest.',
               attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel: 800,
                        radar: 3400, signature: 5.5, damage: 95, fireRate: FIRE_RATE, weaponRange: 820,
                        cargo: 120, capacitor: 60, recharge: 1.5, sustain: 0.36 } },
@@ -103,8 +138,20 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
     }
   }
   // A formation only pays out once there is an escort to fly it, and pays in full
-  // at three drones.
-  const scale = bonusScale((drones ?? []).length);
+  // at `cohesion` drones — three, unless something fitted says otherwise.
+  //
+  // The escort dials have to be SETTLED before the formation is folded in. They
+  // are multipliers on the bonus, and the bonus arrives as entries in `pct` that
+  // are not multiplied by anything until the loop below — so reading them off
+  // `out` after that loop would apply the technology to a number that had already
+  // been spent, and reading them before it would ignore the technology entirely.
+  // Resolved here, removed from `pct`, and clamped once: the same two steps the
+  // final loop does, taken early because this pair is an input to it.
+  for (const k of ['cohesion', 'escort']) {
+    if (k in pct) { out[k] *= 1 + pct[k]; delete pct[k]; }
+    out[k] = Math.min(ATTRS[k].max ?? Infinity, Math.max(ATTRS[k].min ?? 0, out[k]));
+  }
+  const scale = escortScale((drones ?? []).length, out);
   if (scale > 0) for (const [attr, op, v] of FORMATIONS[formation]?.mods ?? []) {
     if (!(attr in out)) continue;
     if (op === 'add') out[attr] += v * scale;

@@ -196,13 +196,21 @@ export const premiumAt = (tier, A = ANCHORS) => 1 + A.premium * (Math.max(1, tie
 // converted into that, because it is the unit the game already pays bounties in.
 //
 // What is NOT in here matters as much as what is. See UNPRICED.
-export function worthTable(A = ANCHORS) {
+export function worthTable(A = ANCHORS, base = resolve(DEFAULT_HULL)) {
   return {
     hull:         1,                        // definitional: effectiveHp is hull + shield
     shield:       1,
     // A point of damage is FIRE_RATE points of dps, and a point of dps trades for
     // `trade` points of hp. 1 x 1.2 x 4.1667 = 5 points per point of damage.
     damage:       FIRE_RATE * A.trade,
+    // And a point of RATE is worth a point of dps the same way, which is why this
+    // row depends on the ship: one more cycle a second is worth whatever a cycle
+    // carries. It used to be listed as unpriceable on the grounds that FIRE_RATE was
+    // fixed for every hull, which was true until the shelf grew a cadence
+    // technology. capabilityOf scores the pair as a PRODUCT rather than adding these
+    // two rows up — see the comment there, it is the whole reason a damage
+    // technology can exist at all.
+    fireRate:     A.trade * (base.damage ?? 0),
     // Rockets are declared per volley and a rack cycles at ROCKET_RATE, so the
     // same conversion with the rack's own cadence. 0.55 x 4.1667 = 2.29.
     rocketVolley: ROCKET_RATE * A.trade,
@@ -240,10 +248,39 @@ export const UNPRICED = Object.freeze({
                'it is hit points per hour of flying, not per fight, and the model ' +
                'has no hour in it.',
   weaponRange: 'reach. Kiting turns it into effective hp, at a rate nothing states.',
-  fireRate:    'fixed at FIRE_RATE for every hull on purpose, so there is nothing ' +
-               'to price.',
   rockets:     'the count. The damage is carried by rocketVolley; the count is a ' +
                'delivery property, and delivery is what DELIVERY_PREMIUM covers.',
+
+  // The escort. Both are multipliers ON a formation, and a formation is itself a
+  // percentage of attributes this table already prices — so pricing them properly
+  // means pricing "how many drones do you have", which is a purchase, not a stat.
+  cohesion:    'how many drones the formation needs before it pays in full. Worth ' +
+               'exactly the drones it saves you buying, and nothing at all once you ' +
+               'have bought them — so its value falls as a build grows, which is the ' +
+               'opposite shape to everything else here and has no term in the model.',
+  escort:      'how hard the formation pays once the wing is big enough. A multiplier ' +
+               'on a multiplier: what it is worth depends on which formation is flying ' +
+               'and how many bays are full, neither of which is an attribute.',
+
+  // The fourth system. Six dials, and the model has no term for any of them for
+  // the same reason it has none for radar: they are worth what not being seen, not
+  // being hurt or not missing is worth, and nothing in the game states that rate.
+  veilDepth:   'how far a Veil cuts the range you are found at. Only the Kestrel ' +
+               'reads it, and being found late is worth the fight it lets you decline ' +
+               '— which the model has no way to value, the same gap radar has.',
+  veilRecover: 'how long a Veil takes to rebuild after a shot. Hit points per hour ' +
+               'of flying rather than per fight, like shieldDelay, and the model has ' +
+               'no hour in it.',
+  anchorSwell: 'what an Anchor multiplies shields by. It IS hit points, but only ' +
+               'while the reactor is holding it and only on the Bulwark, so pricing ' +
+               'it means pricing a duty cycle — the same hole capacitor has.',
+  anchorDrag:  'what an Anchor costs in speed. Speed is unpriced above, and this is ' +
+               'a multiplier on it that only applies while the ability is running.',
+  lockTighten: 'how much of a perfect seeker return a Lock buys. Worth the fraction ' +
+               'of your rockets that would otherwise miss a stealth hull, which is a ' +
+               'property of what you are shooting at rather than of your ship.',
+  lockReach:   'what a Lock costs in reach. Kiting turns reach into effective hp at a ' +
+               'rate nothing states, which is weaponRange\'s gap seen from the ability.',
 });
 
 // What a launcher charges over what its damage is worth. gear.js states the
@@ -266,10 +303,31 @@ export const DELIVERY_PREMIUM = 1.18;
 // has the most of what it scales, and pricing Composite Plating against a
 // finished Bulwark instead of a starter Hauler triples it.
 export function capabilityOf(mods = [], { base = resolve(ANCHOR.hull), A = ANCHORS } = {}) {
-  const worth = worthTable(A);
+  const worth = worthTable(A, base);
   let points = 0;
   const missing = [];
+  // Damage and rate are ONE number, and scoring them apart is how the model would
+  // have got the cadence shelf badly wrong. dps is damage x fireRate, so reading
+  // x1.60 damage and x0.625 rate as "+60%" and "-37.5%" and adding them says +22.5%
+  // — while the ship throws exactly, to the last digit, what it threw before. Siege
+  // Cadence scored 1,260 credits of capability that way and the report put it at
+  // 7.4x over model, which was the model's mistake and not the shelf's.
+  //
+  // So the pair is resolved the way resolve() resolves it — flat adds first, then
+  // the summed percentages, then multiplied — and priced as the dps it actually
+  // moves. Every other attribute is linear and stays in the loop below.
+  const add = {}, pct = {};
   for (const [attr, op, v] of mods) {
+    if (attr !== 'damage' && attr !== 'fireRate') continue;
+    (op === 'mul' ? pct : add)[attr] = ((op === 'mul' ? pct : add)[attr] ?? 0) + v;
+  }
+  const was = (base.damage ?? 0) * (base.fireRate ?? FIRE_RATE);
+  const now = ((base.damage ?? 0) + (add.damage ?? 0)) * (1 + (pct.damage ?? 0))
+            * ((base.fireRate ?? FIRE_RATE) + (add.fireRate ?? 0)) * (1 + (pct.fireRate ?? 0));
+  points += A.trade * (now - was);
+
+  for (const [attr, op, v] of mods) {
+    if (attr === 'damage' || attr === 'fireRate') continue;   // already scored, as a product
     if (!(attr in worth)) { if (attr in UNPRICED) missing.push(attr); continue; }
     points += worth[attr] * (op === 'mul' ? (base[attr] ?? 0) * v : v);
   }
@@ -283,6 +341,29 @@ export function priceFor(mods, tier = 1, { premium = 1, base, A = ANCHORS } = {}
   const cap = capabilityOf(mods, { base, A });
   return { ...cap, price: Math.max(0, cap.points) * A.base * premiumAt(tier, A) * premium };
 }
+
+// --- what a technology the model cannot read costs ----------------------------
+// Read back off the shelf rather than picked, the same move ANCHORS.payback makes
+// on the collector rigs.
+//
+// Most of the technology shelf scores zero points here — the model has no term for
+// a shield clock, a reactor duty cycle, a radar horizon or an ability dial, and
+// UNPRICED says so for every one of them. They are not priced at random even so:
+// divide any of their prices by base x premiumAt(tier) and the answer is the same
+// number to within half a percent. That number IS the shelf's rung for an
+// unreadable technology, and anything added later should sit on it.
+//
+// Median rather than mean, because Racked Reloads deliberately charges
+// DELIVERY_PREMIUM on top of the rung — 11000 against 9300, which is x1.18 of it —
+// and one entry that is a premium ON the rung must not be allowed to drag it.
+export const TECH_POINTS = (() => {
+  const pts = Object.values(EQUIPMENT)
+    .filter(e => e.slot === 'tech' && e.price > 0 && priceFor(e.mods, e.tier ?? 1).points <= 0)
+    .map(e => e.price / (ANCHORS.base * premiumAt(e.tier ?? 1)))
+    .sort((a, b) => a - b);
+  return pts.length ? pts[Math.floor(pts.length / 2)] : 0;
+})();
+export const techRung = (tier, A = ANCHORS) => TECH_POINTS * A.base * premiumAt(tier, A);
 
 // A hull is scored the same way, off its bare attributes rather than a mod list —
 // what the chassis is before anything is bolted to it. Slots are not scored:

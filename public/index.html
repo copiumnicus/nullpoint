@@ -17,7 +17,7 @@ import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
          isCollector, collectorReach } from '/shared/gear.js';
 import { levelFor, progress } from '/shared/level.js';
 import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
-import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale } from '/shared/formation.js';
+import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale, escortScale } from '/shared/formation.js';
 import { SYSTEMS, BOOST, ceilingOf } from '/shared/power.js';
 import { ABILITIES, SPECIAL } from '/shared/ability.js';
 import { chartLayout } from '/shared/chart.js';
@@ -1277,7 +1277,10 @@ function drawBay() {
         g.fillText(flying ? 'FLYING' : 'fly it', r.x + r.w - 10, mid);
         g.textAlign = 'left';
         // What this escort would really deliver, not the brochure number.
-        const k = bonusScale(myDrones.length);
+        // escortScale, not bonusScale: the escort ramp is fittable now (cohesion and
+        // escort are attributes), and bonusScale knows nothing about them — a ship
+        // flying Wing Repeaters read "+4%" while actually flying +12%.
+        const k = escortScale(myDrones.length, stats);
         const nameW = g.measureText(F.name).width;
         g.font = '10px ui-monospace, monospace';
         const mx = r.x + 20 + nameW, room = r.x + r.w - 60 - mx;

@@ -8,9 +8,24 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.25';
+export const VERSION = '0.27';
 
 export const PATCHES = [
+  { v: '0.27', notes: [
+    'Eleven more technologies — your guns, your escort and your hull ability all have one now',
+    'Siege and Rapid Cadence trade bolt weight against cadence for exactly the same damage',
+    'Launcher Primacy pays your guns into your racks, and is a loss if you fly no racks',
+    'Wing Repeaters fly a formation at full strength off one drone; Wing Coupling off six, harder',
+    'Your hull ability is fittable now: deepen a Veil, loosen an Anchor, hold a Lock at range',
+    'A Null Skin halves the range a Kestrel is found at, and costs a third of its shields',
+    'Keel Bracing swells a Bulwark to five and a half times its shield, and parks it there',
+  ] },
+  { v: '0.26', notes: [
+    'Every store row and tooltip says what the thing does and where it is sold',
+    'Tooltips cover ammunition, repair drones and beacons too, priced against your ship',
+    'A refusal names the fix now: which page to buy on, or how many seconds to wait',
+    'Your unfitted gear is your inventory; the ore panel on I is CARGO',
+  ] },
   { v: '0.25', notes: [
     'Anything you cannot buy yet now looks locked and says why, instead of just refusing',
   ] },

@@ -63,24 +63,24 @@ export const AMMO = {
   // For emitters. Consumed one round per bolt, so a big rack eats them fast.
   cell1: { name: 'Standard Cells', for: 'laser', tier: 1, mult: 1.00, pack: 2000, price:  400,
            colour: GRADE_COLOUR[1],
-           blurb: 'What the racks are calibrated for.' },
+           blurb: 'The standard round. Every emitter fires it.' },
   cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 1.25, pack: 2000, price:  600,
            colour: GRADE_COLOUR[2],
-           blurb: 'A quarter more out of every bolt, at a fifth more per point.' },
+           blurb: 'Hotter cells. 20% dearer per point of damage.' },
   cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: 1.50, pack: 2000, price:  840,
            colour: GRADE_COLOUR[3],
-           blurb: 'Half again out of every bolt. The last word in cells.' },
+           blurb: 'The hottest cell made. 40% dearer per point.' },
 
   // For launchers. One warhead per rocket, so a Swarm Rack is fifteen a volley.
   head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, pack: 400, price:  600,
            colour: GRADE_COLOUR[1],
-           blurb: 'Shaped charge, mass produced.' },
+           blurb: 'A mass-produced shaped charge. Any rack fires it.' },
   head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 1.25, pack: 400, price:  900,
            colour: GRADE_COLOUR[2],
-           blurb: 'Two stages. Goes through shielding that shrugs off the first.' },
+           blurb: 'Two stages, to beat shielding. 20% dearer per point.' },
   head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: 1.50, pack: 400, price: 1260,
            colour: GRADE_COLOUR[3],
-           blurb: 'Rare, unstable, and worth every credit when it lands.' },
+           blurb: 'Unstable, and it lands hard. 40% dearer per point.' },
 };
 
 export const AMMO_KEYS = Object.keys(AMMO);
@@ -154,6 +154,10 @@ export function bestTierFor(feed, fit, drones = [], EQUIPMENT) {
 }
 
 // Why this grade is not for sale to this pilot, or null if it is.
+//
+// A refusal that only says no is a refusal you have to go and research. This one
+// names the rung you are missing, the rung you are on, and the shelf that sells
+// the difference, because that is the entire next step.
 export function whyNotBuy(key, { fit, drones = [], EQUIPMENT } = {}) {
   const a = AMMO[key];
   if (!a) return 'no such grade';
@@ -161,7 +165,9 @@ export function whyNotBuy(key, { fit, drones = [], EQUIPMENT } = {}) {
   if (need <= 1) return null;
   const have = bestTierFor(a.for, fit, drones, EQUIPMENT);
   if (have >= need) return null;
-  return `needs a tier ${need} ${a.for === 'rocket' ? 'launcher' : 'emitter'} — you have tier ${have || 'none'}`;
+  const rocket = a.for === 'rocket';
+  return `needs a tier ${need} ${rocket ? 'launcher' : 'emitter'} — you fly `
+       + `${have ? 'tier ' + have : 'none'}, so buy up on the ${rocket ? 'Launchers' : 'Lasers'} page`;
 }
 
 // True if this pilot could fire that weapon at all right now.

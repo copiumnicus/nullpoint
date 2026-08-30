@@ -57,19 +57,22 @@ export const BERTH_QUIET = 6;
 // Why this pilot cannot trade at this outpost right now, or null if they can. One
 // function, so the panel, the prompt and the server all give the same answer.
 export function whyNotBerth({ owned = false, inside = false, sinceHit = 1e9 } = {}) {
-  if (!inside) return 'no outpost in range';
-  if (!owned) return 'you have no berth here';
-  if (sinceHit < BERTH_QUIET) return 'not while you are being shot at';
+  if (!inside) return 'no outpost in range — fly into the ring';
+  if (!owned) return 'no bay here yet — press H to rent one';
+  if (sinceHit < BERTH_QUIET) return `wait ${BERTH_QUIET}s clear of fire — the bay is shut`;
   return null;
 }
 
 // And why they will not sell you one yet.
 export function whyNotBuyBerth({ xp = 0, credits = 0, owned = false, inside = false } = {}) {
-  if (!inside) return 'no outpost in range';
-  if (owned) return 'you already keep a berth here';
+  // These are drawn on the panel's one button, in capitals, so they have to fit
+  // in about forty characters. The reasoning — why pirates care about rank at all
+  // — is printed above the button; this line is only ever the missing piece.
+  if (!inside) return 'no outpost in range — fly closer';
+  if (owned) return 'you already rent a bay here';
   const lvl = levelFor(xp).level;
-  if (lvl < BERTH_RANK) return `they rent to pilots they have heard of — rank ${BERTH_RANK}, you are ${lvl}`;
-  if (credits < berthPrice()) return `a berth here costs ${berthPrice()}`;
+  if (lvl < BERTH_RANK) return `they want rank ${BERTH_RANK} — you are ${lvl}`;
+  if (credits < berthPrice()) return `costs ${berthPrice()} cr — you cannot pay yet`;
   return null;
 }
 
