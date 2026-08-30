@@ -23,12 +23,12 @@ import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from './shared/net.js';
 import { newAccount, sanitiseAccount, capture } from './shared/account.js';
 import { GAME } from './shared/brand.js';
-import { splitKill } from './shared/reward.js';
+import { splitKill, shareOut } from './shared/reward.js';
 import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
-         POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL } from './shared/cargo.js';
+         POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL, mayScoop } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
@@ -158,11 +158,13 @@ setInterval(persistAll, 15000);   // positions drift without changing anything
 for (const sig of ['SIGINT', 'SIGTERM'])
   process.on(sig, () => { persistAll(); console.log('accounts saved'); process.exit(0); });
 
-// Where each hostile lives. Drifters hold the home maps; Ironhusks stand one hop
-// out, so the first sector past home is also the first thing that does not die to
-// the guns you left home with; Bandits are at the frontier, so the first thing you
-// cannot see is the last reason to go further. Seeded per map so a restart
-// replays the same field.
+// Where each hostile lives, and each sector teaches one thing. Drifters hold the
+// home maps. The two sectors out of home are siblings rather than a ladder, and
+// they ask different questions: an Ironhusk on co2 is the first thing that does
+// not die to the guns you left home with, and a Leviathan on co3 is the first
+// thing you cannot beat alone however well you fly. Bandits are at the frontier,
+// where the problem stops being what you can kill and becomes what you can see.
+// Seeded per map so a restart replays the same field.
 const aliens = new Map();
 let alienId = 1_000_000;
 const seed = (mapId, kind, n) => {
@@ -177,6 +179,7 @@ for (const h of HOMES) {
   const co = h[0];
   for (const mid of [co + '2', co + '3']) seed(mid, 'drifter', 4);
   seed(co + '2', 'ironhusk', 3);                  // one hop out: the first thing that outclasses you
+  seed(co + '3', 'leviathan', 2);                 // the other hop out: the first that needs a friend
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
   seed(co + '4', 'drifter', 3);
 }
@@ -211,9 +214,9 @@ for (const id of Object.keys(MAPS)) { bolts.set(id, []); rockets.set(id, []); bl
 const pods = new Map();      // mapId -> cargo adrift
 for (const id of Object.keys(MAPS)) pods.set(id, []);
 let podId = 1;
-const drop = (mapId, x, y, mat, n) => {
+const drop = (mapId, x, y, mat, n, own = 0) => {
   if (n > 0) pods.get(mapId).push({ id: podId++, x: x + (Math.random() - .5) * 70,
-                                    y: y + (Math.random() - .5) * 70, mat, n, t: POD_LIFE });
+                                    y: y + (Math.random() - .5) * 70, mat, n, own, t: POD_LIFE });
 };
 
 const hits = new Map();      // mapId -> damage numbers still climbing
@@ -253,9 +256,18 @@ const killAlien = (mapId, a, byId = null) => {
         with: cuts.length - 1, share: cut.share }));
   }
   boom(mapId, a, true, a.id);
+  // The ore is shared on the same terms as the bounty. One pod that whoever got
+  // there first took meant two rigs racing over a haul both pilots had earned,
+  // and the faster ship won cargo the slower one had paid for in hull.
   const loot = rollDrop(a.kind, a.rand);          // seeded, so drops replay with the alien
-  if (loot) drop(mapId, a.x, a.y, loot.mat, loot.n);
+  if (loot && cuts.length) {
+    const shares = shareOut(cuts, loot.n);
+    cuts.forEach((c, i) => drop(mapId, a.x, a.y, loot.mat, shares[i], c.id));
+  } else if (loot) {
+    drop(mapId, a.x, a.y, loot.mat, loot.n);       // nobody on the ledger: anyone's
+  }
   a.dead = a.def.respawn; a.target = null; a.provoked.clear(); a.dealt.clear();
+  a.crowd = a.threat = null; a.crowdT = a.threatT = 0;
 };
 
 const wss = new WebSocketServer({ server });
@@ -703,7 +715,10 @@ wss.on('connection', (ws, req) => {
     if (P.dead) return;                           // nothing else reaches a wreck
 
     if (m.t === 'scoop') {                        // an order: go get that, however far it is
-      P.want = (pods.get(P.mapId) ?? []).some(c => c.id === +m.id) ? +m.id : null;
+      const target = (pods.get(P.mapId) ?? []).find(c => c.id === +m.id);
+      if (target && !mayScoop(target, id))
+        return tell('That is another pilot\'s share of the kill');
+      P.want = target ? +m.id : null;
       if (process.env.DEBUG_SCOOP) console.log(`scoop order id=${m.id} accepted=${P.want !== null}`);
       return;
     }
@@ -907,7 +922,7 @@ setInterval(() => {
 
   // Collector rigs pull anything in reach without being asked. Your own order
   // still wins — a rig is not allowed to hijack a beam you started.
-  for (const [, p] of players) {
+  for (const [pid, p] of players) {
     if (p.dead || p.scoop || p.want !== null) continue;
     const reach = collectorReach(p.ship.rig);
     if (!reach) continue;
@@ -917,7 +932,7 @@ setInterval(() => {
     // giving up on the first refusal left cargo on the ground with space to spare.
     const near = (pods.get(p.mapId) ?? [])
       .map(c => ({ c, d: Math.hypot(c.x - p.ship.x, c.y - p.ship.y) }))
-      .filter(o => o.d <= reach)
+      .filter(o => o.d <= reach && mayScoop(o.c, pid))   // never someone else's share
       .sort((a, b) => a.d - b.d);
     for (const { c } of near) {
       const s2 = beginScoop(p.ship, p.hold, c, reach, droneSpeed(p.ship));

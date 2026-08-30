@@ -28,9 +28,9 @@ import { audioReady, setThrust, laser, rocket, explosion,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
 import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit } from '/shared/net.js';
-import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor,
+import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
-import { ALIENS } from '/shared/aliens.js';
+import { ALIENS, outlineOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
 import { seenAs } from '/shared/stealth.js';
 import { boltWidth } from '/shared/combat.js';
@@ -380,6 +380,9 @@ function hostileAt(wx, wy) {
 function podAt(wx, wy) {
   let best = null, bestD = Infinity;
   for (const p of pods) {
+    // Somebody else's share of a shared kill is not yours to click. Offering it
+    // and then having the server refuse would be the worse half of both.
+    if (!mayScoop(p, myId)) continue;
     const d = Math.hypot(p.x - wx, p.y - wy);
     if (d < 34 && d < bestD) { bestD = d; best = p; }
   }
@@ -1783,9 +1786,12 @@ function drawBar() {
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
 
     g.globalAlpha = safed ? 0.35 : 1;
-    roundIcon(b.feed, r.x + r.w / 2, r.y + 24, dry ? '#5a2733' : b.feed === 'laser' ? '#8fe7ff' : '#cfe9ff');
+    // The grade has its own colour, and the round itself wears it. Pips alone
+    // meant the only way to tell what was loaded was to count them.
+    const grade = a.colour ?? '#c2a24f';
+    roundIcon(b.feed, r.x + r.w / 2, r.y + 24, dry ? '#5a2733' : grade);
     if (a.tier > 1) {                            // pips for the grade, top-left
-      g.fillStyle = dry ? '#4a4230' : '#ffd479';
+      g.fillStyle = dry ? '#4a4230' : grade;
       for (let i = 0; i < a.tier - 1; i++) g.fillRect(r.x + 6 + i * 6, r.y + 6, 4, 4);
     }
     g.textAlign = 'center'; g.font = '12px ui-monospace, monospace';
@@ -1808,12 +1814,13 @@ function drawBar() {
     }
     if (over(r) && !feedOpen) {                  // name of what is loaded
       const t = `${a.name}  x${a.mult.toFixed(2)}`;
+      g.fillStyle = grade;
       g.font = '11px ui-monospace, monospace';
       const w = g.measureText(t).width + 18;
       const x = Math.max(6, Math.min(VIEW_W - w - 6, r.x + r.w / 2 - w / 2));
       g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - 24, w, 20);
       g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - 23.5, w - 1, 19);
-      g.fillStyle = '#cfe4ff'; g.fillText(t, x + w / 2, r.y - 10);
+      g.fillStyle = grade; g.fillText(t, x + w / 2, r.y - 10);
     }
     g.textAlign = 'left';
   }
@@ -1836,11 +1843,12 @@ function drawBar() {
       const hot = over(row.r);
       g.fillStyle = on ? 'rgba(125,224,138,0.14)' : hot ? 'rgba(122,180,240,0.16)' : 'rgba(255,255,255,0.02)';
       g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
-      if (!kit) roundIcon(feedOpen, row.r.x + 14, row.r.y + row.r.h / 2, on ? '#7de08a' : '#8fa8c4', 0.6);
+      if (!kit) roundIcon(feedOpen, row.r.x + 14, row.r.y + row.r.h / 2, a.colour ?? '#8fa8c4', 0.6);
       g.font = '11px ui-monospace, monospace';
       g.fillStyle = on ? '#cfe4ff' : '#a8bcd4';
       g.fillText(a.name, row.r.x + (kit ? 12 : 28), row.r.y + row.r.h / 2 - 1);
       g.font = '9px ui-monospace, monospace'; g.fillStyle = '#66748c';
+      g.fillStyle = kit ? '#66748c' : (a.colour ?? '#66748c');
       g.fillText(kit ? `+${Math.round(a.heal * 100)}% over ${a.secs}s` : `x${a.mult.toFixed(2)}`,
                  row.r.x + (kit ? 12 : 28), row.r.y + row.r.h / 2 + 10);
       g.textAlign = 'right';
@@ -2009,15 +2017,19 @@ function drawFrame(now) {
 
   for (const pod of pods) {
     const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
-    const pu = 0.72 + 0.28 * Math.sin(now / 260 + pod.id);
-    g.globalAlpha = 0.22 * pu; g.fillStyle = col;
+    // Another pilot's share is drawn faint and does not pulse: still visible, so
+    // the field reads honestly, but plainly not yours to go for.
+    const mine3 = mayScoop(pod, myId);
+    const pu = mine3 ? 0.72 + 0.28 * Math.sin(now / 260 + pod.id) : 0.34;
+    g.globalAlpha = (mine3 ? 1 : 0.42) * 0.22 * pu; g.fillStyle = col;
     g.beginPath(); g.arc(pod.x, pod.y, 26, 0, 7); g.fill();
-    g.globalAlpha = 1; g.fillStyle = col;
+    g.globalAlpha = mine3 ? 1 : 0.42; g.fillStyle = col;
     g.save(); g.translate(pod.x, pod.y); g.rotate(now / 1400 + pod.id);
     g.beginPath(); g.moveTo(0, -9); g.lineTo(8, 0); g.lineTo(0, 9); g.lineTo(-8, 0);
     g.closePath(); g.fill();
     g.strokeStyle = '#05070b'; g.lineWidth = 1.5; g.stroke();
     g.restore();
+    g.globalAlpha = 1;
     if (hover && podAt(toWorld(hover).x, toWorld(hover).y)?.id === pod.id) {
       const reachable = me && Math.hypot(pod.x - me.rx, pod.y - me.ry) <= SCOOP_R;
       g.strokeStyle = col; g.lineWidth = 1.4; g.setLineDash([3, 4]);
@@ -2155,8 +2167,10 @@ function drawFrame(now) {
 
     g.fillStyle = colOf(s);
     if (foe) {                                     // hostiles read as a different kind of thing
+      // Each alien has its own outline. They were all the same arrowhead before,
+      // so an Ironhusk read as a big Drifter rather than as a different animal.
       g.beginPath();
-      g.moveTo(R * 1.35, 0); g.lineTo(0, R); g.lineTo(-R * 0.8, 0); g.lineTo(0, -R);
+      outlineOf(s.hull, R).forEach(([px, py], i) => i ? g.lineTo(px, py) : g.moveTo(px, py));
       g.closePath(); g.fill();
       g.strokeStyle = '#1b0d28'; g.lineWidth = 1.5; g.stroke();
     } else {
@@ -2449,7 +2463,12 @@ function drawFrame(now) {
       const ph = ((now / 900) + id * 0.31) % 1;
       g.globalAlpha = (s.vis === FRESH ? 0.5 + 0.5 * (1 - ph) : 0.35) * (hid ? hid.alpha : 1);
       g.fillStyle = ALIENS[s.hull]?.colour ?? '#b06adf';
-      g.beginPath(); g.moveTo(mx, my - 3); g.lineTo(mx + 3, my); g.lineTo(mx, my + 3); g.lineTo(mx - 3, my);
+      // The same outline as the world view, scaled to the plot — a shape you
+      // learn out the window should be the shape you learn on the chart.
+      const mr = 3 + Math.min(3, (ALIENS[s.hull]?.r ?? 15) / 13);
+      g.beginPath();
+      outlineOf(s.hull, mr).forEach(([px, py], i) =>
+        i ? g.lineTo(mx + px, my + py) : g.moveTo(mx + px, my + py));
       g.closePath(); g.fill();
       g.globalAlpha = 1;
       continue;

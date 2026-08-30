@@ -54,15 +54,21 @@ export const PROPS = [...HULL_ROW, ...FORM_ROW];
 // couple of seconds, far enough that nothing wanders over while you are looking
 // at the gallery — a Drifter only picks a fight inside 420px.
 const KINDS = Object.keys(ALIENS);
-const PEN_GAP = 620;                                // > any aggro radius, so you pull one at a time
+// Wider than the widest aggro radius, so you still pull one at a time — derived
+// from the roster rather than picked, because the number that matters is "no
+// hostile can hear its neighbour" and that changes every time one is added.
+// The range is also closer to the dock than it was: the line grows with the
+// roster, and it has to stay somewhere you can walk to in a starter hull.
+const PEN_GAP = Math.max(...Object.values(ALIENS).map(a => a.aggro ?? 0)) + 60;
+const PEN_X   = 1150;
 export const PEN_SLOTS = KINDS.map((kind, i) => ({
   kind, id: 2e6 + i,
-  x: CX + 1450,
+  x: CX + PEN_X,
   y: CY + (i - (KINDS.length - 1) / 2) * PEN_GAP,   // strung symmetrically about the dock
 }));
 const PEN_PAD = 260;
 export const PEN = {
-  x: CX + 1450 - 550, y: Math.min(...PEN_SLOTS.map(s => s.y)) - PEN_PAD,
+  x: CX + PEN_X - 550, y: Math.min(...PEN_SLOTS.map(s => s.y)) - PEN_PAD,
   w: 1100,            h: (KINDS.length - 1) * PEN_GAP + PEN_PAD * 2,
 };
 

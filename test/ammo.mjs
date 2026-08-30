@@ -33,6 +33,25 @@ for (const f of FEEDS) {
                                && roundPrice(k) > roundPrice(g[i - 1]))),
     'no grade is a straight upgrade at the same price');
   check(`the default ${f} grade is the plain one`, AMMO[DEFAULT_AMMO[f]].mult === 1);
+
+  // The number that decides whether anyone ever loads the good stuff. Fire rate
+  // is fixed, so a grade's multiplier IS its dps — the only question is what the
+  // extra damage costs. A Charged Cell used to be 1.25x the damage at 6.4x the
+  // cost per point, which made two thirds of the shop decoration.
+  const perPoint = k => roundPrice(k) / AMMO[k].mult;
+  console.log(`     ${f.padEnd(7)}` + g.map(k =>
+    `${AMMO[k].name} ${perPoint(k).toFixed(3)}cr/dmg`).join('   '));
+  check(`a better ${f} round is a premium, not a punishment`,
+    g.every((k, i) => i === 0 || perPoint(k) < perPoint(g[0]) * 1.6),
+    `worst grade costs ${(perPoint(g.at(-1)) / perPoint(g[0])).toFixed(2)}x per point of damage, ` +
+    'not the 6.4x that made it pointless');
+  check(`the ${f} premium climbs with the grade, so the plain one still has a job`,
+    g.every((k, i) => i === 0 || perPoint(k) > perPoint(g[i - 1])),
+    'paying more per point buys real dps — it is a trade, not a free upgrade');
+  check(`every ${f} grade is telling them apart by colour`,
+    g.every(k => /^#[0-9a-f]{6}$/i.test(AMMO[k].colour ?? '')) &&
+    new Set(g.map(k => AMMO[k].colour)).size === g.length,
+    g.map(k => `${AMMO[k].name} ${AMMO[k].colour}`).join(', '));
 }
 check('every grade feeds exactly one weapon',
   AMMO_KEYS.every(k => FEEDS.includes(AMMO[k].for)));
@@ -108,9 +127,17 @@ console.log('\nwhat a grade is worth');
     console.log(`       ${AMMO[k].name.padEnd(16)}${perMin(k).toFixed(0)} cr a minute`);
   check('the plain grade is cheap enough not to count', perMin(grades[0]) < 250,
     `${perMin(grades[0]).toFixed(0)} cr a minute, and nobody holds the trigger for a minute`);
-  check('the best grade costs enough to be a decision',
-    perMin(grades.at(-1)) > perMin(grades[0]) * 10,
-    `${perMin(grades.at(-1)).toFixed(0)} cr a minute — you load it for a fight, not for the commute`);
+  // This used to demand the best grade cost more than ten times the plain one to
+  // hold down, so it would be "a decision". At 1.25x the damage for 34x the cost
+  // a minute it was not a decision, it was a wrong answer, and nobody ever loaded
+  // it. The premium has to be real — or the plain grade has no job — but it has
+  // to stay under what the extra damage is worth.
+  const top = grades.at(-1);
+  check('the best grade costs more to hold down, but less than it delivers',
+    perMin(top) > perMin(grades[0]) &&
+    perMin(top) / perMin(grades[0]) < AMMO[top].mult * 1.5,
+    `${(perMin(top) / perMin(grades[0])).toFixed(1)}x a minute for ${AMMO[top].mult}x the damage ` +
+    `— it was 34x for 1.25x, which is why the shop's top two shelves went untouched`);
 }
 
 console.log('\npaying for itself');
@@ -128,7 +155,7 @@ console.log('\npaying for itself');
   for (const kind of WILD) {
     const ehp = effectiveHp(kind), pays = ALIENS[kind].bounty;
     check(`${ALIENS[kind].name} pays what its toughness says it should`,
-      pays === bountyFor(kind), `${ehp} ehp at ${BOUNTY_RATE} = ${pays} cr`);
+      pays === bountyFor(kind), `${ehp} ehp x ${ALIENS[kind].effort ?? 1} effort at ${BOUNTY_RATE} = ${pays} cr`);
     for (const [label, hull, weapon, drones] of builds) {
       const f = sanitiseFit(slotsOf(hull), fit({ weapon }));
       const st = resolve(hull, f, drones);
@@ -152,8 +179,18 @@ console.log('\npaying for itself');
   const vol = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(3).fill('pod3') })), []).rockets;
   const lux = vol * roundPrice(top);
   console.log(`     a ${AMMO[top].name} volley costs ${lux.toFixed(0)} cr against a ${ALIENS.drifter.bounty} cr husk`);
-  check('the best warheads do not pay on trash', lux > ALIENS.drifter.bounty,
-    'which is the point — you load them for something that deserves it');
+  // And this used to read "the best warheads do not pay on trash", which they did
+  // not — a single Antimatter volley cost more than the husk it killed. That was
+  // deliberate and it was the wrong call: ammunition you cannot afford to fire is
+  // ammunition nobody buys. The premium now shows up as thinner margin, not as a
+  // loss, so loading the good stuff is a choice about pace rather than a mistake.
+  check('even the best warheads still turn a profit on a husk',
+    lux < ALIENS.drifter.bounty,
+    `${lux.toFixed(0)} cr of warheads against a ${ALIENS.drifter.bounty} cr husk — ` +
+    `${(ALIENS.drifter.bounty / lux).toFixed(1)}x back, against 0.8x before`);
+  check('but the plain grade is still the thrifty way to farm',
+    vol * roundPrice(DEFAULT_AMMO.rocket) < lux,
+    'the premium buys speed, not free money');
 
   // And the pacing that all of it is for.
   const ORE = 81;

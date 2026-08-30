@@ -1,4 +1,5 @@
-import { splitKill, potFor, SHARE_FLOOR, GROUP_STEP, MAX_CLAIMS, MAX_POT } from '../shared/reward.js';
+import { splitKill, shareOut, potFor, SHARE_FLOOR, GROUP_STEP, MAX_CLAIMS, MAX_POT } from '../shared/reward.js';
+import { mayScoop } from '../shared/cargo.js';
 import { ALIENS, WILD, effectiveHp, BOUNTY_RATE } from '../shared/aliens.js';
 
 const fails = [];
@@ -8,7 +9,10 @@ const check = (name, ok, detail = '') => {
 };
 const ledger = pairs => new Map(pairs);
 const evenly = n => ledger(Array.from({ length: n }, (_, i) => [i + 1, 100]));
-const B = ALIENS.bandit.bounty;                    // 21000, the number the design was argued on
+// A fixed number, not an alien's bounty. This was the Bandit's when the split was
+// designed, and the arithmetic of dividing a pot must not start failing because
+// somebody rebalanced a hostile.
+const B = 21000;
 
 console.log('\nwhat a kill pays');
 check('killing it alone still pays the whole bounty',
@@ -100,6 +104,35 @@ for (const k of WILD.slice(0, 4)) {
     splitKill(ledger([[1, 1]]), a.bounty)[0].credits === a.bounty,
     `${a.bounty} = ${Math.round(effectiveHp(k))} ehp x ${BOUNTY_RATE}`);
 }
+
+console.log('\nthe ore is shared on the same terms');
+// One pod that whoever got there first took meant two rigs racing over a haul
+// both pilots had paid for in hull, and the faster ship won it every time.
+{
+  const cuts = splitKill(evenly(2), B);
+  const ore = shareOut(cuts, 20);
+  check('a shared kill splits its cargo too', ore.length === 2 && ore[0] + ore[1] === 25,
+    `20 iron becomes ${ore.join(' + ')} — the same 1.25x pot the credits use`);
+  check('and one pod each means no race', ore.every(n => n > 0));
+  check('a solo kill still drops the whole thing',
+    shareOut(splitKill(ledger([[1, 1]]), B), 20)[0] === 20);
+  check('the ore pot grows exactly as the credit pot does', (() => {
+    const three = shareOut(splitKill(evenly(3), B), 20);
+    return three.reduce((a, b) => a + b, 0) === Math.round(20 * 1.5);
+  })(), '20 iron across three pilots pays out 30 — grouping is worth it in ore too, not just credits');
+  check('and a single unit simply cannot go three ways', (() => {
+    const one = shareOut(splitKill(evenly(3), B), 1);       // one iridium, three pilots
+    // The pot rounds to 2 and the two biggest shares take it; the third gets 0,
+    // and drop() never makes a pod out of nothing.
+    return one.reduce((a, b) => a + b, 0) === 2 && one.filter(n => n > 0).length <= 2;
+  })(), 'the smallest share goes home empty rather than with a phantom fraction');
+  check('nobody on the ledger, nothing to share out', shareOut([], 20).length === 0);
+}
+check('a pod belongs to the pilot it was dropped for',
+  mayScoop({ own: 7 }, 7) && !mayScoop({ own: 7 }, 8));
+check('and an unclaimed pod is anyone\'s',
+  mayScoop({ own: 0 }, 8) && mayScoop({}, 8) && mayScoop(null, 8),
+  'ore already lying around, or a kill with no ledger behind it');
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — shared rewards'}\n`);
 process.exit(fails.length ? 1 : 0);

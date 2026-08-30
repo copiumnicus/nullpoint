@@ -52,10 +52,22 @@ export function splitKill(ledger, bounty, xp = bounty) {
   const share_ = claim.map(([id, d]) => ({ id, damage: d, share: share(d) }));
 
   for (const [key, amount] of [['credits', bounty], ['xp', xp]]) {
-    const pot = Math.round(potFor(amount, claim.length));
-    let paid = 0;
-    for (const r of share_) { r[key] = Math.floor(pot * r.share); paid += r[key]; }
-    share_[0][key] += pot - paid;                  // the remainder, to the top contributor
+    shareOut(share_, amount).forEach((v, i) => { share_[i][key] = v; });
   }
   return share_;
+}
+
+// Divide one whole amount across claims that already have their shares, growing
+// the pot the same way the bounty does and losing nothing to rounding. Credits,
+// experience and ore all go through this, because a kill you helped with should
+// pay you in every currency it pays in — the ore used to be one pod that whoever
+// got there first took, which put two scavenger rigs in a race over a haul both
+// pilots had earned a share of.
+export function shareOut(claims, amount) {
+  if (!claims.length) return [];
+  const pot = Math.round(potFor(amount, claims.length));
+  let paid = 0;
+  const out = claims.map(c => { const v = Math.floor(pot * c.share); paid += v; return v; });
+  out[0] += pot - paid;                            // the remainder, to the top contributor
+  return out;
 }

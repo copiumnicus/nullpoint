@@ -1,3 +1,5 @@
+import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
+         farmHp, XP_RATE, BOUNTY_RATE } from '../shared/aliens.js';
 import { WILD, ALIENS, ALIENS_PER_MAP, effectiveHp, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
          forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
@@ -352,6 +354,114 @@ check('only one of them hides', WILD.filter(k => ALIENS[k].stealth).length === 1
   check('it does not run, so the fight ends when you decide it does',
     I.flee === 0);
 }
+
+// --- the Leviathan, and why one pilot cannot have it -------------------------
+{
+  const I = ALIENS.ironhusk, L = ALIENS.leviathan;
+  const empty = { weapon: [], generator: [], tech: [] };
+  const hulls = Object.keys(HULLS).map(h => ({ h, st: resolve(h, empty) }));
+
+  check('a Leviathan is exactly ten Ironhusks',
+    effectiveHp('leviathan') === effectiveHp('ironhusk') * 10,
+    `${effectiveHp('leviathan')} ehp`);
+  check('and pays ten of them, by the same derivation',
+    L.bounty === I.bounty * 10 && L.xp === I.xp * 10, `${L.bounty} credits, ${L.xp} xp`);
+
+  // The two properties that make it a cooperation gate rather than a long fight.
+  check('it is the first thing in the game you cannot kite',
+    hulls.every(x => L.attrs.weaponRange > x.st.weaponRange),
+    `${L.attrs.weaponRange} against ` + hulls.map(x => `${x.h} ${x.st.weaponRange}`).join(', '));
+  check('so breaking off to survive hands it everything back',
+    L.attrs.shieldRegen * 25 > L.attrs.shield,
+    `${L.attrs.shieldRegen}/s rebuilds ${L.attrs.shield} shield in ` +
+    `${(L.attrs.shield / L.attrs.shieldRegen).toFixed(0)}s — a lone pilot cannot both live and finish it`);
+  check('but it still cannot trap you: leaving always works',
+    hulls.every(x => x.st.speed > L.attrs.speed),
+    `${L.attrs.speed} against the slowest hull at ${Math.min(...hulls.map(x => x.st.speed))}`);
+  check('and it does not chase you home', L.leash < 3000 && L.flee === 0);
+}
+
+// --- what a kill is worth ----------------------------------------------------
+// Hit points are only half of the work. A Bandit has 30000 of them and used to
+// pay the same rate per point as an Ironhusk, but only 28% of what is fired at
+// one lands against a husk's 75%, so it took 39.9s to the husk's 2.3s — 526
+// credits a second against 1978. The hardest fight in the sector paid a quarter
+// of the rate, and nobody farmed it.
+console.log('\nwhat a kill is worth');
+for (const k of WILD) {
+  const a = ALIENS[k];
+  check(`a ${a.name} pays what it costs to kill`,
+    a.bounty === Math.round(farmHp(k) * BOUNTY_RATE) && a.xp === Math.round(farmHp(k) * XP_RATE),
+    `${effectiveHp(k)} ehp x ${a.effort ?? 1} effort -> ${a.bounty} cr, ${a.xp} xp`);
+}
+check('only the things that are hard to HIT carry an effort multiplier',
+  WILD.every(k => (ALIENS[k].effort ?? 1) === 1 || ALIENS[k].stealth || ALIENS[k].evades),
+  'armour is already counted in hit points — effort is for what you cannot land a shot on');
+check('and the one that hides is paid for it',
+  ALIENS.bandit.effort > 3 && ALIENS.bandit.bounty > ALIENS.ironhusk.bounty * 10,
+  `${ALIENS.bandit.bounty} — it takes 17x as long as an Ironhusk, so it cannot pay 4.6x`);
+
+// --- who it decides to shoot -------------------------------------------------
+// One rule — whoever hit it first — meant a single pilot could hold anything in
+// the game forever while the rest of the party worked in peace. A group fight was
+// a solo fight with an audience.
+console.log('\ntargeting');
+{
+  const map = MAPS.m1;
+  const ship = (x, y) => ({ x, y, hp: 100 });
+  const foe = () => { const a = newAlien('ironhusk', 1, map, 5, { x: 5000, y: 5000 }); return a; };
+  const run = (a, cs, secs) => { let last = null;
+    for (let i = 0; i < secs * 30; i++) last = stepAlienAI(a, map, cs, 1 / 30); return last; };
+
+  {
+    const a = foe();
+    const far = { id: 1, ship: ship(5000, 5300), haven: false };
+    const close = { id: 2, ship: ship(5000, 5060), haven: false };
+    a.provoked.add(1); a.target = 1;
+    check('it still shoots whoever started it, at first',
+      run(a, [far, close], 1) === 1, 'one second of someone else being closer is not enough');
+    check('but crowding it for three seconds takes the aggro',
+      run(a, [far, close], 3) === 2,
+      `${CLOSER_HOLD}s nearer by more than ${Math.round((1 - CLOSER_EDGE) * 100)}% — a party has to rotate the kiting`);
+  }
+  {
+    const a = foe();
+    const tie1 = { id: 1, ship: ship(5000, 5200), haven: false };
+    const tie2 = { id: 2, ship: ship(5000, 5205), haven: false };
+    a.provoked.add(1); a.target = 1;
+    check('two ships flying together do not make it flip back and forth',
+      run(a, [tie1, tie2], 8) === 1,
+      'you have to be nearer by a margin, not merely nearer');
+  }
+  {
+    // The ledger it already keeps to pay the bounty, read for the other obvious
+    // purpose: whoever is actually hurting it.
+    const a = foe();
+    const held = { id: 1, ship: ship(5000, 5100), haven: false };
+    const gun  = { id: 2, ship: ship(5000, 5400), haven: false };
+    a.provoked.add(1); a.target = 1;
+    a.dealt.set(1, 100); a.dealt.set(2, 4000);
+    check('and out-damaging its target pulls it off the tank',
+      run(a, [held, gun], THREAT_HOLD + 0.5) === 2,
+      `${THREAT_EDGE}x the damage over ${THREAT_HOLD}s, from further away`);
+    const b = foe();
+    b.provoked.add(1); b.target = 1;
+    b.dealt.set(1, 4000); b.dealt.set(2, 4100);
+    check('but a graze does not', run(b, [held, gun], THREAT_HOLD + 0.5) === 1,
+      'it has to be a lot more damage, not a bit more');
+  }
+}
+
+// Each hostile is its own silhouette. They were all one arrowhead at different
+// sizes, so the Ironhusk read as a big Drifter instead of a different animal.
+check('no two aliens share an outline',
+  new Set(WILD.map(k => ALIENS[k].shape)).size === WILD.length,
+  WILD.map(k => `${ALIENS[k].name} ${ALIENS[k].shape}`).join(', '));
+check('every outline is a real closed polygon',
+  WILD.every(k => { const pts = outlineOf(k, 20);
+    return pts.length >= 3 && pts.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y)); }));
+check('and an unknown alien still draws something rather than nothing',
+  outlineOf('nosuch', 20).length >= 3, 'a missing shape falls back to the arrowhead');
 
 // A posted alien belongs to a slot on the firing range and goes back to it.
 {

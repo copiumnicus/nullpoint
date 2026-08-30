@@ -44,17 +44,28 @@ const scaled = (table, k) => table.map(r => ({ ...r, min: r.min * k, max: r.max 
 // in a hold. So each is scaled so its commonest drop is about one hold-full for a
 // pilot equipped to be in that sector:
 //
-//   drifter  x1  — 9 iron is 27 volume, into a starter's 60
-//   ironhusk x4  — 36 iron is 108 volume, against 100 with a Scavenger Rig
-//   bandit   x8  — 72 iron is 216 volume, against 240 with an Ore Tender
+//   drifter   x1  — 9 iron is 27 volume, into a starter's 60
+//   ironhusk  x4  — 36 iron is 108 volume, against 100 with a Scavenger Rig
+//   bandit    x8  — 72 iron is 216 volume, against 240 with an Ore Tender
+//   leviathan x8  — the same, because the Ore Tender is the biggest hold there is
 //
-// Past that the reward stays in the bounty, which is where it can grow without
-// asking anyone to make three trips.
+// The Leviathan is ten Ironhusks in every number that scales, but not this one:
+// x40 would be 360 iron, four and a half Ore Tenders, and the answer to "what do
+// you do with the rest" is nothing. It is capped by the biggest hold in the game
+// because ore that will not fit is not a reward. Past that the pay stays in the
+// bounty, which is where it can grow without asking anyone to make four trips —
+// and where a group splits it without anyone having to ferry.
 export const DROPS = {
-  drifter:  HUSK,
-  ironhusk: scaled(HUSK, 4),
-  bandit:   scaled(HUSK, 8),
+  drifter:   HUSK,
+  ironhusk:  scaled(HUSK, 4),
+  bandit:    scaled(HUSK, 8),
+  leviathan: scaled(HUSK, 8),
 };
+
+// A pod dropped by a shared kill belongs to one of the pilots who earned it, so
+// two collector rigs on the same wreck field are not in a race. An unclaimed pod
+// — anything already lying around, or a kill with no ledger — is anyone's.
+export const mayScoop = (pod, id) => !pod || !pod.own || pod.own === id;
 
 export const POD_LIFE   = 120;  // s before a pod disperses
 export const SCOOP_R    = 260;  // px you must be inside to start hauling one in

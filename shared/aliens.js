@@ -10,7 +10,7 @@ import { newBody, inHaven } from './sim.js';
 
 export const ALIENS = {
   drifter: {
-    name: 'Drifter', cls: 'Husk', r: 15, colour: '#b06adf',
+    name: 'Drifter', cls: 'Husk', r: 15, colour: '#b06adf', shape: 'kite',
     // The first thing you meet, and it is meant to end up beneath you. 650
     // effective hp is set from the top down: a fully outfitted Fighter throws 683
     // in one volley, so once you have actually finished a ship these die in a
@@ -64,7 +64,7 @@ export const ALIENS = {
   // A pilot who has moved up to two emitters and a better rack kills it in 13s,
   // which is the progression this is here to make visible.
   ironhusk: {
-    name: 'Ironhusk', cls: 'Husk', r: 26, colour: '#d0563f',
+    name: 'Ironhusk', cls: 'Husk', r: 26, colour: '#d0563f', shape: 'hex',
     attrs: { hull: 4500, shield: 2000, shieldRegen: 130, shieldDelay: 5,
              speed: 190, accel: 420, signature: 6,
              damage: 90, fireRate: 0.8, weaponRange: 500 },
@@ -80,6 +80,41 @@ export const ALIENS = {
     xp: 1400,         // likewise 10 x 140
   },
 
+  // Ten Ironhusks, by the same arithmetic that made an Ironhusk ten Drifters:
+  // 65000 ehp, a 45500 bounty because bounty is ehp x BOUNTY_RATE, and 14000 xp.
+  //
+  // It exists because the Ironhusk stopped needing anyone's help. So this one is
+  // built so that it cannot be soloed by patience, which is the loophole every
+  // other alien in the game leaves open:
+  //
+  //   range 900   - longer than every hull (620-820). The first thing here you
+  //                 cannot kite. Out-ranging it is not on the table; you either
+  //                 stand in it or you leave.
+  //   regen 900/s - and shields only come back after 3s untouched, so a lone
+  //                 pilot who breaks off to survive hands back 20000 shield in
+  //                 22 seconds. Break off enough to live and you never finish it.
+  //
+  // Those two together are the cooperation gate, and neither is a special case:
+  // they are the ordinary shield timer and the ordinary weapon range, set where
+  // one ship cannot hold both open at once. Two pilots can, by taking turns being
+  // shot at while the other keeps the damage unbroken.
+  //
+  // What it does NOT do is trap you. It is slower than every hull including the
+  // Bulwark at 250, so leaving always works — you just cannot leave and win.
+  leviathan: {
+    name: 'Leviathan', cls: 'Colossus', r: 40, colour: '#8fe04a', shape: 'crown',
+    attrs: { hull: 45000, shield: 20000, shieldRegen: 900, shieldDelay: 3,
+             speed: 230, accel: 380, signature: 8,
+             damage: 150, fireRate: 0.8, weaponRange: 900 },
+    aggro: 520,
+    leash: 2200,
+    patience: 4.0,
+    flee: 0,
+    respawn: 90,
+    bounty: 45500,    // 65000 ehp at BOUNTY_RATE, and 10 x the Ironhusk's 4550
+    xp: 14000,        // likewise 10 x 1400
+  },
+
   // A raider that you mostly cannot see. Its signature is shaped rather than
   // sized: nose-on it returns almost nothing, from the beam it comes and goes,
   // and from behind it is just a ship. The catch is that a Bandit engaging you
@@ -90,7 +125,7 @@ export const ALIENS = {
   // Tougher and quicker than a Drifter and hits harder, but it will not stand and
   // trade: it breaks off early, and while it runs you can see it perfectly.
   bandit: {
-    name: 'Bandit', cls: 'Raider', r: 13, colour: '#5fd0ff', stealth: true, evades: true,
+    name: 'Bandit', cls: 'Raider', r: 13, colour: '#5fd0ff', shape: 'dart', stealth: true, evades: true,
     // Built to survive a finished ship for a quarter of a minute, and most of
     // that comes from not being hit rather than from soaking it: it breaks off
     // the firing line whenever a shot gets close. The hull behind that is real
@@ -113,8 +148,12 @@ export const ALIENS = {
     // commits now, and what keeps it alive is the dodging.
     flee: 0,
     respawn: 40,
-    bounty: 21000,    // 30000 ehp at BOUNTY_RATE
-    xp: 2400,
+    // Measured: 3.81x, from 28% of shots landing against a husk's 75%. Rounded
+    // down to 3.8 because the measurement is a simulation and the number should
+    // not pretend to be more exact than the thing it came from.
+    effort: 3.8,
+    bounty: 79800,    // 30000 ehp x 3.8 effort at BOUNTY_RATE
+    xp: 24554,        // and the same effective hp at XP_RATE
   },
 
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
@@ -133,9 +172,53 @@ export const ALIENS = {
 // tougher thing further out pays proportionally more without anyone remembering
 // to tune it, and it keeps the one number that matters honest: the credits a
 // fight returns against the ammunition it burns.
+// What a kill is worth is derived from how much work it is, and hit points are
+// only half of that. A Bandit has 30000 of them and pays the same rate as an
+// Ironhusk per point — but measured with one ship against both, only 28% of what
+// is fired at a Bandit ever lands against 75% on a husk, so it takes 39.9s to the
+// husk's 2.3s. That was 526 credits a second against 1978: a quarter of the pay
+// for the hardest fight in the sector, which is why nobody farmed it.
+//
+// `effort` is that multiplier, measured rather than guessed: what a thing's hit
+// points are actually worth once dodging and camouflage are counted. 1 for
+// anything that stands and trades. The rates below then apply to effective hit
+// points x effort, so nothing needs a hand-set bounty and the next alien that
+// hides gets paid correctly without anyone remembering to.
+export const XP_RATE = 140 / 650;                  // the Drifter is the anchor: 140 xp for 650 ehp
+export const farmHp = kind => effectiveHp(kind) * (ALIENS[kind].effort ?? 1);
 export const BOUNTY_RATE = 0.70;
 export const effectiveHp = kind => ALIENS[kind].attrs.hull + ALIENS[kind].attrs.shield;
-export const bountyFor = kind => Math.round(effectiveHp(kind) * BOUNTY_RATE);
+// Effective hit points TIMES effort: what it costs to kill, not what it is made
+// of. A thing you cannot hit is worth more than a thing you can, at the same
+// toughness, and this is the one place that gets to decide it.
+export const bountyFor = kind => Math.round(farmHp(kind) * BOUNTY_RATE);
+export const xpFor     = kind => Math.round(farmHp(kind) * XP_RATE);
+
+// Every hostile used to be the same arrowhead at a different size and colour, so
+// an Ironhusk read as a big Drifter rather than as a different thing. The outline
+// is per-alien now, declared here because the world view and the minimap both
+// draw it and a shape that disagreed between the two would be worse than none.
+export const SHAPES = {
+  // The arrowhead everything used to be. Still the Drifter's: it is the baseline
+  // and should stay the thing the others are read against.
+  kite: R => [[R * 1.35, 0], [0, R], [-R * 0.8, 0], [0, -R]],
+  // Six flats. Armour plate rather than a nose — it is not pointed at anything,
+  // because it does not need to be.
+  hex: R => Array.from({ length: 6 }, (_, i) => {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    return [Math.cos(a) * R * 1.08, Math.sin(a) * R * 1.08];
+  }),
+  // Long, narrow and nose-heavy. A Bandit is mostly pointed at you, and the
+  // silhouette should be the reason that is hard to see.
+  dart: R => [[R * 1.75, 0], [-R * 0.15, R * 0.55], [-R * 0.95, 0], [-R * 0.15, -R * 0.55]],
+  // Sixteen alternating points. It does not fly so much as loom, and nothing else
+  // in the game has spikes.
+  crown: R => Array.from({ length: 16 }, (_, i) => {
+    const a = (i / 16) * Math.PI * 2, rr = R * (i % 2 ? 0.62 : 1.2);
+    return [Math.cos(a) * rr, Math.sin(a) * rr];
+  }),
+};
+export const outlineOf = (kind, R) => (SHAPES[ALIENS[kind]?.shape] ?? SHAPES.kite)(R);
 
 export const ALIENS_PER_MAP = 7;
 // What the galaxy proper is allowed to spawn. Range furniture is not in it.
@@ -253,6 +336,8 @@ export function newAlien(kind, id, map, seed, post = null) {
     id, kind, def, rand, isAlien: true, post,
     target: null, provoked: new Set(), lost: 0, dead: 0, way: post ?? roamPoint(map, rand),
     dealt: new Map(),                 // playerId -> damage, since it last spawned
+    crowd: null, crowdT: 0,           // who has been closing on it, and for how long
+    threat: null, threatT: 0,         // and who has been out-damaging its target
   });
 }
 
@@ -283,11 +368,28 @@ export function respawnAlien(a, map) {
   a.hp = a.stats.hull; a.shield = a.stats.shield;
   a.sinceHit = 1e9; a.shieldHit = 0; a.cool = 0; a.shotFlash = 0;
   a.target = null; a.provoked.clear(); a.lost = 0; a.dead = 0;
+  a.crowd = null; a.crowdT = 0; a.threat = null; a.threatT = 0;   // no grudges carried over
   a.way = a.post ?? roamPoint(map, a.rand);
   a.tx = a.ty = a.dx = a.dy = null;
 }
 
 // contenders: [{ id, ship, haven }]. Returns the id it intends to shoot, or null.
+// Who an alien shoots, beyond "whoever hit me first".
+//
+// One rule meant one pilot could hold anything in the game forever while the rest
+// of the party worked in peace, so a group fight was a solo fight with spectators.
+// Two more rules, both on a hold so nothing flaps between targets frame to frame:
+//
+//   crowding — stay meaningfully nearer than its current target for CLOSER_HOLD
+//              and it turns on you. Kiting becomes something a party rotates.
+//   threat   — hurt it enough more than its current target and it turns on you.
+//              It already keeps a damage ledger for paying out the bounty; this
+//              is the same ledger read for the other obvious purpose.
+export const CLOSER_HOLD = 3.0;   // s of being the nearest before it switches
+export const CLOSER_EDGE = 0.85;  // and nearer by a margin, not merely tied
+export const THREAT_HOLD = 2.0;   // s of out-damaging its target before it switches
+export const THREAT_EDGE = 2.0;   // and by this multiple, so a graze does not pull it
+
 export function stepAlienAI(a, map, contenders, dt) {
   const at = id => contenders.find(c => c.id === id);
   const alive = c => c && c.ship.hp > 0;
@@ -316,6 +418,38 @@ export function stepAlienAI(a, map, contenders, dt) {
       if (d < bestD) { bestD = d; best = c; }
     }
     if (best) { a.target = best.id; t = best; a.lost = 0; }
+  }
+
+  // Having a target is not the end of the question. Both challenges are timed, so
+  // brushing past it does nothing and committing to crowding it does.
+  if (t) {
+    const eligible = c => alive(c) && c.id !== t.id
+      && !(c.haven && !a.provoked.has(c.id)) && dist(c) <= a.def.leash;
+    let near = null, nearD = Infinity;
+    for (const c of contenders) {
+      if (!eligible(c)) continue;
+      const d = dist(c);
+      if (d < nearD) { nearD = d; near = c; }
+    }
+    if (near && nearD < dist(t) * CLOSER_EDGE) {
+      if (a.crowd !== near.id) { a.crowd = near.id; a.crowdT = 0; }
+      a.crowdT += dt;
+      if (a.crowdT >= CLOSER_HOLD) { a.target = near.id; t = near; a.lost = 0; a.crowd = null; a.crowdT = 0; }
+    } else { a.crowd = null; a.crowdT = 0; }
+  }
+  if (t && a.dealt?.size) {
+    const mine = a.dealt.get(t.id) ?? 0;
+    let worst = null, worstD = 0;
+    for (const c of contenders) {
+      if (!alive(c) || c.id === t.id || dist(c) > a.def.leash) continue;
+      const d = a.dealt.get(c.id) ?? 0;
+      if (d > worstD) { worstD = d; worst = c; }
+    }
+    if (worst && worstD > Math.max(1, mine) * THREAT_EDGE) {
+      if (a.threat !== worst.id) { a.threat = worst.id; a.threatT = 0; }
+      a.threatT += dt;
+      if (a.threatT >= THREAT_HOLD) { a.target = worst.id; t = worst; a.lost = 0; a.threat = null; a.threatT = 0; }
+    } else { a.threat = null; a.threatT = 0; }
   }
 
   if (t) {

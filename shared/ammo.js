@@ -9,21 +9,43 @@
 // cheap enough that nobody counts them. What you actually choose is whether to
 // burn the expensive stuff, which hits harder and costs real money to feed.
 
+// What a round costs per point of damage it delivers. This is the number that
+// matters, because fire rate is fixed: a grade's multiplier IS your dps, so the
+// only question a pilot has is whether the extra damage is worth the extra money.
+//
+// It used to be answered "no". A Charged Cell was 1.25x the damage for 8x the
+// price per round — 6.4x the cost per point — so nothing above the plain grade
+// was ever worth loading, and two thirds of the ammunition in the shop was
+// decoration. The ladder is now a stated premium instead of a trap:
+//
+//   Standard  x1  0.20 cr/round  0.200 per point
+//   Charged   x3  0.72 cr/round  0.240 per point  (+20%)
+//   Fusion    x5  1.40 cr/round  0.280 per point  (+40%)
+//
+// So better rounds still cost more per point — they have to, or the plain grade
+// would be pointless — but the premium buys real dps rather than punishing you
+// for wanting it. Warheads run the same ladder at their own base.
 export const AMMO = {
   // For emitters. Consumed one round per bolt, so a big rack eats them fast.
   cell1: { name: 'Standard Cells', for: 'laser', tier: 1, mult: 1.00, pack: 2000, price:  400,
+           colour: '#c2a24f',
            blurb: 'What the racks are calibrated for.' },
-  cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 1.25, pack: 1000, price: 1600,
-           blurb: 'A quarter more out of every bolt, at four times the price.' },
-  cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: 1.55, pack:  500, price: 3400,
-           blurb: 'For fights you have decided to win.' },
+  cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 3.00, pack: 1000, price:  720,
+           colour: '#e05a5a',
+           blurb: 'Three times the bolt, for a fifth more per point of damage.' },
+  cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: 5.00, pack:  500, price:  700,
+           colour: '#7de08a',
+           blurb: 'Five times the bolt. The most damage a rack can throw at once.' },
 
   // For launchers. One warhead per rocket, so a Swarm Rack is fifteen a volley.
   head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, pack: 400, price:  600,
+           colour: '#c2a24f',
            blurb: 'Shaped charge, mass produced.' },
-  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 1.30, pack: 200, price: 1800,
-           blurb: 'Two stages. Goes through shielding that shrugs off the first.' },
-  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: 1.65, pack: 100, price: 3600,
+  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 3.00, pack: 200, price: 1100,
+           colour: '#e05a5a',
+           blurb: 'Two stages. Three times through shielding that shrugs off one.' },
+  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: 5.00, pack: 100, price: 1050,
+           colour: '#7de08a',
            blurb: 'Rare, unstable, and worth every credit when it lands.' },
 };
 

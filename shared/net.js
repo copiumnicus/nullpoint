@@ -42,8 +42,9 @@ export const packBlast   = o   => [Math.round(o.x), Math.round(o.y), Math.round(
 export const unpackBlast = arr => { const o = {}; for (let i = 0; i < BLAST_FIELDS.length; i++) o[BLAST_FIELDS[i]] = arr[i]; return o; };
 
 // A cargo pod adrift in space.
-export const POD_FIELDS = ['id', 'x', 'y', 'mat', 'n'];
-export const packPod   = o   => [o.id, Math.round(o.x), Math.round(o.y), o.mat, o.n];
+// `own` is the pilot a shared kill reserved this pod for, or 0 for anyone's.
+export const POD_FIELDS = ['id', 'x', 'y', 'mat', 'n', 'own'];
+export const packPod   = o   => [o.id, Math.round(o.x), Math.round(o.y), o.mat, o.n, o.own ?? 0];
 export const unpackPod = arr => { const o = {}; for (let i = 0; i < POD_FIELDS.length; i++) o[POD_FIELDS[i]] = arr[i]; return o; };
 
 // A damage number, floating up from where it landed. `sh` marks a hit the shields
