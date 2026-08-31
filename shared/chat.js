@@ -33,6 +33,10 @@ export const COMMANDS = {
   // The only visibility a server has into its instanced sectors: they are not in
   // MAPS, not on the chart, and nobody but their one pilot can ever see one.
   arenas:{ admin: true,  args: '',                help: 'what claim sectors are open right now' },
+  // What windows this game is played in. The render harness sweeps window sizes
+  // looking for panels that print through each other, and it swept seven somebody
+  // picked; this is how you see which ones are real.
+  sizes: { admin: true,  args: '',                help: 'what window sizes people play at' },
   dev:   { admin: true,  args: '',                help: 'the testing ground, and back again' },
   reset: { admin: true,  args: '[all]',           help: 'wipe your progress — `all` also forgets who you are' },
 };

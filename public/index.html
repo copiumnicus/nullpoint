@@ -989,6 +989,26 @@ const ws = new WebSocket(`${WS_PROTO}//${location.host}/?t=${encodeURIComponent(
 const send = o => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
 ws.onopen  = () => status = 'online';
 ws.onclose = () => status = 'disconnected';
+
+// Tell the server what window this is. Advisory and nothing else — see
+// shared/viewport.js — so it is one more thing on the intent path rather than a
+// channel of its own, and the server files it on the account so /sizes can say
+// what the people who actually play here are looking at.
+//
+// Debounced, because `resize` is a drag: pulling a window across a screen fires
+// it on every frame the pointer moves, so an unthrottled report is three hundred
+// messages to say one final size. One, once the window has stopped.
+//
+// It lives down here rather than inside resize() up top on purpose: resize() is
+// called during module evaluation, hundreds of lines before `send` exists, and a
+// ReferenceError there is not a missing report — it is a black screen.
+const VIEW_SETTLE = 400;
+let viewTimer = 0;
+const reportView = () => send({ t: 'view', w: innerWidth, h: innerHeight, dpr: devicePixelRatio || 1 });
+addEventListener('resize', () => {
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(reportView, VIEW_SETTLE);
+});
 // What the server last told us, so a delta has something to be relative to.
 // Everything below this line still reads a whole snapshot: a delta is turned
 // back into one before it reaches any of it, so there is exactly one snapshot
@@ -1017,6 +1037,10 @@ ws.onmessage = e => {
     refreshTech();
     myName = m.name ?? '';
     signup = null; joinSaid = '';                 // whoever you are, you are in now
+    // On welcome rather than on open, because the lobby refuses everything but
+    // `join` — a first-time pilot's window would never be recorded otherwise, and
+    // they are exactly the pilot whose window nobody has seen yet.
+    reportView();
     // Written and then read back. A storage write that silently fails loses the
     // pilot on the next reload, and the only moment we can tell is this one.
     if (m.token) {

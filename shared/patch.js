@@ -15,7 +15,7 @@ export const PATCHES = [
     'A fully researched ship no longer prints its shield through the number beside it',
     'The station’s stat line sizes its columns to the biggest number you can reach',
     'Money, rank and the rank bar sit a clear character apart at eight figures',
-    'The docked prompt drops to the HUD’s own spacing instead of crowding the line above',
+    'The docked prompt drops to the HUD’s own spacing instead of crowding the line above',    'The game now knows what window you play in, and checks its own layout at that size',
   ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',

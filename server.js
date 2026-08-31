@@ -50,6 +50,7 @@ import { holdShear, foundryBurn, wakeTap, platingArmed, platingBack, loudOf,
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from './shared/scrap.js';
 import { refineStep, applyRefine, refinePeriod } from './shared/refine.js';
 import { sessionSeconds, fmtPlayed } from './shared/playtime.js';
+import { sanitiseView, viewsOf, mergeSizes, sayView } from './shared/viewport.js';
 import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
@@ -810,6 +811,38 @@ wss.on('connection', (ws, req) => {
     // sent every tick until now.
     if (m.t === 'need') { if (P) P.base = newBase(); return; }
 
+    // How big the window is. Advisory, and it rides the intent path because that
+    // is what it is: the client telling us something about itself that the server
+    // files and never acts on. Nothing in the tick reads a viewport — see
+    // shared/viewport.js — so a client lying about it buys a wrong row in /sizes
+    // and nothing else, which is the only safe shape for a number only the client
+    // can know.
+    //
+    // touch() rather than a bare assignment, because /sizes reads db.accounts and
+    // a pilot who is online right now is exactly the one whose window you want to
+    // see — touch is capture plus the dirty flag, so it lands on the account and
+    // on disk within the second. Without it the size sat on the live player only
+    // and the accounts file still said null: verified live, and it is why this
+    // line is a touch and not a `=`.
+    //
+    // The fields are named rather than spread, so `at` is the server's clock and
+    // not something the client can backdate — it is what decides which report in
+    // a bucket is the freshest, and the client has no business setting it.
+    if (m.t === 'view') {
+      if (!P) return;
+      const now = Date.now();
+      const v = sanitiseView({ w: m.w, h: m.h, dpr: m.dpr }, now);
+      if (!v) return;
+      // Only write when the window actually changed. The client already reports
+      // once per settled resize, so this is not about the client — it is that
+      // touch() is a full capture(), and `view` is the one message a client can
+      // send from anywhere at any rate with nothing else gating it.
+      const same = P.view && P.view.w === v.w && P.view.h === v.h && P.view.dpr === v.dpr;
+      P.view = v;
+      if (!same) touch(P);
+      return;
+    }
+
     if (m.t === 'jump') return beginJump(ship, mapOf(P.mapId));
 
     // --- station: everything below needs you sitting in your own base ring ---
@@ -935,8 +968,13 @@ wss.on('connection', (ws, req) => {
             return;
           }
           const seq = acct.seq, co = acct.co, name = acct.name, admin = acct.admin;
+          // The window they play in comes across too. A reset throws away progress,
+          // not hardware — the pilot is sitting at the same monitor a second later,
+          // and losing the row would make /sizes quietly under-count the people who
+          // use /reset most, which is the two of us.
+          const view = acct.view ?? null;
           acct = newAccount(token, seq, Date.now());
-          Object.assign(acct, { name, co, admin, mapId: co + '1' });
+          Object.assign(acct, { name, co, admin, view, mapId: co + '1' });
           const b2 = MAPS[acct.mapId].base;
           acct.x = b2.x; acct.y = b2.y;
           db.accounts[token] = acct;
@@ -1006,6 +1044,22 @@ wss.on('connection', (ws, req) => {
           return tell(JSON.stringify({ open: arenas.size, list: [...arenas].map(([k, a]) =>
             ({ id: k, key: a.key, left: leftIn(k), cleared: a.cleared, replay: a.replay,
                lists: SECTOR_LISTS.filter(L => L.has(k)).length })) }));
+        // What windows this game is actually played in, biggest constituency first.
+        // The whole reason the client reports its size at all: test/render.mjs
+        // sweeps window sizes hunting for panels that print through each other,
+        // and until now it swept seven that somebody picked. This says which of
+        // them are real and what the sweep has grown to.
+        //
+        // Trimmed to six rows because the client cuts an incoming chat line at
+        // MAX_LEN (160), so a long list would arrive with its tail missing and
+        // nothing to say it had.
+        case 'sizes': {
+          const rows = viewsOf(db.accounts);
+          if (!rows.length) return tell('no windows reported yet — sizes land on the account as pilots connect');
+          const shown = rows.slice(0, 6).map(sayView).join('  ');
+          return tell(`${rows.length} window${rows.length > 1 ? 's' : ''}: ${shown}` +
+                      `${rows.length > 6 ? ' …' : ''} — the harness sweeps ${mergeSizes(rows).length}`);
+        }
       }
       return;
     }

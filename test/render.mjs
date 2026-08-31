@@ -31,6 +31,8 @@ import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
 import { Tracker, textWidth, alphaOf } from './uibox.mjs';
 import { collisions, crossings, crowding, say, sayCross, sayTight, key, same } from './uilint.mjs';
+import { mergeSizes, viewsOf, SIZES as SHIPPED } from '../shared/viewport.js';
+import { load } from '../store.js';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -236,7 +238,25 @@ const FOUND = new Map(), CROSS = new Map(), TIGHT = new Map();
 // Every window a player might actually have. Panels are laid out from the
 // viewport, so a line that clears its neighbour at 1600x900 can sit on top of
 // it at 1366x768, and the harness has only ever run at one size.
-const SIZES = [[2560, 1440], [1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 640], [820, 560]];
+//
+// The seven shipped in shared/viewport.js were sizes somebody picked. The client
+// now reports its window and the server files it on the account, so the ones the
+// people who actually play this game sit in front of get merged in on top —
+// which is the point: the suite stops asserting about hypothetical windows and
+// starts asserting about the two real ones as well.
+//
+// Merged, never substituted. The awkward extremes stay, because 820x560 catches
+// a panel running off the bottom that 1920x1080 has never once caught, and the
+// merge is capped so twenty pilots cannot become twenty times the frames.
+//
+// And it degrades to silence. store.load() returns no accounts when there is no
+// save file — a fresh checkout, CI, or a deploy on its first boot — so this is
+// exactly the shipped seven with nothing said about it, and the suite behaves
+// today the way it did yesterday.
+const SIZES = mergeSizes(viewsOf(load().accounts));
+if (SIZES.length > SHIPPED.length)
+  console.log(`windows: ${SIZES.length} sizes — the ${SHIPPED.length} shipped plus ` +
+    SIZES.slice(SHIPPED.length).map(([w, h]) => `${w}x${h}`).join(' ') + ' that people actually play at');
 let SEEN = 0, SIZE = '1600x900';
 // One report per pair of strings, not per frame: the threat file drawn at
 // twenty-six eased scroll offsets is one overlap, not twenty-six. Numbers are
@@ -470,6 +490,45 @@ for (const id of Object.keys(MAPS)) {
 
   welcomeAgain();                                  // and the rest of the file is a pilot again
   frame(t += 16); frames++;
+}
+
+// The client tells the server what window it is in, and does it once per window
+// rather than once per event. Nothing in the game reads a viewport — it is filed
+// on the account so /sizes can say what people play at and so the sweep above can
+// be the real sizes — but the report is client code, and client code that is
+// never driven is how two helper functions went missing while every frame still
+// rendered.
+{
+  // Read before the clear, deliberately: the block above signs a pilot in with a
+  // welcome as its last act, and reporting the window on welcome rather than on
+  // open is the whole reason a first-time pilot is ever counted — the lobby
+  // refuses everything but `join`, so a report sent on open is dropped.
+  const onWelcome = sent.find(m => m.t === 'view');
+  sent.length = 0;
+  globalThis.innerWidth = 1512; globalThis.innerHeight = 945;
+  evt('resize');
+  const early = sent.some(m => m.t === 'view');
+  // Own the debounce for this block, the same way the mood hold owns its clock.
+  // The whole suite runs inside a few milliseconds of wall clock, so a 400ms
+  // timer never fires on its own here: waiting for it really would be waiting,
+  // and not waiting at all would assert nothing.
+  const realTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = fn => (fn(), 0);
+  evt('resize');
+  const v = sent.find(m => m.t === 'view');
+  globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
+  evt('resize');                                   // back to the harness's own window
+  globalThis.setTimeout = realTimeout;             // and no timer left running behind us
+  frame(t += 16); frames++;
+  if (!onWelcome)
+    errs.push('a pilot signed in and never told the server what window they were in');
+  else if (early)
+    errs.push('the window size went out on the first resize event — a drag across a screen is three hundred of those');
+  else if (!v) errs.push('the client never told the server what window it is in');
+  else if (v.w !== 1512 || v.h !== 945)
+    errs.push(`the client reported ${v.w}x${v.h} for a 1512x945 window`);
+  else console.log(`viewport: ${onWelcome.w}x${onWelcome.h} on signing in, then 1512x945@${v.dpr}x ` +
+                   'once the window settles — not once per resize event');
 }
 
 const click = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
