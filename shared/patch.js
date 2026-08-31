@@ -8,9 +8,13 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.43';
+export const VERSION = '0.44';
 
 export const PATCHES = [
+  { v: '0.44', notes: [
+    'Fixed: the beacon refused to fold you to a bay it was listing right in front of you',
+    'And a second hangar in that menu could not be clicked at all',
+  ] },
   { v: '0.43', notes: [
     'The SPACE prompt gets out of the way while you are choosing ammunition',
     'Same for the repair rack and the beacon\'s list of hangars — all of them covered it',

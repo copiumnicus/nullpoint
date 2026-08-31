@@ -2330,6 +2330,20 @@ const heldGrades = feed => feed === 'repair'
   ? DEVICE_KEYS.filter(k => (myDevices[k] ?? 0) > 0)
   : forWeapon(feed).filter(k => (myAmmo[k] ?? 0) > 0);
 
+// WHAT THE ROWS OF A BOX'S MENU ACTUALLY ARE, asked once.
+//
+// Every other box picks between grades you hold; the beacon picks between hangars
+// you own, because there is only one kind of beacon and choosing between one thing
+// is not a choice. The draw was changed to list hangars and the CLICK was not, so
+// the two built different menus out of the same box: the rows you saw were sectors
+// and the row you clicked was the string 'recall', which the server correctly
+// refused with "no hangar of yours there". A pilot with two hangars could not click
+// the second one at all, because on the click side the menu only had one row.
+//
+// One function, both callers. This is rule one in its narrowest form — the same
+// question answered in two places will answer it differently.
+const menuRows = feed => feed === 'device' ? foldPorts().map(h => h.map) : heldGrades(feed);
+
 // Same shape as repairBlocked: the button, its tooltip and the server all ask
 // one function, so the box never offers what the server will refuse.
 function recallBlocked() {
@@ -2364,7 +2378,7 @@ function barClick(v) {
 
   if (feedOpen) {                               // the menu covers the world, so it goes first
     const box = L.boxes.find(b => b.feed === feedOpen);
-    const M = feedMenu(box, heldGrades(feedOpen));
+    const M = feedMenu(box, menuRows(feedOpen));
     for (const row of M.rows) if (inside(row.r)) {
       if (feedOpen === 'repair') { if (row.k !== myKit) send({ t: 'kit', key: row.k }); }
       else if (feedOpen === 'device') {
@@ -2402,7 +2416,7 @@ function barClick(v) {
     }
     const held = heldGrades(b.feed);
     if (b.feed === 'device') {
-      if (v.y < b.r.y + PICK_STRIP && foldPorts().length > 1) {
+      if (v.y < b.r.y + PICK_STRIP && menuRows('device').length > 1) {
         feedOpen = feedOpen === b.feed ? null : b.feed;
         return true;
       }
@@ -2680,7 +2694,7 @@ function drawBar() {
 
   if (feedOpen) {
     const box = L.boxes.find(b => b.feed === feedOpen);
-    const held = feedOpen === 'device' ? foldPorts().map(h => h.map) : heldGrades(feedOpen);
+    const held = menuRows(feedOpen);
     const M = feedMenu(box, held);
     g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(M.box.x, M.box.y, M.box.w, M.box.h);
     g.strokeStyle = '#5a86b8'; g.lineWidth = 1.4;

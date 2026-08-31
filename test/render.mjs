@@ -606,6 +606,45 @@ const dismiss = () => {
               'and not drawn at all while a chooser is open');
 }
 
+// The beacon's hangar menu, with two hangars in it — the case that was broken.
+//
+// The draw listed sectors and the click listed device keys, so the row you clicked
+// was the string 'recall' and the server answered "no hangar of yours there", while
+// the second hangar could not be clicked at all because on the click side the menu
+// only ever had one row. Driving the real menu is the only way to catch that: both
+// halves rendered fine on their own.
+{
+  dismiss();
+  const B = barLayout(innerWidth, innerHeight);
+  feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard',
+         fit: { weapon: [], generator: [], tech: [] }, berths: ['m4'], foldTo: 'm1',
+         devices: { recall: 3 }, device: 'recall' });
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+           hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, name: 'Vy' })],
+         devices: { recall: 3 }, device: 'recall', berths: ['m4'], foldTo: 'm1' });
+  frame(t += 16); frames++;
+
+  const dev = B.boxes.find(b => b.feed === 'device');
+  // The strip along the top opens it, and it only opens when there is a choice.
+  click({ x: dev.r.x, y: dev.r.y, w: dev.r.w, h: 8 });
+  frame(t += 16); frames++;
+  const M = feedMenu(dev, ['m1', 'm4']);
+  trace = []; frame(t += 16); frames++;
+  const drew = trace; trace = null;
+  if (!drew.some(c => /Ironbelt|MTC-4/.test(c)))
+    errs.push('a pilot who rents a bay was not offered it in the beacon menu');
+  sent.length = 0;
+  click(M.rows[1].r);                              // the SECOND hangar: the unclickable one
+  frame(t += 16); frames++;
+  const pick = sent.find(m => m.t === 'foldto');
+  if (!pick) errs.push('clicking the second hangar in the beacon menu did nothing at all');
+  else if (pick.map !== 'm4')
+    errs.push(`the beacon menu sent ${JSON.stringify(pick.map)} instead of a sector`);
+  else console.log(`beacon: two hangars listed, and the second one sends ${pick.map} — it sent "recall"`);
+  dismiss();
+}
+
 // The safe-zone badge. Sanctuary has been in the game since the beginning and had
 // never once said so — you learned the base ring by noticing nothing shot you, and
 // the portal mouth you never learned at all, because nothing draws that 288px
