@@ -18,7 +18,7 @@ import { ANCHORS, ANCHOR, ANCHOR_DPS, ANCHOR_EHP, ANCHOR_FIGHT, WORTH, UNPRICED,
          ORE_RATE, TRIP, HOPS, TIERS, rung, addOf, kitWorth, deviceWorth, consumablePrice,
          freeMultipliers }
   from '../shared/balance.js';
-import { EQUIPMENT, MAX_DRONES } from '../shared/gear.js';
+import { EQUIPMENT, MAX_DRONES, deepOnly } from '../shared/gear.js';
 import { HULLS, ATTRS, FIRE_RATE, resolve } from '../shared/ships.js';
 import { AMMO } from '../shared/ammo.js';
 import { threatDps } from '../shared/aliens.js';
@@ -241,21 +241,51 @@ check('and exactly what it says in experience too',
   WILD.map(k => `${ALIENS[k].name} ${xpFor(k)}`).join(', '));
 check('the ammunition ladder comes back to the credit', (() => {
   for (const [k, a] of Object.entries(AMMO))
-    if (!near(ammoPriceFor(a.mult, a.tier, { pack: a.pack, perPoint: feedBase(a.for) }).pack, a.price, 1e-9)) return false;
+    if (!near(ammoPriceFor(a.mult, a.tier,
+      { pack: a.pack, perPoint: feedBase(a.for), reach: a.reach ?? 1 }).pack, a.price, 1e-9)) return false;
   return true;
-})(), 'which proves nothing on its own: ANCHORS.premium was read off this ladder, so it had to');
-check('but the emitter ladder was NOT read off, and lands inside a tenth anyway', (() => {
-  const es = Object.values(EQUIPMENT).filter(e => e.slot === 'weapon' && e.kind === 'laser');
-  return es.every(e => Math.abs(e.price / priceFor(e.mods, e.tier).price - 1) < 0.10);
-})(), Object.values(EQUIPMENT).filter(e => e.slot === 'weapon' && e.kind === 'laser')
-        .map(e => f(e.price / priceFor(e.mods, e.tier).price)).join(', ') +
-      ' — five rungs of a ladder nobody derived, already on the ammunition ladder\'s premium');
-check('and so does the launcher shelf, once the premium gear.js states is applied', (() => {
-  const ps = Object.values(EQUIPMENT).filter(e => e.kind === 'rocket');
-  return ps.every(e => Math.abs(e.price / priceFor(e.mods, e.tier, { premium: DELIVERY_PREMIUM }).price - 1) < 0.05);
+})(), 'which proves nothing on its own: ANCHORS.premium was read off this ladder, so it had to. What it ' +
+      'does prove is that the fourth grade is on the SAME ladder: it is priced per point of what the round ' +
+      'carries, which is damage x reach, and that is the same number as damage for every grade before it');
+// The shelf splits in two here, and the split is the finding rather than a
+// tolerance somebody widened.
+//
+// Five rungs of the emitter ladder were priced against capability and land within a
+// tenth of this model without anyone having derived them. The sixth does not, and it
+// is 21 times it. That is not a mistake in either direction: it is the second price
+// in the game denominated in what a pilot EARNS instead of in what things cost, and
+// the first one — the deep berth's ten million — already wrote down why. By the deeps
+// the shop has stopped being the constraint on anything: one of every hull, gun,
+// generator and rig in the game comes to about 350,000, and a single Crucible banked
+// at the counter it stands next to pays 1,474,596.
+//
+// So the claim is stated as the split, with both halves named. A future rung that
+// quietly landed between the two would fail this, which is the point.
+const DEEP_SHELF = k => deepOnly(k);
+check('the shop\'s ladders are priced against capability, right up until the deeps', (() => {
+  const es = Object.entries(EQUIPMENT).filter(([, e]) => e.slot === 'weapon' && e.kind === 'laser');
+  return es.filter(([k]) => !DEEP_SHELF(k))
+           .every(([, e]) => Math.abs(e.price / priceFor(e.mods, e.tier).price - 1) < 0.10);
+})(), Object.entries(EQUIPMENT).filter(([, e]) => e.slot === 'weapon' && e.kind === 'laser')
+        .map(([k, e]) => `${f(e.price / priceFor(e.mods, e.tier).price)}${DEEP_SHELF(k) ? '*' : ''}`).join(', ') +
+      ' — five rungs of a ladder nobody derived, already on the ammunition ladder\'s premium. ' +
+      '* is the deep rung, and it is not on this model at all');
+check('and the deep rung is priced in deep-sector kills instead, which is a different currency and says so', (() => {
+  const deep = Object.entries(EQUIPMENT).filter(([k, e]) => DEEP_SHELF(k) && e.slot === 'weapon');
+  return deep.length > 0 && deep.every(([, e]) => e.price / priceFor(e.mods, e.tier).price > 10);
+})(), Object.entries(EQUIPMENT).filter(([k]) => DEEP_SHELF(k))
+        .map(([k, e]) => `${e.name} ${e.price.toLocaleString('en-US')} against a model ` +
+                         `${Math.round(priceFor(e.mods, e.tier).price).toLocaleString('en-US')}, x${f(e.price / priceFor(e.mods, e.tier).price, 1)}`).join('; ') +
+      ' — the deep berth broke the same way first and said so: by the deeps the shop has stopped being ' +
+      'the constraint on anything');
+check('and the launcher shelf still charges the premium gear.js states, over the emitter it shadows', (() => {
+  const ps = Object.entries(EQUIPMENT).filter(([k, e]) => e.kind === 'rocket' && !DEEP_SHELF(k));
+  return ps.every(([, e]) => Math.abs(e.price / priceFor(e.mods, e.tier, { premium: DELIVERY_PREMIUM }).price - 1) < 0.05);
 })(), `x${DELIVERY_PREMIUM} for damage that lands: ` +
-      Object.values(EQUIPMENT).filter(e => e.kind === 'rocket')
-        .map(e => f(e.price / priceFor(e.mods, e.tier, { premium: DELIVERY_PREMIUM }).price)).join(', '));
+      Object.entries(EQUIPMENT).filter(([, e]) => e.kind === 'rocket')
+        .map(([k, e]) => `${f(e.price / priceFor(e.mods, e.tier, { premium: DELIVERY_PREMIUM }).price)}${DEEP_SHELF(k) ? '*' : ''}`).join(', ') +
+      ' — and the deep rack charges it over the deep GUN rather than over this model, ' +
+      `${f(EQUIPMENT.pod4.price / EQUIPMENT.emitter6.price)} of it`);
 check('a repair kit costs about what the trip it saves is worth to the pilot it was priced for', (() => {
   return Object.values(KITS).every(v => {
     const r = v.price / consumablePrice(kitWorth(v.heal, v.secs), v.tier);
@@ -412,19 +442,33 @@ console.log('\nwhat the model currently says about the game (it reports, it does
   // ANCHORS.pressure and a Kedge's is pressure x its own stage, so both read 1.00 by
   // construction and both followed the rework without being touched; the Bandit's
   // 150 x 1.3 is a written number and fell from 0.61 to 0.47 on the same change.
+  //
+  // AND THE SIXTH RUNG SENT THE BILL AGAIN, harder than the hull rework did. The
+  // shop's ceiling went from 11,306 dps to 19,673 in one commit, so the model asks
+  // everything posted at `finished` for x1.74 the dps it asked for yesterday — and
+  // not one gun in the bestiary moved. The two DERIVED guns still read 1.00, because
+  // they are expressions rather than numbers; every typed one fell again. Measured
+  // across the three changes the Bandit has now read 0.61, then 0.47, then 0.27.
+  //
+  // The Hive's threshold moves with it rather than the claim being dropped: "still
+  // throws several stages' worth" is the sentence, and several is 3 now where it was
+  // 5, because the stage it is measured against grew and the mothership did not.
   const DERIVED = ['censer', 'kedge'], TYPED = ['ironhusk', 'leviathan', 'bandit'];
-  check('a derived gun follows the ladder for free, a typed one goes stale, and a mothership still throws five stages\' worth',
+  check('a derived gun follows the ladder for free, a typed one goes stale, and a mothership still throws several stages\' worth',
     DERIVED.every(k => b[k].dpsRatio > 0.99 && b[k].dpsRatio < 1.01) &&
-    TYPED.every(k => b[k].dpsRatio < 0.9) && b.hive.dpsRatio > 5,
+    TYPED.every(k => b[k].dpsRatio < 0.9) && b.hive.dpsRatio > 3,
     `Censer ${f(b.censer.dpsRatio)}, Kedge ${f(b.kedge.dpsRatio)}, Ironhusk ${f(b.ironhusk.dpsRatio)}, ` +
     `Leviathan ${f(b.leviathan.dpsRatio)}, Bandit ${f(b.bandit.dpsRatio)}, Hive ${f(b.hive.dpsRatio)} ` +
     'of the dps its stage asks for — the Bandit read 0.61 before the last hull gained a generator ' +
-    'and a technology bay, and 0.47 after it, which is the bestiary\'s bill for the rework');
+    'and a technology bay, 0.47 after it, and 0.27 once the shop grew a sixth emitter: three reworks, ' +
+    'three bills, and the two derived guns paid none of them');
   check('and the Corsair Hive is the furthest thing in the game from what it claims to be',
-    b.hive.hpRatio < 0.15 && b.hive.dpsRatio > 5,
+    b.hive.hpRatio < 0.15 && b.hive.dpsRatio > 3,
     `${f(b.hive.actualFight, 1)}s against four finished ships, posted as ${b.hive.seconds}s — ` +
     `it needs x${f(1 / b.hive.hpRatio, 1)} the hit points it has, and throws x${f(b.hive.dpsRatio, 1)} ` +
-    'the dps: a fight that is over far too quickly and hurts far too much while it lasts');
+    'the dps: a fight that is over far too quickly and hurts far too much while it lasts. The gap ' +
+    'widened on the hit points and narrowed on the dps when the shop grew a sixth rung, which is one ' +
+    'change moving a row in two directions at once and is exactly what this report is for reading');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`

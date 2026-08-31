@@ -9,6 +9,12 @@
 // cheap enough that nobody counts them. What you actually choose is whether to
 // burn the expensive stuff, which hits harder and costs real money to feed.
 
+// The two dials Drumfire is built out of. They are here because the long-reach
+// grade's damage penalty is SOLVED off them rather than picked — see REACH_EDGE
+// below — so retuning the ability retunes the round, and the two cannot end up
+// charging different prices for the same metre of reach.
+import { DRUMFIRE_GAIN, DRUMFIRE_REACH } from './ability.js';
+
 // What a round costs per point of damage it delivers. This is the number that
 // matters, because fire rate is fixed: a grade's multiplier IS your dps, so the
 // only question a pilot has is whether the extra damage is worth the extra money.
@@ -30,11 +36,19 @@
 //   Standard  x1.00  0.20 cr/round  0.200 per point
 //   Charged   x1.25  0.30 cr/round  0.240 per point  (+20%)
 //   Fusion    x1.50  0.42 cr/round  0.280 per point  (+40%)
+//   Collimated x1.22 at TWICE the reach  0.78 cr/round  0.320 per point  (+60%)
 //
 // The crate is the same size at every grade now. It used to shrink as the grade
 // climbed, which meant the better ammunition had the smaller price on the shelf —
 // true per round and nonsense to read. Warheads run the same ladder at their own
 // base.
+//
+// "Per point" means per point of what the round CARRIES, which is damage times
+// reach. It was per point of damage while every round in the game reached exactly
+// as far as the gun did, and those are the same number when reach is 1. They stop
+// being the same number the moment a round buys distance instead of heat — and
+// reading the ladder off damage alone would price the long round as though the
+// distance were free, which is the mistake the whole shelf was rebuilt to avoid.
 // One colour per grade, so the bar, the chooser and the round itself in flight
 // cannot disagree about what is loaded. Telling grades apart by counting pips in
 // the HUD was no help at all in the middle of a fight.
@@ -52,36 +66,129 @@
 // also reads without a manual: you cannot buy Fusion Cells because you have
 // nothing that could fire one.
 //
-// Three grades across five emitter rungs is the two ends and the middle. Three
-// grades across three launcher rungs is one each.
-export const NEEDS = { cell1: 1, cell2: 3, cell3: 5, head1: 1, head2: 2, head3: 3 };
+// Three grades across five emitter rungs was the two ends and the middle. There
+// are six rungs and four launcher rungs now, and the fourth grade is calibrated
+// for the top of both: every emitter an MK-VI, or every rack a Cyclone.
+//
+// The gate is the SAME RULE, not a new one. whyNotLoad already asks for the worst
+// gun on the ship rather than the best, so "fully specced" means what it has always
+// meant — and the fourth grade simply asks it of a rung that is only sold four hops
+// out, at a bay that costs ten million. Nothing here knows that; it only knows a
+// tier number, which is what keeps this one rule rather than two.
+export const NEEDS = { cell1: 1, cell2: 3, cell3: 5, cell4: 6,
+                       head1: 1, head2: 2, head3: 3, head4: 4 };
 
-export const GRADE_COLOUR = { 1: '#c2a24f', 2: '#e05a5a', 3: '#7de08a' };
+// Purple for the fourth grade, both feeds, because a purple bolt and a purple
+// rocket have to mean the same thing to somebody watching a fight from outside it.
+export const GRADE_COLOUR = { 1: '#c2a24f', 2: '#e05a5a', 3: '#7de08a', 4: '#b07cff' };
 export const gradeColour = tier => GRADE_COLOUR[tier] ?? GRADE_COLOUR[1];
+
+// --- the long round, and what it gives up ------------------------------------
+//
+// A grade that buys DISTANCE instead of heat: twice the reach of whatever gun
+// fires it, at less damage than the grade it shadows. It is the FOURTH RUNG of the
+// ammunition ladder and a SIDEGRADE of the third at the same time, and both halves
+// of that matter. It is a rung because it is gated on the sixth emitter and the
+// fourth launcher, priced at the ladder's fourth premium, and drawn in its own
+// colour; it is a sidegrade because what the rung buys is not more heat — heat
+// topped out at Fusion — so both numbers below are measured against the hottest
+// round rather than against the plain one.
+//
+// That is deliberate and it is the anti-pay-to-win rule doing its work in the one
+// place a shop can be bought past: the dearest ammunition in the game, behind the
+// dearest gun in the game, behind a ten-million bay, is NOT simply the strongest
+// ammunition in the game. It hits softer than the crate one shelf down.
+//
+// THE PRICE OF REACH IS ALREADY IN THE GAME, and it is stated exactly once. The
+// Drum Governor trades a Vanguard's cadence for its reach and holds the product
+// constant: x2.50 of your cycle at 455px against x1.90 at 602px, which is 1137
+// and 1144 of rate-times-range — the same number to 0.6%, and test/tech.mjs
+// asserts it inside 2%. So the game's own exchange rate for doubling your reach
+// is HALF YOUR OUTPUT, and the conserved answer here is x0.75.
+//
+// That answer is rejected, and the reason is written down one file away. It is
+// exactly what Drumfire was before it shipped: the gain used to BE the cost, read
+// back through 1/(1 - 0.35), so a full drum threw precisely the damage per metre
+// a cold ship did. Measured, that was worth 3.8% more damage than routing the
+// same reactor to the guns — an ability nobody would ever switch on. Conservation
+// means the sidegrade is never a gain, only a reshaping, and a grade that is never
+// worth loading is a grade that does not exist.
+//
+// So it is priced at the margin Drumfire itself was solved to, which is a number
+// the game already carries rather than one picked here:
+//
+//     REACH_EDGE = (1 + DRUMFIRE_GAIN) x (1 - DRUMFIRE_REACH)
+//                = 2.50 x 0.65 = 1.625
+//
+// — how far past conservation the shipped ability sits, in the one currency the
+// game has for reach. A full drum's output-times-reach is 1.625 of a cold ship's;
+// so is this round's, against the round it shadows. One rate for reach everywhere,
+// and if the ability is ever retuned this moves with it.
+//
+//     mult = 1.50 x 1.625 / 2 = 1.21875
+//
+// Four fifths of the hottest round, at twice the distance. MEASURED, through the
+// real fire()/launch()/stepAlienAI loop, a finished pilot kiting at 0.92 of reach:
+//
+//     hostile       Fusion             Collimated
+//     Kedge         9.5s, 3269 taken   12.2s, 0 taken
+//     Leviathan    21.7s, 2550 taken   27.3s, 0 taken
+//     Corsair Hive 41.5s, 4620 taken   51.4s, 0 taken
+//     Ironhusk     11.3s,    0 taken   14.7s, 0 taken
+//     Lamprey       7.5s,    0 taken   10.1s, 0 taken
+//
+// which is the shape the design asked for: against the four things in the game
+// that reach 900px or better it turns half your ship into a quarter more time,
+// and against everything you already out-range it is a quarter more time for
+// nothing at all. Load it for the frontier; do not load it to farm.
+export const REACH_MULT = 2;                                        // how much further it throws
+export const REACH_EDGE = (1 + DRUMFIRE_GAIN) * (1 - DRUMFIRE_REACH);   // 1.625
+const TOP_MULT   = 1.50;                                            // the hottest round on the ladder
+const REACH_DMG  = TOP_MULT * REACH_EDGE / REACH_MULT;              // 1.21875
 
 export const AMMO = {
   // For emitters. Consumed one round per bolt, so a big rack eats them fast.
-  cell1: { name: 'Standard Cells', for: 'laser', tier: 1, mult: 1.00, pack: 2000, price:  400,
+  // `reach` is what the round multiplies the FIRING SHIP'S weapon range by, and it
+  // is 1 for everything that is not the long grade — so rangeOf() reads it off the
+  // magazine exactly the way fire() already reads `mult`, and a weapon with nothing
+  // loaded reaches exactly as far as it always did.
+  cell1: { name: 'Standard Cells', for: 'laser', tier: 1, mult: 1.00, reach: 1, pack: 2000, price:  400,
            colour: GRADE_COLOUR[1],
            blurb: 'The standard round. Every emitter fires it.' },
-  cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 1.25, pack: 2000, price:  600,
+  cell2: { name: 'Charged Cells',  for: 'laser', tier: 2, mult: 1.25, reach: 1, pack: 2000, price:  600,
            colour: GRADE_COLOUR[2],
            blurb: 'Hotter cells. 20% dearer per point of damage.' },
-  cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: 1.50, pack: 2000, price:  840,
+  cell3: { name: 'Fusion Cells',   for: 'laser', tier: 3, mult: TOP_MULT, reach: 1, pack: 2000, price:  840,
            colour: GRADE_COLOUR[3],
            blurb: 'The hottest cell made. 40% dearer per point.' },
+  // 0.200 cr/point x premiumAt(4) 1.60 x what it carries 2.4375 x 2000 = 1560.
+  cell4: { name: 'Collimated Cells', for: 'laser', tier: 4, mult: REACH_DMG, reach: REACH_MULT,
+           pack: 2000, price: 1560, colour: GRADE_COLOUR[4],
+           blurb: 'Twice the reach, at four fifths of the punch.' },
 
   // For launchers. One warhead per rocket, so a Swarm Rack is fifteen a volley.
-  head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, pack: 400, price:  600,
+  head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, reach: 1, pack: 400, price:  600,
            colour: GRADE_COLOUR[1],
            blurb: 'A mass-produced shaped charge. Any rack fires it.' },
-  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 1.25, pack: 400, price:  900,
+  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 1.25, reach: 1, pack: 400, price:  900,
            colour: GRADE_COLOUR[2],
            blurb: 'Two stages, to beat shielding. 20% dearer per point.' },
-  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: 1.50, pack: 400, price: 1260,
+  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: TOP_MULT, reach: 1, pack: 400, price: 1260,
            colour: GRADE_COLOUR[3],
            blurb: 'Unstable, and it lands hard. 40% dearer per point.' },
+  // A sustainer is the second-stage motor that keeps a missile flying once the
+  // boost is spent, and it is paid for in warhead: the charge comes out to make
+  // room for it. 1.500 cr/point x 1.60 x 2.4375 x 400 = 2340.
+  head4: { name: 'Sustainer Heads',   for: 'rocket', tier: 4, mult: REACH_DMG, reach: REACH_MULT,
+           pack: 400, price: 2340, colour: GRADE_COLOUR[4],
+           blurb: 'A bigger motor, a smaller charge. Twice the reach.' },
 };
+
+// How far a weapon fed this grade reaches, as a multiple of the ship's own reach.
+// One lookup, because the client's OUT OF RANGE label and the server's fire()
+// gate have to be the same number — a client that says out of range while the
+// server is happily shooting is the workshop-dock bug with the sides swapped.
+export const gradeReach = key => AMMO[key]?.reach ?? 1;
 
 export const AMMO_KEYS = Object.keys(AMMO);
 export const FEEDS = ['laser', 'rocket'];
@@ -142,8 +249,12 @@ export function sanitiseUsing(raw, stock = {}, ctx = null) {
 export function magazine(stock, using, feed) {
   const key = AMMO[using?.[feed]]?.for === feed ? using[feed] : DEFAULT_AMMO[feed];
   // `tier` rides along so a round in flight can be drawn in its own colour —
-  // combat.js never has to know what a grade is, only what it was handed.
-  return { key, n: Math.max(0, Math.floor(stock?.[key] ?? 0)), mult: AMMO[key].mult, tier: AMMO[key].tier };
+  // combat.js never has to know what a grade is, only what it was handed. `reach`
+  // rides along for the same reason: sim.js decides how far a weapon shoots and
+  // deliberately knows nothing about the shop, so the magazine hands it the
+  // number the way it already hands over the damage multiplier.
+  return { key, n: Math.max(0, Math.floor(stock?.[key] ?? 0)),
+           mult: AMMO[key].mult, reach: AMMO[key].reach ?? 1, tier: AMMO[key].tier };
 }
 
 // The best gun of the right sort you are actually carrying, rack and escort both.

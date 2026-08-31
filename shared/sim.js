@@ -19,7 +19,17 @@ export const hullOf = s => HULLS[s?.hull];
 // straight off the ship in two places, and an ability that only reached one of
 // them would have sped the volley up and left the cycle where it was.
 export const speedOf = s => s.stats.speed * dragOf(hullOf(s), s.power, s.stats);
-export const rangeOf = s => s.stats.weaponRange * reachOf(hullOf(s), s.power, s.stats);
+// `mag` is the magazine feeding the weapon that is asking, or null for anything
+// that carries no ammunition — every alien, and any caller that only wants the
+// hull's own reach. A grade that buys distance multiplies here and nowhere else,
+// which is what keeps it PER WEAPON: a ship with long cells in the guns and plain
+// warheads in the racks has two different reaches, and it should.
+//
+// A plain argument rather than a lookup, exactly as `grace` is in driftDps: this
+// file decides how far a ship shoots and deliberately knows nothing about the
+// shop. shared/ammo.js decides what a grade is and hands the answer in.
+export const rangeOf = (s, mag = null) =>
+  s.stats.weaponRange * reachOf(hullOf(s), s.power, s.stats) * (mag?.reach ?? 1);
 export const rateOf  = s => s.stats.fireRate * drumOf(hullOf(s), s.power, s.stats);
 export const veilOf  = s => cloakOf(hullOf(s), s.power, s.stats, s.sinceShot ?? 1e9);
 

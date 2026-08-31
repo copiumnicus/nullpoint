@@ -1779,7 +1779,8 @@ wss.on('connection', (ws, req) => {
       if (!item) return;
       // Your company stocks what it issues. The upper half of every ladder comes
       // off a pirate hulk, and only to a pilot who rents a bay there.
-      const why = whyNotSold(m.item, { docked: canDock(mapOf(P.mapId), P.co, ship), berth: atBerth() });
+      const why = whyNotSold(m.item, { docked: canDock(mapOf(P.mapId), P.co, ship),
+                                       berth: atBerth(), deep: atBerth() && !!mapOf(P.mapId).deep });
       if (why) return tell(why);
       if (P.credits < item.price) return;
       P.credits -= item.price;

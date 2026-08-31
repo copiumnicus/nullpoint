@@ -818,13 +818,30 @@ console.log('\nthe posting and the pay');
     'because 28% of what is fired at it lands; these land everything');
   check('they notice you no further out than you can see them',
     [V, D].every(a => a.aggro <= 560), `${V.aggro} against 560px of sight`);
-  check('and neither of them can catch anybody',
+  // "Anybody" is every ship a pilot ARRIVES here in, which is the ladder up to and
+  // including `finished`. It was every stage, and the deep shelf added one that is
+  // slower than both sowers: three F-Cells and sixteen MK-VI Emitters is 74px/s
+  // against a Cruiser's stock 250, because a sixth-rung generator costs 36 of your
+  // speed and a sixth-rung emitter costs 3.5 of it on every mount it fills.
+  //
+  // That is the trade those two rungs exist to make and it is not a bug — but it is
+  // a REAL exception to a promise this file makes, so it is stated as one below
+  // rather than folded into a minimum where nobody would find it.
+  const CLIMB = STAGE_KEYS.filter(k => k !== 'deep');
+  check('and neither of them can catch anybody who flew here',
     (() => {
-      const slowest = Math.min(...STAGE_KEYS.map(st => pilot(st, X32).stats.speed));
+      const slowest = Math.min(...CLIMB.map(st => pilot(st, X32).stats.speed));
       return V.attrs.speed < slowest && D.attrs.speed < slowest;
     })(),
-    `${D.attrs.speed} and ${V.attrs.speed} against the slowest fitted ship in the game at ` +
-    `${Math.min(...STAGE_KEYS.map(st => pilot(st, X32).stats.speed)).toFixed(0)}px/s — leaving always works`);
+    `${D.attrs.speed} and ${V.attrs.speed} against the slowest ship on the climb at ` +
+    `${Math.min(...CLIMB.map(st => pilot(st, X32).stats.speed)).toFixed(0)}px/s — leaving always works`);
+  check('except the one ship that bought the deep shelf, which gave up leaving to get it',
+    pilot('deep', X32).stats.speed < D.attrs.speed &&
+    pilot('deep', X32).stats.speed < pilot('finished', X32).stats.speed,
+    `${pilot('deep', X32).stats.speed.toFixed(0)}px/s against a Doldrum's ${D.attrs.speed} — ` +
+    'sixteen MK-VIs at 3.5 of your speed each and three F-Cells at 36. A ship built entirely out of ' +
+    'the deep shelf is a siege platform: it out-reaches and out-throws everything out here and it ' +
+    'cannot walk away from any of it, which is exactly what those two rungs charge');
   // REWRITTEN because they have guns now. It used to read "a sower holds station at
   // its sowing reach, not at a gun it does not have" — true while weaponRange was 0,
   // and exactly wrong once it is 900: reading the sowing reach would park one at 770

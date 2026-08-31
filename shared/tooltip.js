@@ -13,7 +13,7 @@
 
 import { ATTRS, HULLS, resolve, slotsOf, baysOf } from './ships.js';
 import { bonusBays } from './quests.js';
-import { EQUIPMENT, dronePrice, topTier, frontierOnly, isCollector } from './gear.js';
+import { EQUIPMENT, dronePrice, topTier, frontierOnly, deepOnly, isCollector } from './gear.js';
 import { FORMATIONS, BONUS_AT, escortScale } from './formation.js';
 import { launcherRoom, launcherCap } from './rockets.js';
 import { AMMO, NEEDS, bestTierFor } from './ammo.js';
@@ -112,6 +112,7 @@ const DETAIL = {
 // Said the same way everywhere, because "where can I buy this" is one question
 // and two answers to it is how a pilot ends up flying to the wrong ring.
 const SOLD_FRONTIER = 'Sold only at an outpost bay you rent.';
+const SOLD_DEEP     = 'Sold only at a bay in a DEEP sector.';
 const SOLD_STATION  = 'Sold at your base ring or at an outpost bay.';
 const SOLD_ANYWHERE = 'Sold anywhere, docked or not.';
 
@@ -163,7 +164,7 @@ export function tipFor(kind, key, ctx) {
                                           : 'Rides a drone, and you do not own one yet.')
         : room > 0 ? `${room} ${e.slot} slot${room === 1 ? '' : 's'} free on this hull.`
         : 'No slot free. Strip one, or hang this on a drone.',
-        frontierOnly(key) ? SOLD_FRONTIER : SOLD_STATION,
+        deepOnly(key) ? SOLD_DEEP : frontierOnly(key) ? SOLD_FRONTIER : SOLD_STATION,
       ].filter(Boolean),
       owned: ctx.gear?.[key] ?? 0,
     };
@@ -249,10 +250,21 @@ export function tipFor(kind, key, ctx) {
     // facts and stops — the rung it wants, and the rung you are on.
     const need = NEEDS[key] ?? 1;
     const have = bestTierFor(a.for, fit, drones, EQUIPMENT);
+    // Two lines, not one, and the second one only when there is something to say.
+    // A grade that buys reach with damage shows BOTH halves of the trade or the
+    // row reads as a downgrade — the damage line alone says "less damage, more
+    // money" and stops, which is the whole purchase upside down.
+    const reach = a.reach ?? 1;
     return {
       title: a.name, price: a.price, blurb: a.blurb,
       sub: `crate of ${a.pack} rounds · ${round(a.price / a.pack)} cr each`,
-      lines: [line(attr, ATTRS[attr].label, now[attr], now[attr] * a.mult, ATTRS[attr].unit ?? '')],
+      lines: [
+        line(attr, ATTRS[attr].label, now[attr], now[attr] * a.mult, ATTRS[attr].unit ?? ''),
+        ...(reach !== 1
+          ? [line('weaponRange', ATTRS.weaponRange.label, now.weaponRange, now.weaponRange * reach,
+                  ATTRS.weaponRange.unit ?? '')]
+          : []),
+      ],
       notes: [
         need > 1 && have < need ? `Needs a tier ${need} ${gun}. You fly ${have ? 'tier ' + have : 'none'}.`
                     : `Feeds every ${gun} you fly, escort included.`,

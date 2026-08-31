@@ -2,7 +2,7 @@
 import * as R from '../shared/research.js';
 import { MAPS, HOMES } from '../shared/maps.js';
 import { resolve, slotsOf, HULLS } from '../shared/ships.js';
-import { EQUIPMENT } from '../shared/gear.js';
+import { EQUIPMENT, deepOnly } from '../shared/gear.js';
 import { ALIENS, effectiveHp } from '../shared/aliens.js';
 import { sanitiseLab } from '../shared/account.js';
 import { STREAMS, LAB_FIELDS, packLab, unpackLab } from '../shared/net.js';
@@ -107,8 +107,20 @@ console.log('\nwhat it earns');
 
 console.log('\nwhat it makes you');
 {
-  const best = s => Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === s)
-    .sort((a, b) => (EQUIPMENT[b].tier ?? 0) - (EQUIPMENT[a].tier ?? 0))[0];
+  // The top of the CLIMB, not the top of the shop. The research ladder's height was
+  // chosen against a Corsair Hive flown by a finished ship, and "finished" is the
+  // ship a pilot arrives at the Hive in — the Hive stands on the gate sectors, and
+  // the sixth rungs are sold at deep outposts four hops PAST it. Reading the shelf's
+  // very top here compares the wrong pilot: measured, a x32 deep build parks in a
+  // full brood at 290% of what standing still costs, where the climb's top build
+  // reads 68% and has to fly the fight.
+  //
+  // That the deep build CAN park in one is true, and it is the same sentence the
+  // bestiary report has been making about the Hive for three revisions — it needs
+  // x22.7 the hit points it has. The answer to that is the Hive's numbers, not this
+  // ladder's height, so this claim stays where it was pointed.
+  const best = s => Object.entries(EQUIPMENT).filter(([k, e]) => e.slot === s && !deepOnly(k))
+    .sort(([, a2], [, b2]) => (b2.tier ?? 0) - (a2.tier ?? 0))[0][0];
   const w = best('weapon'), g = best('generator');
   const finished = h => {
     const sl = slotsOf(h);

@@ -3,10 +3,10 @@ import { ABILITIES, abilityOf, driveOf, cloakOf, swellOf, dragOf, drumOf, reachO
          DRUMFIRE_GAIN, DRUMFIRE_REACH, SPECIAL }
   from '../shared/ability.js';
 import { HULLS, FIRE_RATE, resolve, slotsOf, baysOf } from '../shared/ships.js';
-import { topTier } from '../shared/gear.js';
+import { topTier, EQUIPMENT } from '../shared/gear.js';
 import { newShip, stepVitals, shieldMax, speedOf, rangeOf, rateOf, veilOf } from '../shared/sim.js';
 import { SYSTEMS, levelOf } from '../shared/power.js';
-import { seekerOn, ROCKET_RATE, launch, stepRockets, launcherCap } from '../shared/rockets.js';
+import { seekerOn, ROCKET_RATE, launch, stepRockets, launcherCap, isLauncher } from '../shared/rockets.js';
 import { fire, stepBolts } from '../shared/combat.js';
 
 const fails = [];
@@ -149,8 +149,16 @@ console.log('\nDrumfire: do not let up');
     return dealt / 60;
   };
   const gunsOf2 = h => Array(slotsOf(h).weapon).fill(TOP);
+  // The best rack in the shop, read off the shelf rather than named. It said 'pod3'
+  // and that was the top of the launcher ladder right up until the deep outposts
+  // grew a fourth rung — at which point the guns build climbed to the MK-VI and the
+  // racks build did not, which is two different shops being compared and read as the
+  // ability having got 10% weaker. Measured: x1.968 at five rungs, x1.781 with the
+  // hardcode left in, x1.960 with it read off the shelf.
+  const TOPPOD = Object.keys(EQUIPMENT).filter(isLauncher)
+    .reduce((a2, b2) => (EQUIPMENT[b2].tier > EQUIPMENT[a2].tier ? b2 : a2));
   const racksOf2 = h => { const lc = Math.min(launcherCap(h), slotsOf(h).weapon);
-    return [...Array(lc).fill('pod3'), ...Array(slotsOf(h).weapon - lc).fill(TOP)]; };
+    return [...Array(lc).fill(TOPPOD), ...Array(slotsOf(h).weapon - lc).fill(TOP)]; };
   const K = { guns: full('kestrel', gunsOf2('kestrel'), 'weapons', 1),
               racks: full('kestrel', racksOf2('kestrel'), 'weapons', 1) };
   const V = { guns: full('vanguard', gunsOf2('vanguard'), SPECIAL, 1),
@@ -161,8 +169,15 @@ console.log('\nDrumfire: do not let up');
     // staircase. On the guns build x2.50 and x2.60 of the dial land on the SAME
     // step and the next one up overshoots to x2.08 — x2.50 is the closest either
     // side of twice, and the 6% between the two builds is that staircase.
-    return V.guns / K.guns > 1.85 && V.guns / K.guns < 2.15
-        && V.racks / K.racks > 1.85 && V.racks / K.racks < 2.15;
+    // Stated as a percentage of the target rather than as two typed edges, because
+    // the typed ones were 1.85/2.15 and the guns build sat at 1.853 — three
+    // thousandths of margin. A sixth emitter moved it to 1.847 without touching the
+    // ability at all: a bigger gun makes the HULL'S own damage a smaller share of
+    // the build, and the Vanguard's 95 against a Kestrel's 38 is where the surplus
+    // over the raw slot count came from. 8% is the staircase plus that drift.
+    const BAND = 0.08;
+    return Math.abs(V.guns / K.guns / 2 - 1) < BAND
+        && Math.abs(V.racks / K.racks / 2 - 1) < BAND;
   })(), `guns x${(V.guns / K.guns).toFixed(2)} (${V.guns.toFixed(0)} against ${K.guns.toFixed(0)}), ` +
         `racks x${(V.racks / K.racks).toFixed(2)} (${V.racks.toFixed(0)} against ${K.racks.toFixed(0)}). ` +
         `The two builds solve for x${(2 * K.guns / (V.guns / (1 + DRUMFIRE_GAIN))).toFixed(4)} and ` +

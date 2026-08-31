@@ -25,8 +25,13 @@ const mark = (x, y, r = 13) => ({ x, y, vx: 0, vy: 0, r, hp: 1e9, shield: 0, sin
 
 console.log('\nthe rack');
 console.log('     ' + PODS.map(k => `${EQUIPMENT[k].name} ${rocketsOf(k)}x${volleyOf(k) / rocketsOf(k)}`).join('   '));
-check('the ladder is one, three and five rockets',
-  PODS.map(rocketsOf).join() === '1,3,5', 'a better launcher throws more, not harder');
+// Odd numbers, and the reason is the fan: an odd rack keeps one rocket down the
+// aim line with the rest arcing in around it, which is what "none of them is aimed
+// at the target to begin with, except the middle one" below is measuring. The
+// fourth rung is seven for that reason and not because seven came next.
+check('the ladder is one, three, five and seven rockets',
+  PODS.map(rocketsOf).join() === '1,3,5,7' && PODS.every(k => rocketsOf(k) % 2 === 1),
+  'a better launcher throws more, not harder — and always an odd number of them');
 check('a better rack throws more rockets AND heavier ones',
   PODS.every((k, i) => i === 0 || (rocketsOf(k) > rocketsOf(PODS[i - 1])
                                 && volleyOf(k) / rocketsOf(k) > volleyOf(PODS[i - 1]) / rocketsOf(PODS[i - 1]))),
@@ -218,6 +223,62 @@ console.log('\nnothing sitting still gets away');
     return lost === 0;
   })(), 'an Interceptor is r=10 and still cannot be orbited');
   check('and it does not take all day', slowest < 3.2, `${slowest.toFixed(1)}s at the worst range`);
+}
+
+// --- and none of it breaks when a warhead doubles the reach --------------------
+//
+// The bug this whole section exists for was a turn circle wider than the miss
+// distance: 52 of 140 rockets sailed around a parked target and expired. A grade
+// that fires the rack at twice the hull's reach re-opens exactly that question,
+// because the fan throws a rocket 109 degrees off the aim line and it has to come
+// all the way back with a fixed 4.5s of motor.
+//
+// Measured rather than reasoned about, and it holds with room. The furthest any
+// ship in the game can be told to shoot is a Cruiser's 820 doubled — 1,640px — and
+// the whole ladder captures out to 1,900. It starts losing rockets at 2,100, where
+// the outer pair of a fan runs the motor out: 2,340px of flight is the budget and
+// the excursion is what spends it. So the reach grade sits 28% inside the failure
+// point, and the number that would have to move to break it is written down.
+{
+  const { REACH_MULT } = await import('../shared/ammo.js');
+  const FURTHEST = Math.max(...Object.keys(HULLS).map(h => resolve(h).weaponRange)) * REACH_MULT;
+  const long = (dist, r, pod) => {
+    const s = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [pod] })));
+    s.stats = { ...s.stats, weaponRange: 1e6 };     // the magazine's reach, stood in for
+    s.heading = 0;
+    const tgt = mark(dist, 0, r);
+    let air = [];
+    for (let i = 0; i < 400 && !air.length; i++) air = launch(s, tgt, dt);
+    let landed = 0, t = 0, last = 0;
+    while (t < ROCKET_TTL + 0.5 && air.length) {
+      const h = stepRockets(air, dt); if (h.length) last = t; landed += h.length; t += dt;
+    }
+    return { n: PODS.indexOf(pod) >= 0 ? Math.round(EQUIPMENT[pod].mods.find(([a]) => a === 'rockets')[2]) : 0,
+             landed, last };
+  };
+  let lost = 0, shots = 0, slowest = 0;
+  const line = [];
+  for (const pod of PODS) for (const d of [820, 1100, 1400, FURTHEST]) {
+    const r = long(d, 26, pod);
+    lost += r.n - r.landed; shots += r.n; slowest = Math.max(slowest, r.last);
+    if (pod === PODS.at(-1)) line.push(`${Math.round(d)}px ${r.landed}/${r.n}`);
+  }
+  console.log(`     a ${EQUIPMENT[PODS.at(-1)].name} at a long warhead's reach: ` + line.join('  '));
+  check('every rocket still finds a parked target at twice the longest reach in the game',
+    lost === 0,
+    `${shots} rockets across four ranges out to ${Math.round(FURTHEST)}px, none lost — ` +
+    `slowest arrival ${slowest.toFixed(1)}s against ${ROCKET_TTL}s of motor`);
+  check('and on a small hull too',
+    (() => { let l = 0; for (const pod of PODS) for (const d of [1100, FURTHEST]) {
+      const r = long(d, 10, pod); l += r.n - r.landed; } return l === 0; })(),
+    'an Interceptor is r=10 and still cannot be orbited at 1,640px');
+  // The seam, named because it is the thing that would break this. The motor is the
+  // budget and the fan is what spends it; the failure point was measured at 2,100px.
+  check('and the reach grade leaves the motor real headroom before that stops being true',
+    FURTHEST < ROCKET_SPEED * ROCKET_TTL * 0.75,
+    `${Math.round(FURTHEST)}px against ${Math.round(ROCKET_SPEED * ROCKET_TTL)}px of motor — measured, a ` +
+    'five-fan starts losing its outer pair at 2,100px, so the grade sits 28% inside the failure point. ' +
+    'A third doubling, a slower rocket or a shorter TTL is what would take it there');
 }
 
 console.log('\nwhat a rack is worth');
