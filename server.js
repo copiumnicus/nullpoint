@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, shieldWait, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, shieldWait, WORLD, boundsOf, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
@@ -55,11 +55,17 @@ import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL, mayScoop,
-         pirateValue, PIRATE_RATE, claimLapsed, CLAIM_TIME, tollOn, DEATH_TOLL } from './shared/cargo.js';
+         pirateValue, PIRATE_RATE, claimLapsed, CLAIM_TIME, tollOn, DEATH_TOLL,
+         BOND } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD,
          mapOf, arenaId, isArena } from './shared/maps.js';
 import { ARENAS, countOf, postsFor, arrivalAt,
          whyNotClaim, whyNotReplay, LINGER, LIMIT } from './shared/arena.js';
+import { FOLD_SECS, FOLD_PORT, FOLD_CLAIM, FOLD_DUEL, newFold, foldBroken,
+         brokenText } from './shared/fold.js';
+import { DUEL_KEY, startsAt, HOME_TO, COUNT as DUEL_COUNT,
+         LIMIT as DUEL_LIMIT, LINGER as DUEL_LINGER, CHALLENGE_TTL, CHALLENGE_CD,
+         whyNotChallenge, stakeOf, challengeText, mayAim, isDuelMap } from './shared/duel.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
 
@@ -434,8 +440,18 @@ for (const d of GALAXY.filter(id => MAPS[id].deep)) { seed(d, 'vitriol', 2); see
 // it is keyed on a map id string and nothing else. The only two things that had
 // to change are the ones that read the SECTOR rather than its id: `mapOf` instead
 // of `MAPS[...]`, and the seven per-sector lists created together.
-const arenas = new Map();   // mapId -> { key, owner, back, opened, cleared, leaveIn, total, replay }
+// A SEAT, NOT AN OWNER. `owner` was one token, because every arena had exactly one
+// occupant; a duel has two, and the honest generalisation of "is the owner still
+// standing in this sector" is "is ANY seat still standing in it". `seats` is the
+// list of tokens allowed to be here, `back` is where each of them came from, and
+// everything below — the sweep especially — reads those rather than a single name.
+// A duel is an arena with a second seat; it is deliberately not a second registry.
+const arenas = new Map();   // mapId -> { key, seats, back, opened, cleared, leaveIn, total, replay, duel? }
 let arenaAlienId = 3_000_000;   // clear of ship ids, alien ids and lab ids alike
+
+// Who from this arena's seats is actually standing in it right now.
+const sittingIn = (aid, ar) =>
+  [...players.values()].filter(q => ar.seats.includes(q.token) && q.mapId === aid);
 
 function openArena(p, key, replay = false) {
   const id = arenaId(p.token, key);
@@ -459,8 +475,42 @@ function openArena(p, key, replay = false) {
   // sold and a company can be changed mid-fight; the way home should not depend on
   // anything that can still move.
   const home = respawnAt(p, MAPS);
-  arenas.set(id, { key, owner: p.token, back: home, opened: Date.now(),
+  arenas.set(id, { key, seats: [p.token], back: { [p.token]: home }, opened: Date.now(),
                    cleared: false, leaveIn: 0, total: countOf(key), replay });
+  return id;
+}
+
+// The same sector, with two seats and nothing in it.
+//
+// It is the same function shape as openArena on purpose: the same id scheme, the
+// same eight per-sector lists, the same registry, and therefore the same sweep. The
+// only things that differ are the roster (there isn't one) and the countdown, which
+// is a number on the record because the SERVER owns it — see the tick.
+//
+// The id is keyed on the challenger's token, so a pilot can hold one duel open at a
+// time for exactly the reason they can hold one claim open at a time, and by the
+// same line of code.
+function openDuel(a, b) {
+  const id = arenaId(a.token, DUEL_KEY);
+  if (arenas.has(id)) return null;
+  openLists(id);
+  // An empty alien list rather than no entry at all. `closeArena` deletes it either
+  // way, and every unguarded `aliens.get(mapId)` in the tick then has something to
+  // find — the same reasoning SECTOR_LISTS is a named list for.
+  aliens.set(id, []);
+  arenas.set(id, { key: DUEL_KEY, duel: true,
+                   seats: [a.token, b.token],
+                   name: { [a.token]: a.acct.name, [b.token]: b.acct.name },
+                   back: { [a.token]: respawnAt(a, MAPS), [b.token]: respawnAt(b, MAPS) },
+                   opened: Date.now(),
+                   // Five seconds where the server refuses every intent either of
+                   // them can send. The client draws this number; it does not own it.
+                   count: DUEL_COUNT,
+                   // Set once, by whoever ends it: { winner, loser, draw }. Its
+                   // presence is what "this duel is settled" means, so the stake can
+                   // only ever be paid one time however many ways it ends at once.
+                   over: null, leaveIn: 0,
+                   cleared: false, total: 0, replay: false });
   return id;
 }
 
@@ -479,7 +529,16 @@ const leftIn = id => (aliens.get(id) ?? []).filter(a => a.dead <= 0 && !a.gone).
 // Put a pilot somewhere real. Used by every exit that is not a wreck — winning,
 // running out of time, and the sweep below.
 function leaveArena(p, why) {
-  const at = arenas.get(p.mapId)?.back ?? respawnAt(p, MAPS);
+  // Per SEAT, not per arena. A duel's two pilots came from two different hangars
+  // and each of them goes back to their own — reading one `back` off the record
+  // would have sent the loser to the winner's dock.
+  const at = arenas.get(p.mapId)?.back?.[p.token] ?? respawnAt(p, MAPS);
+  // Nothing follows you out, exactly as nothing follows you through a portal. It
+  // never mattered for a claim — the sector closes on the same tick — but a duel
+  // has a second occupant who may still have rockets in the air, and a seeker whose
+  // target is now standing in another sector chases coordinates that are not in
+  // this one.
+  dropRocketsAt(p.mapId, p.ship);
   p.mapId = at.map;
   p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
   // Inside the ring, not on its rim: `r` is why homePorts carries one at all —
@@ -492,6 +551,290 @@ function leaveArena(p, why) {
   touch(p);
   sendMap(p);
   if (why && p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'chat', from: '', text: why }));
+}
+
+// --- duels: consent, and what is at stake -------------------------------------
+//
+// A challenge is a message on somebody's screen with a clock on it. It stands for
+// CHALLENGE_TTL and then it is gone, and you may not put another on the same pilot
+// for CHALLENGE_CD after that — a challenge is an interruption, and an unlimited
+// supply of them is harassment with a slash in front of it.
+const challenges = new Map();   // challenged token -> { from, fromName, at }
+const cooling    = new Map();   // `${from}>${to}` -> ms at which another may be sent
+// Both pilots fold for five seconds and BOTH have to land. A duel with one seat
+// filled is a pilot alone in an empty sector, so this holds the two folds together
+// until they either both complete or one of them breaks.
+const pending    = new Map();   // duel arena id -> { seats: [tokA, tokB], ready: Set, off, since }
+
+const byToken = tok => [...players.values()].find(q => q.token === tok) ?? null;
+const byName  = nm => [...players.values()].find(q =>
+  !q.lobby && (q.acct?.name ?? '').toLowerCase() === String(nm ?? '').toLowerCase()) ?? null;
+
+// What a pilot is doing right now, as the plain facts whyNotChallenge asks for.
+// One shape, built once, so the refusal the challenger reads and the second check
+// on accept cannot disagree about what "docked" or "in an arena" meant.
+const duelStateOf = p => p ? {
+  name: p.acct?.name ?? '', token: p.token, online: true, lobby: !!p.lobby,
+  dead: !!p.dead, docked: !!p.docked, inArena: isArena(p.mapId) && !arenas.get(p.mapId)?.duel,
+  duelling: !!arenas.get(p.mapId)?.duel || !!p.duelWith,
+  folding: !!p.folding, jumping: (p.ship?.charge ?? 0) > 0,
+} : null;
+
+// The arena record if this pilot is standing in a duel, else null.
+const duelIn  = p => { const ar = arenas.get(p?.mapId); return ar?.duel ? ar : null; };
+// LOCKED is the countdown, and it is the whole of the server-authoritative half:
+// while it is true every intent that could matter is refused down in the socket
+// handler and both hulls are held at zero velocity up in the tick.
+const duelLocked = p => (duelIn(p)?.count ?? 0) > 0;
+// The other pilot in this duel, as a live player, or null if they have gone.
+function duelFoe(p) {
+  const ar = duelIn(p);
+  if (!ar) return null;
+  const other = ar.seats.find(t => t !== p.token);
+  const q = byToken(other);
+  return q && q.mapId === p.mapId && !q.dead && q.ship.hp > 0 ? q : null;
+}
+
+// A pod carrying credits rather than ore. See BOND in shared/cargo.js for why the
+// purse is not a seventh metal.
+const dropBond = (mapId, x, y, cr) => {
+  if (!(cr > 0)) return;
+  pods.get(mapId)?.push({ id: podId++, x: x + (Math.random() - .5) * 70,
+                          y: y + (Math.random() - .5) * 70,
+                          mat: BOND.key, n: 0, cr, own: 0, t: POD_LIFE });
+};
+
+// THE STAKE, and it is not a new number: `tollOn()` is exactly what an ordinary
+// death already takes, and the hold is exactly what an ordinary death already
+// spills. A duel changes where it goes, not how much it is.
+//
+// CHARGED AT RESOLUTION RATHER THAN HELD IN ESCROW, and the reason is that escrow
+// can be lost. Debiting on arrival and holding the purse on the arena record means a
+// process restart mid-duel destroys both stakes with nothing to show for it, and an
+// arena is by construction the one sector that cannot survive a restart. Charging
+// when it settles has no such hole, because there is nothing to spend it on in the
+// meantime: a duel sector has no dock, no berth and no outpost, so atStation() is
+// false everywhere in it and both the balance and the hold are frozen by the
+// geometry rather than by a rule anybody had to write.
+//
+// It reaches the ACCOUNT when the pilot has gone. That is what closes the disconnect
+// dodge: closing the tab is a forfeit, the sweep sees the empty seat on the next
+// tick, and `db.accounts[token]` is still sitting there to be debited.
+function takeStake(ar, aid, loserToken, at) {
+  const p = byToken(loserToken);
+  let cr = 0, hold = {};
+  if (p) {
+    cr = tollOn(p.credits); hold = { ...p.hold };
+    p.credits -= cr; p.hold = {};
+    touch(p);
+  } else {
+    const acct = db.accounts[loserToken];
+    if (!acct) return { cr: 0, hold: {} };
+    cr = tollOn(acct.credits ?? 0); hold = { ...(acct.hold ?? {}) };
+    acct.credits = (acct.credits ?? 0) - cr; acct.hold = {};
+    dirty = true;
+  }
+  for (const [m, n] of Object.entries(hold)) if (n > 0) drop(aid, at.x, at.y, m, n);
+  dropBond(aid, at.x, at.y, cr);
+  return { cr, hold };
+}
+
+// ONE place a duel ends, so the stake can be taken exactly once however many ways
+// it ends at the same instant — a pilot who dies on the tick the wall expires would
+// otherwise pay twice.
+//
+// `draw` pays nothing at all, and that is the anti-farming rule working from the
+// other end: if running out the clock paid, the cheapest way to move credits
+// between two accounts would be to fly to opposite corners and wait.
+function settleDuel(aid, ar, { winner = null, loser = null, draw = false, why = '' } = {}) {
+  if (ar.over) return ar.over;
+  // Where they WERE, off the record the tick keeps, not where they are. A pilot who
+  // forfeited by taking the portal is standing in their own hangar by now, and one
+  // who forfeited by closing the tab is not anywhere at all.
+  const at = ar.last?.[loser] ?? { x: (mapOf(aid)?.w ?? MAP_W) / 2,
+                                   y: (mapOf(aid)?.h ?? MAP_H) / 2 };
+  const took = draw ? { cr: 0, hold: {} } : takeStake(ar, aid, loser, at);
+  ar.over = { winner, loser, draw, ...took };
+  ar.leaveIn = DUEL_LINGER;
+  for (const q of sittingIn(aid, ar)) {
+    if (q.ws.readyState !== 1) continue;
+    const mine = q.token === winner;
+    q.ws.send(JSON.stringify({ t: 'duelend', draw: draw ? 1 : 0, won: mine ? 1 : 0,
+                               cr: took.cr, secs: DUEL_LINGER, why }));
+  }
+  return ar.over;
+}
+
+// A line in the chat log, from the server, to one pilot. The socket handler has its
+// own `tell` in scope; the tick does not, and everything below runs in the tick.
+const note = (p, text) => {
+  if (p?.ws?.readyState === 1) p.ws.send(JSON.stringify({ t: 'chat', from: '', text }));
+};
+
+// --- where a fold puts you down ------------------------------------------------
+//
+// Three arrivals, one per FOLD_ kind. They are functions rather than a switch
+// inlined in the tick because two of them have to be reachable from the duel
+// bookkeeping as well, and because the ORDER inside each of them is the part that
+// is easy to get wrong — see arriveClaim.
+
+// The beacon. The device is spent HERE, on arrival, which is shared/devices.js's
+// SPENT_ON: being interrupted is already the punishment.
+function arriveHome(p, to) {
+  if (to.spend && p.devices[to.spend] !== undefined && --p.devices[to.spend] <= 0)
+    delete p.devices[to.spend];
+  const b = foldTo(p, MAPS, p.foldTo);
+  p.mapId = b.map; p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
+  Object.assign(p.ship, { x: b.x, y: b.y, vx: 0, vy: 0, tx: null, ty: null,
+                          dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0 });
+  touch(p);
+  // The beacon is spent here, so the bar has to be told — touch() saves it but says
+  // nothing, and the box went on reading the old count.
+  if (p.ws.readyState !== 1) return;
+  sendMap(p);
+  p.ws.send(JSON.stringify({ t: 'fit', hull: p.ship.hull, fit: p.ship.fit,
+    drones: p.ship.drones, rig: p.ship.rig ?? null, formation: p.ship.formation,
+    formations: p.formations, ammo: p.ammo, using: p.using, armed: p.armed,
+    kits: p.kits, kit: p.kit, devices: p.devices, device: p.device,
+    foldTo: p.foldTo, berths: p.berths,
+    gear: p.gear, hulls: p.hulls, credits: p.credits }));
+}
+
+// A claim. THE ARENA IS OPENED HERE AND NOT WHEN THE BUTTON WAS PRESSED, and that
+// ordering is the whole reason this is a separate function.
+//
+// It used to run openArena() first and change the map on the same line. With a fold
+// in front of it that would register a sector — eight per-sector lists, fifteen
+// hostiles, its own alien id block — five seconds before anybody was in it, and
+// leave it standing if the fold broke. The sweep would collect it on the next tick
+// because nobody is sitting in it, so nothing would visibly break; it would simply
+// be a sector stepped thirty times a second for no reason, and "the sweep gets it
+// eventually" is not the same claim as "it was never there".
+function arriveClaim(p, to) {
+  const id = openArena(p, to.key, to.replay);
+  if (!id) return note(p, 'that claim is already open — you are on your way');
+  p.mapId = id;
+  p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
+  const a = arrivalAt();
+  Object.assign(p.ship, { x: a.x, y: a.y, vx: 0, vy: 0, tx: null, ty: null,
+                          dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0, jumpCd: 0 });
+  // NOT touched. An arena id must never reach the account file: a pilot who was in
+  // one when the process died would come back to a sector that does not exist.
+  sendMap(p);
+  note(p, to.replay
+    ? `${MODULES[to.key].name} — the field is back. Nothing is paid for this one.`
+    : `${MODULES[to.key].name} — ${countOf(to.key)} hostiles hold the rock. Clear them.`);
+}
+
+// A duel. BOTH folds have to land, so this is a rendezvous rather than an arrival:
+// the first one to finish waits, and the sector is opened on the tick the second
+// one gets there.
+//
+// If one fold breaks the duel is called off and NEITHER goes. The alternative —
+// send the one who made it — is a pilot alone in an empty sector with a countdown,
+// waiting for somebody who is never coming, and the only way out of it would be the
+// portal. Both of them are told why.
+function arriveDuel(p, to) {
+  const pend = pending.get(to.id);
+  if (!pend || pend.off) { p.duelWith = null; return note(p, 'the duel is off'); }
+  pend.ready.add(p.token);
+  if (pend.ready.size < pend.seats.length) return;    // hold for the other one
+  pending.delete(to.id);
+  const [a, b] = pend.seats.map(byToken);
+  if (!a || !b) {
+    for (const q of [a, b]) if (q) { q.duelWith = null; note(q, 'the duel is off — they are gone'); }
+    return;
+  }
+  const id = openDuel(a, b);
+  if (!id) {
+    for (const q of [a, b]) { q.duelWith = null; note(q, 'the duel is off — that sector is already open'); }
+    return;
+  }
+  pend.seats.forEach((tok, i) => {
+    const q = byToken(tok);
+    if (!q) return;
+    q.duelWith = null;
+    q.mapId = id;
+    q.contacts.clear(); q.targetId = null; q.want = null; q.scoop = null;
+    const at = startsAt(i);
+    Object.assign(q.ship, { x: at.x, y: at.y, heading: at.heading, vx: 0, vy: 0,
+                            tx: null, ty: null, dx: null, dy: null,
+                            charge: 0, chargeTo: null, snare: 0, calm: 0, jumpCd: 0 });
+    // Same rule a claim keeps and for the same reason: an arena id must never reach
+    // the account file.
+    sendMap(q);
+    note(q, `the cut — ${DUEL_COUNT} seconds, then it is a fight`);
+  });
+}
+
+// One duel, one tick. Called from the sweep so it runs in the same pass and under
+// the same "is anybody still standing in this" rule as a claim.
+//
+// The ORDER matters and it is the same order the wreck path uses: settle first,
+// linger second, because a duel can end two ways on the same tick — the last
+// hull falls exactly as the wall expires — and `settleDuel` refusing to run twice
+// is what makes the stake payable exactly once.
+function stepDuel(aid, ar, seated, dt) {
+  // Where each of them is, remembered every tick. The purse drops where the loser
+  // WAS, and by the time a forfeit is noticed they are either at their own hangar
+  // or not connected at all — reading ship.x then would have dropped a duel's whole
+  // stake in the middle of somebody's home dock, or thrown.
+  ar.last = ar.last ?? {};
+  for (const q of seated) ar.last[q.token] = { x: q.ship.x, y: q.ship.y };
+
+  // The countdown. THE SERVER OWNS THIS NUMBER. It is refused in the socket
+  // handler, pinned in the ship step, and skipped in the guns pass; this is only
+  // where it runs down.
+  if (ar.count > 0) {
+    ar.count = Math.max(0, ar.count - dt);
+    if (ar.count === 0) for (const q of seated) note(q, 'go');
+  }
+
+  if (!ar.over) {
+    const standing = seated.filter(q => !q.dead && q.ship.hp > 0);
+    const fallen   = seated.find(q => q.dead || q.ship.hp <= 0);
+    if (fallen && standing.length === 1)
+      settleDuel(aid, ar, { winner: standing[0].token, loser: fallen.token, why: 'destroyed' });
+    else if (seated.length < ar.seats.length) {
+      // A FORFEIT. Leaving while the other one is still standing is conceding, and
+      // it pays exactly what dying pays — that is the whole of the answer to "can
+      // the loser dodge the stake by taking the portal, firing a beacon or closing
+      // the tab". They cannot: all three land here, on the tick after they go, and
+      // takeStake debits the ACCOUNT when the player object has gone with them.
+      const gone   = ar.seats.find(t => !seated.some(q => q.token === t));
+      const stayed = seated.find(q => !q.dead && q.ship.hp > 0);
+      if (stayed) settleDuel(aid, ar, { winner: stayed.token, loser: gone, why: 'forfeit' });
+      else { closeArena(aid); return; }   // both of them gone at once: nobody pays
+    }
+    // The wall. A DRAW, and it pays nothing at all — see shared/duel.js: if running
+    // out the clock paid, the cheapest way to move credits between two accounts
+    // would be to fly to opposite corners and wait for it.
+    else if ((Date.now() - ar.opened) / 1000 > DUEL_LIMIT)
+      settleDuel(aid, ar, { draw: true, why: 'time' });
+  }
+
+  if (ar.over && (ar.leaveIn -= dt) <= 0)
+    for (const q of seated)
+      leaveArena(q, ar.over.draw ? 'time — neither of you fell, and nothing changed hands'
+                 : q.token === ar.over.winner
+                   ? `you won. ${ar.over.cr.toLocaleString('en-US')} cr and their hold were on the floor`
+                   : 'you lost — a tenth of your credits and your hold went with the ship');
+}
+
+// Take a pending duel down before it ever became a sector. Clears both folds so
+// neither pilot arrives, and says why — a fold that stops with no explanation is
+// indistinguishable from a button that did not work.
+function callOffDuel(id, why) {
+  const pend = pending.get(id);
+  if (!pend) return;
+  pending.delete(id);
+  for (const tok of pend.seats) {
+    const q = byToken(tok);
+    if (!q) continue;
+    if (q.folding?.to?.kind === FOLD_DUEL && q.folding.to.id === id) q.folding = null;
+    q.duelWith = null;
+    note(q, why);
+  }
 }
 
 // The hull and formation galleries, resolved once at boot. They never move, take
@@ -850,7 +1193,19 @@ wss.on('connection', (ws, req) => {
       P.view = v;
       if (!same) touch(P);
       return;
-    }
+    }    // --- THE COUNTDOWN, AND IT IS ENFORCED HERE ------------------------------
+    //
+    // Five seconds where neither pilot can move, turn, shoot, launch, route power,
+    // jump or fold. The client draws the number; it does not own it. Every intent
+    // that could matter is refused right here, and the tick holds both hulls at
+    // zero velocity on top of it — so a client that lies about the countdown, or
+    // simply never runs one, gains exactly nothing.
+    //
+    // This is above every handler below it on purpose. A gate that sits under the
+    // one message somebody forgot to think about is not a gate.
+    if (duelLocked(P) && ['jump', 'intent', 'target', 'power', 'scoop', 'recall',
+                          'claim', 'replay', 'repair'].includes(m.t))
+      return tell('hold — the clock has not let go yet');
 
     if (m.t === 'jump') return beginJump(ship, mapOf(P.mapId));
 
@@ -1052,6 +1407,8 @@ wss.on('connection', (ws, req) => {
         case 'arenas':
           return tell(JSON.stringify({ open: arenas.size, list: [...arenas].map(([k, a]) =>
             ({ id: k, key: a.key, left: leftIn(k), cleared: a.cleared, replay: a.replay,
+               duel: !!a.duel, seats: a.seats.length,
+               here: sittingIn(k, a).length, count: +(a.count ?? 0).toFixed(1),
                lists: SECTOR_LISTS.filter(L => L.has(k)).length })) }));
         // What windows this game is actually played in, biggest constituency first.
         // The whole reason the client reports its size at all: test/render.mjs
@@ -1068,6 +1425,68 @@ wss.on('connection', (ws, req) => {
           const shown = rows.slice(0, 6).map(sayView).join('  ');
           return tell(`${rows.length} window${rows.length > 1 ? 's' : ''}: ${shown}` +
                       `${rows.length > 6 ? ' …' : ''} — the harness sweeps ${mergeSizes(rows).length}`);
+        }
+
+        // --- a duel ---------------------------------------------------------
+        //
+        // The name is REJOINED from the args rather than read as a1, because a
+        // callsign may contain spaces — shared/signup.js allows them — and
+        // `/1v1 Ash Ryder` would otherwise challenge a pilot called "Ash".
+        case '1v1': {
+          const want = line.args.join(' ').trim();
+          if (!want) return tell('who? — /1v1 <callsign>');
+          const them = byName(want);
+          const key = `${token}>${them?.token ?? want}`;
+          const cool = Math.max(0, ((cooling.get(key) ?? 0) - Date.now()) / 1000);
+          // ONE outstanding challenge per pilot, in either direction. Without it a
+          // single pilot can put a line on every screen in the game at once, which
+          // is the spam this cooldown exists to stop by a slower route.
+          const mine = [...challenges.values()].some(c => c.from === token);
+          const why = whyNotChallenge(duelStateOf(P), duelStateOf(them),
+                                      { cooling: cool, pending: mine });
+          if (why) return tell(why);
+          const stake = stakeOf(P.credits, P.hold);
+          challenges.set(them.token, { from: token, fromName: acct.name, at: Date.now() });
+          // Both ends are told, and the challenged pilot is told the NUMBER. An
+          // uncapped stake is only fair if nobody can accept one blind — see the
+          // cap argument in shared/duel.js, which is why there is no cap.
+          if (them.ws.readyState === 1) them.ws.send(JSON.stringify(
+            { t: 'challenge', from: acct.name, secs: CHALLENGE_TTL, cr: stake.cr }));
+          note(them, challengeText(acct.name, stake));
+          return tell(`challenge sent to ${them.acct.name} — it lapses in ${CHALLENGE_TTL}s`);
+        }
+        case 'accept': {
+          const c = challenges.get(token);
+          if (!c) return tell('nobody has challenged you');
+          challenges.delete(token);
+          const them = byToken(c.from);
+          // Re-asked rather than trusted. Everything either of them was doing can
+          // have changed in the thirty seconds the offer stood — they may have
+          // docked, died, jumped or started another duel — and the refusal has to
+          // be the same refusal in the same words that /1v1 would have given.
+          const why = whyNotChallenge(duelStateOf(P), duelStateOf(them));
+          if (why) { if (them) note(them, `${acct.name} could not take it: ${why}`); return tell(why); }
+          const id = arenaId(them.token, DUEL_KEY);
+          if (arenas.has(id) || pending.has(id)) return tell('they already have a duel open');
+          // BOTH fold. Five seconds each, cancelled by anything that lands, and
+          // neither goes unless both land — see arriveDuel.
+          pending.set(id, { seats: [them.token, token], ready: new Set(), off: false,
+                            since: Date.now() });
+          for (const q of [them, P]) {
+            q.duelWith = id;
+            q.folding = newFold({ kind: FOLD_DUEL, id }, q.ship.sinceHit);
+          }
+          note(them, `${acct.name} took it — folding out. ${FOLD_SECS.toFixed(0)}s, and one hit calls it off`);
+          return tell(`folding out against ${them.acct.name} — ${FOLD_SECS.toFixed(0)}s, and one hit calls it off`);
+        }
+        case 'decline': {
+          const c = challenges.get(token);
+          if (!c) return tell('nobody has challenged you');
+          challenges.delete(token);
+          cooling.set(`${c.from}>${token}`, Date.now() + CHALLENGE_CD * 1000);
+          const them = byToken(c.from);
+          if (them) note(them, `${acct.name} declined`);
+          return tell('declined');
         }
       }
       return;
@@ -1148,11 +1567,11 @@ wss.on('connection', (ws, req) => {
       const why = whyNotDevice({ devices: P.devices, using: P.device,
                                  atDest, busy: !!P.folding });
       if (why) return tell(why);
-      const d = DEVICES[P.device];
       // Nothing is spent here. Being interrupted is already the punishment, and
       // charging for the attempt would mean the only safe time to press it is a
-      // time you did not need it.
-      P.folding = { key: P.device, left: d.secs, secs: d.secs, mark: ship.sinceHit };
+      // time you did not need it. The device rides the DESTINATION now rather than
+      // being the destination — `spend` is what arriveHome consumes.
+      P.folding = newFold({ kind: FOLD_PORT, spend: P.device }, ship.sinceHit);
       return;
     }
     if (m.t === 'repair') {
@@ -1436,21 +1855,20 @@ wss.on('connection', (ws, req) => {
                       near: P.mapId === P.co + '1' && nearLab(at2, ship) };
       const why = back ? whyNotReplay(m.key, where) : whyNotClaim(m.key, where);
       if (why) return tell(why);
-      const id2 = openArena(P, m.key, back);
-      if (!id2) return tell('that claim is already open — you are on your way');
-      P.mapId = id2;
-      P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
-      const a3 = arrivalAt();
-      Object.assign(ship, { x: a3.x, y: a3.y, vx: 0, vy: 0, tx: null, ty: null,
-                            dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0, jumpCd: 0 });
-      // NOT touched. An arena id must never reach the account file: a pilot who
-      // was in one when the process died would come back to a sector that does not
-      // exist, and the only thing standing between that and a black screen is a
-      // sanitiser that has to guess where they meant to be.
-      sendMap(P);
-      return tell(back
-        ? `${MODULES[m.key].name} — the field is back. Nothing is paid for this one.`
-        : `${MODULES[m.key].name} — ${countOf(m.key)} hostiles hold the rock. Clear them.`);
+      if (P.folding) return tell('a fold is already running');
+      // A FIVE SECOND FOLD, NOT A TELEPORT, and it is cancelled by anything that
+      // lands on you. This used to put you in the sector on the same line it
+      // checked the refusal, which made the station panel a free escape hatch out
+      // of any fight in the open world — you are being shot, you press CLAIM, you
+      // are gone with your ship and your hold. A Recall Beacon costs 3,400 credits
+      // and five interruptible seconds to do exactly that.
+      //
+      // The sector itself is opened on ARRIVAL — see arriveClaim — so a fold that
+      // breaks leaves nothing registered.
+      P.folding = newFold({ kind: FOLD_CLAIM, key: m.key, replay: back }, ship.sinceHit);
+      return tell(`folding out to ${MODULES[m.key].name} — ${FOLD_SECS.toFixed(0)}s, `
+        + `and one hit stops it. ${back ? 'Nothing is paid for this one.'
+                                        : `${countOf(m.key)} hostiles hold the rock.`}`);
     }
     if (m.t === 'buyberth') {
       const why = whyNotBuyBerth({ xp: P.xp, credits: P.credits,
@@ -1486,9 +1904,22 @@ wss.on('connection', (ws, req) => {
       load(P.vault, P.hold, m.mat, P.vault[m.mat] ?? 0, ship.stats.cargo);
       return;
     }
-    if (m.t === 'target') {                       // aliens only for now; PvP needs its own rules
+    // Aliens anywhere; the other pilot ONLY inside a duel.
+    //
+    // PvP is a property of the SECTOR and never of the ship — the same pattern
+    // `noLeash` and `dry` use, and for the same reason: two pilots of one company
+    // must be able to hurt each other in here and nowhere else, and a flag on the
+    // ship would follow them out into the open world where a fleetmate has to stay
+    // untouchable. `duelFoe` reads the arena record, so there is no way to name a
+    // player as a target from a sector that is not a duel, however the id arrives.
+    if (m.t === 'target') {
       const found = (aliens.get(P.mapId) ?? []).find(a => a.id === +m.id && a.dead <= 0 && a.hp > 0);
-      P.targetId = found ? found.id : null;
+      if (found) { P.targetId = found.id; return; }
+      const foe = duelFoe(P);
+      // The same predicate the client asks before it offers the shot.
+      P.targetId = mayAim({ co: P.co, id: +m.id },
+                          { foeId: foe?.id ?? null, count: duelIn(P)?.count ?? 0 })
+        ? foe.id : null;
       return;
     }
 
@@ -1506,8 +1937,14 @@ wss.on('connection', (ws, req) => {
       ship.tx = ship.ty = null;
     } else if (m.mode === 'pt') {                 // click-to-move
       ship.dx = ship.dy = null;
-      ship.tx = Math.max(WORLD.x0, Math.min(WORLD.x1, +m.x || 0));   // you may order a course
-      ship.ty = Math.max(WORLD.y0, Math.min(WORLD.y1, +m.y || 0));   // out past the lattice
+      // Clamped to THIS SECTOR's bounds, which is the galaxy's rectangle plus the
+      // drift margin everywhere except a duel arena — a quarter the size, with a
+      // hard edge. The client's minimap asks boundsOf() too, so the rectangle it
+      // draws a course into and the rectangle the server accepts one in are the
+      // same rectangle. Two copies of that is exactly the drift rule one names.
+      const B = boundsOf(mapOf(P.mapId));
+      ship.tx = Math.max(B.x0, Math.min(B.x1, +m.x || 0));   // you may order a course
+      ship.ty = Math.max(B.y0, Math.min(B.y1, +m.y || 0));   // out past the lattice
 
     } else {                                      // stop
       ship.dx = ship.dy = ship.tx = ship.ty = null;
@@ -1544,7 +1981,18 @@ setInterval(() => {
 
   for (const [id, p] of players) {
     if (p.lobby) continue;                        // still choosing a name
-    step(p.ship, dt);
+    const here = mapOf(p.mapId);
+    // THE COUNTDOWN, HELD IN THE SIMULATION AND NOT ONLY IN THE MESSAGE HANDLER.
+    // Refusing the intents is not enough on its own: a course ordered before the
+    // fold, or a velocity carried in from the last sector, would coast through the
+    // whole five seconds. So the hull is pinned every tick until the clock lets go.
+    if (duelLocked(p))
+      Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
+                              charge: 0, chargeTo: null });
+    // The sector's own bounds. A duel arena is a quarter the size with a hard edge;
+    // everywhere else this is the galaxy's rectangle plus the drift margin, exactly
+    // as it always was.
+    step(p.ship, dt, boundsOf(here));
     // The engines-out clock and the calm that is owed after it. AFTER step(), so the
     // tick a hold is spent is a tick that actually had no thrust in it — advancing it
     // first would hand every hold one free frame of acceleration back and make the
@@ -1553,7 +2001,9 @@ setInterval(() => {
     // A Shear Compensator nulls the first half of the drift margin and charges the
     // reactor for it, so how far out you can hold is how much tank you have left.
     // Nothing fitted and holdShear returns 0, which is the curve sim.js always had.
-    stepDrift(p.ship, dt, holdShear(p.ship, dt));
+    // `here` so a walled sector reports no depth: a duel is decided by guns, not by
+    // shoving somebody over a line into the shear.
+    stepDrift(p.ship, dt, holdShear(p.ship, dt), here);
     const map = mapOf(p.mapId);
     p.docked = canDock(map, p.co, p.ship);
     // The last hangar you actually stood in, which is where a wreck comes back.
@@ -1562,7 +2012,16 @@ setInterval(() => {
     if (isHangar(p.mapId, map, p.co, p.ship, p.berths)) {
       if (p.lastDock !== p.mapId) { p.lastDock = p.mapId; touch(p); }
     }
-    stepVitals(p.ship, dt, p.docked);
+    // Shields do not come back inside a DUEL — and they DO come back inside a
+    // claim. Both halves of that were the designer's call. A claim is hard because
+    // nothing in it ever breaks off; making it hard by taking a mechanic away was
+    // never asked for and was reverted. A duel is a different argument that belongs
+    // to duels: regeneration is 3.33% of the pool a second, so two evenly matched
+    // pilots in a 6,000px box have an obvious dominant line, and it is to kite to
+    // the wall and take the draw. Without it, the ship each of them arrives in is
+    // all they get and somebody has to commit. A repair kit still works, because
+    // five seconds of not being shot at is a decision rather than a rest button.
+    stepVitals(p.ship, dt, p.docked, isDuelMap(mapOf(p.mapId)));
     // The mine, paid out once a second rather than once a tick — see bankLab.
     //
     // Date.now(), NOT the tick's `now`. The tick runs on performance.now(), which
@@ -1599,34 +2058,31 @@ setInterval(() => {
     // space is the whole cost of not flying home.
     // Folding home. Any hit at all ends it — sinceHit only ever counts UP unless
     // something lands, so a drop in it is a hit and needs no separate signal.
+    // ONE FOLD, THREE DESTINATIONS. This used to be the Recall Beacon's private
+    // mechanic; the beacon is now one caller of it and a claim and a duel are the
+    // other two. `p.folding.to` says where it puts you down and nothing here reads
+    // a device key to find out — see shared/fold.js for why that mattered: an
+    // instant teleport into a claim was a free, uninterruptible version of the
+    // thing the beacon charges 3,400 credits and five interruptible seconds for.
     if (p.folding) {
-      if (p.ship.sinceHit < p.folding.mark || p.ship.hp <= 0) {
+      if (foldBroken(p.ship.sinceHit, p.folding.mark, p.ship.hp)) {
+        const to = p.folding.to;
         p.folding = null;
+        // A broken duel fold takes the whole duel down, not just this pilot's half.
+        // The other one is still folding, and landing them alone in an empty sector
+        // is the one outcome nobody asked for.
+        if (to.kind === FOLD_DUEL) callOffDuel(to.id, `${p.acct.name} was hit — the duel is off`);
         if (p.ws.readyState === 1) p.ws.send(JSON.stringify(
-          { t: 'chat', from: '', text: 'recall broken off — the beacon is still yours' }));
+          { t: 'chat', from: '', text: brokenText(to.kind) }));
       } else {
         p.folding.mark = p.ship.sinceHit;
         p.folding.left -= dt;
         if (p.folding.left <= 0) {
-          const key = p.folding.key;
+          const to = p.folding.to;
           p.folding = null;
-          if (--p.devices[key] <= 0) delete p.devices[key];
-          const b = foldTo(p, MAPS, p.foldTo), home = b.map;
-          p.mapId = home; p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
-          Object.assign(p.ship, { x: b.x, y: b.y, vx: 0, vy: 0, tx: null, ty: null,
-                                  dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0 });
-          touch(p);
-          // The beacon is spent here, so the bar has to be told — touch() saves it
-          // but says nothing, and the box went on reading the old count.
-          if (p.ws.readyState === 1) {
-            sendMap(p);
-            p.ws.send(JSON.stringify({ t: 'fit', hull: p.ship.hull, fit: p.ship.fit,
-              drones: p.ship.drones, rig: p.ship.rig ?? null, formation: p.ship.formation,
-              formations: p.formations, ammo: p.ammo, using: p.using, armed: p.armed,
-              kits: p.kits, kit: p.kit, devices: p.devices, device: p.device,
-              foldTo: p.foldTo, berths: p.berths,
-              gear: p.gear, hulls: p.hulls, credits: p.credits }));
-          }
+          if (to.kind === FOLD_PORT) arriveHome(p, to);
+          else if (to.kind === FOLD_CLAIM) arriveClaim(p, to);
+          else if (to.kind === FOLD_DUEL) arriveDuel(p, to);
         }
       }
     }
@@ -1667,6 +2123,12 @@ setInterval(() => {
       // avoid rather than something to try. The claim you did not free is the
       // punishment; on a replay there is not even that, which is exactly what
       // makes a replay a practice range rather than a gamble.
+      // Nothing is settled here inside ANY arena, and that covers both kinds for two
+      // different reasons. A claim costs nothing by design — you arrived with an
+      // empty hold and dying there is meant to be cheap. A duel costs exactly what
+      // an ordinary death costs, but it is settled by settleDuel() a few lines
+      // further down the same tick, where it can be paid to somebody rather than
+      // burned. Leaving it true here would charge the loser twice.
       const stake = !isArena(p.mapId);
       const lost = stake ? { ...p.hold } : {};
       if (stake) {
@@ -1689,6 +2151,22 @@ setInterval(() => {
 
     const dest = stepJump(p.ship, mapOf(p.mapId), dt);
     if (!dest) continue;
+    // THE WAY HOME OUT OF A DUEL. The first portal any instanced sector has ever
+    // had, and its destination differs per pilot — each of them comes out at their
+    // own hangar — so it names a sentinel rather than a map. `MAPS['@home']` is
+    // undefined and the line below would have thrown on `.portals`, which is the
+    // black screen the client's `map.portals.length` guard was written for, this
+    // time on the server.
+    //
+    // Taking it while the other pilot is still standing is a FORFEIT: leaveArena
+    // puts them at their own dock, the sweep sees the empty seat on the next tick,
+    // and the stake is paid at the spot they left from. That is what stops the
+    // portal being a free way out of a fight you are losing.
+    if (dest === HOME_TO) {
+      dropRocketsAt(p.mapId, p.ship);
+      leaveArena(p, 'you took the way out');
+      continue;
+    }
     const a = arrivalFor(p.mapId, MAPS[dest]);
     dropRocketsAt(p.mapId, p.ship);              // nothing follows you through a portal
     p.mapId = dest;
@@ -1828,7 +2306,7 @@ setInterval(() => {
           }
         }
       }
-      step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
+      step(a, dt, boundsOf(map)); stepDrift(a, dt, 0, map); stepVitals(a, dt, false); stepAlienRepair(a, dt);
       // Breaking means turning, and turning is what takes its nose off you. The
       // camouflage and the evasion are the same mechanic from two sides.
       if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = jinkHeading(a, victim?.ship);
@@ -1931,8 +2409,18 @@ setInterval(() => {
 
   // --- player guns ----------------------------------------------------------
   for (const [id, p] of players) {
+    // The countdown again, and this is the third place it is held: refusing the
+    // `target` message stops a NEW target being named, but a target named before
+    // the fold would otherwise keep firing through the whole five seconds.
+    if (duelLocked(p)) { fire(p.ship, null, dt); launch(p.ship, null, dt); continue; }
+    const other = duelFoe(p);
+    // A hostile, or — only inside a duel — the other pilot. `stepBolts` and
+    // `stepRockets` resolve their target by object identity against anything with
+    // {x, y, r, hp}, which a player's ship has always had, so nothing in
+    // shared/combat.js or shared/rockets.js had to learn what a player is.
     const foe = p.targetId
-      ? (aliens.get(p.mapId) ?? []).find(a => a.id === p.targetId && a.dead <= 0 && a.hp > 0)
+      ? ((aliens.get(p.mapId) ?? []).find(a => a.id === p.targetId && a.dead <= 0 && a.hp > 0)
+         ?? (other && other.id === p.targetId ? other.ship : null))
       : null;
     if (!foe) { p.targetId = null; fire(p.ship, null, dt); launch(p.ship, null, dt); continue; }
     faceTarget(p.ship, foe);
@@ -1952,6 +2440,9 @@ setInterval(() => {
     for (const shot of volley) { shot.owner = id; bolts.get(p.mapId).push(shot); }
     for (const rk of salvo)    { rk.owner = id;   rockets.get(p.mapId).push(rk); }
     if (!volley.length && !salvo.length) continue;
+    // A player's ship has no grudge to hold — `provoked` and `target` are an
+    // alien's bookkeeping, and reading them off a hull would be `undefined.add`.
+    if (!foe.isAlien) continue;
     foe.provoked.add(id);                        // pulling the trigger is the provocation,
     if (!foe.target) foe.target = id;            // whether or not the shot lands
   }
@@ -2033,7 +2524,15 @@ setInterval(() => {
     // The pod goes the moment the lift lands, which is now before the drone is
     // home — so this cannot wait on the pull being finished the way it used to.
     if (r.emptied && pod) list.splice(list.indexOf(pod), 1);
-    if (r.took) touch(p);
+    // A bond goes onto the balance instead of into the hold — a duel's purse. It is
+    // the only pod in the game that pays credits, and stepScoop hands the number
+    // back rather than banking it, because shared/cargo.js does not know what an
+    // account is.
+    if (r.cr > 0) {
+      p.credits += r.cr;
+      note(p, `${r.cr.toLocaleString('en-US')} cr recovered`);
+    }
+    if (r.took || r.cr > 0) touch(p);
     if (!r.running) p.scoop = null;
   }
 
@@ -2166,9 +2665,43 @@ setInterval(() => {
   // taking the account over) before it was written down. An arena that outlives its
   // pilot is a sector full of hostiles nobody will ever see, stepped thirty times a
   // second, forever.
+  // Challenges lapse on their own. A pilot who never answers is answering; the line
+  // goes away and the challenger is told, so nobody is left waiting on a screen for
+  // something that has already expired. Lapsing starts the same cooldown a refusal
+  // does — ignoring somebody twice a minute is the same interruption as being
+  // refused twice a minute.
+  for (const [to, c] of [...challenges]) {
+    if ((Date.now() - c.at) / 1000 < CHALLENGE_TTL) continue;
+    challenges.delete(to);
+    cooling.set(`${c.from}>${to}`, Date.now() + CHALLENGE_CD * 1000);
+    note(byToken(c.from), 'your challenge lapsed — no answer');
+    note(byToken(to), 'the challenge lapsed');
+  }
+
+  // A pending duel that never completed. Both folds are the same length and start on
+  // the same tick, so the only way one side never arrives is that the pilot stopped
+  // existing — a closed tab, a second session taking the account over. Without this
+  // the survivor waits in `pending` forever with `duelWith` still set, which is a
+  // pilot who can never duel again and nothing anywhere saying why. Half a second
+  // past the fold is long enough that a normal rendezvous is never caught by it.
+  for (const [pid, pend] of [...pending]) {
+    pend.since = pend.since ?? Date.now();
+    if ((Date.now() - pend.since) / 1000 < FOLD_SECS + 1.5) continue;
+    callOffDuel(pid, 'the duel is off — the other pilot never arrived');
+  }
+
   for (const [aid, ar] of [...arenas]) {
-    const who = [...players.values()].find(q => q.token === ar.owner && q.mapId === aid);
-    if (!who) { closeArena(aid); continue; }
+    // THE GENERALISATION, and it is one word. It was "is the OWNER still standing
+    // in this sector"; it is now "is ANY of its seats". A claim has one seat and
+    // reads exactly as it always did; a duel has two and closes when the second of
+    // them goes, by whatever route and at whatever moment — the portal, a wreck
+    // that respawned, a beacon, /tp, a closed tab, a second session taking the
+    // account over, the wall. Still no list of exits, for the reason the first
+    // draft learned: it enumerated them and had already missed two.
+    const seated = sittingIn(aid, ar);
+    if (!seated.length) { closeArena(aid); continue; }
+    if (ar.duel) { stepDuel(aid, ar, seated, dt); continue; }
+    const who = seated[0];
 
     const left = leftIn(aid);
     if (!ar.cleared && left === 0) {
@@ -2379,10 +2912,36 @@ setInterval(() => {
       // set difference over the snapshot's own keys, so it is diffed for free and
       // goes quiet between kills. `left` is here because a pilot who cannot see how
       // many are standing cannot tell whether they are winning.
-      arena: arenas.has(V.mapId)
+      arena: arenas.get(V.mapId) && !arenas.get(V.mapId).duel
         ? { key: arenas.get(V.mapId).key, left: leftIn(V.mapId),
             total: arenas.get(V.mapId).total, cleared: arenas.get(V.mapId).cleared ? 1 : 0,
             replay: arenas.get(V.mapId).replay ? 1 : 0 }
+        : undefined,
+      // The duel this pilot is standing in, and it is a READOUT: the client draws
+      // `count` and does not run a clock of its own, because a client that lied
+      // about the countdown would gain nothing anyway — every intent it could send
+      // is refused server-side while this is above zero. A bag field rather than a
+      // stream for the same reason `arena` is one: it is one small object about the
+      // viewer, so the set difference diffs it for free and it goes quiet between
+      // changes. Absence is information — the delta reports it gone and the bar
+      // comes off the screen.
+      duel: duelIn(V)
+        ? { count: +(duelIn(V).count ?? 0).toFixed(2),
+            foe: duelIn(V).name?.[duelIn(V).seats.find(t => t !== V.token)] ?? '',
+            // Who to aim at. It is on the wire rather than inferred from "the other
+            // ship in the sector" because inference is a second copy of the rule,
+            // and a duel where one pilot is dead has one ship in it.
+            id: byToken(duelIn(V).seats.find(t => t !== V.token))?.id ?? 0,
+            // Seconds left before it is called a draw, rounded to WHOLE seconds and
+            // that is not cosmetic. The bag is a set difference: any field that
+            // changes re-sends the object, so a float here would put this on the
+            // wire thirty times a second for the whole five minutes. Rounded, it
+            // moves once a second — and a clock nobody reads to two decimals has no
+            // use for the other twenty-nine.
+            left: Math.max(0, Math.ceil(DUEL_LIMIT - (Date.now() - duelIn(V).opened) / 1000)),
+            over: duelIn(V).over ? 1 : 0,
+            draw: duelIn(V).over?.draw ? 1 : 0,
+            won: duelIn(V).over && duelIn(V).over.winner === V.token ? 1 : 0 }
         : undefined,
       played: (V.acct.played ?? 0) + sessionSeconds(V.banked ?? V.acted, V.acted),
       // Who else is out there. A world with nobody in it should say so rather

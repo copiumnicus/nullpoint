@@ -37,7 +37,7 @@ import { burnOf, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn }
 import { holdShear, loudOf } from '../shared/tech.js';
 import { buildFor, stageDps, stageEhp, earnRate } from '../shared/balance.js';
 import { MAP_W, MAP_H, MAPS, GALAXY, mapOf, arenaId, parseArena, isArena,
-         ARENA_KEYS, ARENA_PREFIX } from '../shared/maps.js';
+         ARENA_KEYS, CLAIM_KEYS, ARENA_PREFIX } from '../shared/maps.js';
 import { MODULES, tiersOf, addMod, incomeOf, whyNotBuild, rowState, labPanel,
          LAB_TAB_KEYS } from '../shared/research.js';
 import { ARENAS, ARENA_MODULES, rosterOf, countOf, fieldEhp, fieldBounty, fieldDps,
@@ -45,6 +45,7 @@ import { ARENAS, ARENA_MODULES, rosterOf, countOf, fieldEhp, fieldBounty, fieldD
          missionText, mission, PAYS, RING_R, ARRIVE_R, LINGER, LIMIT, weightOf,
          BAR_TOP, BAR_LOW, BAR_H, HUD_LEFT, HUD_RIGHT } from '../shared/arena.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
+import { FOLD_SECS } from '../shared/fold.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -293,9 +294,16 @@ console.log('\nthe sector, which is a pure function of its id');
   check('an arena is not in the galaxy, so it is not on the chart and nothing seeds it',
     !GALAXY.some(isArena) && !Object.keys(MAPS).some(isArena),
     `${GALAXY.length} sectors a pilot can fly to, none of them a claim`);
+  // Rewritten rather than deleted when duels arrived. The rule it states is still
+  // exactly the rule — a mining tier with no field would be a rung nobody could ever
+  // buy — but ARENA_KEYS is now every INSTANCED sector and a duel is one of those
+  // without being a claim. CLAIM_KEYS is the half this rule was always about.
   check('every claim tier has a sector template and every template has a claim',
-    ARENA_KEYS.every(k => ARENAS[k]) && ARENA_MODULES.every(k => ARENA_KEYS.includes(k)),
+    CLAIM_KEYS.every(k => ARENAS[k]) && ARENA_MODULES.every(k => CLAIM_KEYS.includes(k)),
     ARENA_MODULES.join(' '));
+  check('and a duel is an instanced sector that is deliberately not a claim',
+    ARENA_KEYS.includes('duel') && !CLAIM_KEYS.includes('duel') && !ARENAS.duel,
+    `${ARENA_KEYS.length} instanced templates, ${CLAIM_KEYS.length} of them rocks`);
   check('and the claim list IS the mining ladder, read off research rather than written twice',
     ARENA_MODULES.join() === tiersOf('mine').join(),
     'a fourth mining tier with no field would be a rung nobody could buy');
@@ -741,6 +749,19 @@ const join = async (name, token = null) => {
 // The bag only arrives on a keyframe here, so ask for one and wait for it.
 const snap = async p => { p.bag = {}; p.send({ t: 'need' }); await wait(250); return p.bag; };
 
+// GOING TO A CLAIM IS A FOLD NOW, not a teleport. Five seconds standing still,
+// cancelled by anything that lands on you — the same fold a Recall Beacon runs, and
+// the reason it is the same one is that an instant, uninterruptible ride out of a
+// fight sitting free on the station panel is strictly better than the 3,400-credit
+// interruptible one, which is the shape rule five calls pay-to-win.
+//
+// So every entry below waits it out. The wait is FOLD_SECS plus a few ticks of
+// slack rather than a number somebody picked, so moving the fold moves the test
+// with it. It costs the suite about five seconds per claim entry and that is the
+// price of the fold actually being tested rather than mocked.
+const FOLD_WAIT = FOLD_SECS * 1000 + 500;
+const foldOut = async (p, msg, extra = 0) => { p.send(msg); await wait(FOLD_WAIT + extra); };
+
 const simSecs = (Date.now() - began) / 1000;
 console.log('\nevery way out of a claim, over a real socket');
 boot();
@@ -759,8 +780,7 @@ await wait(1600);
   await wait(200);
 
   // --- 1. IN --------------------------------------------------------------
-  p.send({ t: 'claim', key: 'mine1' });
-  await wait(300);
+  await foldOut(p, { t: 'claim', key: 'mine1' });
   bag = await snap(p);
   check('a claim puts you in a sector of your own, alone with the rock',
     isArena(p.map) && parseArena(p.map).key === 'mine1' && bag.arena?.total === countOf('mine1'),
@@ -791,8 +811,7 @@ await wait(1600);
   // --- 3. WON -------------------------------------------------------------
   p.chat('/tolab');
   await wait(200);
-  p.send({ t: 'claim', key: 'mine1' });
-  await wait(300);
+  await foldOut(p, { t: 'claim', key: 'mine1' });
   const wonIn = p.map;
   p.chat('/clear');
   await wait(400);
@@ -823,8 +842,7 @@ await wait(1600);
   // --- 5. REPLAY ----------------------------------------------------------
   const wasXp = bag.xp ?? 0;
   p.freed.length = 0; p.awards.length = 0;
-  p.send({ t: 'replay', key: 'mine1' });
-  await wait(300);
+  await foldOut(p, { t: 'replay', key: 'mine1' });
   bag = await snap(p);
   check('a freed rock can be flown again',
     isArena(p.map) && bag.arena?.replay === 1 && bag.arena?.left === countOf('mine1'),
@@ -865,8 +883,7 @@ await wait(1600);
   p.send({ t: 'buydevice', key: 'recall' });       // at the dock ring, before leaving
   await wait(300);
   const hadBeacon = p.devices.recall ?? 0;
-  p.send({ t: 'claim', key: 'mine2' });
-  await wait(300);
+  await foldOut(p, { t: 'claim', key: 'mine2' });
   check('the second claim is a different sector from the first',
     isArena(p.map) && p.map !== wonIn && parseArena(p.map).key === 'mine2', p.map);
   p.chat('/clear');
@@ -887,8 +904,7 @@ await wait(1600);
   // rock you have freed is a replay from then on.
   p.chat('/tolab');
   await wait(200);
-  p.send({ t: 'claim', key: 'mine3' });
-  await wait(300);
+  await foldOut(p, { t: 'claim', key: 'mine3' });
   const abandoned = isArena(p.map);
   p.close();
   await wait(500);
@@ -909,8 +925,7 @@ await wait(1600);
   await wait(250);
   r.chat('/tolab');
   await wait(200);
-  r.send({ t: 'claim', key: 'mine1' });
-  await wait(300);
+  await foldOut(r, { t: 'claim', key: 'mine1' });
   const inClaim = isArena(r.map);
   const r2 = await join('Twinned', r.token);       // the same account, a second tab
   await wait(400);
@@ -938,8 +953,7 @@ await wait(1600);
   await wait(250);
   s.chat('/tolab');
   await wait(200);
-  s.send({ t: 'claim', key: 'mine1' });
-  await wait(400);
+  await foldOut(s, { t: 'claim', key: 'mine1' }, 100);
   const wasIn = isArena(s.map) ? s.map : null;
   const tok = s.token;
   kill();

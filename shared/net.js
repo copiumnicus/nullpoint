@@ -70,8 +70,11 @@ export const unpackBlast = arr => { const o = {}; for (let i = 0; i < BLAST_FIEL
 
 // A cargo pod adrift in space.
 // `own` is the pilot a shared kill reserved this pod for, or 0 for anyone's.
-export const POD_FIELDS = ['id', 'x', 'y', 'mat', 'n', 'own'];
-export const packPod   = o   => [o.id, Math.round(o.x), Math.round(o.y), o.mat, o.n, o.own ?? 0];
+// `cr` is credits rather than ore — a duel's purse, dropped where the loser fell.
+// It is 0 on every pod the galaxy has ever produced, so it costs one zero per pod
+// on the keyframe and nothing at all per tick once the delta mask has seen it.
+export const POD_FIELDS = ['id', 'x', 'y', 'mat', 'n', 'own', 'cr'];
+export const packPod   = o   => [o.id, Math.round(o.x), Math.round(o.y), o.mat, o.n, o.own ?? 0, o.cr ?? 0];
 export const unpackPod = arr => { const o = {}; for (let i = 0; i < POD_FIELDS.length; i++) o[POD_FIELDS[i]] = arr[i]; return o; };
 
 // A damage number, floating up from where it landed. `sh` marks a hit the shields

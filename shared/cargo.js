@@ -127,6 +127,26 @@ export const DROPS = {
 // — anything already lying around, or a kill with no ledger — is anyone's.
 export const mayScoop = (pod, id) => !pod || !pod.own || pod.own === id;
 
+// --- a pod that is not ore ------------------------------------------------------
+//
+// A duel's stake is a tenth of the loser's CREDITS as well as their hold, and the
+// designer's line was "for the other player that they can pick up". Credits are not
+// a metal: they have no volume, no density, no refinery rung and no sale price, so
+// putting them in MATERIALS would give every one of those a meaningless answer and
+// the refinery a seventh rung it must never compress.
+//
+// So a bond is a pod with `cr` on it and a `mat` that is deliberately NOT a
+// material. Everything that asks a pod what it is goes through these three, which
+// is what stops `MATERIALS[pod.mat]` being undefined in six places — it was, and
+// the client drew a pod labelled `undefined` in the colour `#888` before this
+// existed. It never touches the hold, so a full hold can still pick one up: cargo
+// space is a reason to leave ore behind, and it would be a strange one to lose a
+// fight's whole purse to.
+export const BOND = { key: 'bond', name: 'Credit Bond', colour: '#e8c46a' };
+export const isBond    = pod => pod?.mat === BOND.key;
+export const podName   = pod => isBond(pod) ? BOND.name   : (MATERIALS[pod?.mat]?.name   ?? 'salvage');
+export const podColour = pod => isBond(pod) ? BOND.colour : (MATERIALS[pod?.mat]?.colour ?? '#8d7f6e');
+
 export const POD_LIFE   = 120;  // s before a pod disperses
 
 // How long a share stays reserved. A claim that held for the pod's whole life
@@ -266,7 +286,8 @@ export function beginScoop(ship, hold, pod, reach = SCOOP_R, speed = 0) {
   if (!pod) return 'gone';
   const away = Math.hypot(pod.x - ship.x, pod.y - ship.y);
   if (away > reach) return 'far';
-  if (stow({ ...hold }, pod.mat, 1, ship.stats.cargo) === 0) return 'full';
+  // A bond has no volume, so a full hold is not a reason to refuse one.
+  if (!isBond(pod) && stow({ ...hold }, pod.mat, 1, ship.stats.cargo) === 0) return 'full';
   const t = pullTime(away, speed);
   // `out` is the outbound leg, and it is what tells rigAt whether there is a drone
   // in this pull at all. Your own tractor beam has none.
@@ -308,9 +329,13 @@ export function stepScoop(scoop, pod, ship, hold, dt) {
   const elapsed = scoop.secs - scoop.t;
   const liftAt = scoop.out > 0 ? scoop.out + DWELL : scoop.secs;
   if (!scoop.done && elapsed >= liftAt) {
+    scoop.done = true;
+    // A bond goes onto the balance rather than into the hold, and it always goes
+    // whole — there is no partial lift of a number. `cr` is handed back for the
+    // caller to bank, because this file does not know what an account is.
+    if (isBond(pod)) return { running: scoop.out > 0, took: 0, cr: pod.cr ?? 0, emptied: true };
     const took = stow(hold, pod.mat, pod.n, ship.stats.cargo);
     pod.n -= took;
-    scoop.done = true;
     // An arm has no drone to fly home, so for it the lift IS the end.
     return { running: scoop.out > 0, took, emptied: pod.n <= 0 };
   }

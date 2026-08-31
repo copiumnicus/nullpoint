@@ -397,8 +397,13 @@ export function missionText({ key, left = 0, total = 0, cleared = false, replay 
 // when the window is too short for its rows — a thing you can see and cannot read
 // is the same bug as a row you can see and cannot click, and this codebase has
 // shipped that twice.
-export function mission(VIEW_W, state) {
-  const { tone, forms } = missionText(state);
+// The fitting itself, over any {tone, forms}. Split out from mission() because a
+// duel wants the SAME rectangle and the same "drop below the columns, then say
+// less" rules with different words in it — and a second copy of this would be a
+// second set of numbers for test/render.mjs to assert against, which is exactly
+// the drift rule one names. shared/duel.js supplies forms; it does not import this
+// file, and this file does not import it.
+export function bar(VIEW_W, { tone, forms }) {
   const wide = t => Math.round(t.length * CHAR) + BAR_PAD * 2;
   const band = VIEW_W - 2 * HUD_LEFT;             // room up beside the readouts
   const low  = VIEW_W - 2 * HUD_RIGHT;            // room below, beside the receipts
@@ -413,6 +418,7 @@ export function mission(VIEW_W, state) {
   const text = forms.at(-1), w = Math.min(wide(text), Math.max(80, VIEW_W - 32));
   return { x: Math.round((VIEW_W - w) / 2), y: BAR_LOW, w, h: BAR_H, text, tone };
 }
+export const mission = (VIEW_W, state) => bar(VIEW_W, missionText(state));
 export const BAR_TONE = { task: '#ff8f6b', won: '#7de08a' };
 
 // How long you stand in a freed claim before the station pulls you back.

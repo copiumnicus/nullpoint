@@ -8,9 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.70';
+export const VERSION = '0.71';
 
 export const PATCHES = [
+  { v: '0.71', notes: [
+    'Duels: /1v1 <callsign> challenges another pilot, /accept or /decline answers it',
+    'Both of you fold out to a sector a quarter the usual size, with a wall for an edge',
+    'Five seconds where nothing moves or fires, then it is a fight — and it is real PvP',
+    'The loser drops what dying costs: a tenth of their credits, and their whole hold',
+    'Both are pods the winner scoops. Leaving early is conceding, and it pays the same',
+    'A portal in the middle takes you home. Nobody falls in five minutes and it is a draw',
+    'Claims fold out now too — five seconds, and one hit cancels it. No more free escapes',
+  ] },
   { v: '0.70', notes: [
     'Drumfire got serious: a full drum is two and a half times your cycle, not half again',
     'That is twice what an interceptor throws with its whole reactor on its guns',
@@ -33,8 +42,7 @@ export const PATCHES = [
     'The docked prompt drops to the HUD’s own spacing instead of crowding the line above',
     'The game now knows what window you play in, and checks its own layout at that size',    'The shield bar counts down to the second your shields start coming back up',
     'It counts the delay your ship actually flies, so power in shields shortens the wait',
-    'At your own dock it counts to the dock’s clock instead, which comes round sooner',
-  ] },
+    'At your own dock it counts to the dock’s clock instead, which comes round sooner',  ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
     'Half again the shots at full, and your reach drops to 65% to pay for it',

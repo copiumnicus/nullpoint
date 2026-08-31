@@ -42,7 +42,44 @@ export const DRIFT_MAX    = 2000;   // hull/s out at the hard limit — steep en
 export const WORLD = { x0: -DRIFT_MARGIN, y0: -DRIFT_MARGIN,
                        x1: MAP_W + DRIFT_MARGIN, y1: MAP_H + DRIFT_MARGIN };
 
-export const driftDepth = (x, y) => Math.max(0, -x, x - MAP_W, -y, y - MAP_H);
+// --- THE SIZE TRAVELS WITH THE MAP ---------------------------------------------
+//
+// MAP_W and MAP_H were a global fact about every sector, and they still are for
+// every sector in the galaxy. A duel arena is a quarter of that by area, and it is
+// the first sector that is not the standard size — so "how big is this place" has
+// to become a question you ask a sector rather than a constant you import.
+//
+// Both of these DEFAULT to the globals, which is what makes this a small change
+// rather than a rewrite of nine files: every existing caller that has no sector in
+// hand keeps the answer it always had, and only the places that genuinely know
+// which sector they are talking about pass one. The client's minimap and the
+// server's course clamp are the two that matter, and they now ask the same
+// function — a client drawing at one scale while the server clamps at another is
+// exactly the class of bug rule one exists to prevent.
+//
+// `sizeOf` is the CHARTED rectangle: what the minimap draws, 0..w by 0..h.
+export const sizeOf = map => ({ w: map?.w ?? MAP_W, h: map?.h ?? MAP_H });
+
+// `boundsOf` is where a hull can physically be, which is not the same rectangle.
+//
+// In the galaxy it is the charted zone plus the drift margin: space keeps going and
+// the shear bills you for it. In a `wall` sector it is the charted zone exactly,
+// and the edge is hard — you stop and you take nothing. A duel wants the wall,
+// because a boundary made of damage is a way to shove somebody to death rather
+// than shoot them, and that turns a gunfight into a wrestling match.
+export const boundsOf = map => map?.wall
+  ? { x0: 0, y0: 0, x1: map.w ?? MAP_W, y1: map.h ?? MAP_H }
+  : WORLD;
+
+// Drift is measured against the CHARTED zone of whatever sector you are in. A
+// walled sector has none by construction — its bounds and its charted zone are the
+// same rectangle, so there is nowhere inside it that is outside — and passing no
+// map keeps the galaxy's answer, which is every existing caller.
+export const driftDepth = (x, y, map = null) => {
+  if (map?.wall) return 0;
+  const { w, h } = sizeOf(map);
+  return Math.max(0, -x, x - w, -y, y - h);
+};
 // `grace` is how much of the margin something aboard is nulling for you, in px.
 // It is a plain argument rather than a lookup because this file deliberately
 // knows nothing about the shop: shared/tech.js decides who gets any and what it
@@ -139,7 +176,12 @@ export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.forma
 // Two distinct intents, because they are genuinely different orders:
 //   tap       -> a DESTINATION. Fly there, arrive, stop.
 //   hold+drag -> a DIRECTION. Thrust that way for as long as it's held.
-export function step(s, dt) {
+//
+// `bounds` is where the hull may physically be — boundsOf(map) — and it DEFAULTS to
+// the galaxy's, so every caller that has no sector in hand is unchanged. A duel
+// arena is a quarter the size and hands its own, which is the only way the edge a
+// pilot is stopped at and the edge their minimap draws can be the same edge.
+export function step(s, dt, bounds = WORLD) {
   if (s.jumpCd > 0) s.jumpCd -= dt;
   stepPower(s.power, dt, s.stats);
   const thr = boostOf(s.power, 'thrusters', s.stats);
@@ -180,10 +222,10 @@ export function step(s, dt) {
   s.x += s.vx * dt;
   s.y += s.vy * dt;
 
-  if (s.x < WORLD.x0 + s.r) { s.x = WORLD.x0 + s.r; s.vx = 0; }
-  if (s.x > WORLD.x1 - s.r) { s.x = WORLD.x1 - s.r; s.vx = 0; }
-  if (s.y < WORLD.y0 + s.r) { s.y = WORLD.y0 + s.r; s.vy = 0; }
-  if (s.y > WORLD.y1 - s.r) { s.y = WORLD.y1 - s.r; s.vy = 0; }
+  if (s.x < bounds.x0 + s.r) { s.x = bounds.x0 + s.r; s.vx = 0; }
+  if (s.x > bounds.x1 - s.r) { s.x = bounds.x1 - s.r; s.vx = 0; }
+  if (s.y < bounds.y0 + s.r) { s.y = bounds.y0 + s.r; s.vy = 0; }
+  if (s.y > bounds.y1 - s.r) { s.y = bounds.y1 - s.r; s.vy = 0; }
 
   if (Math.hypot(s.vx, s.vy) > 1) s.heading = Math.atan2(s.vy, s.vx);
 }
@@ -273,15 +315,25 @@ const poolMult = s => boostOf(s.power, 'shields', s.stats) * swellOf(hullOf(s), 
 // told to wait shieldDelay would be reading a number that was already wrong by
 // two seconds. Whichever arrives first is the honest answer, and it is the same
 // one stepVitals acts on.
-export function shieldWait(s, docked = false, m = poolMult(s)) {
+// `dry` is a sector where shields do not come back at all. It was briefly true of
+// asteroid claims and should not have been — a claim is meant to be hard because
+// nothing in it ever breaks off, not because a mechanic was taken away, and the
+// designer said so. It is true of a DUEL, for a reason that belongs to duels:
+// regeneration is 3.33% of the pool a second, which refills a finished ship in
+// half a minute, so two evenly matched pilots in a 6,000px box with that running
+// have an obvious dominant line and it is to kite until the wall and take the
+// draw. Without it, the ship each of them arrives in is all they get and somebody
+// has to commit. A repair kit still works, because five seconds of not being shot
+// at is a decision rather than a rest button.
+export function shieldWait(s, docked = false, dry = false, m = poolMult(s)) {
   if (!(s.stats.shieldRegen > 0)) return null;      // nothing to come back at all
   if (s.shield >= s.stats.shield * m) return null;  // already full: nothing pending
-  const field = s.stats.shieldDelay / m;
+  const field = dry ? Infinity : s.stats.shieldDelay / m;
   const at = docked ? Math.min(DOCK_INTERRUPT, field) : field;
   return Number.isFinite(at) ? Math.max(0, at - (s.sinceHit ?? 1e9)) : null;
 }
 
-export function stepVitals(s, dt, docked = false) {
+export function stepVitals(s, dt, docked = false, dry = false) {
   s.sinceHit += dt;
   s.sinceShot = (s.sinceShot ?? 1e9) + dt;   // a veil rebuilds from this
   if (s.shieldHit > 0) s.shieldHit = Math.max(0, s.shieldHit - dt);
@@ -308,7 +360,7 @@ export function stepVitals(s, dt, docked = false) {
   }
   // The gate and the HUD's countdown are the same rule, asked the same way: a
   // wait of anything but exactly zero means the shields are not coming back yet.
-  if (shieldWait(s, docked, m) !== 0) return;
+  if (shieldWait(s, docked, dry, m) !== 0) return;
   // A SHARE of the pool, so the seconds to full do not change when the pool does.
   // `max` already carries the power boost and the hull ability, so a bigger shield
   // refills proportionally faster and an Anchored Bulwark is not punished for the
@@ -345,8 +397,11 @@ export function drainHull(s, amount) {
 
 // Shear is ordinary damage: it eats shields first and, because applyDamage resets
 // the timer every tick, they never start coming back while you are still out there.
-export function stepDrift(s, dt, grace = 0) {
-  const dps = driftDps(driftDepth(s.x, s.y), grace);
+// `map` defaults to null, which means the galaxy's charted zone — every existing
+// caller. A walled sector reports no depth anywhere inside itself, so a duel takes
+// no shear at all and cannot be won by pushing somebody over a line.
+export function stepDrift(s, dt, grace = 0, map = null) {
+  const dps = driftDps(driftDepth(s.x, s.y, map), grace);
   return dps > 0 ? applyDamage(s, dps * dt) : null;
 }
 

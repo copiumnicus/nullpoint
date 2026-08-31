@@ -8,13 +8,14 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES, mapOf, isArena } from '/shared/maps.js';
-import { mission, BAR_TONE, whyNotClaim, whyNotReplay, claimState } from '/shared/arena.js';
+import { mission, bar as missionBar, BAR_TONE, whyNotClaim, whyNotReplay, claimState } from '/shared/arena.js';
+import { duelText, mayAim } from '/shared/duel.js';
 import { LAYER_NAME, STAT_STEP, fmt as statFmt, improves, VALUE_AT, LABEL_PX } from '/shared/breakdown.js';
 import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
 import { unpackLab } from '/shared/net.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
-         DRIFT_MARGIN, WORLD, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
+         DRIFT_MARGIN, WORLD, boundsOf, sizeOf, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
 import { havenBadge, havenLine, TONE } from '/shared/haven.js';
 import { filePanel, filedIn, dossierOf, fileProgress, totalKills,
          FILE_PAD, FILE_HEAD, FILE_ROW } from '/shared/threats.js';
@@ -52,7 +53,7 @@ import { burnOf, burnR } from '/shared/burn.js';
 import { sowOf, HOLD } from '/shared/ground.js';
 import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
-         SCOOP_R, CURRENCY } from '/shared/cargo.js';
+         SCOOP_R, CURRENCY, isBond, podName, podColour } from '/shared/cargo.js';
 import { ALIENS, outlineOf, payloadOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
 import { seenAs } from '/shared/stealth.js';
@@ -157,6 +158,11 @@ let labs = new Map();             // every research station in this sector
 let myLab = null;                 // { mods, income } if you have one
 let myClaims = [];                // mining rocks already freed
 let arena = null;                 // { key, left, total, cleared, replay } while standing on a claim
+// The duel you are standing in, as the server sees it: { count, foe, id, left, over,
+// draw, won }. `count` is a READOUT and not a clock of our own — the server refuses
+// every intent while it is above zero, so a client running its own would only ever
+// be lying to the person holding it.
+let duel = null;
 let labOpen = false;              // the research panel
 let labTab = 'ladder';            // RESEARCH, or the CLAIMS page you go back out from
 // Staking is permanent and costs 500,000, and a pilot doing it for the first time
@@ -977,7 +983,7 @@ function spaceAction() {
   const pod = pods.filter(pd => Math.hypot(pd.x - me2.rx, pd.y - me2.ry) <= SCOOP_R)
                   .sort((a, b) => Math.hypot(a.x - me2.rx, a.y - me2.ry)
                                 - Math.hypot(b.x - me2.rx, b.y - me2.ry))[0];
-  if (pod) return { kind: 'scoop', pod, label: `haul in ${MATERIALS[pod.mat]?.name ?? 'cargo'}` };
+  if (pod) return { kind: 'scoop', pod, label: `haul in ${podName(pod)}` };
   return { kind: 'none' };
 }
 
@@ -1103,6 +1109,24 @@ ws.onmessage = e => {
                  : `THE CLAIM IS YOURS — ${String(m.what).toUpperCase()} MAY COMMENCE`, '#7de08a');
     return;
   }
+  // Somebody wants a fight. The line is a `say()` rather than a modal because a
+  // challenge must never take the controls away from a pilot who is flying — being
+  // yanked out of a fight by a stranger's popup is the harassment this whole
+  // consent path exists to prevent. The chat line beside it carries the stake, and
+  // the answer is two words you type when you have a spare hand.
+  if (m.t === 'challenge') {
+    say(`${m.from} CHALLENGES YOU — /accept OR /decline (${m.secs}s)`, '#ff8f6b');
+    return;
+  }
+  // And how it ended. Credits are re-read off the next bag either way; this is the
+  // sentence, and it says the number because the number is the whole point.
+  if (m.t === 'duelend') {
+    say(m.draw ? 'TIME — NEITHER OF YOU FELL, AND NOTHING CHANGED HANDS'
+       : m.won ? `YOU WON — ${fmtCredits(m.cr)} ${CURRENCY.short} AND THEIR HOLD ARE ON THE FLOOR`
+               : `YOU LOST — ${fmtCredits(m.cr)} ${CURRENCY.short} AND YOUR HOLD WENT WITH THE SHIP`,
+        m.draw ? '#8ab4e6' : m.won ? '#7de08a' : '#e0a53f');
+    return;
+  }
   if (m.t === 'award') {
     credits = m.total;
     // A shared bounty that reads exactly like a solo one teaches nobody the system
@@ -1170,6 +1194,12 @@ ws.onmessage = e => {
   // the session after the station pulled the pilot home, which is the same bug as
   // one that never appears.
   arena = m.arena ?? null;
+  // Unconditionally, exactly like `arena` above and for the same reason a live
+  // socket taught: a bag field that goes away is reported in the delta's `gone` list
+  // and decodeDelta hands back the WHOLE bag, so absence is information. Guarding
+  // this with `'duel' in m` would leave the bar and the countdown on screen for the
+  // rest of the session after the duel ended.
+  duel = m.duel ?? null;
   hold = m.hold ?? {}; cargoCap = m.cap ?? cargoCap;
   vault = m.vault ?? vault;
   // The balance, and the moment it was true. Everything between banks is drawn by
@@ -1279,7 +1309,11 @@ const docked = () => {
 function hostileAt(wx, wy) {
   let best = null, bestD = Infinity;
   for (const [id, sh] of ships) {
-    if (sh.co !== 'x' || sh.vis === STALE) continue;
+    // `mayAim` rather than `co === 'x'`. It is the same predicate the server uses on
+    // the intent, so a shot this offers is a shot that will be taken — the other
+    // pilot inside a duel whose clock has let go, and a hostile everywhere else.
+    if (!mayAim({ co: sh.co, id }, { foeId: duel?.id ?? null, count: duel?.count ?? 0 })
+        || sh.vis === STALE) continue;
     const d = Math.hypot(sh.rx - wx, sh.ry - wy);
     if (d < rOf(sh) + PICK_SLACK && d < bestD) { bestD = d; best = id; }
   }
@@ -1304,7 +1338,8 @@ function nearestHostile() {
   if (!me) return null;
   let best = null, bestD = Infinity;
   for (const [id, sh] of ships) {
-    if (sh.co !== 'x' || sh.vis === STALE) continue;
+    if (!mayAim({ co: sh.co, id }, { foeId: duel?.id ?? null, count: duel?.count ?? 0 })
+        || sh.vis === STALE) continue;
     const d = Math.hypot(sh.rx - me.rx, sh.ry - me.ry);
     if (d < bestD) { bestD = d; best = id; }
   }
@@ -1388,8 +1423,10 @@ addEventListener('keydown', e => {
     e.preventDefault();
     const act = spaceAction();
     if (act.kind === 'scoop') {
-      if (holdFullFor(hold, act.pod.mat, cargoCap))
-        return say(`Hold is full — no room for ${MATERIALS[act.pod.mat]?.name ?? 'that'}`, '#e0a53f');
+      // A bond is credits, not cargo — it has no volume, so a full hold is never a
+      // reason to refuse one. beginScoop() on the server makes the same exception.
+      if (!isBond(act.pod) && holdFullFor(hold, act.pod.mat, cargoCap))
+        return say(`Hold is full — no room for ${podName(act.pod)}`, '#e0a53f');
       return send({ t: 'scoop', id: act.pod.id });
     }
     if (act.kind === 'stow') {
@@ -1475,8 +1512,8 @@ c.addEventListener('pointerdown', e => {
   if (can) { lastClick = { t: performance.now(), x: v.x, y: v.y };
              marker = { x: can.x, y: can.y };        // show the course you just ordered
              {
-               if (holdFullFor(hold, can.mat, cargoCap))
-                 return say(`Hold is full — no room for ${MATERIALS[can.mat]?.name ?? 'that'}`, '#e0a53f');
+               if (!isBond(can) && holdFullFor(hold, can.mat, cargoCap))
+                 return say(`Hold is full — no room for ${podName(can)}`, '#e0a53f');
                return send({ t: 'scoop', id: can.id });
              } }
 
@@ -1489,8 +1526,12 @@ c.addEventListener('pointerdown', e => {
   } else lastClick = { t: now2, x: v.x, y: v.y };
 
   if (v.x > MM_X && v.y > MM_Y) {                     // minimap click = destination order
-    marker = { x: clamp((v.x - MM_X) / MM_W * MAP_W, 0, MAP_W),
-               y: clamp((v.y - MM_Y) / MM_H * MAP_H, 0, MAP_H) };   // the minimap IS charted space
+    // Against the SECTOR's own size. Reading the galaxy's here while the plot was
+    // drawn at a quarter of it would send every duel course order to four times
+    // the distance it was clicked at, straight into the wall.
+    const S = sizeOf(mapOf(mapId));
+    marker = { x: clamp((v.x - MM_X) / MM_W * S.w, 0, S.w),
+               y: clamp((v.y - MM_Y) / MM_H * S.h, 0, S.h) };   // the minimap IS charted space
     return send({ t: 'intent', mode: 'pt', x: marker.x, y: marker.y });
   }
   held = true; steering = false; downAt = performance.now(); cur = down = v;
@@ -3479,11 +3520,16 @@ function drawFrame(now) {
   setThrust(thrust);
 
   for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
+  // The camera is held inside THIS SECTOR's bounds, which is the galaxy's rectangle
+  // plus the drift margin everywhere except a duel arena — a quarter the size, with
+  // a hard edge. boundsOf() is what the server clamps a course with, so the frame
+  // and the wall are the same rectangle.
   if (me) {
-    cam.x = clamp(me.rx - WVW / 2, WORLD.x0, Math.max(WORLD.x0, WORLD.x1 - WVW));
-    cam.y = clamp(me.ry - WVH / 2, WORLD.y0, Math.max(WORLD.y0, WORLD.y1 - WVH));
+    const B = boundsOf(map);
+    cam.x = clamp(me.rx - WVW / 2, B.x0, Math.max(B.x0, B.x1 - WVW));
+    cam.y = clamp(me.ry - WVH / 2, B.y0, Math.max(B.y0, B.y1 - WVH));
   }
-  const depth = me ? driftDepth(me.x, me.y) : 0;
+  const depth = me ? driftDepth(me.x, me.y, map) : 0;
   if (marker && me && Math.hypot(marker.x - me.x, marker.y - me.y) < 12) marker = null;
   const atPortal = me ? nearPortal(map, { x: me.x, y: me.y, jumpCd: 0 }) : null;
   const charge = me?.charge ?? 0;
@@ -3691,7 +3737,11 @@ function drawFrame(now) {
 
   const idle = 0.6 + 0.4 * Math.sin(now / 420);
   for (const p of map.portals) {
-    const tint = MAPS[p.to].tint;
+    // A duel's way home carries its own tint and names no destination map — see
+    // shared/duel.js. `MAPS[undefined].tint` inside drawFrame is caught by the
+    // wrapper above, which sets the flag that suppresses every LATER error too, so
+    // the whole canvas goes black with the socket still running.
+    const tint = p.tint ?? MAPS[p.to].tint;
     const spooling = charge > 0 && atPortal === p;
     let r = PORTAL_R;
     if (spooling) {
@@ -3708,7 +3758,7 @@ function drawFrame(now) {
       g.stroke();
     }
     g.fillStyle = tint; g.textAlign = 'center';
-    g.fillText(MAPS[p.to].name.toUpperCase(), p.x, p.y - PORTAL_R * 1.45 - 14);
+    g.fillText(p.home ? 'THE WAY OUT' : MAPS[p.to].name.toUpperCase(), p.x, p.y - PORTAL_R * 1.45 - 14);
   }
   g.textAlign = 'left';
 
@@ -3719,7 +3769,7 @@ function drawFrame(now) {
   }
 
   for (const pod of pods) {
-    const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+    const col = podColour(pod);
     // Another pilot's share is drawn faint and does not pulse: still visible, so
     // the field reads honestly, but plainly not yours to go for.
     const mine3 = mayScoop(pod, myId);
@@ -3738,13 +3788,17 @@ function drawFrame(now) {
       g.strokeStyle = col; g.lineWidth = 1.4; g.setLineDash([3, 4]);
       g.beginPath(); g.arc(pod.x, pod.y, 21, 0, 7); g.stroke(); g.setLineDash([]);
       g.fillStyle = col; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
-      g.fillText(`${MATERIALS[pod.mat]?.name ?? pod.mat} — click to ${reachable ? 'haul in' : 'fly over and collect'}`,
+      g.fillText(`${podName(pod)} — click to ${reachable ? 'haul in' : 'fly over and collect'}`,
                  pod.x, pod.y + 32);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
     {
       g.fillStyle = col; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
-      g.fillText((MATERIALS[pod.mat]?.sym ?? '?') + (pod.n > 1 ? ' ×' + pod.n : ''), pod.x, pod.y - 18);
+      // A bond says what it is worth, because that is the only thing about it there
+      // is to know — a metal's symbol and a count would both be meaningless on one.
+      g.fillText(isBond(pod) ? fmtCredits(pod.cr ?? 0)
+                             : (MATERIALS[pod.mat]?.sym ?? '?') + (pod.n > 1 ? ' ×' + pod.n : ''),
+                 pod.x, pod.y - 18);
       g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     }
   }
@@ -3752,7 +3806,7 @@ function drawFrame(now) {
   if (want && me) {                                // on the way to fetch something
     const pod = pods.find(p => p.id === want);
     if (pod) {
-      const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+      const col = podColour(pod);
       g.strokeStyle = col; g.globalAlpha = 0.45; g.lineWidth = 1.5; g.setLineDash([9, 8]);
       g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
       g.setLineDash([]); g.globalAlpha = 1;
@@ -3772,7 +3826,7 @@ function drawFrame(now) {
       // No beam. The drone flying out and back IS the animation. It carries the
       // ore home on the return leg, which the wire now names rather than guesses.
       if (leg === 2) {
-        const col = MATERIALS[pod?.mat]?.colour ?? '#c2a24f';
+        const col = podColour(pod ?? {});
         g.fillStyle = col;
         g.beginPath(); g.arc(me.rgx, me.rgy, 4.5, 0, 7); g.fill();
         g.globalAlpha = 0.35;
@@ -3780,7 +3834,7 @@ function drawFrame(now) {
         g.globalAlpha = 1;
       }
     } else if (pod) {                              // your own arm: a proper beam
-      const col = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
+      const col = podColour(pod);
       const px = pod.x + (me.rx - pod.x) * scoop.p, py = pod.y + (me.ry - pod.y) * scoop.p;
       g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 10;
       g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(pod.x, pod.y); g.stroke();
@@ -4469,7 +4523,10 @@ function drawFrame(now) {
       g.globalAlpha = 1;
     }
 
-    if (hover && s.co === 'x' && !lost && id === hostileAt(toWorld(hover).x, toWorld(hover).y) && id !== me?.tgt) {
+    // The hover ring follows what is actually clickable, so the other pilot in a
+    // duel gets one too. `hostileAt` already answers with mayAim, so testing `co`
+    // again here would have drawn nothing over the one ship you can shoot.
+    if (hover && !lost && id === hostileAt(toWorld(hover).x, toWorld(hover).y) && id !== me?.tgt) {
       g.strokeStyle = 'rgba(255,140,120,0.55)'; g.lineWidth = 1.2; g.setLineDash([3, 4]);
       g.beginPath(); g.arc(s.rx, s.ry, R + 13, 0, 7); g.stroke(); g.setLineDash([]);
     }
@@ -4785,7 +4842,9 @@ function drawFrame(now) {
   // throws inside drawFrame — which catches, sets the flag that suppresses every
   // later error, and leaves a permanently black canvas with the socket still up.
   if ((atPortal || charge > 0) && map.portals.length) {
-    const p = atPortal ?? map.portals[0], tint = MAPS[p.to].tint, b = btn();
+    // `p.tint` first, for the same reason the plot's portal dots read it: a duel's
+    // way home has no destination map, because it sends each pilot to their own.
+    const p = atPortal ?? map.portals[0], tint = p.tint ?? MAPS[p.to].tint, b = btn();
     const prog = charge > 0 ? 1 - charge / JUMP_TIME : 0;
     g.fillStyle = 'rgba(6,10,16,0.9)';
     g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 6); g.fill();
@@ -4798,12 +4857,19 @@ function drawFrame(now) {
     g.beginPath(); g.roundRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1, 6); g.stroke();
     g.fillStyle = tint; g.textAlign = 'center'; g.font = '13px ui-monospace, monospace';
     g.fillText(charge > 0 ? `SPOOLING  ${charge.toFixed(1)}s  ·  CLICK TO ABORT`
-                          : `JUMP  →  ${MAPS[p.to].name.toUpperCase()}`, b.x + b.w / 2, b.y + 29);
+                          : p.home ? 'JUMP  →  YOUR HANGAR'
+                                   : `JUMP  →  ${MAPS[p.to].name.toUpperCase()}`, b.x + b.w / 2, b.y + 29);
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
   // --- minimap ---
-  const sx = MM_W / MAP_W, sy = MM_H / MAP_H;
+  // THE MINIMAP IS THIS SECTOR, not the galaxy's standard rectangle. A duel arena
+  // is 6,000 x 4,000 against everywhere else's 12,000 x 8,000, and drawing it at
+  // the galaxy's scale would put both ships in the top-left quarter of the plot and
+  // clamp every minimap course order to a rectangle four times too big. Same aspect
+  // by construction, so the box itself does not change shape.
+  const MMS = sizeOf(map);
+  const sx = MM_W / MMS.w, sy = MM_H / MMS.h;
   g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(MM_X, MM_Y, MM_W, MM_H);
   g.strokeStyle = map.tint + '99'; g.lineWidth = 1; g.strokeRect(MM_X + .5, MM_Y + .5, MM_W - 1, MM_H - 1);
   if (map.outpost) {                               // a ring on the plot, so it can be found
@@ -4824,11 +4890,14 @@ function drawFrame(now) {
     g.fillStyle = col; g.fillRect(MM_X + b.x * sx - 2, MM_Y + b.y * sy - 2, 4, 4);
   }
   for (const p of map.portals) {
-    g.fillStyle = MAPS[p.to].tint;
+    // `p.tint` first: a duel's way home names no destination map at all, because it
+    // sends each of the two pilots to a different hangar. `MAPS[p.to]` is undefined
+    // for it and `.tint` on that is the black-screen bug this whole guard exists for.
+    g.fillStyle = p.tint ?? MAPS[p.to].tint;
     g.fillRect(MM_X + p.x * sx - 2.5, MM_Y + p.y * sy - 2.5, 5, 5);
   }
   if (marker && me) {                                 // course line, drawn under the dots
-    const mx = MM_X + clamp(marker.x, 0, MAP_W) * sx, my = MM_Y + clamp(marker.y, 0, MAP_H) * sy;
+    const mx = MM_X + clamp(marker.x, 0, MMS.w) * sx, my = MM_Y + clamp(marker.y, 0, MMS.h) * sy;
     g.strokeStyle = 'rgba(74,144,217,0.75)'; g.lineWidth = 1; g.setLineDash([3, 3]);
     g.beginPath(); g.moveTo(MM_X + me.rx * sx, MM_Y + me.ry * sy); g.lineTo(mx, my); g.stroke();
     g.setLineDash([]);
@@ -4841,7 +4910,7 @@ function drawFrame(now) {
   g.beginPath(); g.rect(MM_X, MM_Y, MM_W, MM_H); g.clip();
 
   if (me) {                                        // the sweep itself, expanding out to radar range
-    const cx = MM_X + clamp(me.rx, 0, MAP_W) * sx, cy = MM_Y + clamp(me.ry, 0, MAP_H) * sy;
+    const cx = MM_X + clamp(me.rx, 0, MMS.w) * sx, cy = MM_Y + clamp(me.ry, 0, MMS.h) * sy;
     const reach = st.radar * sx;                 // the sweep itself, no ring left behind
     for (const off of [0, 0.5]) {
       const ph = ((now / 2400) + off) % 1;
@@ -4853,12 +4922,12 @@ function drawFrame(now) {
   }
 
   for (const pod of pods) {
-    g.fillStyle = MATERIALS[pod.mat]?.colour ?? '#9aa3ad';
-    g.fillRect(MM_X + clamp(pod.x, 0, MAP_W) * sx - 1, MM_Y + clamp(pod.y, 0, MAP_H) * sy - 1, 2, 2);
+    g.fillStyle = podColour(pod);                  // a bond is credits, not a metal
+    g.fillRect(MM_X + clamp(pod.x, 0, MMS.w) * sx - 1, MM_Y + clamp(pod.y, 0, MMS.h) * sy - 1, 2, 2);
   }
   for (const [id, s] of ships) {
-    const off = driftDepth(s.x, s.y) > 0;          // clamp strays to the frame so they stay findable
-    const mx = MM_X + clamp(s.rx, 0, MAP_W) * sx, my = MM_Y + clamp(s.ry, 0, MAP_H) * sy;
+    const off = driftDepth(s.x, s.y, map) > 0;     // clamp strays to the frame so they stay findable
+    const mx = MM_X + clamp(s.rx, 0, MMS.w) * sx, my = MM_Y + clamp(s.ry, 0, MMS.h) * sy;
     if (s.co === 'x') {                            // hostiles: a pulsing diamond, never a ping ring
       // A Bandit is as faint on the plot as it is out the window, and drops off
       // it entirely at the aspects where you cannot see it either.
@@ -4901,7 +4970,7 @@ function drawFrame(now) {
   // The viewport can hang off charted space now, so draw only the part of it that
   // the plot actually covers — clipped to the frame, half a pixel in for the stroke.
   const vx0 = Math.max(0, cam.x), vy0 = Math.max(0, cam.y);
-  const vx1 = Math.min(MAP_W, cam.x + WVW), vy1 = Math.min(MAP_H, cam.y + WVH);
+  const vx1 = Math.min(MMS.w, cam.x + WVW), vy1 = Math.min(MMS.h, cam.y + WVH);
   if (vx1 > vx0 && vy1 > vy0) {
     const L = Math.max(MM_X + .5, MM_X + vx0 * sx), T = Math.max(MM_Y + .5, MM_Y + vy0 * sy);
     const R = Math.min(MM_X + MM_W - .5, MM_X + vx1 * sx), B = Math.min(MM_Y + MM_H - .5, MM_Y + vy1 * sy);
@@ -5228,9 +5297,21 @@ function drawFrame(now) {
   // of both HUD columns — the rectangle comes from shared/arena.js because the
   // render harness asserts it does not land on the changelog icon, the safe-zone
   // badge or the first receipt, and it can only assert that against one source.
-  if (arena) {
-    const b = mission(VIEW_W, { key: arena.key, left: arena.left, total: arena.total,
-                                cleared: !!arena.cleared, replay: !!arena.replay });
+  // One bar, two kinds of sector. `missionBar` is shared/arena.js's rectangle — the
+  // same fitting rules and the same render-harness assertions that it clears the
+  // changelog icon, the safe-zone badge and the first receipt — and duelText only
+  // supplies the words. A second copy of that geometry is a second set of numbers
+  // for the harness to disagree with.
+  const barState = arena
+    ? mission(VIEW_W, { key: arena.key, left: arena.left, total: arena.total,
+                        cleared: !!arena.cleared, replay: !!arena.replay })
+    : duel
+      ? missionBar(VIEW_W, duelText({ count: duel.count ?? 0, foe: duel.foe ?? '',
+                                      over: !!duel.over, won: !!duel.won,
+                                      draw: !!duel.draw, left: duel.left ?? 0 }))
+      : null;
+  if (barState) {
+    const b = barState;
     const col = BAR_TONE[b.tone] ?? BAR_TONE.task;
     g.fillStyle = 'rgba(6,10,16,0.93)'; g.fillRect(b.x, b.y, b.w, b.h);
     g.strokeStyle = col; g.lineWidth = 1;
@@ -5240,6 +5321,30 @@ function drawFrame(now) {
     g.fillStyle = col;
     g.fillText(b.text, b.x + b.w / 2, b.y + 19);
     g.textAlign = 'left';
+  }
+
+  // THE COUNTDOWN, big and in the middle, and it is a READOUT. `duel.count` is the
+  // server's own number off the wire — the client runs no clock of its own here, and
+  // could gain nothing by running a faster one: every intent it can send is refused
+  // server-side and both hulls are pinned at zero velocity until this reaches zero.
+  // Drawn from the whole seconds so it counts 5, 4, 3, 2, 1 rather than showing a
+  // float, and it is above the bar rather than in it because a number you have to
+  // read a sentence to find is not a countdown.
+  if (duel && (duel.count ?? 0) > 0) {
+    const n = Math.ceil(duel.count);
+    const frac = n - duel.count;                   // 0 at the top of each second
+    g.save();
+    g.textAlign = 'center';
+    g.globalAlpha = 0.25 + 0.55 * (1 - frac);
+    g.font = '84px ui-monospace, monospace';
+    g.fillStyle = '#ff8f6b';
+    g.fillText(String(n), VIEW_W / 2, VIEW_H * 0.42);
+    g.globalAlpha = 0.9;
+    g.font = '13px ui-monospace, monospace';
+    g.fillStyle = '#ffc8b4';
+    g.fillText('ENGINES AND GUNS ARE HELD', VIEW_W / 2, VIEW_H * 0.42 + 26);
+    g.restore();
+    g.textAlign = 'left'; g.globalAlpha = 1; g.font = '12px ui-monospace, monospace';
   }
 
   stirMusic(now);

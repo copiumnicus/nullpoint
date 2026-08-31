@@ -6,9 +6,14 @@
 // The table is the seam: everything here is keyed, tiered and priced the same
 // way, so a second device is a row of data rather than another slot.
 
+// `secs` is read from shared/fold.js and not written here. The beacon used to own
+// the fold; it is now one caller of a general one that a claim and a duel also use,
+// and three copies of "five seconds" is three chances for two of them to disagree.
+import { FOLD_SECS } from './fold.js';
+
 export const DEVICES = {
   recall: {
-    name: 'Recall Beacon', tier: 1, secs: 5.0, price: 3400,
+    name: 'Recall Beacon', tier: 1, secs: FOLD_SECS, price: 3400,
     blurb: 'Folds you to any hangar you own. One hit cancels it.',
   },
 };

@@ -26,7 +26,8 @@ import { havenBadge, HAVEN_COPY, HAVEN_BROKEN } from '../shared/haven.js';
 import { filePanel, filedIn, dossierOf } from '../shared/threats.js';
 import { labPanel, LAB_PRICE, MODULES } from '../shared/research.js';
 import { arenaId, mapOf } from '../shared/maps.js';
-import { countOf, mission, ARENA_MODULES } from '../shared/arena.js';
+import { countOf, mission, bar as missionBar, ARENA_MODULES } from '../shared/arena.js';
+import { DUEL_KEY, startsAt, duelText } from '../shared/duel.js';
 import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
 import { Tracker, textWidth, alphaOf } from './uibox.mjs';
@@ -1380,6 +1381,122 @@ const dismiss = () => {
   if (a.some(c => /HOSTILES LEFT|CLAIM FREED|FIELD CLEAR/.test(c)))
     errs.push('the mission bar stayed on screen after the station pulled the pilot home');
   else console.log('claim: the bar goes away with the sector — absence is information');
+}
+
+// A DUEL, which is the first instanced sector that has a portal in it.
+//
+// The claim block above exists because `map.portals[0]` is undefined in an arena and
+// `MAPS[undefined].tint` is a black screen. A duel makes that guard load-bearing in
+// the other direction: it HAS a portal, and that portal names no destination map at
+// all — each of the two pilots comes out at their own hangar — so every place that
+// reads `MAPS[p.to]` is the same black screen unless it reads the portal's own tint
+// first. There are four of them: the world ring, its label, the jump button and the
+// dot on the plot. The only way to catch that is to draw it and press the button.
+//
+// The countdown and the bar are drawn here too, because both are READOUTS of numbers
+// the server sent — a client that invented either would be lying to the person
+// holding it, and a client that drew `undefined` for either would look identical.
+{
+  dismiss();
+  const duelId = arenaId('rendertoken', DUEL_KEY);
+  const dm = mapOf(duelId), port = dm.portals[0];
+  const A = startsAt(0), B = startsAt(1);
+  const seat = (id, at, name) => packShip({ id, x: at.x, y: at.y, heading: at.heading, charge: 0,
+    co: 'm', hull: id === 1 ? 'vanguard' : 'hauler', hp: 70, sh: 55, flash: 0, tgt: 0, shot: 0,
+    rk: 0, vis: 2, name });
+  feed({ t: 'map', map: duelId });
+
+  // The countdown, every whole second of it, plus the fight and all three endings.
+  const states = [
+    { count: 5, foe: 'Bly', id: 2, left: 300 }, { count: 3.4, foe: 'Bly', id: 2, left: 298 },
+    { count: 0.2, foe: 'Bly', id: 2, left: 295 }, { count: 0, foe: 'Bly', id: 2, left: 244 },
+    { count: 0, foe: 'Bly', id: 2, left: 9, over: 1, won: 1 },
+    { count: 0, foe: 'Bly', id: 2, left: 9, over: 1, won: 0 },
+    { count: 0, foe: 'Bly', id: 2, left: 0, over: 1, draw: 1 },
+  ];
+  for (const d of states) {
+    feed({ t: 's', ships: [seat(1, A, 'Vy'), seat(2, B, 'Bly')],
+           credits: 250_000, docked: false, labs: [], lab: null, claims: [],
+           // A bond and an ore pod on the floor, which is what a duel leaves behind.
+           pods: [packPod({ id: 1, x: A.x + 60, y: A.y, mat: 'bond', n: 0, own: 0, cr: 50_000 }),
+                  packPod({ id: 2, x: A.x + 90, y: A.y + 40, mat: 'iron', n: 12, own: 0 })],
+           duel: d });
+    trace = []; frame(t += 16); frames++;
+    const a2 = trace; trace = null;
+    const want = missionBar(innerWidth, duelText({ count: d.count, foe: d.foe, over: !!d.over,
+                                                  won: !!d.won, draw: !!d.draw, left: d.left }));
+    if (!a2.some(c => c.startsWith(`fillText ${want.text} `)))
+      errs.push(`the duel bar never said "${want.text}"`);
+    // The countdown is drawn from the server's own number, so 5.0 and 3.4 both read
+    // as whole seconds counting down and 0 draws nothing at all.
+    const shown = a2.some(c => c.startsWith(`fillText ${Math.ceil(d.count)} `));
+    if (d.count > 0 && !shown) errs.push(`the countdown never drew ${Math.ceil(d.count)}`);
+    if (d.count === 0 && a2.some(c => /^fillText ENGINES AND GUNS ARE HELD /.test(c)))
+      errs.push('the countdown was still on screen after the clock let go');
+  }
+  console.log(`duel: ${states.length} states — the countdown, the fight and all three endings`);
+
+  // The purse. A bond is not a metal, so every place that reads MATERIALS[pod.mat]
+  // has to have an answer for it — the label, the symbol, the colour and the plot.
+  feed({ t: 's', ships: [seat(1, { ...A, x: A.x + 40 }, 'Vy')], credits: 250_000, docked: false,
+         labs: [], lab: null, claims: [],
+         pods: [packPod({ id: 1, x: A.x + 60, y: A.y, mat: 'bond', n: 0, own: 0, cr: 50_000 })],
+         duel: { count: 0, foe: 'Bly', id: 2, left: 9, over: 1, won: 1 } });
+  // Swept rather than aimed: the camera clamps inside a quarter-size sector, so
+  // "the middle of the screen" is not the middle of the map and computing the one
+  // pixel the pod is under would be a second copy of the projection.
+  const pa = [];
+  for (let px = 40; px < innerWidth - 40; px += 60)
+    for (let py = 40; py < innerHeight - 40; py += 60) {
+      evt('pointermove', { clientX: px, clientY: py });
+      trace = []; frame(t += 16); frames++;
+      pa.push(...trace); trace = null;
+    }
+  if (!pa.some(c => /^fillText Credit Bond /.test(c)))
+    errs.push('hovering a credit bond never named it — six places read MATERIALS[pod.mat]');
+  else if (!pa.some(c => /^fillText 50k /.test(c)))
+    errs.push('a credit bond never said what it was worth, which is all there is to know about one');
+  else console.log('duel: the purse reads as credits rather than as an undefined metal');
+
+  // THE PORTAL. Standing in its mouth, which is what makes the jump button appear —
+  // and the button, its ring, its label and its dot on the plot all reach for the
+  // destination map, which for this one does not exist.
+  feed({ t: 's', ships: [seat(1, { x: port.x, y: port.y, heading: 0 }, 'Vy'), seat(2, B, 'Bly')],
+         credits: 250_000, docked: false, labs: [], lab: null, claims: [],
+         duel: { count: 0, foe: 'Bly', id: 2, left: 120 } });
+  trace = []; frame(t += 16); frames++;
+  const qa = trace; trace = null;
+  if (!qa.some(c => /^fillText JUMP {2}→ {2}YOUR HANGAR /.test(c)))
+    errs.push('the way home out of a duel drew no jump button');
+  else if (!qa.some(c => /^fillText THE WAY OUT /.test(c)))
+    errs.push('the portal in the middle of a duel was never labelled');
+  else console.log('duel: the way home draws, and it names no sector because it goes to yours');
+  // And press it, then press everything else a pilot can press in here. The
+  // rectangle is the client's own `btn()`, which is not in shared/ yet.
+  click({ x: innerWidth / 2 - 115, y: innerHeight - 104, w: 230, h: 48 });
+  for (const k of ['m', 'm', 'h', 'h', 'i', 'i', 'l', 'l', 'Tab', 'x', ' ']) {
+    evt('keydown', { key: k }); frame(t += 16); frames++;
+  }
+  dismiss();
+  for (const [px, py] of [[40, 40], [innerWidth / 2, innerHeight / 2], [innerWidth - 60, innerHeight - 40]]) {
+    evt('pointermove', { clientX: px, clientY: py });
+    evt('pointerdown', { clientX: px, clientY: py });
+    evt('pointerup', { clientX: px, clientY: py });
+    frame(t += 16); frames++;
+  }
+  evt('pointerleave');
+
+  // And out. The bar and the countdown both go by the duel being ABSENT from the
+  // bag, exactly the way the claim bar does — the delta reports it gone and
+  // decodeDelta hands back the whole bag, so absence is information.
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [seat(1, { x: MAPS.m1.base.x, y: MAPS.m1.base.y, heading: 0 }, 'Vy')],
+         credits: 250_000, docked: true, labs: [], lab: null, claims: [] });
+  trace = []; frame(t += 16); frames++;
+  const za = trace; trace = null;
+  if (za.some(c => /ENGINES AND GUNS ARE HELD|BEFORE IT IS CALLED A DRAW|IS DOWN/.test(c)))
+    errs.push('the duel bar stayed on screen after the duel ended');
+  else console.log('duel: the bar and the countdown go away with the sector');
 }
 
 // The CLAIMS page. A replay is not a rung — it costs nothing and buys nothing —
