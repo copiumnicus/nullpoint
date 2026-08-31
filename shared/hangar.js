@@ -9,8 +9,8 @@
 // pages so a single scrolling column never has to hold ships, guns, reactors,
 // technology, drones and formations at once.
 
-import { HULLS, slotsOf } from './ships.js';
-import { EQUIPMENT, SLOTS, MAX_DRONES, emptyFit } from './gear.js';
+import { HULLS, slotsOf, baysOf, DEFAULT_HULL } from './ships.js';
+import { EQUIPMENT, SLOTS, emptyFit } from './gear.js';
 import { launcherRoom } from './rockets.js';
 import { FORMATION_KEYS } from './formation.js';
 import { AMMO_KEYS } from './ammo.js';
@@ -57,7 +57,7 @@ export const sellsAt = (page, docked) => docked || ANYWHERE.includes(page);
 export const STORE_PAGES = [
   { key: 'ships',     name: 'Ships',       hint: 'Hulls. Each one carries a different mix of slots.' },
   { key: 'weapon',    name: 'Lasers',      hint: 'Emitters. Each adds flat damage to every bolt you fire.' },
-  { key: 'rocket',    name: 'Launchers',   hint: 'Rockets that chase. Three racks per ship, never on a drone.' },
+  { key: 'rocket',    name: 'Launchers',   hint: 'Rockets that chase. As many racks as the hull allows, never on a drone.' },
   { key: 'generator', name: 'Generators',  hint: 'Shields and capacitor, paid for in speed.' },
   { key: 'tech',      name: 'Technology',  hint: 'One of each per ship. Each one lets you do something.' },
   { key: 'techx',     name: 'Deep Tech',   hint: 'The top rungs. Sold only at an outpost bay you rent.' },
@@ -68,11 +68,15 @@ export const STORE_PAGES = [
 ];
 
 // What a store page holds. Kinds tell the client how to draw and what to send.
-export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}) {
+export function pageItems(page, { hull = DEFAULT_HULL, hulls = [], formations = [], drones = 0 } = {}) {
   switch (page) {
     case 'ships':  return Object.keys(HULLS).map(k => ({ kind: 'hull', k, owned: hulls.includes(k) }));
     case 'drones': return [
-      ...(drones < MAX_DRONES ? [{ kind: 'drone', k: 'drone', owned: false }] : []),
+      // The hull's berths, not the shelf's twelve. Selling a thirteenth bay to a
+      // Bulwark that berths ten is selling something that cannot fly, and the
+      // server refuses it — a counter that offers what the server declines is the
+      // workshop-dock bug pointing the other way.
+      ...(drones < baysOf(hull) ? [{ kind: 'drone', k: 'drone', owned: false }] : []),
       ...Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'collector')
         .map(k => ({ kind: 'item', k, owned: false })),
     ];
@@ -105,7 +109,7 @@ export function pageItems(page, { hulls = [], formations = [], drones = 0 } = {}
 // What your inventory can put in one slot, best first. "Best" is the tier you paid
 // most for, because filling an empty slot with whatever happened to sort first
 // meant a pilot holding MK-Vs kept getting MK-Is bolted on.
-export function fitsIn(target, { gear = {}, fit = emptyFit(), drones = [] } = {}) {
+export function fitsIn(target, { hull = DEFAULT_HULL, gear = {}, fit = emptyFit(), drones = [] } = {}) {
   const held = k => (gear[k] ?? 0) > 0;
   const takenTech = new Set([...(fit.tech ?? []), ...drones.filter(Boolean)]
     .filter(k => EQUIPMENT[k]?.slot === 'tech'));
@@ -120,7 +124,7 @@ export function fitsIn(target, { gear = {}, fit = emptyFit(), drones = [] } = {}
       ? EQUIPMENT[k].kind !== 'rocket' && EQUIPMENT[k].kind !== 'collector'
       : EQUIPMENT[k].slot === target))
     .filter(k => !(EQUIPMENT[k].slot === 'tech' && takenTech.has(k)))
-    .filter(k => !(EQUIPMENT[k].kind === 'rocket' && launcherRoom(fit) <= 0))
+    .filter(k => !(EQUIPMENT[k].kind === 'rocket' && launcherRoom(hull, fit) <= 0))
     .sort((a, b) => (EQUIPMENT[b].tier ?? 0) - (EQUIPMENT[a].tier ?? 0)
                  || EQUIPMENT[b].price - EQUIPMENT[a].price);
 }
@@ -174,7 +178,10 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
 
     const counts = slotsOf(hullKey) ?? { weapon: 0, generator: 0, tech: 0 };
     const rackRows = SLOTS.reduce((n, sl) => n + (counts[sl] ?? 0), 0) + SLOTS.length;
-    const bays = Math.min(MAX_DRONES, droneCount);
+    // Berths, not bays owned: a row you can drop a module into that then does not
+    // fly is worse than no row. The surplus is parked, not lost — fly something
+    // with room and it is back.
+    const bays = Math.min(baysOf(hullKey), droneCount);
     const escortRows = 1 + bays + 2 + 1 + formations.length;   // + the rig header and its one bay
     // Each column is stepped to fit itself, so a six-drone Bulwark no longer
     // squeezes the weapon rack down with it.
@@ -268,7 +275,7 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   // every row on it shorter — the technology page went from four rows at 58px to
   // fifteen at 22.5px, and the client draws each blurb at y+35, so it clipped.
   // A shelf should not get harder to read every time something is added to it.
-  const items = pageItems(page, { hulls, formations, drones: droneCount });
+  const items = pageItems(page, { hull: hullKey, hulls, formations, drones: droneCount });
   const iX = x + 30 + catW, iW = w - 50 - catW;
   const span = items.length * STORE_ROW;
   const at = Math.max(0, Math.min(spanOf(span, room), scroll));

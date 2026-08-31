@@ -44,7 +44,10 @@ export function hardpoints(a) {
   const c = Math.cos(a.heading), sn = Math.sin(a.heading);
   const mount = lat => ({ x: a.x + c * a.r * 1.55 - sn * lat, y: a.y + sn * a.r * 1.55 + c * lat });
   const out = [mount(-a.r * 0.95), mount(a.r * 0.95)];
-  (a.drones ?? []).forEach((item, i) => {
+  // Only the bays this hull berths. A ship carrying more than it can fly still
+  // owns them (see berthed() in ships.js), but a bolt must not leave a drone the
+  // pilot cannot see.
+  (a.drones ?? []).slice(0, a.bays ?? Infinity).forEach((item, i) => {
     if (EQUIPMENT[item]?.slot === 'weapon') out.push(droneAt(a, i));
   });
   return out;

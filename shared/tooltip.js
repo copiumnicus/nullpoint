@@ -11,10 +11,10 @@
 // clicking, which meant the shop answered questions in the wrong order: it told
 // you no, and only then told you what it was.
 
-import { ATTRS, HULLS, resolve, slotsOf } from './ships.js';
-import { EQUIPMENT, MAX_DRONES, dronePrice, topTier, frontierOnly } from './gear.js';
+import { ATTRS, HULLS, resolve, slotsOf, baysOf } from './ships.js';
+import { EQUIPMENT, dronePrice, topTier, frontierOnly, isCollector } from './gear.js';
 import { FORMATIONS, BONUS_AT, escortScale } from './formation.js';
-import { launcherRoom, MAX_LAUNCHERS } from './rockets.js';
+import { launcherRoom, launcherCap } from './rockets.js';
 import { AMMO, NEEDS, bestTierFor } from './ammo.js';
 import { KITS, KIT_QUIET } from './repair.js';
 import { DEVICES } from './devices.js';
@@ -124,7 +124,7 @@ export function tipFor(kind, key, ctx) {
     if (!e) return null;
     const room = (slotsOf(hull)?.[e.slot] ?? 0) - (fit[e.slot]?.length ?? 0);
     const dupe = e.slot === 'tech' && (fit.tech ?? []).concat(drones).includes(key);
-    const capped = e.kind === 'rocket' && launcherRoom(fit) <= 0;
+    const capped = e.kind === 'rocket' && launcherRoom(hull, fit) <= 0;
     const bays = drones.filter(d => d === null).length;
     return {
       title: e.name, price: e.price, blurb: e.blurb,
@@ -147,8 +147,8 @@ export function tipFor(kind, key, ctx) {
         DETAIL[key] ? DETAIL[key]() : null,
         e.spends ? `Costs you ${SPENDS[e.spends]}.` : null,
         dupe ? 'Already fitted. One of each technology per ship.'
-        : capped ? `Full: ${MAX_LAUNCHERS} launchers to a ship. Strip one first.`
-        : e.kind === 'rocket' ? `${launcherRoom(fit)} of ${MAX_LAUNCHERS} launcher slots left. Not on a drone.`
+        : capped ? `Full: ${launcherCap(hull)} launchers on a ${HULLS[hull]?.name ?? 'hull'}. Strip one first.`
+        : e.kind === 'rocket' ? `${launcherRoom(hull, fit)} of ${launcherCap(hull)} launcher slots left. Not on a drone.`
         : onADrone(key) ? (bays ? `Rides a drone. You have ${bays} empty bay${bays === 1 ? '' : 's'}.`
                           : drones.length ? 'Rides a drone, and every bay of yours is full.'
                                           : 'Rides a drone, and you do not own one yet.')
@@ -169,7 +169,7 @@ export function tipFor(kind, key, ctx) {
     // new ship, so quoting a fitted number would be a lie.
     return {
       title: H.name, price: H.price, blurb: H.blurb,
-      sub: `${H.cls} · ${sl.weapon} weapon · ${sl.generator} generator · ${sl.tech} tech`,
+      sub: `${H.cls} · ${sl.weapon} weapon · ${sl.generator} generator · ${sl.tech} tech · ${baysOf(key)} bays`,
       lines: diffLines(resolve(hull, { weapon: [], generator: [], tech: [] }, [], formation),
                        resolve(key,  { weapon: [], generator: [], tech: [] }, [], formation)),
       notes: [
@@ -208,15 +208,18 @@ export function tipFor(kind, key, ctx) {
   }
 
   if (kind === 'drone') {
-    const n = drones.length;
-    if (n >= MAX_DRONES) return null;
+    // Bays, not escort entries. ctx.drones is escortOf(bays, rig), so counting it
+    // whole made an eleven-bay pilot with a collector read as twelve and the
+    // tooltip vanish off a row the store was still drawing.
+    const n = drones.filter(k => !isCollector(k)).length;
+    if (n >= baysOf(hull)) return null;
     // A drone's worth depends entirely on what you hang on it, so show the best
     // case you could actually build today rather than an empty bay's zero.
     const best = topTier('weapon');
     return {
       title: `Drone ${n + 1}`, price: dronePrice(n),
       blurb: 'An escort ship. It carries one module of yours.',
-      sub: `bay ${n + 1} of ${MAX_DRONES} · each bay costs more than the last`,
+      sub: `bay ${n + 1} of ${baysOf(hull)} on a ${HULLS[hull]?.name ?? 'hull'} · each bay costs more than the last`,
       lines: diffLines(now, resolve(hull, fit, [...drones, best], formation)),
       notes: [
         `Shown carrying one ${EQUIPMENT[best].name}.`,

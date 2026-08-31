@@ -130,12 +130,18 @@ check('and it is still never free, so nothing here is an upgrade nobody would de
 check('and the reference trade itself, damage for shields, is the one shape that cannot be sold', (() => {
   const at = st => { const b = buildFor(st); return resolve(b.hull, b.fit, b.drones); };
   const pts = st => priceFor([['damage', 'mul', 0.15], ['shield', 'mul', -0.10]], 2, { base: at(st) }).points;
-  return pts('anchor') < 0 && pts('finished') > 4000;
+  // A RATIO, not a level. `> 4000` was a reading of one particular finished ship
+  // and moved the moment the last hull's rack changed (4,451 -> 3,697). What the
+  // shelf actually forbids is the SIGN FLIP: the identical row is a loss to the
+  // pilot it would be priced for and a fortune to the pilot who has finished
+  // whatever the top hull happens to be, by orders of magnitude.
+  return pts('anchor') < 0 && pts('finished') / -pts('anchor') > 300;
 })(), (() => {
   const at = st => { const b = buildFor(st); return resolve(b.hull, b.fit, b.drones); };
   const p = st => priceFor([['damage', 'mul', 0.15], ['shield', 'mul', -0.10]], 2, { base: at(st) });
   return `x1.15 damage for x0.90 shield scores ${Math.round(p('anchor').points)} points against the reference ` +
-         `pilot and ${Math.round(p('finished').points)} against a finished ship — ` +
+         `pilot and ${Math.round(p('finished').points)} against a finished ship, a ` +
+         `${Math.round(p('finished').points / -p('anchor').points)}x sign flip — ` +
          `${Math.round(p('finished').price).toLocaleString('en-GB')} cr of capability, on the same row, at the same price`;
 })());
 

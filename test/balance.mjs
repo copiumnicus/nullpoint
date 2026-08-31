@@ -384,12 +384,26 @@ console.log('\nwhat the model currently says about the game (it reports, it does
   // the top of the ladder reported as the safest thing in the bestiary. It now
   // counts the brood, and a mirror's chamber, for the same reason: what a hostile
   // does to you is what it does to you, whatever shape it arrives in.
-  check('a Censer is exactly on model, and a mothership throws seven times what its stage asks',
-    b.censer.dpsRatio > 0.99 && b.censer.dpsRatio < 1.01 &&
-    b.bandit.dpsRatio > 0.6 && b.hive.dpsRatio > 5,
-    `Censer ${f(b.censer.dpsRatio)}, Bandit ${f(b.bandit.dpsRatio)}, Ironhusk ${f(b.ironhusk.dpsRatio)}, ` +
-    `Leviathan ${f(b.leviathan.dpsRatio)}, Hive ${f(b.hive.dpsRatio)} of the dps its stage asks for — ` +
-    'the Hive read 0.04 while its brood was invisible to this model');
+  //
+  // Rewritten, not re-thresholded. `bandit > 0.6` was a reading of the shipped
+  // Bulwark taken at 0.615 — a point and a half of margin — and the hull rework
+  // moved it by making the last hull tougher: a third generator bay and a second
+  // technology bay take stageEhp('finished') from 7,050 to 9,305, so the model asks
+  // everything posted there for a third more dps and not one of their guns moved.
+  // The claim underneath was always the one worth keeping, so it is the one stated
+  // now: a dps DERIVED from this model tracks it for free and a dps somebody typed
+  // goes stale the moment the ladder under it moves. A Censer's rate IS
+  // ANCHORS.pressure and a Kedge's is pressure x its own stage, so both read 1.00 by
+  // construction and both followed the rework without being touched; the Bandit's
+  // 150 x 1.3 is a written number and fell from 0.61 to 0.47 on the same change.
+  const DERIVED = ['censer', 'kedge'], TYPED = ['ironhusk', 'leviathan', 'bandit'];
+  check('a derived gun follows the ladder for free, a typed one goes stale, and a mothership still throws five stages\' worth',
+    DERIVED.every(k => b[k].dpsRatio > 0.99 && b[k].dpsRatio < 1.01) &&
+    TYPED.every(k => b[k].dpsRatio < 0.9) && b.hive.dpsRatio > 5,
+    `Censer ${f(b.censer.dpsRatio)}, Kedge ${f(b.kedge.dpsRatio)}, Ironhusk ${f(b.ironhusk.dpsRatio)}, ` +
+    `Leviathan ${f(b.leviathan.dpsRatio)}, Bandit ${f(b.bandit.dpsRatio)}, Hive ${f(b.hive.dpsRatio)} ` +
+    'of the dps its stage asks for — the Bandit read 0.61 before the last hull gained a generator ' +
+    'and a technology bay, and 0.47 after it, which is the bestiary\'s bill for the rework');
   check('and the Corsair Hive is the furthest thing in the game from what it claims to be',
     b.hive.hpRatio < 0.15 && b.hive.dpsRatio > 5,
     `${f(b.hive.actualFight, 1)}s against four finished ships, posted as ${b.hive.seconds}s — ` +

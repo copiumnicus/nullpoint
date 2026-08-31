@@ -19,7 +19,7 @@ import { nameProblem, cleanName } from './shared/signup.js';
 import { MUSIC_DIRS, pickDir } from './config.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { DEVICES, devicePrice, sanitiseDevice, whyNotDevice } from './shared/devices.js';
-import { HULLS, sanitiseFit, slotsOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
+import { HULLS, sanitiseFit, slotsOf, baysOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones, sanitiseRig, isCollector, topTier, collectorReach,
          whyNotSold, frontierOnly } from './shared/gear.js';
@@ -381,9 +381,9 @@ const PROP_ROWS = PROPS.map(p2 => {
   const s2 = newShip(p2.x, p2.y, p2.hull, propFit(p2.hull), Array(MAX_DRONES).fill(topTier('weapon')), p2.formation);
   return { id: p2.id, x: p2.x, y: p2.y, heading: 0, charge: 0, co: p2.co, hull: p2.hull,
            hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0,
-           guns: s2.guns, lvl: 0, drones: s2.drones.length,
+           guns: s2.guns, lvl: 0, drones: s2.bays,
            form: Math.max(0, FORMATION_KEYS.indexOf(p2.formation)),
-           dmask: (1 << MAX_DRONES) - 1, psys: 0, plvl: 0, vis: ALLY,
+           dmask: (1 << s2.bays) - 1, psys: 0, plvl: 0, vis: ALLY,
            rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, abl: 0, name: '' };
 });
 
@@ -835,7 +835,15 @@ wss.on('connection', (ws, req) => {
       if (P.credits < hullPrice(m.key)) return;
       P.credits -= hullPrice(m.key);
       P.hulls.push(m.key);
-      refit(ship, m.key, ship.fit, ship.drones, ship.formation);   // bought, and flown at once
+      // The same reseat the hull-swap below does, and for the same reason. Buying
+      // a ship flies it at once, and this branch handed the new hull the old rack
+      // untouched: a Bulwark's four MK-Vs resolved WHOLE on a Kestrel that seats
+      // two — 1,638 damage where 838 is legal — and stayed that way until the next
+      // save ran the fit through sanitiseFit and deleted the surplus without a
+      // word. Buying a hull and switching to one you own are the same act.
+      const moved = reseat(slotsOf(m.key), ship.fit, P.gear);
+      P.gear = moved.gear;
+      refit(ship, m.key, moved.fit, ship.drones, ship.formation);   // bought, and flown at once
       receipt(HULLS[m.key].name, hullPrice(m.key), 'bought, and you are flying it');
       return outfit();
     }
@@ -969,12 +977,15 @@ wss.on('connection', (ws, req) => {
       return outfit();
     }
     if (m.t === 'buydrone') {
-      if (!atStation() || ship.drones.length >= MAX_DRONES) return;
+      // The hull's berths, not the shelf's twelve — the same number hangar.js draws
+      // the counter from, because a shop that sells what the server refuses is the
+      // one bug this codebase keeps one copy of every rule to avoid.
+      if (!atStation() || ship.drones.length >= baysOf(ship.hull)) return;
       const cost = dronePrice(ship.drones.length);
       if (P.credits < cost) return;
       P.credits -= cost;
       refit(ship, ship.hull, ship.fit, [...ship.drones, null]);
-      receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length} of ${MAX_DRONES} bays used`);
+      receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length} of ${baysOf(ship.hull)} bays used`);
       return outfit();
     }
     if (m.t === 'dronefit') {
@@ -1032,7 +1043,7 @@ wss.on('connection', (ws, req) => {
       const rack = ship.fit[item.slot], room = slotsOf(ship.hull)[item.slot] ?? 0;
       if (rack.length >= room) return;
       if (item.slot === 'tech' && rack.includes(m.item)) return;   // technologies are unique
-      if (item.kind === 'rocket' && launcherRoom(ship.fit) <= 0) return;   // three to a ship
+      if (item.kind === 'rocket' && launcherRoom(ship.hull, ship.fit) <= 0) return;   // this hull's rack limit
       rack.push(m.item);
       if (--P.gear[m.item] <= 0) delete P.gear[m.item];
       refit(ship, ship.hull, ship.fit, ship.drones, ship.formation);
@@ -1792,9 +1803,10 @@ setInterval(() => {
       wrp: p.folding ? Math.round(100 * (1 - p.folding.left / p.folding.secs)) : 0,
       abl: Math.round(100 * levelOf(p.ship.power, SPECIAL, p.ship.stats)),
       rk: Math.round(100 * (p.ship.rocketFlash ?? 0) / LAUNCH_FLASH),
-      guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.drones.length,
+      guns: p.ship.guns ?? 1, lvl: levelFor(p.xp).level, drones: p.ship.bays ?? p.ship.drones.length,
       form: Math.max(0, FORMATION_KEYS.indexOf(p.ship.formation)),
-      dmask: p.ship.drones.reduce((m2, k, i) => m2 | (EQUIPMENT[k]?.slot === 'weapon' ? 1 << i : 0), 0),
+      dmask: p.ship.drones.slice(0, p.ship.bays ?? p.ship.drones.length)
+        .reduce((m2, k, i) => m2 | (EQUIPMENT[k]?.slot === 'weapon' ? 1 << i : 0), 0),
       psys: p.ship.power.to ? SYSTEMS.indexOf(p.ship.power.to) + 1 : 0,
       plvl: p.ship.power.to ? Math.round(100 * levelOf(p.ship.power, p.ship.power.to, p.ship.stats)) : 0,
       // The collector, for everyone rather than just its owner. rgp is -1 when the
