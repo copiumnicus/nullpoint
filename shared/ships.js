@@ -98,11 +98,20 @@ export const ATTRS = {
   veilRecover: { label: 'Veil rebuild', unit: 's',   dflt: VEIL_RECOVER, better: 'low',  min: 0.4 },
   anchorSwell: { label: 'Anchor swell', unit: 'x',   dflt: ANCHOR_SWELL, better: 'high', min: 0,   max: 5 },
   anchorDrag:  { label: 'Anchor drag',  unit: '',    dflt: ANCHOR_DRAG,  better: 'low',  min: 0.1, max: 0.95 },
-  // The two Drumfire rows are one number twice: the gain IS the cost, read through
-  // 1/(1-cost) - 1, and so is the ceiling — a reach floor of 20% pays for x5.00 of
-  // rate and not a fraction more. See DRUMFIRE_GAIN.
+  // The gain's ceiling is the design target doubled. ability.js solves the shipped
+  // setting from "a full drum throws twice what an interceptor does with its
+  // reactor on its guns" — x2.50 — so the exit from the game is the drum that
+  // throws FOUR times an interceptor: 2 x 2.5066 = x5.01 of the cycle, and the dial
+  // is that minus one. Past there the reactor is worth more than the rest of the
+  // ship and the fighter stops being a class.
+  //
+  // The two rows were one number twice while the gain was 1/(1 - cost) - 1; they
+  // are independent now, and the reach floor carries its own argument: 20% of a
+  // Vanguard's 700 is 140px, which is inside the hull radius and the 38px of slack
+  // around an aim point for most of the bestiary — a reach you cannot miss from is
+  // not a reach.
   drumfireGain: { label: 'Drumfire gain', unit: 'x', dflt: DRUMFIRE_GAIN,  better: 'high', min: 0,
-                  max: 4 },     // 0.8 / (1 - 0.8), written out because 0.8/0.2 is 4.000000000000001
+                  max: 4 },
   drumfireReach:{ label: 'Drumfire cost', unit: '',  dflt: DRUMFIRE_REACH, better: 'low',  min: 0,
                   max: 0.8 },
 };

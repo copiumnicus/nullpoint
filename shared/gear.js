@@ -398,26 +398,27 @@ export const EQUIPMENT = {
               does: 'Lets you hold an Anchor and still go somewhere.',
               blurb: 'A wall that can walk, at two thirds of the wall.',
               mods: [['anchorDrag', 'mul', -0.60], ['anchorSwell', 'mul', -0.40]] },
-  // Drumfire's two dials are one number twice — reach x rate is 1.000 at a full
-  // drum, because the gain IS the cost read through 1/(1-cost) — so a technology
-  // may only move WHERE on that curve the hull sits, never lift it off. Off the
-  // curve is a free multiplier: the shipped setting is 65% reach for x1.54, and a
-  // row that bought the rate without the reach would be x1.24 of damage output for
-  // nothing, which is the Cadence pair's bug wearing a different hat.
+  // A governor is a device that LIMITS an engine, and that is what this one does.
   //
-  // So: half your reach, and 1/0.5 = twice the rate. Both muls fall out of that
-  // one sentence and neither is picked —
+  // It was "half your reach for twice the rate", derived off an identity that no
+  // longer exists: Drumfire's two dials used to be one number twice, so the only
+  // honest technology was one that slid the hull along that curve. The gain is
+  // solved from a design target now — a full drum throws twice what an interceptor
+  // does — and the two dials are independent, so a row that raised the gain would
+  // simply be a bigger ability rather than a different one, and the ceiling this
+  // shelf exists to respect is the one the ability itself already sets.
   //
-  //      cost  0.35 -> 0.50   is  x10/7,  so  +3/7
-  //      gain  7/13 -> 1.00   is  x13/7,  so  +6/7
-  //
-  // The Anchor Servos shape, one ability along: it cannot make the ability bigger,
-  // only change the exchange rate, and what it buys is a ship that fights at 350px
-  // where nothing else would call that a range.
+  // So it goes the other way, which is exactly Anchor Servos one ability along —
+  // the same -0.60 and -0.40, and for the same reason. A stock Drumfire is x2.50 of
+  // your cycle at 455px, which is a commitment: the shortest reach in the game,
+  // inside the envelope of everything that matters. This is x1.90 at 602px, which
+  // is a drum you can hold at a range you can actually fight from. Measured, both
+  // land within a percent of the same damage per metre of reach — 8.49M against
+  // 8.53M — so it changes the exchange rate and never the size of the ability.
   governor: { name: 'Drum Governor', slot: 'tech', tier: 3, price: 9300,
-              does: 'Lets you trade half your reach for twice the rate.',
-              blurb: 'Half the reach at a full drum, and double the rate for it.',
-              mods: [['drumfireGain', 'mul', 6 / 7], ['drumfireReach', 'mul', 3 / 7]] },
+              does: 'Lets you hold a drum without closing to knife range.',
+              blurb: 'Most of your reach back, at four fifths of the drum.',
+              mods: [['drumfireReach', 'mul', -0.60], ['drumfireGain', 'mul', -0.40]] },
 };
 
 // A collector lives in its own bay, not in a combat one. It used to sit in the
