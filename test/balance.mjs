@@ -377,15 +377,24 @@ console.log('\nwhat the model currently says about the game (it reports, it does
   // ANCHORS.pressure rather than an approximation of it, so its ratio is 1.000 at
   // every stage by construction — the only thing in the bestiary that is on model
   // on both halves at once.
-  check('a Censer is exactly on model, and the Bandit is the nearest thing with a gun',
+  //
+  // The Hive's row moved from 0.04 to 7.72 and NOTHING ABOUT THE HIVE CHANGED.
+  // threatDps used to read damage x fireRate and stop, so a mothership was a 110
+  // dps hostile in this model while twelve Bandits sat around it throwing 2,340 —
+  // the top of the ladder reported as the safest thing in the bestiary. It now
+  // counts the brood, and a mirror's chamber, for the same reason: what a hostile
+  // does to you is what it does to you, whatever shape it arrives in.
+  check('a Censer is exactly on model, and a mothership throws seven times what its stage asks',
     b.censer.dpsRatio > 0.99 && b.censer.dpsRatio < 1.01 &&
-    b.bandit.dpsRatio > 0.6 && b.hive.dpsRatio < 0.5,
+    b.bandit.dpsRatio > 0.6 && b.hive.dpsRatio > 5,
     `Censer ${f(b.censer.dpsRatio)}, Bandit ${f(b.bandit.dpsRatio)}, Ironhusk ${f(b.ironhusk.dpsRatio)}, ` +
-    `Leviathan ${f(b.leviathan.dpsRatio)}, Hive ${f(b.hive.dpsRatio)} of the dps its stage asks for`);
+    `Leviathan ${f(b.leviathan.dpsRatio)}, Hive ${f(b.hive.dpsRatio)} of the dps its stage asks for — ` +
+    'the Hive read 0.04 while its brood was invisible to this model');
   check('and the Corsair Hive is the furthest thing in the game from what it claims to be',
-    b.hive.hpRatio < 0.15,
+    b.hive.hpRatio < 0.15 && b.hive.dpsRatio > 5,
     `${f(b.hive.actualFight, 1)}s against four finished ships, posted as ${b.hive.seconds}s — ` +
-    `it needs x${f(1 / b.hive.hpRatio, 1)} the hit points and x${f(1 / b.hive.dpsRatio, 1)} the dps`);
+    `it needs x${f(1 / b.hive.hpRatio, 1)} the hit points it has, and throws x${f(b.hive.dpsRatio, 1)} ` +
+    'the dps: a fight that is over far too quickly and hurts far too much while it lasts');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`

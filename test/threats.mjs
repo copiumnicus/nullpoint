@@ -1,7 +1,7 @@
 // The threat file: what a pilot knows, and what they had to do to know it.
 import { sanitiseKills, filedIn, totalKills, dossierOf, filePanel, fileProgress,
          FILE_ROW, FILE_HEAD, FILE_PAD } from '../shared/threats.js';
-import { ALIENS, WILD, effectiveHp, outlineOf } from '../shared/aliens.js';
+import { ALIENS, WILD, effectiveHp, outlineOf, MIRROR, hiveDps } from '../shared/aliens.js';
 import { sanitiseAccount } from '../shared/account.js';
 
 const fails = [];
@@ -25,6 +25,20 @@ console.log('\nwhat is in it');
     'would be the manual this exists instead of');
   check('the tally is the diary',
     totalKills(some) === 414, `${totalKills(some)} confirmed kills`);
+}
+
+console.log('\nand it quotes the worst it can be');
+{
+  // It said "80 dps at 900" for the thing that was hitting finished ships for
+  // 9,011, because dossierOf read damage x fireRate and a mirror's gun is its
+  // chamber. A threat file that lies is worse than no threat file.
+  const T = dossierOf('thresher', { thresher: 1 });
+  check('a mirror is filed at what a full chamber throws, not at its barrel',
+    T.dps > 800 && Math.abs(T.dps - (ALIENS.thresher.attrs.damage + MIRROR.dps)) < 1,
+    `${T.dps} dps at ${T.reach} — it read 80, which is the barrel and not the fight`);
+  check('and that is still under a Hive, which is the whole claim',
+    T.dps < hiveDps(),
+    `${T.dps} against a Hive and its brood at ${hiveDps()}`);
 }
 
 console.log('\nevery hostile can be filed');

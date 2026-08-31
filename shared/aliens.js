@@ -237,34 +237,47 @@ export const ALIENS = {
   },
   // A mirror. It returns what you put into it, and that is the whole design.
   //
-  // Every other hostile is a wall of hit points, and the research ladder is about to
-  // make walls of hit points irrelevant: a finished ship at x32 takes 4,558 seconds
-  // to die to a Drifter and deletes anything under 100,000 effective hit points in
-  // under two seconds. Content whose only tool is damage is finished.
+  // Every other hostile is a wall of hit points, and the research ladder makes walls
+  // of hit points irrelevant: a finished ship at x32 takes 4,558 seconds to die to a
+  // Drifter and deletes anything under 100,000 effective hit points in under two
+  // seconds. Content whose only tool is damage is finished.
   //
-  // So the difficulty of this fight is set by YOUR gun rather than by its hull, and
-  // it cannot be bought past. `returns: 1` is the fiction rather than a dial — a
-  // mirror returns what it is given — and it produces an identity nothing else in
-  // the game has:
-  //
-  //   total damage returned over the fight = returns x effective hp = 205,550,
-  //   exactly, whatever you fly.
-  //
-  // You have to deal its hit points to kill it, and it hands them back.
+  // So the difficulty of this fight is set by YOUR gun rather than by its hull.
+  // `returns: 1` is the fiction rather than a dial — a mirror returns what it is
+  // given — and the chamber it returns it out of is MIRROR, below.
   //
   // 205,550 is 650 x 10^2.5 to the nearest ten — half a rung under the Corsair Hive,
-  // the same relation the Harrier has to the Ironhusk. Measured against a finished
-  // Bulwark it dies at x16 research and is survivable at x32, which reproduces the
-  // research ladder's own argument for x32 from an independent derivation with
-  // nothing tuned to fit.
+  // the same relation the Harrier has to the Ironhusk. MIRROR.dps puts it half a
+  // rung under the Hive on the other axis too, by the same sqrt(10), and that is
+  // the whole of what "it is not supposed to be harder than the Hive" means here:
   //
-  // And the answer to it is a behaviour, not a purchase. Standing still costs 88% of
-  // a x32 ship over the fight; sidestepping 80px across the line of fire costs 35%.
-  // It is the first hostile that makes "hold range and hold the trigger" wrong.
+  //                         full chamber      lived, standing still
+  //   Corsair Hive          2,450 dps         2.9s
+  //   Thresher                855 dps         9.1s     (it was 0.58s)
+  //   on model, balance.js    317 dps        22.2s
   //
-  // Speed 200 is under every hull, like a Leviathan: it can kill you but it can
-  // never trap you. Reach 900 is over every hull, also like a Leviathan, so you
-  // cannot simply out-range the problem.
+  // What it gave back USED to be one for one and uncapped, which is a one-shot by
+  // arithmetic rather than by intent: your damage spans 256x across the shop and
+  // your hit points span 6.4x, so at the top of the ladder one returned bolt was
+  // 9,011 into a 7,050 ship, and buying a bigger gun bought a proportionally harder
+  // fight. Measured against the real AI: a finished Bulwark died standing still in
+  // 2.7s, kiting in 2.8s and weaving in 3.8s, at every research tier below x32.
+  //
+  // The answer is still a behaviour rather than a purchase, and now there is one.
+  // Measured, a finished Bulwark with NO research: standing still it dies at 17.2s;
+  // weaving across the line of fire it kills the thing with 36% of its ship left.
+  // At x8 it survives standing still, down 21%. The chamber it is being shot with
+  // is drawn over its head the whole time, so which of those you are doing is
+  // something you can see rather than something you read in a threat file.
+  //
+  // Speed 200 is under every bare hull, like a Leviathan: it can kill you but it
+  // can never trap you. Reach 900 is over every hull, also like a Leviathan, so you
+  // cannot simply out-range the problem. NOTE, because it is measured and it is not
+  // what the old test claimed: a FITTED ship is slower than a bare one — generators
+  // are bought with speed — and a finished Bulwark flies at 152 against this thing's
+  // 200. You cannot open range on a Thresher in the hull that fights it, so backing
+  // off is worth nothing measurable and the disengage is the trigger and the
+  // stick, not the throttle. test/aliens.mjs now says that out loud.
   thresher: {
     name: 'Thresher', cls: 'Revenant', r: 46, colour: '#e4e4e4', shape: 'facet',
     returns: 1,
@@ -280,7 +293,7 @@ export const ALIENS = {
     xp: 44272,
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'A mirror. Everything you put into it comes back out, so it is as dangerous as your own gun. Do not stand still.',
+    tell: 'A mirror. It throws back what you have just dealt it — watch the chamber over its head, and stop shooting to empty it. Do not stand still.',
   },
 
   // The rung between a Drifter and an Ironhusk, and the reason the frontier is
@@ -559,7 +572,17 @@ export const threatDps = (kind, ehp, hull = ehp) => {
   if (!a) return 0;
   return (a.attrs.damage ?? 0) * (a.attrs.fireRate ?? 0)
        + (a.burn?.rate ?? 0) * ehp
-       + (a.siphon?.rate ?? 0) * hull;
+       + (a.siphon?.rate ?? 0) * hull
+       // A mirror's barrel reads 80 x 1.0 and it is not an 80 dps hostile: the
+       // chamber is the gun. This is the worst it can ever be — a full chamber —
+       // so pressureOf(), report() and bestiaryReport() stop calling the hardest
+       // thing at the gates harmless. It had a Thresher at 80 dps.
+       + (a.returns ?? 0) * MIRROR.dps
+       // And a mothership's gun is not its fight either. A Hive read as 110 dps
+       // here while twelve Bandits sat around it throwing 2,340, which made the
+       // top of the ladder the SAFEST thing in the bestiary report. One term, and
+       // it is what MIRROR.dps is derived from, so the two can never disagree.
+       + (a.broods ? a.broods.max * threatDps(a.broods.kind, ehp, hull) : 0);
 };
 // Effective hit points TIMES effort: what it costs to kill, not what it is made
 // of. A thing you cannot hit is worth more than a thing you can, at the same
@@ -835,35 +858,134 @@ export function stepAlienRepair(a, dt) {
 
 // --- a mirror's chamber ---------------------------------------------------------
 //
-// What has been fed into it and not yet given back. Three seconds, so a pilot who
-// breaks off still eats what they already dealt, but a fight abandoned two sectors
-// ago is not still in the chamber waiting.
+// What it is holding, 0..1, and the whole of what makes it dangerous.
 //
-// The payload IS the alien's damage stat while it is loaded, which is why none of
-// combat.js, net.js or the client needs to know this exists: boltWidth() already
-// fattens a bolt from its damage and the floating damage number already says how
-// hard it landed, so the tell is free three times over.
-export const LOAD_HOLD = 3;
+// It used to be an absolute pile: everything you dealt it inside three seconds
+// came back out of the next bolt one for one, and firing emptied it. That reads
+// beautifully and is unplayable. Your damage spans 256x across the shop and your
+// hit points span 6.4x, so "as dangerous as your own gun" is a one-shot the
+// moment your gun outgrows your hull. Measured against the real AI, real bolts
+// and real movement, before this:
+//
+//   finished Bulwark, no research   biggest bolt 9,011 into a 7,050 ship — 128%
+//   stand / kite / weave / break    died in 2.7s / 2.8s / 3.8s / 2.7s
+//   every stage and every tier under x32 finished: DIED, in all four
+//
+// Buying a bigger gun bought a proportionally harder fight, which is the
+// anti-pay-to-win invariant running backwards, and nothing on the screen said any
+// of it was happening. Three things change, and only one of them is a dial.
+//
+// 1. THE CHAMBER IS A CHARGE, NOT A MAGAZINE. Firing no longer empties it and
+//    nothing zeroes it on a timer; it bleeds continuously instead. That is what
+//    makes it playable AND what makes it legible, and they are the same change:
+//    the meter over its head rises while you are hurting it and falls the moment
+//    you stop, so the answer is visible from the cockpit rather than written down
+//    in a threat file. LOAD_HOLD was a flat three-second timer that dropped the
+//    whole load at once — nothing to watch, and nothing to play around.
+//
+// 2. THE CHAMBER IS DIMENSIONLESS. `load` is the share of the mirror's OWN hit
+//    points you have taken off it lately, so it is 0..1 by construction. That is
+//    not tidiness: `abl` is the free per-alien dial on the wire and it is a 0..100
+//    integer, so a chamber measured in points would need the client to know a
+//    normalising constant — a rule kept in two places, which is the one thing this
+//    codebase has learned always disagrees. There is nothing to normalise against
+//    because the number already is a share.
+//
+// 3. THE PAYLOAD HAS A CEILING, AND THE CEILING IS THE HIVE. See MIRROR.dps.
+//
+// What comes out of all three is one identity, and it is stronger than the one it
+// replaces. Under sustained fire the chamber settles at (your dps / SOAK x its hp)
+// / lambda, the fight lasts (its hp / your dps), and the product drops both: a
+// pilot who stands still and never stops shooting takes
+//
+//      MIRROR.dps / (MIRROR.soak x ln2 / MIRROR.half)  =  11,182 points
+//
+// whatever they fly and however long it takes them. A bigger gun no longer costs
+// you anything at all — it makes the fight shorter and louder, not dearer.
+
+// What the top of the ladder throws: the Hive's own gun plus a full brood of
+// twelve Bandits. Read off the definitions rather than written down, so a Bandit
+// rebalance carries into this without anyone remembering.
+export const hiveDps = () => {
+  const H = ALIENS.hive, B = ALIENS[H.broods?.kind];
+  return (H.attrs.damage ?? 0) * (H.attrs.fireRate ?? 0)
+       + (H.broods?.max ?? 0) * (B?.attrs.damage ?? 0) * (B?.attrs.fireRate ?? 0);
+};
+
+export const MIRROR = Object.freeze({
+  // How much of itself, dealt inside the decay window, fills the chamber. A tenth
+  // — one rung of the bestiary's own ladder of tens. It is also the only number
+  // here with any slack in it, and the slack is deliberate: at a tenth, the
+  // sharpest gun the shop sells (a finished Bulwark's 12,003 dps) holds the
+  // chamber at 84%, so the top of the shop very nearly fills the meter and
+  // nothing available can push it past. A party of four saturates it, and
+  // saturating it is the ceiling doing its job rather than a bug.
+  soak: 0.10,
+
+  // And it halves in one of its own firing cycles, 1 / fireRate. Not picked: the
+  // clock of this fight is its trigger, so the natural unit of "break off for a
+  // moment" is one shot it did not get to reload from. Stop shooting for one
+  // second and the next bolt is half as hard — which is the answer the fight was
+  // missing, it is available to every hull at every stage, and it costs nothing
+  // but the fight taking longer. Proportional rather than a flat bleed, because
+  // the pool this drains is the player's own gun: a flat amount would be the
+  // whole chamber at the bottom of the shop and a rounding error at the top.
+  half: 1.0,
+
+  // WHAT A FULL CHAMBER THROWS, per second, and the number that answers "it is not
+  // supposed to be harder than the Hive".
+  //
+  // A Hive throws 2,450 — 110 from its own gun and 2,340 from twelve Bandits. This
+  // sits half a rung under a Hive in hit points already: 205,550 against 650,000
+  // is x1/sqrt(10), and test/aliens.mjs pins it there. So put it half a rung under
+  // on the OTHER axis too, by the same sqrt(10). One relation, both axes, nothing
+  // chosen twice:
+  //
+  //      2,450 / sqrt(10) = 775 dps at a full chamber
+  //
+  // Against a finished Bulwark with no research that is 11% of the ship a second —
+  // 9.1 seconds of standing still, against 2.9 in a Hive and the 22.2 an on-model
+  // hostile is allowed by balance.js. It was 0.58 seconds.
+  dps: hiveDps() / Math.sqrt(10),
+});
+
+// The share of its own hit points that fills the chamber, in points.
+export const soakOf = def => MIRROR.soak * ((def?.attrs?.hull ?? 0) + (def?.attrs?.shield ?? 0));
+
+// What the next bolt carries, in points, at a given charge. Exported because the
+// client draws this number over its head and the server puts it in the bolt, and a
+// tell that disagreed with the hit would be worse than no tell — see the workshop
+// dock, which refused to sell anything for a day over exactly this.
+export const payloadOf = (def, load = 0) =>
+  (def?.attrs?.damage ?? 0)
+  + Math.max(0, Math.min(1, load || 0)) * (def?.returns ?? 0) * MIRROR.dps / (def?.attrs?.fireRate || 1);
 
 export function storeHit(a, amount) {
   if (!a?.def?.returns || !(amount > 0)) return;
-  a.load = (a.load ?? 0) + amount * a.def.returns;
-  a.loadT = LOAD_HOLD;
+  const soak = soakOf(a.def);
+  if (!(soak > 0)) return;
+  a.load = Math.min(1, (a.load ?? 0) + amount / soak);
 }
 
-// Called before it fires. Returns the payload, so the caller can decide whether
-// anything was worth spending.
+// Called before it fires. Bleeds the chamber, writes the payload onto the live
+// damage stat, and returns the charge 0..1 — which is what goes on the wire.
+//
+// The payload IS the alien's damage stat, which is why none of combat.js, net.js
+// or the client's bolt code needs to know this exists: boltWidth() already fattens
+// a bolt from its damage and the floating damage number already says how hard it
+// landed, so the tell is free three times over on top of the meter.
 export function stepMirror(a, dt) {
   if (!a?.def?.returns) return 0;
-  if (a.loadT > 0) { a.loadT -= dt; if (a.loadT <= 0) { a.load = 0; a.loadT = 0; } }
+  a.load = (a.load ?? 0) * Math.pow(2, -dt / MIRROR.half);
+  // Otherwise it asymptotes and the meter never reads empty — a bar stuck at one
+  // pixel says "still loaded" to a pilot who has done everything right.
+  if (!(a.load > 1e-4)) a.load = 0;
   // The base damage is read off the definition rather than off the live stats,
   // because the live stats are what this function is writing to. Reading them back
   // would compound the payload every tick into an unbounded number.
-  a.stats.damage = (a.def.attrs.damage ?? 0) + (a.load ?? 0);
-  return a.load ?? 0;
+  a.stats.damage = payloadOf(a.def, a.load);
+  return a.load;
 }
-
-export const spendMirror = a => { if (a) { a.load = 0; a.loadT = 0; } };
 
 export function respawnAlien(a, map, away = []) {
   // A posted alien belongs to its slot on the firing range and goes back to it
@@ -874,6 +996,9 @@ export function respawnAlien(a, map, away = []) {
   a.sinceHit = 1e9; a.shieldHit = 0; a.cool = 0; a.shotFlash = 0;
   a.target = null; a.provoked.clear(); a.lost = 0; a.dead = 0;
   a.crowd = null; a.crowdT = 0; a.threat = null; a.threatT = 0;   // no grudges carried over
+  a.load = 0;                                                     // nor a chamber: a mirror that
+                                                                  // respawned loaded would open the
+                                                                  // next fight with your last one
   a.way = a.post ?? roamPoint(map, a.rand, away);
   a.tx = a.ty = a.dx = a.dy = null;
 }

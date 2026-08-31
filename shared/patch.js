@@ -12,14 +12,16 @@ export const VERSION = '0.54';
 
 export const PATCHES = [
   { v: '0.54', notes: [
-    'A Kedge now hurts you for the distance it drags you — stand still and it costs nothing',
-    'Fixed: the X on the threat file did nothing. Nor did clicking away from it',
+    'A Thresher now carries its payload over its head — watch it fill as you shoot it',
+    'Stop shooting for a second and the chamber halves, and so does the next bolt',
+    'It can no longer one-shot you: a full chamber is 855 a second, a Hive throws 2,450',
+    'A bigger gun makes the fight shorter now, not deadlier',
   ] },
   { v: '0.53', notes: [
     'Kedges hold the gates beside the Threshers — something out there you can actually kill',
-    'It marks where you are standing, and three seconds later drags you back to that spot',
-    'It has to stop dead to do it, and that is the moment to kill it',
-    'Sit in a gate mouth and it cannot touch you. Running away works, it just takes twice as long',
+    'It takes a fix on where you are standing and three seconds later puts you back on it',
+    'It has to stand dead still to do it. That is when you kill it',
+    'A portal mouth breaks the fix. Leaving takes twice as long and it always works',
   ] },
   { v: '0.52', notes: [
     'Research rungs say what they do for you even when you cannot afford them yet',

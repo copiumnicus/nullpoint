@@ -542,6 +542,37 @@ const dismiss = () => {
   console.log('siphon: tether drawn at six draws, plus an undetected victim, no victim and zero length');
 }
 
+// A Thresher's chamber, through the real draw path. It draws NOTHING until `abl`
+// is above zero, which is exactly how two helper functions once went missing while
+// every frame still rendered — so the charge is driven across its whole range here
+// rather than left at the 0 every other hostile sends.
+//
+// The last two rows are the guard: `abl` absent, and `abl` NaN. Both must draw the
+// hull and no meter, because `held > 0` is false for NaN and the harness rejects
+// any draw call carrying one. A meter that drew a NaN rect would take the whole
+// frame down, and the mechanic it is drawing is the one that used to read as a
+// random one-shot.
+{
+  dismiss();
+  feed({ t: 'map', map: 'm1' });
+  const mirror = (extra) => packShip({ id: 1_000_700, x: 6600, y: 4000, heading: 3.1, charge: 0,
+    co: 'x', hull: 'thresher', hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1, name: '', ...extra });
+  const me3 = packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'bulwark',
+    hp: 80, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, guns: 4, lvl: 6, drones: 0, form: 0,
+    dmask: 0, psys: 0, plvl: 0, vis: 2, name: 'you' });
+  let drew = 0;
+  for (const d of [0, 1, 12, 40, 57, 84, 99, 100]) {
+    feed({ t: 's', ships: [me3, mirror({ abl: d })] });
+    frame(t += 16); frames++; drew++;
+    frame(t += 140); frames++; drew++;          // and again, so the shimmer and the beat move
+  }
+  feed({ t: 's', ships: [me3, mirror({ abl: undefined })] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me3, mirror({ abl: NaN })] });
+  frame(t += 16); frames++;
+  console.log(`mirror: the chamber drawn over ${drew} frames from empty to full, plus a missing dial and a NaN`);
+}
+
 // The SPACE prompt, and the strip of screen it has been fighting over since it was
 // added. It sat 34px above the bar; a box tooltip covers r.y-24 to r.y-4, so hovering
 // a weapon to read what is loaded printed the tooltip straight through the sentence

@@ -31,7 +31,7 @@ import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from '.
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix } from './shared/net.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
-import { storeHit, stepMirror, spendMirror } from './shared/aliens.js';
+import { storeHit, stepMirror } from './shared/aliens.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
@@ -1518,10 +1518,12 @@ setInterval(() => {
       // camouflage and the evasion are the same mechanic from two sides.
       if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = jinkHeading(a, victim?.ship);
       else faceTarget(a, victim?.ship);
-      // A mirror loads what it was hit with and gives it back on its next shot. The
-      // payload IS its damage stat while it is loaded, so fire() needs no idea this
-      // exists — and it is spent on firing rather than on time, so breaking off does
-      // not empty the chamber, it only stops you filling it.
+      // A mirror's chamber. It fills with what you deal it and bleeds continuously,
+      // and the payload IS its damage stat while it is charged — so fire() needs no
+      // idea this exists and a heavier bolt is already drawn heavier. It is stepped
+      // BEFORE fire() and never emptied by it: the chamber is a charge level, not a
+      // magazine, which is what makes the meter over its head fall while a pilot
+      // holds fire instead of flicking back to zero once a shot has gone.
       stepMirror(a, dt);
       // A Lamprey has no gun at all — the tether is instead of firing, not as well
       // as it, and fire() produces nothing for one anyway because its weaponRange is
@@ -1548,7 +1550,6 @@ setInterval(() => {
       }
       const spat = fire(a, victim?.ship ?? null, dt);
       for (const shot of spat) bolts.get(mapId).push(shot);
-      if (spat.length) spendMirror(a);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
       // The ring. It winds up while it has somebody and settles when it does not, and
       // it burns whoever is standing in it — everyone, not just its target, because a
@@ -1813,11 +1814,18 @@ setInterval(() => {
       // needed no new SHIP_FIELDS entry — the row is at 30 of a hard 31 — and `tgt`,
       // on the wire since the beginning, is already the victim's id.
       rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0,
-      // Whichever dial this hostile has. A Lamprey rides its tether draw here and a
-      // Censer its ring spin; both are 0..1 and both have to be visible, because a
-      // ring you cannot see widening and a cord you cannot see tighten are both
-      // indistinguishable from a bug. Everything else sends 0, as it always has.
-      abl: Math.round(100 * (a.draw ?? a.spin ?? a.fix ?? 0)), name: '' });
+      // Whichever dial this hostile has. A Lamprey rides its tether draw here, a
+      // Censer its ring spin, a Kedge its fix and a Thresher its chamber; every one
+      // is 0..1 and every one has to be visible, because a ring you cannot see
+      // widening, a cord you cannot see tighten and a payload you cannot see
+      // building are each indistinguishable from a bug — the last one read as a
+      // random one-shot for as long as it existed. Everything else sends 0.
+      //
+      // A mirror's chamber is a SHARE of its own hit points by construction, so it
+      // arrives here already 0..1 and there is no normalising constant for the
+      // client to be told. That is why it is a share: `abl` is one integer, and a
+      // second copy of the scale would be a rule kept twice.
+      abl: Math.round(100 * (a.draw ?? a.spin ?? a.fix ?? a.load ?? 0)), name: '' });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }

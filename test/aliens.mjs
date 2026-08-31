@@ -1,16 +1,18 @@
 import { readFileSync } from 'node:fs';
-import { storeHit, stepMirror, spendMirror, LOAD_HOLD, standOff } from '../shared/aliens.js';
+import { storeHit, stepMirror, MIRROR, payloadOf, soakOf, hiveDps, threatDps, standOff } from '../shared/aliens.js';
 import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
          farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR,
          broodReady, shoveFromBase, BASE_KEEPOUT } from '../shared/aliens.js';
 import { WILD, ALIENS, ALIENS_PER_MAP, effectiveHp, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
          forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
-import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R } from '../shared/sim.js';
+import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R, shieldMax } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { HULLS, resolve, DEFAULT_HULL } from '../shared/ships.js';
 import { BOOST } from '../shared/power.js';
 import { topTier } from '../shared/gear.js';
+import { buildFor, stageDps, STAGE_KEYS } from '../shared/balance.js';
+import { MODULES, addMod } from '../shared/research.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -24,24 +26,40 @@ const ehp = s => s.hp + s.shield;              // shields eat the first hits, so
 const full = s => s.stats.hull + s.stats.shield;
 
 // A real engagement: alien AI, movement, both guns, and bolts actually in flight.
-function fight(a, p, secs, { playerFires = false, drive = null } = {}) {
+//
+// The mirror is stepped here, in the same order server.js steps it — before the
+// alien fires, and fed from the hits its bolts actually land. It is in the shared
+// harness rather than in a Thresher-only one because a stat block that is only
+// ever read is a stat block whose code path is untested, and this is the only
+// mechanic in the game that writes to a live damage stat every tick.
+// `hold` is a predicate on t: true means the pilot has their finger OFF the
+// trigger, which is the one disengage available against something you cannot
+// outrun.
+function fight(a, p, secs, { playerFires = false, drive = null, hold = null } = {}) {
   let t = 0, everTargeted = false, air = [], fired = 0;
+  let took = 0, biggest = 0, peak = 0, mirrored = 0;
   while (t < secs && a.hp > 0 && p.hp > 0) {
     if (drive) drive(p, t);
     const tgt = stepAlienAI(a, map, con(p), dt);
     if (tgt) everTargeted = true;
     step(a, dt); step(p, dt); stepVitals(a, dt); stepVitals(p, dt);
     faceTarget(a, tgt ? p : null);
-    for (const s1 of fire(a, tgt ? p : null, dt)) { air.push(s1); fired++; }
-    if (playerFires) {
+    peak = Math.max(peak, stepMirror(a, dt));
+    const base = a.def?.attrs?.damage ?? 0;
+    for (const s1 of fire(a, tgt ? p : null, dt)) { air.push(s1); fired++; mirrored += Math.max(0, s1.dmg - base); }
+    if (playerFires && !(hold && hold(t))) {
       faceTarget(p, a);
       const volley = fire(p, a, dt);
       if (volley.length) { air.push(...volley); a.provoked.add(1); a.target ??= 1; }
+    } else if (hold) p.volley = 0;
+    for (const h of stepBolts(air, dt)) {
+      const n = h.split.shield + h.split.hull;
+      if (h.target === a) storeHit(a, n);
+      else { took += n; biggest = Math.max(biggest, n); }
     }
-    stepBolts(air, dt);
     t += dt;
   }
-  return { t, everTargeted, fired };
+  return { t, everTargeted, fired, took, biggest, peak, mirrored, won: a.hp <= 0, died: p.hp <= 0 };
 }
 
 console.log('\nsanctuary');
@@ -637,42 +655,185 @@ check('and an unknown alien still draws something rather than nothing',
 // A mirror, and the first hostile whose difficulty is set by your gun rather than
 // by its hull. That is the whole reason it exists: the research ladder multiplies
 // hull and shield by 32, so a wall of hit points is about to stop being content.
+//
+// It was also, measurably, harder than the thing at the top of the ladder. It gave
+// back one for one with no ceiling, and a finished Bulwark's 12,003 dps came back
+// as a 9,011 bolt into a 7,050 ship — 128% of the pilot, once a second. Every claim
+// in here that changed is rewritten rather than deleted, and the numbers that
+// replaced them were measured with the same harness in the same file.
+console.log('\nthe mirror');
 {
-  const T = ALIENS.thresher;
-  check('everything you put into a Thresher comes back out',
-    T.returns === 1,
-    `returns x effective hp = ${effectiveHp('thresher').toLocaleString('en-US')} damage over the fight, ` +
-    'whatever you fly — you have to deal its hit points to kill it, and it hands them back');
-  check('a mirror loads what it is hit with and gives it back on its next shot', (() => {
-    const a = newAlien('thresher', 1, map, 3);
-    const base = T.attrs.damage;
-    storeHit(a, 5000); stepMirror(a, 0.03);
-    const loaded = a.stats.damage;
-    spendMirror(a); stepMirror(a, 0.03);
-    return loaded === base + 5000 && a.stats.damage === base;
-  })(), `${T.attrs.damage} base becomes ${T.attrs.damage + 5000} carrying a 5,000 hit, and ${T.attrs.damage} again once spent`);
-  check('a payload it never fired bleeds away rather than waiting for you',
+  const T = ALIENS.thresher, H = ALIENS.hive;
+  const dt2 = 1 / 30;
+  const f = n => Math.round(n).toLocaleString('en-US');
+  const mask = mul => Object.keys(MODULES)
+    .filter(k => MODULES[k].mul === mul && MODULES[k].line !== 'mine')
+    .reduce((m, k) => addMod(m, k), 0);
+  const at = (stage, mul = 1) => {
+    const b = buildFor(stage);
+    return newShip(map.base.x + 4000, map.base.y, b.hull, b.fit, b.drones ?? [], undefined, null, mul > 1 ? mask(mul) : 0);
+  };
+  const mirror = (x, y) => { const a = newAlien('thresher', 2e6, map, 5); a.x = x; a.y = y; a.vx = a.vy = 0; return a; };
+  const pool = p => p.stats.hull + shieldMax(p);
+
+  // --- what the numbers claim ------------------------------------------------
+  check('a Thresher is not harder than a Hive, which is what it is FOR',
+    threatDps('thresher', 7050, 2850) < threatDps('hive', 7050, 2850),
+    `${f(threatDps('thresher', 7050, 2850))} dps at a full chamber against a Hive's ` +
+    `${f(threatDps('hive', 7050, 2850))} — and it used to be the same 80 dps barrel and ` +
+    '9,011 a bolt, which is why nobody believed the bestiary');
+  check('and it is exactly half a rung under it, on the same axis as its hull',
+    Math.abs(MIRROR.dps - hiveDps() / Math.sqrt(10)) < 1e-9 &&
+    Math.abs(effectiveHp('thresher') - effectiveHp('hive') / Math.sqrt(10)) <= 10,
+    `${f(MIRROR.dps)} dps against ${f(hiveDps())}, and ${f(effectiveHp('thresher'))} hp against ` +
+    `${f(effectiveHp('hive'))} — one sqrt(10), both axes, nothing chosen twice`);
+  check('you live eight seconds standing in front of one, and three in a Hive',
     (() => {
-      const a = newAlien('thresher', 2, map, 3);
-      storeHit(a, 9000);
-      for (let i = 0; i < 40; i++) stepMirror(a, 0.1);   // 4s, past LOAD_HOLD
-      return a.stats.damage === T.attrs.damage;
-    })(), `${LOAD_HOLD}s — break off and it forgets, so a fight abandoned two sectors ago is not still in the chamber`);
+      const p = at('finished');
+      const mine = pool(p) / threatDps('thresher', pool(p), p.stats.hull);
+      const hive = pool(p) / threatDps('hive', pool(p), p.stats.hull);
+      return mine > 2.5 * hive && mine > 7;
+    })(),
+    (() => { const p = at('finished');
+             return `${(pool(p) / threatDps('thresher', pool(p), p.stats.hull)).toFixed(1)}s against ` +
+                    `${(pool(p) / threatDps('hive', pool(p), p.stats.hull)).toFixed(1)}s in a Hive and the ` +
+                    '22.2s balance.js allows an on-model hostile — it was 0.58s'; })());
+
+  // --- the chamber -----------------------------------------------------------
+  check('a mirror is loaded by what you take off it, and a tenth of it fills the chamber',
+    (() => {
+      const a = mirror(0, 0);
+      storeHit(a, soakOf(T));
+      return Math.abs(a.load - 1) < 1e-9 && Math.abs(soakOf(T) - effectiveHp('thresher') * MIRROR.soak) < 1e-9;
+    })(),
+    `${f(soakOf(T))} points is ${MIRROR.soak * 100}% of its ${f(effectiveHp('thresher'))} — and the chamber is a ` +
+    'SHARE, 0..1, so it rides `abl` with nothing to normalise against');
+  check('and nothing you can buy fills it past full',
+    (() => { const a = mirror(0, 0); storeHit(a, soakOf(T) * 40); return a.load === 1; })(),
+    `a full chamber throws ${f(payloadOf(T, 1))} and no gun, party or ammunition grade can raise it — ` +
+    'it used to be exactly your own dps, with no ceiling at all');
+  check('firing no longer empties it: the chamber is a charge, not a magazine',
+    (() => {
+      const a = mirror(0, 0);
+      storeHit(a, soakOf(T));
+      const before = a.load;
+      const spat = fire(a, Object.assign(newShip(300, 0, 'bulwark'), { vx: 0, vy: 0 }), 1 / 30);
+      stepMirror(a, 1 / 30);
+      return spat.length > 0 && a.load > before * 0.9;
+    })(),
+    'a load that vanished the instant a shot left could never be watched falling, ' +
+    'and watching it fall is the only way a pilot learns to stop shooting');
+  check('breaking off for one second halves what the next bolt carries',
+    (() => {
+      const a = mirror(0, 0);
+      storeHit(a, soakOf(T));
+      for (let i = 0; i < 30; i++) stepMirror(a, dt2);
+      return Math.abs(a.load - 0.5) < 0.01;
+    })(),
+    `${MIRROR.half}s, which is one of its own firing cycles — the payload goes ` +
+    `${f(payloadOf(T, 1))} -> ${f(payloadOf(T, 0.5))} -> ${f(payloadOf(T, 0.25))} over three of them, and it ` +
+    'bleeds every tick rather than dropping to zero on a timer');
+  check('and it bleeds by a share rather than by an amount',
+    (() => {
+      const big = mirror(0, 0), small = mirror(0, 0);
+      storeHit(big, soakOf(T)); storeHit(small, soakOf(T) * 0.1);
+      for (let i = 0; i < 30; i++) { stepMirror(big, dt2); stepMirror(small, dt2); }
+      return Math.abs(big.load / 1 - small.load / 0.1) < 0.01;    // the same FRACTION gone
+    })(),
+    (() => { const a = mirror(0, 0); storeHit(a, soakOf(T));
+             for (let i = 0; i < 30; i++) stepMirror(a, dt2);
+             return `a full chamber and a tenth of one both keep ${(100 * a.load).toFixed(0)}% after a second. ` +
+                    'The pool this drains IS the player gun, and a flat bleed is the whole chamber at the ' +
+                    'bottom of the shop and a rounding error at the top'; })());
   check('and the chamber cannot compound itself into an unbounded number',
     (() => {
-      const a = newAlien('thresher', 3, map, 3);
-      storeHit(a, 1000);
-      for (let i = 0; i < 60; i++) stepMirror(a, 0.001);  // many ticks, one payload
-      return a.stats.damage === T.attrs.damage + 1000;
+      const a = mirror(0, 0);
+      storeHit(a, soakOf(T) * 0.5);
+      for (let i = 0; i < 60; i++) stepMirror(a, 0.000001);
+      return a.stats.damage < payloadOf(T, 0.51);
     })(), 'the base is read off the definition, not off the stats this is writing to');
-  check('it can kill you but it can never trap you',
-    Object.keys(HULLS).filter(h => HULLS[h].price > 0)
-      .every(h => resolve(h).speed > T.attrs.speed),
-    `${T.attrs.speed} against every hull — the same promise a Leviathan makes`);
-  check('and you cannot out-range the problem either',
+  check('a mirror that respawned is empty',
+    (() => { const a = mirror(0, 0); storeHit(a, soakOf(T)); respawnAlien(a, map); return !a.load; })(),
+    'it kept its chamber across a death, so the next pilot opened the fight eating the last one');
+
+  // --- the fight, measured ---------------------------------------------------
+  // One line per stage so a regression prints the number it broke, not just a name.
+  const runs = {};
+  for (const [key, stage, mul, opt] of [
+    ['stand', 'finished', 1, {}],
+    ['stand8', 'finished', 8, {}],
+    ['stand32', 'finished', 32, {}],
+    ['weave', 'finished', 1, { drive: (p, t) => {
+      // A CHANGE of course is the dodge — a bolt leads your velocity, so a steady
+      // circle-strafe is aimed at perfectly and only a reversal misses.
+      const sgn = Math.floor(t / 0.6) % 2 ? 1 : -1;
+      p.dx = 0; p.dy = sgn;
+    } }],
+    ['cruiser', 'cruiser', 1, {}],
+    // Four completed fights at x32, so nobody dies half way and the returned total
+    // is the whole fight rather than a slice of one. 429 dps to 12,003 is a 28x
+    // span of player gun, and that span is the point of the claim below.
+    ['x32 interceptor', 'interceptor', 32, { secs: 900 }],
+    ['x32 fighter', 'fighter', 32, {}],
+    ['x32 cruiser', 'cruiser', 32, {}],
+  ]) {
+    const p = at(stage, mul), a = mirror(p.x + 700, p.y);
+    const { secs = 400, ...rest } = opt;
+    runs[key] = { p, a, full: pool(p), dps: stageDps(stage),
+                  r: fight(a, p, secs, { playerFires: true, ...rest }) };
+  }
+  for (const [k, v] of Object.entries(runs))
+    console.log(`     ${k.padEnd(12)} ${(v.r.won ? 'killed it' : v.r.died ? 'DIED' : 'timeout').padEnd(10)}` +
+      ` ${v.r.t.toFixed(1).padStart(6)}s  took ${f(v.r.took).padStart(7)} of ${f(v.full).padStart(7)}` +
+      `  biggest ${f(v.r.biggest).padStart(5)}  chamber peaked ${(100 * v.r.peak).toFixed(0)}%`);
+
+  check('one bolt is no longer most of your ship',
+    runs.stand.r.biggest < runs.stand.full * 0.12,
+    `${f(runs.stand.r.biggest)} into a finished Bulwark's ${f(runs.stand.full)} — ` +
+    `${(100 * runs.stand.r.biggest / runs.stand.full).toFixed(0)}% of it, where it was 9,011 and 128%`);
+  check('standing still in front of one is still what kills you',
+    runs.stand.r.died && !runs.stand.r.won,
+    `dead in ${runs.stand.r.t.toFixed(1)}s with a finished ship and no research — ` +
+    'the identity is "do not stand still", and softening it must not remove it');
+  check('but moving is now an answer rather than a delay',
+    runs.weave.r.won && !runs.weave.r.died,
+    `weaving across the line of fire kills it in ${runs.weave.r.t.toFixed(1)}s with ` +
+    `${(100 * (1 - runs.weave.r.took / runs.weave.full)).toFixed(0)}% of the ship left. Before this ` +
+    'every line of play died: 2.7s standing, 2.8s kiting, 3.8s weaving');
+  check('and one rung of research carries a pilot who does neither',
+    runs.stand8.r.won && runs.stand8.r.took < runs.stand8.full * 0.5,
+    `x8 hull and shields, never moving: kills it down ${(100 * runs.stand8.r.took / runs.stand8.full).toFixed(0)}%. ` +
+    'It used to take x32 to survive at all, and x32 cost 88%');
+  {
+    const span = ['x32 interceptor', 'x32 fighter', 'x32 cruiser', 'stand32'].map(k => runs[k]);
+    check('buying a bigger gun never makes a Thresher cost more',
+      span.every(v => v.r.won) && Math.max(...span.map(v => v.r.mirrored)) < Math.min(...span.map(v => v.r.mirrored)) * 1.4,
+      span.map(v => `${f(v.r.mirrored)}`).join(' / ') + ' points of returned fire across a ' +
+      `${(Math.max(...span.map(v => v.dps)) / Math.min(...span.map(v => v.dps))).toFixed(0)}x span of player damage ` +
+      '— a sharper gun makes the fight shorter and louder, not dearer. It used to be 205,550 for everyone, ' +
+      'delivered one ship at a time');
+  }
+
+  // --- and what has not changed ----------------------------------------------
+  check('you cannot out-range the problem',
     Object.keys(HULLS).filter(h => HULLS[h].price > 0)
       .every(h => resolve(h, { weapon: [topTier('weapon')], generator: [], tech: [] }).weaponRange < T.attrs.weaponRange),
     `it reaches ${T.attrs.weaponRange}, which is past every gun in the game`);
+  // This used to read "it can kill you but it can never trap you", against BARE
+  // hulls. It is false and it was false when it was written: a generator is bought
+  // with speed, so the ship that fights this thing is slower than the bare hull it
+  // was built on. A finished Bulwark flies at 152 against a Thresher's 200. The
+  // claim is rewritten to what is true and to what the fight therefore is.
+  check('a fitted ship cannot outrun one, so the disengage is the trigger, not the throttle',
+    (() => {
+      const fitted = STAGE_KEYS.map(k => at(k).stats.speed);
+      return Math.min(...fitted) < T.attrs.speed;
+    })(),
+    `the slowest fitted build in the game flies at ${Math.round(Math.min(...STAGE_KEYS.map(k => at(k).stats.speed)))} ` +
+    `against ${T.attrs.speed}, so backing off buys nothing — measured, a 2s-on/1s-off retreat cost 102% of the ship ` +
+    'and standing still cost 103%. Holding fire is what empties the chamber');
+  check('and it does not run, so the fight ends when you decide it does',
+    T.flee === 0 && T.returns === 1);
 }
 
 // The one rule about where things live: the further from your home ring a sector

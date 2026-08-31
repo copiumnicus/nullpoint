@@ -15,7 +15,7 @@
 // The count comes with it, because a tally is a diary. "Drifter x412" says more
 // about a pilot's week than anything else on the screen.
 
-import { ALIENS, WILD, effectiveHp } from './aliens.js';
+import { ALIENS, WILD, effectiveHp, MIRROR } from './aliens.js';
 
 // --- what you have met --------------------------------------------------------
 //
@@ -48,7 +48,13 @@ export const totalKills = kills =>
 export function dossierOf(kind, kills = {}) {
   const a = ALIENS[kind];
   if (!a) return null;
-  const gun = (a.attrs.damage ?? 0) * (a.attrs.fireRate ?? 0);
+  // A mirror's barrel is 80 and its chamber is the gun. Quoting the barrel put
+  // "80 dps at 900" on the page for the thing that was one-shotting finished ships,
+  // which is a threat file actively misleading the pilot reading it. The number here
+  // is the worst it can be — a full chamber — because that is what a threat file is
+  // for, and it is MIRROR.dps rather than a second copy of it.
+  const gun = (a.attrs.damage ?? 0) * (a.attrs.fireRate ?? 0)
+            + (a.returns ?? 0) * MIRROR.dps;
   return {
     kind, name: a.name, cls: a.cls, colour: a.colour, shape: a.shape,
     killed: kills?.[kind] ?? 0,
