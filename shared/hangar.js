@@ -19,6 +19,8 @@ import { DEVICE_KEYS } from './devices.js';
 
 import { rowsOf as statRows, rowHeight } from './breakdown.js';
 
+import { rowsIn, stackIn, barIn, spanOf, heightOf } from './scroll.js';
+
 export const TABS = [{ key: 'hangar', name: 'HANGAR' },
                      { key: 'store', name: 'STORE' },
                      { key: 'inventory', name: 'INVENTORY' },
@@ -208,25 +210,13 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     // how the first wiring of this threw.
     const rows = statRows({ ...s, drones: Array.isArray(s.escort) ? s.escort : [] });
     const sX = x + 20, sW = w - 40;
-    let span = 0;
-    for (const r of rows) span += rowHeight(r);
-    const max = Math.max(0, span - room);
-    const at = Math.max(0, Math.min(max, scroll));
-    const placed = [];
-    let cy = top - at;
-    for (const r of rows) {
-      const rh = rowHeight(r);
-      if (cy + rh > top && cy < top + room) placed.push({ ...r, r: { x: sX, y: cy, w: sW, h: rh } });
-      cy += rh;
-    }
-    out.stats = placed;
+    const heights = rows.map(rowHeight), span = heightOf(heights);
+    const at = Math.max(0, Math.min(spanOf(span, room), scroll));
+    out.stats = stackIn({ x: sX, top, room, w: sW, heights, at })
+      .map(hit => ({ ...rows[hit.i], ...hit }));
     out.body = { x: sX, y: top, w: sW, h: room };
-    out.scroll = { at, max, span };
-    out.bar = max > 0 ? {
-      x: sX + sW + 6, y: top + (at / span) * room,
-      w: 3, h: Math.max(20, (room / span) * room),
-      track: { x: sX + sW + 6, y: top, w: 3, h: room },
-    } : null;
+    out.scroll = { at, max: spanOf(span, room), span };
+    out.bar = barIn({ x: sX + sW + 6, top, room, content: span, at });
     return out;
   }
 
@@ -234,18 +224,13 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     // One column, the full width, scrolling on the same fixed row height the store
     // uses — it is the same kind of list and should not read as a different screen.
     const items = inventoryItems(s);
-    const iX = x + 20, iW = w - 40, iStep = STORE_ROW;
-    const per = Math.max(1, Math.floor(room / iStep));
-    const max = Math.max(0, items.length - per);
-    const at = Math.max(0, Math.min(max, Math.round(scroll)));
-    out.store = items.slice(at, at + per)
-      .map((it, i) => ({ ...it, r: { x: iX, y: top + i * iStep, w: iW, h: iStep - 8 } }));
-    out.scroll = { at, per, total: items.length, max };
-    out.bar = max > 0 ? {
-      x: iX + iW + 6, y: top + (at / items.length) * room,
-      w: 3, h: Math.max(20, (per / items.length) * room),
-      track: { x: iX + iW + 6, y: top, w: 3, h: room },
-    } : null;
+    const iX = x + 20, iW = w - 40, span = items.length * STORE_ROW;
+    const at = Math.max(0, Math.min(spanOf(span, room), scroll));
+    out.store = rowsIn({ x: iX, top, room, w: iW, n: items.length, rowH: STORE_ROW, at, gap: 8 })
+      .map(hit => ({ ...items[hit.i], ...hit }));
+    out.body = { x: iX, y: top, w: iW, h: room };
+    out.scroll = { at, max: spanOf(span, room), span, total: items.length };
+    out.bar = barIn({ x: iX + iW + 6, top, room, content: span, at });
     return out;
   }
 
@@ -261,19 +246,14 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   // A shelf should not get harder to read every time something is added to it.
   const items = pageItems(page, { hulls, formations, drones: droneCount });
   const iX = x + 30 + catW, iW = w - 50 - catW;
-  const iStep = STORE_ROW;
-  const per = Math.max(1, Math.floor(room / iStep));
-  const max = Math.max(0, items.length - per);
-  const at = Math.max(0, Math.min(max, Math.round(scroll)));
-  out.store = items.slice(at, at + per)
-    .map((it, i) => ({ ...it, r: { x: iX, y: top + i * iStep, w: iW, h: iStep - 8 } }));
+  const span = items.length * STORE_ROW;
+  const at = Math.max(0, Math.min(spanOf(span, room), scroll));
+  out.store = rowsIn({ x: iX, top, room, w: iW, n: items.length, rowH: STORE_ROW, at, gap: 8 })
+    .map(hit => ({ ...items[hit.i], ...hit }));
+  out.body = { x: iX, y: top, w: iW, h: room };
   // Only when there is something below the fold, so a short shelf grows no
   // control it does not need.
-  out.scroll = { at, per, total: items.length, max };
-  out.bar = max > 0 ? {
-    x: iX + iW + 6, y: top + (at / items.length) * room,
-    w: 3, h: Math.max(20, (per / items.length) * room),
-    track: { x: iX + iW + 6, y: top, w: 3, h: room },
-  } : null;
+  out.scroll = { at, max: spanOf(span, room), span, total: items.length };
+  out.bar = barIn({ x: iX + iW + 6, top, room, content: span, at });
   return out;
 }

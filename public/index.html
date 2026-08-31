@@ -17,6 +17,7 @@ import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpos
 import { havenBadge, havenLine, TONE } from '/shared/haven.js';
 import { filePanel, filedIn, dossierOf, fileProgress, totalKills,
          FILE_PAD, FILE_HEAD, FILE_ROW } from '/shared/threats.js';
+import { scroller, wheel as scrollWheel, ease as scrollEase } from '/shared/scroll.js';
 import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, rungGain, partsOf,
          shortOf, tiersOf,
          applyResearch,
@@ -136,12 +137,7 @@ let labConfirm = false;
 // never written down anywhere a player could read them, and this is where they
 // are, paid for one kill at a time.
 let myKills = {}, fileOpen = false;
-// Two positions, and the difference between them is why it feels like anything.
-// `fileWant` is where the wheel has asked to be; `fileAt` is where the list is
-// actually drawn, easing toward it. A wheel tick used to move a whole 96px entry
-// in one frame, which is not scrolling, it is two different lists shown in
-// succession.
-let fileWant = 0, fileAt = 0, fileTick = 0;
+const fileScr = scroller();
 // The balance the server last told us, and when. The counter runs UP from that
 // at the rate the server also told us — it never invents money, it only shows
 // the money that is already accruing between one bank and the next. Server truth
@@ -216,20 +212,12 @@ const toast = (what, cost, note) => {
 // be the manual this exists instead of.
 function drawFile(now) {
   const filed = filedIn(myKills);
-  // Ease toward where the wheel asked to be, off the timestamp the FRAME was handed
-  // rather than off performance.now(). Two clocks matter here and CLAUDE.md says so:
-  // the render harness drives frames inside a few milliseconds of wall clock, so an
-  // easing measured against the real clock never advances and the panel looks
-  // frozen to the only thing that could have tested it.
-  //
-  // Frame-rate independent: the same fraction of the remaining distance per second
-  // however fast the client runs, so it settles in about a fifth of a second at
-  // 30fps and at 144.
-  const dtS = Math.min(0.05, Math.max(0, (now - fileTick) / 1000)) || 0.016;
-  fileTick = now;
-  const ease = 1 - Math.pow(0.0001, dtS);
-  fileAt += (fileWant - fileAt) * ease;
-  if (Math.abs(fileWant - fileAt) < 0.5) fileAt = fileWant;
+  // Eased by shared/scroll.js, off the timestamp the FRAME was handed rather than
+  // the wall clock — the harness drives frames inside a few milliseconds of real
+  // time, so an easing on performance.now() never advances and the panel is frozen
+  // to the only thing that could have tested it.
+  const fileAt = scrollEase(fileScr, now,
+    filePanel(VIEW_W, VIEW_H, 0, filed.length).maxScroll);
   const L = filePanel(VIEW_W, VIEW_H, fileAt, filed.length);
   const P = L.panel;
   g.fillStyle = 'rgba(4,7,12,0.94)'; g.fillRect(P.x, P.y, P.w, P.h);
@@ -339,7 +327,7 @@ function fileClick(v) {
   // target and a drawn value and renamed both, and this was left reading a name
   // that no longer exists — so every click in the panel threw a ReferenceError and
   // the close button, and clicking away, silently did nothing.
-  const L = filePanel(VIEW_W, VIEW_H, fileAt, filed.length);
+  const L = filePanel(VIEW_W, VIEW_H, fileScr.at, filed.length);
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
   if (inside(L.close) || !inside(L.panel)) { fileOpen = false; return true; }
   return true;                                     // a reference document: reading, not clicking
@@ -1165,7 +1153,7 @@ addEventListener('keydown', e => {
   if (k === 'r') { labOpen = !labOpen; labConfirm = false; sysOpen = false; bayOpen = false; invOpen = false; }
   // L for the logbook. Readable anywhere, because it is a reference document and
   // the moment you want it is the moment something unfamiliar is shooting at you.
-  if (k === 'l') { fileOpen = !fileOpen; fileWant = fileAt = 0; sysOpen = false; bayOpen = false; invOpen = false; labOpen = false; }
+  if (k === 'l') { fileOpen = !fileOpen; fileScr.want = fileScr.at = 0; sysOpen = false; bayOpen = false; invOpen = false; labOpen = false; }
   if (k === 'o') { setOpen = !setOpen; sysOpen = bayOpen = invOpen = false; }
   if (k === 'n') { nextTrack(); }
   if (e.key === '[' || e.key === ']') {
@@ -1325,27 +1313,18 @@ addEventListener('wheel', e => {
     patchScroll = Math.max(0, patchScroll + (e.deltaY > 0 ? 3 : -3));
     return;
   }
+  // Everything that scrolls scrolls the same way now — one notch, in pixels, eased,
+  // clamped at both ends. It used to be four arrangements and one handler adding "2"
+  // to whichever was open, which was two ROWS on the shop and two PIXELS on the
+  // stats page.
   if (fileOpen) {
     e.preventDefault?.();
-    // Clamped at BOTH ends. Unbounded above, scrolling past the last entry kept
-    // counting, so coming back up did nothing until every phantom step had been
-    // undone — which reads exactly like a panel that does not scroll at all.
-    // In pixels, and clamped at BOTH ends. Unbounded above, scrolling past the
-    // last entry kept counting, so coming back did nothing until every phantom
-    // step had been undone — which reads exactly like a panel that does not scroll.
-    const max = filePanel(VIEW_W, VIEW_H, 0, filedIn(myKills).length).maxScroll;
-    const step = Math.max(40, Math.min(140, Math.abs(e.deltaY) || 60));
-    fileWant = Math.max(0, Math.min(max, fileWant + Math.sign(e.deltaY) * step));
+    scrollWheel(fileScr, e.deltaY, filePanel(VIEW_W, VIEW_H, 0, filedIn(myKills).length).maxScroll);
     return;
   }
-  if (bayOpen && (bayTab === 'store' || bayTab === 'inventory' || bayTab === 'stats')) {
-    e.preventDefault?.();
-    // The shop and the locker scroll by ROWS; the stats page scrolls by PIXELS,
-    // because its rows are different heights. Two of anything a notch is two rows
-    // on one and two pixels on the other — which is a page that does not move, and
-    // is why the attributes below the fold could not be reached at all.
-    const step = bayTab === 'stats' ? 62 : 2;
-    bayScroll = Math.max(0, bayScroll + (e.deltaY > 0 ? step : -step));
+  if (bayOpen) {
+    const G = bayGeom();
+    if (G.scroll?.max > 0) { e.preventDefault?.(); scrollWheel(bayScr, e.deltaY, G.scroll.max); }
   }
 }, { passive: false });
 addEventListener('keyup', e => steerDown.delete(e.key.toLowerCase()));
@@ -1545,7 +1524,21 @@ const pickGeom = () => {
   return row && items.length ? { G, row, ...pickerLayout(G, row, items) } : null;
 };
 
-let bayScroll = 0;                        // how far down the current shelf we are
+// One scroller per panel, all of them the same thing from shared/scroll.js: a
+// target the wheel moves and a drawn position chasing it. There used to be four
+// different scrolls in this client and one wheel handler adding "2" to whichever
+// was open — two ROWS on the shop and two PIXELS on the stats page, which is a
+// page that does not move.
+const bayScr = scroller();
+let bayScroll = 0;                        // the eased pixel offset, read by bayGeom
+// Eased once per frame, before anything reads the geometry — the shop, the locker
+// and the stats page all ride the same scroller now.
+const bayEase = now => {
+  const probe = bayLayout(VIEW_W, VIEW_H, { tab: bayTab, page: bayPage, hull: myHull,
+    drones: myDrones.length, hulls: myHulls, formations: myForms, gear: myGear, scroll: 0,
+    fit: myFit, escort: myDrones, rig: myRig, formation: myForm, mask: myLab?.mods ?? 0 });
+  bayScroll = scrollEase(bayScr, now, probe.scroll?.max ?? 0);
+};
 const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
   tab: bayTab, page: bayPage, hull: myHull, drones: myDrones.length,
   hulls: myHulls, formations: myForms, gear: myGear, scroll: bayScroll,
@@ -1605,8 +1598,8 @@ function bayClick(v) {
   // the way home and know what to fly back for — it was refusing every click
   // when you were not docked, which also meant the panel stuck on whichever tab
   // you happened to be on when you left the ring.
-  for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; bayScroll = 0; picking = null; return; }
-  for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; bayScroll = 0; return; }
+  for (const t of G.tabs) if (inside(t.r)) { bayTab = t.key; bayScr.want = bayScr.at = bayScroll = 0; picking = null; return; }
+  for (const p of G.pages) if (inside(p.r)) { bayPage = p.key; bayScr.want = bayScr.at = bayScroll = 0; return; }
 
   // Spending and fitting are not free.
   const atRing = docked();
@@ -2065,6 +2058,11 @@ function drawBay() {
     g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   }
 
+  // Rows overhang the window on purpose now — they are placed at a pixel offset —
+  // so the caller clips, which is what makes a row leaving the top get CUT rather
+  // than drawn across the header. Same contract the stats page and the threat file
+  // already use, from the same module.
+  if (G.body) { g.save(); g.beginPath(); g.rect(G.body.x, G.body.y, G.body.w, G.body.h); g.clip(); }
   for (const it of G.store) {
     const r = it.r;
     const price = it.kind === 'own' ? scrapOfItem(it.k)
@@ -2152,6 +2150,7 @@ function drawBay() {
                             r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';
   }
+  if (G.body) g.restore();
 
   g.fillStyle = '#5b6b85';
   g.fillText('hover for exact numbers · click to buy · fit it in the HANGAR tab · H or Esc to close',
@@ -4475,7 +4474,7 @@ function drawFrame(now) {
   if (leaving()) drawLeaving();
   if (setOpen) drawSettings();
   if (sysOpen) drawSystem(me);
-  if (bayOpen) drawBay();
+  if (bayOpen) { bayEase(now); drawBay(); }
   if (berthOpen) drawBerth();
   if (invOpen) drawInventory();
   if (labOpen) drawLab();

@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.55';
+export const VERSION = '0.56';
 
 export const PATCHES = [
+  { v: '0.56', notes: [
+    'Everything that scrolls now scrolls the way the threat file does',
+    'The shop, the locker and the stats page move by pixels, eased, with a proper bar',
+    'They used to jump a whole row a notch, and the stats page barely moved at all',
+  ] },
   { v: '0.55', notes: [
     'Fixed: your hull and shield readouts showed what the shops sold you, not what you fly',
     'Research WAS working — the two numbers you watch while swapping ships never showed it',

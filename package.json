@@ -6,7 +6,7 @@
     "start": "node server.js",
     "balance": "node test/offmodel.mjs",
     "dev": "DEV_ADMIN=1 node server.js",
-    "test": "node test/account.mjs && node test/ships.mjs && node test/power.mjs && node test/cargo.mjs && node test/radar.mjs && node test/aliens.mjs && node test/siphon.mjs && node test/stealth.mjs && node test/rockets.mjs && node test/steer.mjs && node test/reward.mjs && node test/playtime.mjs && node test/patch.mjs && node test/ammo.mjs && node test/sim.mjs && node test/wire.mjs && node test/balance.mjs && node test/ability.mjs && node test/tech.mjs && node test/silhouette.mjs && node test/perf.mjs && node test/berth.mjs && node test/scrap.mjs && node test/spawn.mjs && node test/refine.mjs && node test/research.mjs && node test/threats.mjs && node test/kedge.mjs && node test/render.mjs"
+    "test": "node test/account.mjs && node test/ships.mjs && node test/power.mjs && node test/cargo.mjs && node test/radar.mjs && node test/aliens.mjs && node test/siphon.mjs && node test/stealth.mjs && node test/rockets.mjs && node test/steer.mjs && node test/reward.mjs && node test/playtime.mjs && node test/patch.mjs && node test/ammo.mjs && node test/sim.mjs && node test/wire.mjs && node test/balance.mjs && node test/ability.mjs && node test/tech.mjs && node test/silhouette.mjs && node test/perf.mjs && node test/berth.mjs && node test/scrap.mjs && node test/spawn.mjs && node test/refine.mjs && node test/research.mjs && node test/threats.mjs && node test/kedge.mjs && node test/scroll.mjs && node test/render.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
