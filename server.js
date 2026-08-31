@@ -35,7 +35,7 @@ import { storeHit, stepMirror } from './shared/aliens.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
-import { newAccount, sanitiseAccount, capture } from './shared/account.js';
+import { newAccount, sanitiseAccount, capture, carried } from './shared/account.js';
 import { GAME } from './shared/brand.js';
 import { whyNotBerth, whyNotBuyBerth, berthPrice, BERTH_RANK,
          respawnAt, isHangar, homePorts, foldTo } from './shared/berth.js';
@@ -560,15 +560,10 @@ wss.on('connection', (ws, req) => {
                     // map: radar means two pilots in the same sector see different
                     // things, so there is no shared previous world to diff against.
                     base: newBase(),
-                    hold: { ...acct.hold }, vault: { ...acct.vault }, credits: acct.credits,
-                    gear: { ...acct.gear }, hulls: [...acct.hulls], xp: acct.xp,
-                    formations: [...acct.formations],
-                    ammo: { ...acct.ammo }, using: { ...acct.using }, armed: { ...acct.armed },
-                    kits: { ...acct.kits }, kit: acct.kit, fixing: null,
-                    devices: { ...acct.devices }, device: acct.device, folding: null,
-                    foldTo: acct.foldTo ?? null, lab: acct.lab ?? null,
-                    kills: { ...(acct.kills ?? {}) },
-                    berths: [...(acct.berths ?? [])], lastDock: acct.lastDock ?? null,
+                    // Everything the account carries, in one list, shared with
+                    // /reset — see carried() in shared/account.js for why.
+                    ...carried(acct),
+                    fixing: null, folding: null,
                     scoop: null, want: null, dead: false, lobby,
                     // Composite Plating starts seated. You sign in at a dock or a
                     // hangar either way, and the tick would re-seat it a frame
@@ -785,6 +780,11 @@ wss.on('connection', (ws, req) => {
             delete db.accounts[token];
             store.save(db);
             players.delete(id);
+            // The yard is built from the accounts, so an account that no longer
+            // exists still has a station standing in the ring until something else
+            // happens to rebuild it — a plot claimed by nobody, drawn with a name
+            // nobody answers to. Same reason on the plain reset below.
+            reyard();
             for (const list of aliens.values()) forgetPlayer(list, id);
             ws.send(JSON.stringify({ t: 'reset' }));   // the client drops its token and reloads
             console.log(`~ ${acct.name} wiped their account`);
@@ -798,17 +798,23 @@ wss.on('connection', (ws, req) => {
           db.accounts[token] = acct;
 
           P.acct = acct; P.mapId = acct.mapId; P.co = co;
-          P.credits = 0; P.xp = 0;
-          P.gear = {}; P.hulls = [...acct.hulls]; P.formations = [...acct.formations];
-          P.ammo = { ...acct.ammo }; P.using = { ...acct.using }; P.armed = { ...acct.armed };
-          P.kits = {}; P.kit = acct.kit;
-          P.hold = {}; P.vault = {};
-          P.targetId = null; P.want = null; P.scoop = null; P.fixing = null;
+          // From the new account rather than field by field. The hand-written
+          // version had drifted: it zeroed credits and gear and never touched the
+          // research station, so a reset pilot flew a starter hull with a x4 hull
+          // multiplier and a 500,000cr lab still standing in their ring, and
+          // capture() wrote it all back a second later. carried() is one list, used
+          // here and where a connection seeds a player, and it cannot drift again.
+          Object.assign(P, carried(acct),
+                        { targetId: null, want: null, scoop: null, fixing: null, folding: null });
           P.contacts.clear();
+          // The ship carries the research multiplier too — refit reads it off the
+          // account's lab, which the new account does not have.
           refit(ship, acct.hull, acct.fit, [], acct.formation, null);
+          ship.research = 0;
           Object.assign(ship, { x: b2.x, y: b2.y, vx: 0, vy: 0, tx: null, ty: null,
                                 dx: null, dy: null, charge: 0, chargeTo: null });
           store.save(db);
+          reyard();                     // the plot goes back to the ring with it
           sendWelcome();
           sendMap(P);
           console.log(`~ ${acct.name} reset to a new pilot`);

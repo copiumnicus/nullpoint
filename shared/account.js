@@ -118,6 +118,41 @@ export function sanitiseAccount(a, seq, now) {
   };
 }
 
+// Unfold an account into the live fields a player carries. The exact inverse of
+// capture() below, and it exists because the list was written out twice: once
+// where a connection seeds a player, and once inside /reset, by hand.
+//
+// The hand-written one had already fallen behind. /reset built a fresh account —
+// which correctly has no research station — assigned it, then zeroed credits, gear,
+// hulls, ammunition and the hold field by field and never touched `lab`, `kills`,
+// `berths`, `devices` or `foldTo`. So the live player kept a 500,000cr station and
+// a x4 hull multiplier, capture() wrote all of it straight back onto the new
+// account a second later, and a pilot who reset came out with nothing but the
+// research ladder of the pilot they had just thrown away. It said "a starter hull,
+// no credits, and your own dock again" while doing none of that.
+//
+// One list now. Both callers take it, so a field added to an account cannot be
+// missed by the reset, and test/account.mjs fails BY NAME if capture() learns to
+// write something this does not hand back.
+//
+// SHIP_FIELDS below is the seam: those are the account fields that live on the
+// ship rather than on the player, so they are restored by refit() rather than here.
+export const SHIP_FIELDS = ['hull', 'fit', 'drones', 'rig', 'formation'];
+
+export function carried(a) {
+  return {
+    credits: a.credits, xp: a.xp,
+    gear: { ...a.gear }, hulls: [...a.hulls], formations: [...a.formations],
+    ammo: { ...a.ammo }, using: { ...a.using }, armed: { ...a.armed },
+    kits: { ...a.kits }, kit: a.kit,
+    devices: { ...a.devices }, device: a.device,
+    foldTo: a.foldTo ?? null, lab: a.lab ?? null,
+    kills: { ...(a.kills ?? {}) },
+    berths: [...(a.berths ?? [])], lastDock: a.lastDock ?? null,
+    vault: { ...a.vault }, hold: { ...a.hold },
+  };
+}
+
 // Fold a live player back into their account, ready to be written out.
 export function capture(account, p, now) {
   account.co = p.co;

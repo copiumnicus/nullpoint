@@ -1,4 +1,5 @@
-import { newAccount, sanitiseAccount, capture, callsign, companyFor } from '../shared/account.js';
+import { newAccount, sanitiseAccount, capture, carried, SHIP_FIELDS,
+         callsign, companyFor } from '../shared/account.js';
 import { newShip, refit } from '../shared/sim.js';
 import { MAPS, COMPANIES } from '../shared/maps.js';
 import { HULLS, DEFAULT_HULL } from '../shared/ships.js';
@@ -174,6 +175,46 @@ console.log('\non disk');
   check('no half-written temp file is left behind', !fs.existsSync('data/accounts.json.tmp'));
   process.chdir(cwd);
   fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+console.log('\nwhat a reset actually resets');
+{
+  // /reset used to zero the live player field by field, in a list written out a
+  // second time, and that list had fallen behind capture(): it never touched the
+  // research station, so a pilot who reset kept a 500,000cr lab and a x4 hull
+  // multiplier with no credits to their name, and capture() wrote it back onto the
+  // fresh account a second later.
+  //
+  // carried() is now the one list, taken by the login path and by /reset. This is
+  // the guard: everything capture() writes must either come back out of carried()
+  // or be one of the fields restored from the ship instead.
+  const RESTORED_ELSEWHERE = [...SHIP_FIELDS, 'co', 'mapId', 'x', 'y', 'seen', 'played'];
+  const rich = newAccount('rich', 3, 1000);
+  Object.assign(rich, { credits: 412_000, xp: 90_000, lab: { slot: 2, mods: 7, since: 1000 },
+                        kills: { drifter: 412 }, berths: ['hxi4'], devices: { recall: 1 },
+                        gear: { emitter5: 4 }, hold: { iron: 30 }, vault: { void: 2 } });
+  const ship = newShip(0, 0, rich.hull, rich.fit, [], rich.formation, null, rich.lab.mods);
+  const live = { ship, ...carried(rich), co: rich.co, mapId: rich.mapId,
+                 acted: 2000, banked: 1000 };
+  const wrote = capture({}, live, 2000);
+  const missing = Object.keys(wrote).filter(k => !RESTORED_ELSEWHERE.includes(k)
+                                             && !(k in carried(rich)));
+  check('everything an account carries is handed back when a pilot is re-seeded',
+    missing.length === 0,
+    missing.length ? `capture() writes ${missing.join(', ')} and carried() does not` :
+      `${Object.keys(wrote).length} fields written, ${Object.keys(carried(rich)).length} carried, ` +
+      `${RESTORED_ELSEWHERE.length} restored from the ship — none unaccounted for`);
+
+  const fresh = newAccount('rich', 3, 3000);
+  const after = { ...live };
+  Object.assign(after, carried(fresh));
+  check('a reset pilot has no research station and no ladder on their hull',
+    after.lab === null && after.credits === 0 && after.xp === 0,
+    'it said "a starter hull, no credits, and your own dock again" and left a x4 hull standing');
+  check('and nothing else of the old pilot survives it either',
+    Object.keys(after.kills).length === 0 && after.berths.length === 0
+    && Object.keys(after.gear).length === 0 && Object.keys(after.hold).length === 0,
+    'the threat file, the berths, the locker and the hold all go with it');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — accounts'}\n`);

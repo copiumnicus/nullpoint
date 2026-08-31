@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.57';
+export const VERSION = '0.58';
 
 export const PATCHES = [
+  { v: '0.58', notes: [
+    '/reset now actually resets — it was leaving your research station standing',
+    'A reset pilot kept a 500,000cr lab and a x4 hull with no credits to pay for it',
+    'And the station itself stayed standing in the ring, owned by nobody',
+  ] },
   { v: '0.57', notes: [
     'The STATS page shows every number on your ship, not the eleven it used to',
     'Weapon range, capacitor, rockets, the reactor and your hull’s own system are all on it',
