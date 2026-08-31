@@ -8,14 +8,22 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.75';
+export const VERSION = '0.77';
 
 export const PATCHES = [
-  { v: '0.75', notes: [
+  { v: '0.77', notes: [
     'Kill a hundred Corsair Hives and the Brood Frame is yours: two more drone berths',
     'Every hull flies them, they are permanent, and there is nothing to buy at the end',
     'The threat file shows how close you are, with a bar under the hostile it counts',
     'The stats page has a fifth layer — what you earned, beside what you bought',
+  ] },
+  { v: '0.76', notes: [
+    'Signing out takes five seconds now instead of ten, and a fight still cancels it',
+  ] },
+  { v: '0.75', notes: [
+    'A Doldrum holds you for two and a half seconds now, not five. It was too much',
+    'That is under a portal spool again, so a jump you have committed to always lands',
+    'You still lose a third of any minute to it — in two short stops rather than one long one',
   ] },
   { v: '0.74', notes: [
     'You can challenge someone to a duel from your own dock now. It was refused before',
@@ -23,7 +31,7 @@ export const PATCHES = [
   { v: '0.73', notes: [
     'The Vitriol is a Crucible now, and it pours plasma — acid never marked a deep hull',
     'White Heat is 560px wide and takes 4.5% of your ship a second. You cannot step around it',
-    'A Doldrum stops you DEAD for five seconds. You keep your guns; you keep nothing else',
+    'A Doldrum stops you DEAD where you stand. You keep your guns; you keep nothing else',
     'They fly as a pair, so pulling one pulls both, and both pour onto the same spot',
     'Both carry real guns as well — 438 a second at 900, past every hull in the shop',
   ] },

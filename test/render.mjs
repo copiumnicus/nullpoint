@@ -2014,7 +2014,7 @@ const dismiss = () => {
     } finally { performance.now = perf; }
   }
 
-  // Signing out is a stand-down, not a switch: ten seconds, cancelled by a fight
+  // Signing out is a stand-down, not a switch: FOLD_SECS, cancelled by a fight
   // or by changing your mind. Putting your ship on the floor of a sector with a
   // drifter on it should take more than one misclick.
   {

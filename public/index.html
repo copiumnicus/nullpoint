@@ -10,6 +10,7 @@
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES, mapOf, isArena } from '/shared/maps.js';
 import { mission, bar as missionBar, BAR_TONE, whyNotClaim, whyNotReplay, claimState } from '/shared/arena.js';
 import { duelText, mayAim } from '/shared/duel.js';
+import { FOLD_SECS } from '/shared/fold.js';
 import { LAYER_NAME, STAT_STEP, fmt as statFmt, improves, VALUE_AT, LABEL_PX } from '/shared/breakdown.js';
 import { berthPanel, berthPrice, berthRank, whyNotBerth, whyNotBuyBerth, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
@@ -2913,10 +2914,15 @@ function settingsClick(v) {
   }
 }
 
-// Signing out is a ten second stand-down, not a switch. Something shooting at
-// you cancels it, and so does changing your mind — otherwise a misclick puts
-// your ship on the floor of a sector with a drifter on it.
-const SIGNOUT_WAIT = 10_000;
+// Signing out is a stand-down, not a switch. Something shooting at you cancels
+// it, and so does changing your mind — otherwise a misclick puts your ship on
+// the floor of a sector with a drifter on it.
+//
+// FOLD_SECS rather than a ten of its own, because leaving is leaving: a Recall
+// Beacon, a claim, a duel and this are all "five seconds, and anything that
+// lands on you calls it off". It was ten, which made signing out the slowest
+// way out of a sector by twice, for no reason anybody could have stated.
+const SIGNOUT_WAIT = FOLD_SECS * 1000;
 let leavingAt = 0;
 
 const leaving = () => leavingAt > 0;
