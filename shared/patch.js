@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.65';
+export const VERSION = '0.66';
 
 export const PATCHES = [
+  { v: '0.66', notes: [
+    'The Corsair Hive has moved to the gates. Something worse holds the deeps now',
+    'A Vitriol lays pools of Aqua Regia where you were standing, and they stay there',
+    'A Doldrum lays stills: cross one and your engines cut for a second and a half',
+    'You keep your speed and your guns — you just cannot change course. Watch your line',
+  ] },
   { v: '0.65', notes: [
     'The hotkey strip no longer runs across the minimap and the star chart button',
     'It wraps onto a second line instead, and keeps clear of the reactor dial too',

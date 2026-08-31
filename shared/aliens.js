@@ -10,6 +10,48 @@ import { newBody, inHaven } from './sim.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, burnBurst,
          pyreFor, inPyre, poolOf, inBurn } from './burn.js';
 import { fixOf } from './kedge.js';
+import { sowOf, HOLD } from './ground.js';
+
+// What a kill pays, per point of work. Hoisted above the bestiary because the deeps
+// derive their bounty from their rung inside the table below, and a const cannot be
+// read before it is initialised — the argument for both numbers is where bountyFor
+// is, which is where they used to sit.
+export const XP_RATE = 140 / 650;                  // the Drifter is the anchor: 140 xp for 650 ehp
+export const BOUNTY_RATE = 0.70;
+
+// --- the one number in this file that was argued rather than derived ------------
+//
+// Everything else in the bestiary falls out of something already written down: an
+// Ironhusk is ten Drifters, a Harrier is half a rung, a Thresher is half a rung under
+// a Hive. The deeps are the one place a person had to choose, because the brief asked
+// for "five times stronger than the Hive" and five times is 3,250,000, which is not a
+// rung of this ladder at all. The rungs either side of it are 2,055,480 — this, which
+// is 650 x 10^3.5 to the nearest ten, the same arithmetic that produced the Harrier's
+// 2,060 and the Thresher's 205,550 — and 6,500,000, a full decade up.
+//
+// This one is nearer on both readings. Linearly it is 1.19M from the ask against
+// 3.25M; in the logarithm the ladder is actually built in, it is 0.199 of a rung away
+// against 0.301. And it is the right FIGHT, which is what settles it: measured
+// against the real AI, a pair of these kills a finished Bulwark flown well and wants
+// a party of four, while the rung above is nine minutes of unbroken solo fire against
+// pressure nobody survives for nine minutes. test/ground.mjs runs both and prints it.
+//
+// SO IT IS ONE EDIT. Change this line and the hull split, the shield, the bounty, the
+// experience, the ore rung and the posting all move with it — none of them is typed
+// anywhere. That is deliberate rather than tidy: this is the number somebody may want
+// back, and a deviation you cannot reverse cheaply is a deviation nobody can argue
+// with. `6_500_000` is the other rung, if it is wanted.
+export const DEEP_HP = 2_055_480;
+// A hostile's hit points have to be a multiple of ten or `bounty = ehp x 0.70` stops
+// being whole credits — test/balance.mjs asserts that identity to 1e-6 across every
+// hostile, and it is what caught the Harrier at 2,055. So the split rounds the shield
+// to a ten and gives the hull the remainder, which keeps the sum exact whatever share
+// is asked for.
+const deepSplit = shieldShare => {
+  const shield = Math.round(DEEP_HP * shieldShare / 10) * 10;
+  return { hull: DEEP_HP - shield, shield };
+};
+const deepPay = { bounty: Math.round(DEEP_HP * BOUNTY_RATE), xp: Math.round(DEEP_HP * XP_RATE) };
 
 export const ALIENS = {
   drifter: {
@@ -550,6 +592,185 @@ export const ALIENS = {
     tell: 'No gun. A tether onto your hull that drinks past your shields and mends it. Fly out of range and the cord snaps.',
   },
 
+  // --- the deeps ----------------------------------------------------------------
+  //
+  // The Corsair Hive stood here and now stands at the gates. It was never a deep
+  // hostile; it was the biggest thing in the game parked at the furthest map,
+  // which is a different statement, and the gates wanted it — a mirror you cannot
+  // farm and a Kedge you can, with nothing in between that a party would cross a
+  // sector for. What the deeps wanted was something that is not a bigger Hive.
+  //
+  // These two are that. Neither of them shoots at you. Both of them take GROUND
+  // away from you and leave it taken, which is the one thing this bestiary has
+  // never done: every hazard in it until now is a property of a hull and dies with
+  // it. See shared/ground.js.
+  //
+  // WHERE THEY LAND. 2,055,480 effective hit points each — 650 x 10^3.5 to the
+  // nearest ten, which is the same arithmetic that produced the Harrier's 2,060 and
+  // the Thresher's 205,550 and is therefore not a new rule. It is half a rung above
+  // the Hive, x sqrt(10).
+  //
+  // The brief asked for five times the Hive, which is 3,250,000 and is not on the
+  // ladder at all. The two rungs either side of it are this and 6,500,000, and this
+  // is the nearer on both readings: 5x is x1.58 above this rung and x0.5 below the
+  // next, and in the logarithm the ladder is actually built in it is 0.199 of a rung
+  // away against 0.301. Measured, the other rung is also the wrong FIGHT — see the
+  // note on respawn below.
+  //
+  // WHY THERE IS NO GUN ON EITHER. The balance model's own complaint, in
+  // test/balance.mjs: "content dps has not kept up with the player's hull". Every
+  // armed hostile throws a flat number of points, player effective hit points span
+  // x6.4 across the shop and another x32 across the research ladder, and the deeps
+  // are precisely where the pilots at the top of both live. A bolt for 220 is not a
+  // threat to 220,736 effective hit points and no honest number of them is. So both
+  // of these take a SHARE, the way a Censer's ring and a Lamprey's tether do, and
+  // the share is what makes them the same fight at x1 and at x32.
+  vitriol: {
+    name: 'Vitriol', cls: 'Sower', r: 76, colour: '#f2ff1f', shape: 'flask',
+    // AQUA REGIA. Royal water: the one acid that dissolves the noble metals, which
+    // is what the deeps pay out in — a pool of this is standing on top of the
+    // platinum you came for, and it is standing there because you were.
+    //
+    // 0.14230 of your effective hit points per second, and it is one relation
+    // rather than a number. ANCHORS.pressure is 0.045 — the balance model's own
+    // definition of a hostile on model, "4.5% of you a second, so it kills a pilot
+    // who stands still in 22.2 seconds, whatever they fly" — and this is that times
+    // sqrt(10). Half a rung above on model, which is the only step size this
+    // bestiary has: it is what makes a Harrier a Harrier, and MIRROR.dps is the
+    // same step taken in the other direction for the same reason. Standing in one
+    // kills you in 7.0 seconds at every stage.
+    //
+    // It is allowed to be that sharp because it is ground you CHOSE to stand on.
+    // Nothing here reaches out; a pool is a place, and every pilot in the game can
+    // be somewhere else. The Censer's ring is gentler at 22.2s precisely because it
+    // comes to you and you cannot decline it.
+    //
+    // `every` is not a third number: it is life / max, so a definition can never ask
+    // for more pools than it is allowed to have alive. And `life` is not chosen
+    // either — it is ONE LAP. Circling a Vitriol at your own gun range in the slowest
+    // hull that fights one takes 2 pi x 754 / 128 = 37.0 seconds, so 36s of pool
+    // denies you exactly one circuit: the ground you laid down at the start of a lap
+    // lets go as you come back round to it. Six of them, one every six seconds, is
+    // that lap divided by the cadence — the ring of ground closes and it closes
+    // exactly, so a pilot who keeps moving stays one step ahead of it and a pilot who
+    // stops is standing in it.
+    //
+    // Six pools of 165px cover 0.51 Mpx against the 2.11 Mpx a pilot can shoot a
+    // Vitriol from with the longest gun in the shop — 24% of the ground its own fight
+    // is fought on. That is deliberately less than it was when a pool was 380px wide
+    // and undodgeable: what makes it area denial is that the ground is always where
+    // you just were, not that there is a lot of it.
+    //
+    // reach 1100 is the Hive's gun — past every hull (620-820), so out-ranging the
+    // sowing is not on the table. The answer is not range, it is movement.
+    sow: { kind: 'regia',
+           reach: 1100,            // the Hive's gun: past every hull, so range is not the answer
+           r: 165,                 // MEASURED, not picked, and it MOVES WHEN THE SHOP DOES.
+                                   //   The slowest fitted ship in the game is a finished
+                                   //   Bulwark; starting from rest it covers 184px inside the
+                                   //   1.5s the ghost marker stands, and 184 less its own 17px
+                                   //   hull is 167. Acceleration is most of that, so this is a
+                                   //   measurement of step() rather than speed x wind. 165 is
+                                   //   the nearest five under it: every hull in the game can
+                                   //   refuse a pool from a standing start, and none can refuse
+                                   //   one while held. It was 195 on the hull table before slots
+                                   //   replaced base attributes, when a finished Bulwark flew at
+                                   //   152 rather than 128 — test/ground.mjs re-measures this
+                                   //   through step() every run, so a hull change fails there
+                                   //   loudly instead of quietly making a pool undodgeable
+           life: 36, max: 6,       // six alive at once, thirty-six seconds each
+           every: 6,               // life / max, so it can never ask for more than it may have
+           wind: HOLD,             // 1.5s, and it is the SAME 1.5s a hold lasts
+           rate: 0.014230,         // ANCHORS.pressure / sqrt(10)
+           hold: 0 },              // it takes ground, not steering
+    // 85/15 hull to shield, the Censer's split and the Thresher's: a vessel is mostly
+    // what it is carrying. Derived from DEEP_HP so the rung is one edit, not five.
+    attrs: { ...deepSplit(0.15), shieldRegen: 0.005, shieldDelay: 6,
+             // 120, between the Hive's 110 and the Kedge's 150. Leaving always
+             // works: the slowest thing a fitted pilot can hold indefinitely is a
+             // finished Bulwark at 195 px/s, and this is 75 under it.
+             speed: 120, accel: 200, signature: 10,
+             // No gun at all. weaponRange 0 makes fire() refuse every tick with no
+             // special case, the way it does for a Censer and a Lamprey; fireRate
+             // is the ATTRS floor rather than 0 because 1 / fireRate is a real
+             // division.
+             damage: 0, fireRate: 0.1, weaponRange: 0 },
+    aggro: 540,       // the Hive's, still inside SIGHT_R, so it is on screen first
+    leash: 2600,
+    patience: 5.0,
+    flee: 0,          // it has nowhere to be; it is making the place
+    respawn: 300,
+    ...deepPay,       // DEEP_HP at BOUNTY_RATE and XP_RATE — nothing typed
+    tell: 'No gun. It lays pools of Aqua Regia where you were standing and they stay there. Keep moving, and never let it corner you against its own ground.',
+  },
+
+  // The other half of the deeps, and the dangerous one.
+  //
+  // SLACK WATER is the moment between tides when there is no current at all, and a
+  // doldrum is the belt of dead air that used to hold sailing ships for weeks. Both
+  // are the same idea and it is the only idea here: a place where nothing you do to
+  // your engines makes any difference.
+  //
+  // WHAT "ROOTED" MEANS, EXACTLY, because this game has never taken movement from a
+  // player and the whole of shared/kedge.js is an argument about why a fix was
+  // allowed to exist and a stun was not. It is NOT a stun. Crossing into a still
+  // cuts your ENGINES for 1.5 seconds. Momentum is kept in full — no braking, no
+  // drag, no turn — so a ship that was going somewhere carries on going there at
+  // the speed it had. You still shoot, target, launch, run a repair drone, hold a
+  // portal mouth and finish a Recall Beacon. The one thing you cannot do is change
+  // your mind, and that is the entire ability.
+  //
+  // Which is exactly why it combos with a Vitriol and exactly why it is fair. The
+  // answer to a pool of Aqua Regia is to steer out of it. This is the one thing in
+  // the game that takes steering away, so a pilot caught by both at once is carried
+  // wherever they were already pointed — and the counter is therefore something a
+  // pilot does BEFORE the trap, in the cockpit, with no purchase: be pointed
+  // somewhere you would be happy to be in a second and a half.
+  //
+  // It cannot be chained. HOLD is 1.5s, CALM is 3.0s of guaranteed thrust after
+  // every hold, and one patch may hold one ship once per entry. Those three
+  // together are the promise, they are in shared/ground.js, and test/ground.mjs
+  // brute-forces every arrangement it can build against them.
+  //
+  // Its stills barely burn: 0.01423 a second, ANCHORS.pressure divided by sqrt(10),
+  // half a rung BELOW on model — which makes it exactly a tenth of a Vitriol's
+  // pool, one rung of the bestiary's own ladder of tens. That ratio is the design
+  // in one number. The ground that holds you is not the ground that kills you, and
+  // a Doldrum on its own is 70 seconds of nuisance. It is what it does to the
+  // ground somebody else laid that makes it an apex.
+  doldrum: {
+    name: 'Doldrum', cls: 'Deadfall', r: 82, colour: '#6b3cff', shape: 'anvil',
+    sow: { kind: 'slack',
+           reach: 1100,
+           r: 420,                 // at least twice a pool (2 x 195 = 390), so a pool sown
+                                   //   ANYWHERE inside a still is wholly inside it — which is
+                                   //   the combo, and it is a property of the two radii rather
+                                   //   than anything either hostile knows about the other.
+                                   //   Measured, it is refusable from a standing start by
+                                   //   exactly one hull in the game, the Kestrel at 457px, and
+                                   //   a Kestrel has no business four hops out
+           life: 12, max: 2,
+           every: 6,               // life / max again
+           wind: HOLD,
+           rate: 0.004500,         // ANCHORS.pressure / 10
+           hold: HOLD },           // engines out on the way in, once per entry
+    // 70/30, the Hive's split: more of it is field than plating, and the field is what
+    // the stills come out of. Derived from DEEP_HP, like its rung-mate's.
+    attrs: { ...deepSplit(0.30), shieldRegen: 0.005, shieldDelay: 8,
+             // 90 — the slowest thing in the game, under the Hive's 110. It does
+             // not need to catch you. It needs you to come to it, and the ground
+             // is how it arranges that.
+             speed: 90, accel: 150, signature: 10,
+             damage: 0, fireRate: 0.1, weaponRange: 0 },
+    aggro: 540,
+    leash: 2600,
+    patience: 5.0,
+    flee: 0,
+    respawn: 300,
+    ...deepPay,       // the same rung, so the same pay, from the same line
+    tell: 'No gun. Its stills cut your engines for a second and a half when you cross into one — you keep your speed and your guns, but not your steering. Never enter one pointed at a pool.',
+  },
+
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
   // flee, and carries enough hull that a finished ship cannot delete it before you
   // have read a number off it. Never seeded outside the testing ground.
@@ -578,9 +799,11 @@ export const ALIENS = {
 // anything that stands and trades. The rates below then apply to effective hit
 // points x effort, so nothing needs a hand-set bounty and the next alien that
 // hides gets paid correctly without anyone remembering to.
-export const XP_RATE = 140 / 650;                  // the Drifter is the anchor: 140 xp for 650 ehp
+// XP_RATE and BOUNTY_RATE are declared ABOVE the bestiary rather than here, because
+// the deeps derive their pay from their rung inside the table itself and a const
+// cannot be read before it is initialised. The argument for both rates is the
+// paragraph above; only the two lines moved.
 export const farmHp = kind => effectiveHp(kind) * (ALIENS[kind].effort ?? 1);
-export const BOUNTY_RATE = 0.70;
 export const effectiveHp = kind => ALIENS[kind].attrs.hull + ALIENS[kind].attrs.shield;
 
 // What a hostile actually does to you per second, whatever shape it arrives in.
@@ -601,6 +824,15 @@ export const threatDps = (kind, ehp, hull = ehp) => {
   return (a.attrs.damage ?? 0) * (a.attrs.fireRate ?? 0)
        + (a.burn?.rate ?? 0) * ehp
        + (a.siphon?.rate ?? 0) * hull
+       // And ground. A Vitriol's barrel reads 0 x 0.1 and it is not a harmless
+       // hostile: a pool of Aqua Regia takes a share of whatever is standing in it
+       // every second, for as long as it is standing there. It is counted ONCE
+       // rather than `max` times because patches deliberately do not stack — a ship
+       // where two pools overlap takes the worse of them and not the sum, which is
+       // what stops six of a Vitriol's own patches being a delete button and what
+       // keeps this term honest. Same pool as a burn, and for the same reason:
+       // ground eats a shield as readily as a hull.
+       + (a.sow?.rate ?? 0) * ehp
        // A mirror's barrel reads 80 x 1.0 and it is not an 80 dps hostile: the
        // chamber is the gun. This is the worst it can ever be — a full chamber, so
        // 12,083 — and it is deliberately the worst rather than the typical, because
@@ -699,6 +931,27 @@ export const SHAPES = {
     const a = (i / 24) * Math.PI * 2, rr = R * (i % 2 ? 0.86 : 1.05);
     return [Math.cos(a) * rr, Math.sin(a) * rr];
   }),
+  // A round-bottomed flask: a heavy bulb with a narrow neck off one side and three
+  // drips hanging off the trailing edge. It is the only thing in the bestiary with
+  // a NECK, which is the read — everything else is a hull, a plate, a spike or a
+  // tool, and this is a container being emptied. Built from one half and mirrored
+  // about the neck's axis so it stays one closed outline like the rest.
+  flask: R => {
+    const half = [[1.05, 0], [0.98, 0.30], [0.62, 0.34], [0.55, 0.62],
+                  [-0.10, 0.86], [-0.62, 1.08], [-0.52, 0.72], [-0.88, 0.80],
+                  [-0.80, 0.46], [-1.18, 0.44], [-1.05, 0.16], [-1.30, 0]];
+    return [...half, ...half.slice(1, -1).reverse().map(([x, y]) => [x, -y])]
+      .map(([x, y]) => [x * R, y * R]);
+  },
+  // An anvil: a broad flat face, a heavy waisted body and a horn out to one side.
+  // Nothing else here is asymmetric about the long axis and nothing else reads as
+  // MASS — a crown looms, a hive is a structure, and this is a thing that is
+  // simply not going to move. Which is the ability, drawn.
+  anvil: R => [
+    [1.30, -0.18], [1.02, -0.30], [0.42, -0.42], [-0.52, -0.46],
+    [-1.18, -0.66], [-1.30, -0.26], [-0.96, -0.10], [-1.02, 0.28],
+    [-1.24, 0.52], [-0.58, 0.62], [0.30, 0.52], [0.86, 0.30], [1.02, 0.02],
+  ].map(([x, y]) => [x * R, y * R]),
 };
 export const outlineOf = (kind, R) => (SHAPES[ALIENS[kind]?.shape] ?? SHAPES.kite)(R);
 
@@ -1132,6 +1385,10 @@ export function respawnAlien(a, map, away = []) {
   a.sinceHit = 1e9; a.shieldHit = 0; a.cool = 0; a.shotFlash = 0;
   a.target = null; a.provoked.clear(); a.lost = 0; a.dead = 0;
   a.crowd = null; a.crowdT = 0; a.threat = null; a.threatT = 0;   // no grudges carried over
+  a.sow = 0; a.sowAt = null; a.sowOn = null; a.sowCool = 0;       // nor a wind-up. Ground it has
+                                                                  // already laid stays laid, which
+                                                                  // is the whole mechanic; the CAST
+                                                                  // does not survive the caster
   a.load = 0;                                                     // nor a chamber: a mirror that
                                                                   // respawned loaded would open the
                                                                   // next fight with your last one
@@ -1167,8 +1424,14 @@ export const THREAT_EDGE = 2.0;   // and by this multiple, so a graze does not p
 //
 // A Censer's is live rather than fixed: cold it presses right up at 110, and once
 // it has spun up it stops closing at 630, because by then the ring has come to you.
+// A sower's is its sowing reach, for exactly the reason a tether's is: reading
+// weaponRange alone is 0 x 0.7 = 0, which parks a hostile inside your hull with its
+// only mechanic having no room to work. It is a FIXED reach rather than a live one
+// like a Censer's — a Censer's ring comes to you, so how close it stands depends on
+// how wound up it is, and ground does not come to you at all.
 export const standOff = a =>
   a.def?.siphon?.reach ??
+  a.def?.sow?.reach ??
   (a.def?.burn ? Math.max(a.def.burn.idle, burnR(a.def, a.spin ?? 0) * 0.7) : a.stats.weaponRange);
 
 // Sanctuary, and the one exception to it: an alien will not start on somebody
@@ -1201,6 +1464,45 @@ export const mayHarm = (a, c) => !(c.haven && !a.provoked.has(c.id));
 // is "everything in here knows where you are from the moment you arrive".
 export const noLeash   = map => !!map?.arena;
 export const noHorizon = map => !!map?.arena && !!map?.hunt;
+
+// --- the one dial a hostile shows about itself ---------------------------------
+//
+// `abl` on the wire is a single 0..100 integer, and five different mechanics now
+// ride it: a Lamprey's draw, a Censer's spin, a Kedge's sighting, a Thresher's
+// chamber and a sower's wind-up. There is exactly one slot left in SHIP_FIELDS —
+// 30 of a hard 31 — so one field for all five is the right trade and it is not
+// changing. What was wrong was HOW the one was chosen.
+//
+// It was `a.draw ?? a.spin ?? a.fix ?? a.load ?? a.sow ?? 0`, reading the LIVE
+// fields in a fixed order. That is a silent wrong answer waiting to happen: the
+// moment a hostile carries two mechanics, the second one's dial simply never
+// reaches the client — nothing throws, nothing is logged, and what a pilot sees is
+// a mechanic that is running and invisible. That is precisely the Thresher's
+// chamber before 0.54, which read as a random one-shot for as long as it existed.
+//
+// So the dial is chosen off the DEFINITION, which is static, declared in one place,
+// and can be asked a question a live field cannot: how many has this hostile got?
+// `dialsOn` answers that, test/ground.mjs asserts it is never more than one, and
+// the packer and the test now read the same table — so they cannot drift apart the
+// way the workshop dock's two copies of "may this pilot buy here" did.
+export const DIALS = [
+  ['siphon',  a => a.draw],    // a Lamprey's draw, 0..1
+  ['burn',    a => a.spin],    // a Censer's ring, cold to full
+  ['fix',     a => a.fix],     // a Kedge's sighting, from taken to collapsed
+  ['returns', a => a.load],    // a Thresher's chamber, empty to full
+  ['sow',     a => a.sow],     // a sower's wind-up, before the ground lands
+];
+export const dialsOn = def => DIALS.filter(([k]) => def?.[k] !== undefined).map(([k]) => k);
+// Clamped here rather than at the call site, so a NaN out of any of the five draws
+// a nought instead of taking the frame down. The client already reads `abl` through
+// ALIENS[hull] for each mechanic, so this is the server half of a decision the two
+// sides were already making the same way.
+export const dialOf = a => {
+  const d = DIALS.find(([k]) => a?.def?.[k] !== undefined);
+  const v = d ? d[1](a) : 0;
+  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+};
+
 
 export function stepAlienAI(a, map, contenders, dt) {
   const at = id => contenders.find(c => c.id === id);

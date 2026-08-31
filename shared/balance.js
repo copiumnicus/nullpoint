@@ -491,6 +491,26 @@ export function alienFor({ stage = 'anchor', seconds = ANCHOR_FIGHT, party = 1,
     stage, seconds, party, effort,
     farmHp:  farm,                             // effective hp x effort
     ehp:     farm / Math.max(1e-9, effort),    // the hit points it actually needs
+    // What it must throw back, per second. SEAM, and a real one: this has no term
+    // for `seconds`, and the two hostiles in the deeps are the first place that is
+    // actively wrong rather than merely incomplete.
+    //
+    // A.pressure is 4.5% of a pilot per second, and it was read off the anchor
+    // fight — 8.68 seconds — so an on-model hostile takes 39% of you over its own
+    // fight if you never move. That ratio is the thing anybody actually means by
+    // "on model", and it is the thing this line drops. Against a hostile whose
+    // fight is forty seconds long, asking for the same 4.5% a second is asking for
+    // 193% of the pilot, which is not a fight but arithmetic; against one that dies
+    // in two it is asking for nothing. Every hostile in the game until now had a
+    // fight within a factor of two of the anchor, so nobody had to notice.
+    //
+    // The fix, when somebody wants it, is one term and it belongs here rather than
+    // in the bestiary: `A.pressure * ehp * Math.min(1, ANCHOR_FIGHT / seconds)`,
+    // which holds the SHARE-OVER-THE-FIGHT constant instead of the share per second
+    // and leaves every existing row where it is at seconds === ANCHOR_FIGHT. It is
+    // not done here because it would move `dpsRatio` on all twelve hostiles in one
+    // commit, and this file reports rather than corrects — the number moving under
+    // a report is exactly what the report is for reading.
     dps:     A.pressure * ehp,                 // what it must throw back
     // How long YOU last standing still in front of it. Constant at every stage,
     // because pressure is a rate against your own hit points and not a share of
@@ -569,9 +589,30 @@ export const POSTING = Object.freeze({
                why: 'aliens.js: 6500 / 429 dps is the fight its hit points buy at that stage' },
   lamprey:   { stage: 'fighter',     seconds: 12, party: 1,
                why: 'aliens.js: 20,550 points against a full Vanguard is 11.7s of shooting, 14.3s once it mends' },
-  // server.js: one on each gate sector, respawn 300s.
+  // server.js: TWO on each gate sector now, respawn 300s. It moved back one hop when
+  // the deeps got something bigger; the fight it is did not change.
   hive:      { stage: 'finished',    seconds: 180, party: 4,
                why: 'a five-minute respawn and a brood of twelve: an event, not a kill' },
+  // server.js: two of each on every deep sector, respawn 300s. `party` is MEASURED
+  // rather than intended — test/ground.mjs runs the real AI against one, two, three
+  // and four finished pilots all flying the counter, over three arrangements each:
+  //
+  //   the pair, 1 pilot    WIPED at every arrangement, 171-209s
+  //   the pair, 2 pilots   cleared, 174-180s, and one of the two ends under 30%
+  //   the pair, 3 pilots   cleared at 118s, comfortable
+  //   all four hostiles    wipes 2 and 3, and costs a party of four three ships
+  //
+  // So the encounter is the PAIR and the pair wants two, which is the Leviathan's
+  // number five rungs up: the thing past a gate you cannot take alone. It was going
+  // to be four, measured against the hull table before slots replaced base
+  // attributes — a finished Bulwark delivered 8,351 dps then and delivers 11,941 now
+  // with its reactor on the gun, so the fight went from 246s to 171s and the ground
+  // has a third less time to accumulate. The claim moved to the measurement rather
+  // than the other way round.
+  vitriol:   { stage: 'finished',    seconds: 91, party: 2,
+               why: '2,055,480 over two finished builds. Measured: 175s, both under 70%' },
+  doldrum:   { stage: 'finished',    seconds: 91, party: 2,
+               why: 'the same rung and the same fight; what differs is that it takes your steering' },
 });
 
 // --- the conformance report ---------------------------------------------------
