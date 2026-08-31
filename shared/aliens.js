@@ -9,6 +9,7 @@ import { MAP_W, MAP_H } from './maps.js';
 import { newBody, inHaven } from './sim.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, burnBurst,
          pyreFor, inPyre, poolOf, inBurn } from './burn.js';
+import { fixOf } from './kedge.js';
 
 export const ALIENS = {
   drifter: {
@@ -141,6 +142,98 @@ export const ALIENS = {
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
     tell: 'No gun. The ring burns whatever stands in it and widens as you kill it, then stands after it dies and lets go of the rest.',
+  },
+  // The one thing on a gate you are meant to be able to finish.
+  //
+  // A gate sector held one Thresher and nothing else. That made it a corridor: the
+  // only thing standing on it deals back every point you put into it — 205,550 over
+  // the fight, whatever you fly — and a pilot arriving from the frontier in a
+  // finished hull with no research carries 7,050. One mirrored volley is 5,291 at
+  // the stage that gets there. You do not fight it; you fly past it. The frontier
+  // solved exactly this problem by standing Harriers beside the Bandits, and this is
+  // that move again one hop out: something workable to hunt on the map you are
+  // running away from something on.
+  //
+  // WHERE IT LANDS. 65,000, which is a rung of tens and the Leviathan's. It is a
+  // shared rung on purpose, and it is NOT the Censer's reason for sharing one — co2
+  // and co3 are equidistant and must weigh the same, so they differ by question. A
+  // Leviathan is a frontier fixture and this is a gate fixture, so the sharing is
+  // the ordinary rule instead: every sector keeps something well under its ceiling
+  // or it is somewhere you fly through. The frontier's ceiling is 114,000 and it
+  // keeps 2,060 Harriers, a factor of 55. A gate's ceiling is 205,550 and it keeps
+  // this, a factor of 3.2 — much the tighter of the two.
+  //
+  // The rung above is the Thresher's own 205,550 and taking it was the other real
+  // option. It is refused: two hostiles of identical weight on ONE map, one of which
+  // cannot kill you, makes the other one pointless — you would never fight the
+  // mirror again. Sharing a rung has to happen across sectors, not inside one.
+  //
+  // 45,500 credits and 14,000 experience follow, and they are the Leviathan's to the
+  // credit because bounty is farm hit points x BOUNTY_RATE and nothing else. There
+  // is no effort multiplier and there deliberately cannot be one: effort is what a
+  // thing's hit points are worth once you count the shots that never land, and a fix
+  // never costs you a shot. It always moves you TOWARD the thing shooting at you,
+  // because the point it returns you to is one you occupied while it was chasing —
+  // so what it takes is hull, and hull is `pressure`, not `effort`. Paying a bounty
+  // for danger rather than for time is the mistake bountyFor exists to prevent.
+  //
+  // WHAT IT ASKS. Every other hostile in this file is answered by position. Kite the
+  // husks, hold 85% of your reach off a Censer, out-range a Harrier, break a
+  // Lamprey's tether, sidestep a Thresher. This is the one that takes position back:
+  // a fix undoes the last three seconds of wherever you were going, every six. You
+  // can still leave — see escapeTax in shared/kedge.js, it costs exactly twice as
+  // long and never more — but you cannot leave for free, and that is the animal.
+  //
+  // 258.75 dps is not a chosen number either: it is ANCHORS.pressure x the effective
+  // hit points of the stage it is posted for, which is the model's own definition of
+  // a hostile that is exactly on model. 345 x 0.75 is the only clean pair that makes
+  // it. What is new is that for this one the number is a FLOOR rather than a
+  // ceiling: every other armed hostile's dps is what it would do if you let it, and
+  // this one collects because you cannot hold range on it.
+  //
+  // Reach 900 is the Leviathan's and the Thresher's, and it is the same number for
+  // the same reason: past every hull in the game (620-820), so you cannot out-range
+  // the problem. It was 560 for one draft, on the theory that kiting should be the
+  // obvious answer and the fix should be what takes it away. Measured, that draft
+  // was a pushover — a finished pilot holding 780px killed it in 8.5s and gave up
+  // 10% of a hull, because a Kedge that plants itself to take a sighting stops
+  // closing, so the kiter stops retreating, so the collapse has nothing of theirs to
+  // undo. A fix cannot punish standing still and should not try: it punishes
+  // LEAVING, and the gun has to be what makes you want to.
+  //
+  // Speed 150, and it is NOT the Ironhusk's 190. That number carries an argument —
+  // "under a finished Bulwark's 234 with the reactor on its thrusters" — which is
+  // true and incomplete, because a chase outlasts a capacitor. Routing to thrusters
+  // costs charge, and once the charge is gone a system falls back to the free
+  // trickle: the slowest thing any pilot can hold indefinitely is a finished Bulwark
+  // at 152 x (1 + 0.54 x 0.52) = 195 px/s. A 190 Kedge is 5px/s under that, which
+  // measured as a hostile a finished Bulwark could not leave at all — 300 seconds of
+  // full burn and the leash never broke. 150 is a quarter under the floor rather
+  // than a hair under the ceiling, and every hull breaks off in under 33 seconds.
+  //
+  // Shield regen 0.012 rebuilds its shell in 83 seconds — deliberately not the
+  // Leviathan's 0.045, because a rung-mate that ALSO punished breaking off would be
+  // a second cooperation gate and this one is meant to be soloed.
+  kedge: {
+    name: 'Kedge', cls: 'Surveyor', r: 34, colour: '#7c8824', shape: 'fluke',
+    tell: 'Takes a fix on where you are and three seconds later puts you back on it. It has to stand dead still to do it, which is when you kill it. A portal mouth breaks the fix.',
+    fix: {
+      fuse: 3.0,      // s from the sighting to the collapse. JUMP_TIME exactly: the fix
+                      //   and the door cost the same three seconds, so reaching a portal
+                      //   mouth first is the answer and reaching it second is not
+      cool: 3.0,      // s before it may take another. Equal to the fuse, so leaving costs
+                      //   exactly x2 — see escapeTax
+    },
+    attrs: { hull: 40000, shield: 25000, shieldRegen: 0.012, shieldDelay: 5,
+             speed: 150, accel: 300, signature: 8,
+             damage: 345, fireRate: 0.75, weaponRange: 900 },
+    aggro: 540,       // the Thresher's, still inside SIGHT_R, so it is on screen first
+    leash: 1800,      // a picket has no business chasing you across a sector
+    patience: 4.0,
+    flee: 0,          // it has nowhere to be; it IS the place
+    respawn: 90,      // the Leviathan's — same rung, same weight of fight, same cadence
+    bounty: 45500,    // 65000 ehp at BOUNTY_RATE, exactly
+    xp: 14000,
   },
   // A mirror. It returns what you put into it, and that is the whole design.
   //
@@ -531,6 +624,19 @@ export const SHAPES = {
     const a = (i / 18) * Math.PI * 2, rr = R * (0.86 + 0.48 * Math.cos(3 * a));
     return [Math.cos(a) * rr, Math.sin(a) * rr];
   }),
+  // A kedge anchor: a shank with a stock across it and two flukes at the crown. It
+  // is the only thing in the bestiary with a crossbar, and the only one that is
+  // plainly a tool rather than an animal or a hull — which is the read, because what
+  // it does to you is a piece of navigation equipment being used on you. Built from
+  // one half and mirrored, so it is exactly symmetrical and stays one closed outline
+  // like every other shape here.
+  fluke: R => {
+    const half = [[1.45, 0], [1.05, 0.18], [0.72, 0.20], [0.68, 0.78], [0.48, 0.80],
+                  [0.52, 0.20], [-0.35, 0.24], [-0.55, 0.72], [-1.00, 1.05],
+                  [-0.92, 0.62], [-1.25, 0.30], [-1.30, 0]];
+    return [...half, ...half.slice(1, -1).reverse().map(([x, y]) => [x, -y])]
+      .map(([x, y]) => [x * R, y * R]);
+  },
   // A knobbly disc: twelve shallow lobes, no nose and no spikes. It reads as a
   // structure rather than a ship, which is what it is.
   hive: R => Array.from({ length: 24 }, (_, i) => {

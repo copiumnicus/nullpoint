@@ -7,7 +7,7 @@ import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rocket
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp } from './shared/aliens.js';
-import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
+import { DEV_ID, PROPS, PEN_SLOTS, BENCH_SLOTS, propFit } from './shared/devmap.js';
 import { respawnDelay } from './shared/spawn.js';
 import { sanitiseKills } from './shared/threats.js';
 import { LAB_PRICE, MODULES, claimPlot, plotAt, plotsFor, incomeOf, earnedOver,
@@ -29,7 +29,8 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre } from './shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix } from './shared/net.js';
+import { stepFix, fixHolds, fixWinding, collapseTo, fixOf } from './shared/kedge.js';
 import { storeHit, stepMirror, spendMirror } from './shared/aliens.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
@@ -311,7 +312,12 @@ const seed = (mapId, kind, n) => {
     list.push(newAlien(kind, alienId++, MAPS[mapId], mapId.charCodeAt(0) * 977 + i * 7919 + kind.length));
   aliens.set(mapId, list);
 };
-aliens.set(DEV_ID, PEN_SLOTS.map(sl => newAlien(sl.kind, sl.id, MAPS[DEV_ID], sl.id, { x: sl.x, y: sl.y })));
+// The firing line, plus the bench west of the dock where the range furniture
+// stands. The Bulkhead has aggro 0 and damage 0 — it is a thing you shoot AT to
+// read a number off, so it belongs beside the dock rather than out with the
+// animals, and taking it out of the grid is what let an eleventh hostile fit.
+aliens.set(DEV_ID, [...PEN_SLOTS, ...BENCH_SLOTS].map(sl =>
+  newAlien(sl.kind, sl.id, MAPS[DEV_ID], sl.id, { x: sl.x, y: sl.y })));
 for (const h of HOMES) {
   seed(h, 'drifter', ALIENS_PER_MAP);
   const co = h[0];
@@ -353,6 +359,14 @@ for (const h of HOMES) {
 // map put it where almost nobody would meet it, and the point of the thing is to
 // be met.
 for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'thresher', 2);
+// And four Kedges beside it. A gate held one Thresher and nothing else, which made
+// it a corridor rather than a sector: the only thing standing there returns every
+// point you deal it, so a pilot arriving from the frontier flies past rather than
+// works. This is the frontier's own answer repeated one hop out — Harriers stand
+// beside the Bandits for exactly this reason — and it does not move the ceiling:
+// 65,000 under a Thresher's 205,550, so the mirror is still the thing you flee.
+for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'kedge', 4);
+
 
 // The deeps were seeded with nothing at all — three sectors past the gates, which a
 // pilot can only reach by getting through one, and there was nothing there when
@@ -387,7 +401,11 @@ const dropRocketsAt = (mapId, ship) => {
 };
 const blasts = new Map();    // mapId -> kill flashes still playing
 const pyres = new Map();     // mapId -> reactors that have died and not yet let go
-for (const id of Object.keys(MAPS)) { bolts.set(id, []); rockets.set(id, []); blasts.set(id, []); pyres.set(id, []); }
+// Rebuilt from the live hostiles every tick rather than kept, because a fix has no
+// life of its own: it exists exactly while a Kedge is holding one, and a stale one
+// left lying about would be a marker for a collapse that is never coming.
+const fixes = new Map();
+for (const id of Object.keys(MAPS)) { bolts.set(id, []); rockets.set(id, []); blasts.set(id, []); pyres.set(id, []); fixes.set(id, []); }
 
 const pods = new Map();      // mapId -> cargo adrift
 for (const id of Object.keys(MAPS)) pods.set(id, []);
@@ -1453,8 +1471,38 @@ setInterval(() => {
                        vx: (b.ax - b.sx) / b.ttl, vy: (b.ay - b.sy) / b.ttl })),
       ];
       const breaking = stepEvade(a, incoming, map, dt);
-      step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
+      // The fix, and it runs BEFORE the hull is stepped rather than after it. That is
+      // not tidiness: planting a Kedge means clearing the course stepAlienAI has just
+      // set, and a plant written after step() is a plant that never happens — the next
+      // tick sets the course again before anything moves. Measured with it in the
+      // wrong place, a Kedge chased at full speed through every sighting, which turns
+      // the toll below into a hostile no hull in the game can leave.
+      //
+      // Resolved before the fix rather than after the step: the Kedge needs to know
+      // who it is looking at in order to plant itself, and `const` in a temporal
+      // dead zone is a runtime crash that `node --check` cannot see.
       const victim = tgt ? here.find(c => c.id === tgt) : null;
+      // It takes a sighting of where its target is standing and three seconds later
+      // puts them back on it — see shared/kedge.js for why holding station through
+      // the fuse is the whole of what makes that a toll on leaving rather than a
+      // trap. Sanctuary is the SAME `haven` the AI was just handed rather than a
+      // second lookup, for the reason the tether below says: one predicate, one
+      // answer.
+      if (fixOf(a.def)) {
+        const held = victim ? fixHolds(a, victim.ship, victim.haven) : false;
+        const snap = stepFix(a, victim?.ship ?? null, held, dt);
+        if (fixWinding(a)) { a.tx = a.ty = a.dx = a.dy = null; }
+        // Re-checked on the tick it fires, not only on the tick it started: three
+        // seconds is exactly a portal's spool, and reaching one has to be the answer
+        // rather than a delay.
+        //
+        // No flash is pushed for the arrival, deliberately. A blast is this game's
+        // "something died here", and firing one at a pilot who is merely somewhere
+        // else would play an explosion in their ears. The tell is the marker: it
+        // tightens for three seconds over the exact spot, and then the hull is in it.
+        if (snap && victim && victim.ship.hp > 0 && mayHarm(a, victim)) collapseTo(victim.ship, snap.to);
+      }
+      step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
       // Breaking means turning, and turning is what takes its nose off you. The
       // camouflage and the evasion are the same mechanic from two sides.
       if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = jinkHeading(a, victim?.ship);
@@ -1675,6 +1723,19 @@ setInterval(() => {
       }
     }
   }
+  // Rebuild the sightings from whoever is actually holding one. Placed here, in the
+  // same pass the pyres are settled in, so a fix and the hostile that owns it can
+  // never be a frame apart.
+  for (const [mapId, list] of aliens) {
+    const here = fixes.get(mapId);
+    here.length = 0;
+    for (const a of list) {
+      if (a.dead > 0 || !fixWinding(a)) continue;
+      const who = players.get(a.target);
+      if (!who || who.mapId !== mapId) continue;
+      here.push({ x: a.fixAt.x, y: a.fixAt.y, r: who.ship.r, p: a.fix, who: a.target });
+    }
+  }
   for (const [, list] of blasts)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
   for (const [, list] of hits)
@@ -1745,7 +1806,7 @@ setInterval(() => {
       // Censer its ring spin; both are 0..1 and both have to be visible, because a
       // ring you cannot see widening and a cord you cannot see tighten are both
       // indistinguishable from a bug. Everything else sends 0, as it always has.
-      abl: Math.round(100 * (a.draw ?? a.spin ?? 0)), name: '' });
+      abl: Math.round(100 * (a.draw ?? a.spin ?? a.fix ?? 0)), name: '' });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
@@ -1776,8 +1837,15 @@ setInterval(() => {
     // bolt does: you have to be able to see the thing you are running out of.
     const alight = (pyres.get(V.mapId) ?? []).filter(py =>
       Math.hypot(py.x - V.ship.x, py.y - V.ship.y) <= reach + py.r);
+    // Your own fix always reaches you, however far you have run from it — the whole
+    // point of the thing is that you can see where you are going to be put back to,
+    // and it is three seconds of full burn away by definition. Everyone else's is
+    // radar-filtered like anything else on the field.
+    const sights = (fixes.get(V.mapId) ?? []).filter(fx =>
+      fx.who === V.id || Math.hypot(fx.x - V.ship.x, fx.y - V.ship.y) <= reach);
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
                     blasts: flashes.map(packBlast), pyres: alight.map(packPyre),
+                    fixes: sights.map(fx => packFix(fx, fx.who === V.id)),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };
     // Every station in this sector, and which one is theirs. Not radar-filtered:
     // the radar rule keeps an enemy you have not DETECTED off the wire, and a lab

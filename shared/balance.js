@@ -556,6 +556,14 @@ export const POSTING = Object.freeze({
                why: 'aliens.js: "built to survive a finished ship for a quarter of a minute"' },
   // server.js: the frontier, under the Leviathan — the thing out there one pilot
   // is meant to be able to finish alone.
+  // server.js: four on each gate sector, beside the Thresher they cannot fight yet.
+  // The stage is `cruiser` rather than `finished` on purpose: the pilot this is for
+  // is the one a Thresher one-shots, which is a finished hull with no research —
+  // 5,291 dps and 5,750 effective hp — and reading it at `finished` would ask for
+  // 317.25 dps, which is exactly the ceiling the armed-hostile span below is allowed
+  // to reach.
+  kedge:     { stage: 'cruiser',     seconds: 12, party: 1,
+               why: 'aliens.js: 65,000 over a cruiser\'s 5,291 dps is 12.3s, and its dps IS the model\'s' },
   // server.js: the other hop out, where its rung-mate the Ironhusk is not.
   censer:    { stage: 'interceptor', seconds: 15, party: 1,
                why: 'aliens.js: 6500 / 429 dps is the fight its hit points buy at that stage' },

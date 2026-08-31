@@ -308,8 +308,12 @@ console.log('\nwhat is deliberately not deltaed');
   // exception to it: a pyre lives 1.8 seconds and its fuse moves every single tick,
   // so a keyed diff would pay an id and a mask to re-send the one field that
   // changed. There is at most one per dead Censer.
-  check('bolts, rockets, blasts, hits and pyres go whole, and the list says so',
-    same(EPHEMERAL, ['bolts', 'rockets', 'blasts', 'hits', 'pyres']),
+  // A Kedge's fix joined them on the pyre's argument: it lives three seconds, there
+  // is at most one per hostile, and the one field that matters — how far through the
+  // fuse it is — changes every single tick, so a keyed diff would pay an id and a
+  // mask to re-send the only thing that moved.
+  check('bolts, rockets, blasts, hits, pyres and fixes go whole, and the list says so',
+    same(EPHEMERAL, ['bolts', 'rockets', 'blasts', 'hits', 'pyres', 'fixes']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost

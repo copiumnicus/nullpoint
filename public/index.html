@@ -44,7 +44,7 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix } from '/shared/net.js';
 import { burnOf, burnR } from '/shared/burn.js';
 import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
@@ -172,7 +172,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [];   // rebuilt every snapshot
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
 let invOpen = false, notice = null;
@@ -955,6 +955,7 @@ ws.onmessage = e => {
   snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
   pyres  = (m.pyres ?? []).map(unpackPyre);
+  fixes  = (m.fixes ?? []).map(unpackFix);
   {                                               // a blast is new the first time we see it low
     const self0 = ships.get(myId);
     for (const b of blasts) {
@@ -3599,6 +3600,59 @@ function drawFrame(now) {
         g.globalAlpha = 1;
       }
     }
+    // A Kedge taking a sighting, and it is the only warning the fix gives from this
+    // end: the thing stops dead and opens a pair of survey arms onto you.
+    //
+    // Deliberately the opposite read to the Lamprey's cord directly above. That one
+    // sags, flows and pulses toward the drainer, because it is carrying your hull
+    // away; this one is straight, rigid and marching OUTWARD, because it is carrying
+    // nothing at all — it is measuring. Same two fields underneath: `abl` is the dial
+    // (0..100, and 0 on every hostile that has no fix) and `tgt` is who, so this cost
+    // no new SHIP_FIELDS entry either. The row is at 30 of a hard 31.
+    //
+    // It cannot put a bad number into a draw call. `sight` is 0 unless ALIENS[hull]
+    // has a `fix` block, which is undefined for every other hostile and for a ship;
+    // `(s.abl ?? 0) / 100` is clamped into 0..1 and `sight > 0.02` is false for NaN.
+    // The victim is radar-filtered per viewer, so a Kedge can legitimately be sighting
+    // somebody this client was never sent — ships.get misses, `mark` is null, and only
+    // the arms are drawn, which is the radar rule as much as the arithmetic one.
+    const sight = foe && ALIENS[s.hull]?.fix ? Math.max(0, Math.min(1, (s.abl ?? 0) / 100)) : 0;
+    if (sight > 0.02) {
+      const tint = colOf(s);
+      const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+      const mark = s.tgt ? ships.get(s.tgt) : null;
+      const bear = mark && Number.isFinite(mark.rx) ? Math.atan2(mark.ry - s.ry, mark.rx - s.rx) : s.heading;
+      g.save(); g.translate(s.rx, s.ry);
+      // Two arms swinging closed onto the bearing, like a caliper being read. They
+      // start wide and meet as the sighting completes, so how far through it is can
+      // be read off the angle between them without a number.
+      const open = (1 - sight) * 1.15 + 0.06;
+      g.strokeStyle = tint; g.lineCap = 'round';
+      for (const side of [-1, 1]) {
+        g.globalAlpha = al(0.35 + 0.5 * sight);
+        g.lineWidth = 1.6 + 2.2 * sight;
+        g.beginPath();
+        g.arc(0, 0, R * 2.1, bear + side * open - 0.30, bear + side * open + 0.30);
+        g.stroke();
+        g.globalAlpha = al(0.25 + 0.45 * sight);
+        g.lineWidth = 1.2;
+        g.beginPath();
+        g.moveTo(Math.cos(bear + side * open) * R * 1.15, Math.sin(bear + side * open) * R * 1.15);
+        g.lineTo(Math.cos(bear + side * open) * R * 2.1, Math.sin(bear + side * open) * R * 2.1);
+        g.stroke();
+      }
+      g.lineCap = 'butt';
+      // and the bearing itself: a hard dashed line running OUT along the sight, the
+      // dashes marching away from the hull so it reads as a measurement being taken
+      // rather than as something being pulled in.
+      g.rotate(bear);
+      g.globalAlpha = al(0.20 + 0.55 * sight);
+      g.strokeStyle = tint; g.lineWidth = 1 + sight;
+      g.setLineDash([9, 11]);
+      g.lineDashOffset = -now / 90;
+      g.beginPath(); g.moveTo(R * 1.3, 0); g.lineTo(R * 1.3 + 260 * sight, 0); g.stroke();
+      g.setLineDash([]); g.globalAlpha = 1; g.restore();
+    }
 
     // A Lock that only shows on the bolt is a Lock you cannot see between volleys,
     // and it is running — and draining — the whole time. The hull carries it.
@@ -3892,6 +3946,65 @@ function drawFrame(now) {
     grd.addColorStop(1, 'rgba(255,180,60,0)');
     g.fillStyle = grd;
     g.beginPath(); g.arc(py.x, py.y, Math.max(1, rr), 0, 7); g.fill();
+  }
+
+  // A fix: the place a pilot is about to be standing whether they like it or not.
+  //
+  // This is the whole warning, and it has to be readable as one — where, and when.
+  // WHERE is a bracket the exact size of the hull it is waiting for, so the shape a
+  // player recognises is their own ship's footprint. WHEN is a ring falling onto it,
+  // touching the bracket at the moment the collapse fires. Three seconds is the
+  // whole of the countdown and it is the same three seconds a portal takes, which is
+  // the decision the marker exists to put in front of you.
+  //
+  // Yours is drawn loud, with a line back to your hull so the two ends of it are one
+  // object; somebody else's is quiet furniture, exactly the way another pilot's
+  // scoop beam is. `own` comes off the wire per viewer, the way a damage number's
+  // `mine` does, so this client never has to match ids to know whose it is.
+  //
+  // Nothing here can produce undefined, NaN or a bad colour: `p` is clamped and
+  // fixed to three places before it reaches a string, every radius goes through
+  // Math.max, and the array is empty on every tick nobody is holding a sighting.
+  for (const fx of fixes) {
+    const p = Math.max(0, Math.min(1, fx.p ?? 0));
+    const rr = Math.max(3, fx.r ?? 10);
+    const mine = !!fx.own;
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    const tint = mine ? '212,232,64' : '124,136,36';
+    // the ring, falling from four hull-widths onto the bracket
+    g.strokeStyle = `rgba(${tint},${al((mine ? 0.45 : 0.22) + 0.45 * p)})`;
+    g.lineWidth = 1.2 + (mine ? 2.4 : 1.0) * p;
+    g.setLineDash([14, 10]);
+    g.lineDashOffset = now / 30;
+    g.beginPath(); g.arc(fx.x, fx.y, rr * (4.2 - 3.0 * p), 0, 7); g.stroke();
+    g.setLineDash([]);
+    // the bracket: your own outline, waiting
+    g.strokeStyle = `rgba(${tint},${al((mine ? 0.55 : 0.25) + 0.4 * p)})`;
+    g.lineWidth = mine ? 2 : 1.2;
+    for (let q = 0; q < 4; q++) {
+      const a0 = q * Math.PI / 2 + Math.PI / 4;
+      g.beginPath(); g.arc(fx.x, fx.y, rr * 1.25, a0 - 0.38, a0 + 0.38); g.stroke();
+    }
+    if (!mine) continue;
+    // and the line home, so a pilot who has run two thousand pixels can still see
+    // which way they are about to go. It brightens as the fix closes; the dashes run
+    // FROM the ship TO the marker, which is the direction the ship is going.
+    if (me && Number.isFinite(me.rx)) {
+      g.strokeStyle = `rgba(${tint},${al(0.10 + 0.35 * p)})`;
+      g.lineWidth = 1;
+      g.setLineDash([6, 14]);
+      g.lineDashOffset = -now / 55;
+      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(fx.x, fx.y); g.stroke();
+      g.setLineDash([]);
+    }
+    // the last second, when there is nothing left to decide
+    if (p > 0.66) {
+      const bite = (p - 0.66) / 0.34;
+      g.globalAlpha = al(0.10 + 0.30 * bite * (0.6 + 0.4 * Math.sin(now / 70)));
+      g.fillStyle = `rgb(${tint})`;
+      g.beginPath(); g.arc(fx.x, fx.y, rr * 1.25, 0, 7); g.fill();
+      g.globalAlpha = 1;
+    }
   }
 
   for (const b of blasts) {                        // kill flash, over everything in world space

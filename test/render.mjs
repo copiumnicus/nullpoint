@@ -718,7 +718,9 @@ const dismiss = () => {
     errs.push('the threat file listed a hostile this pilot has never killed');
   else if (!out.some(c => /^fillText 412 /.test(c)))
     errs.push('the threat file recorded a hostile without saying how many');
-  else if (!out.some(c => /^fillText 2 of 9 recorded/.test(c)))
+  // Derived from WILD, not written out: adding a hostile must not fail a test about
+  // a different line. It did — the Kedge made it "2 of 10" and this said 9.
+  else if (!out.some(c => new RegExp(`^fillText 2 of ${WILD.length} recorded`).test(c)))
     errs.push('the threat file did not say how much of it is still unwritten');
   else if (!out.some(c => /mirror|comes back out/.test(c)))
     errs.push('a recorded hostile did not explain what it does');

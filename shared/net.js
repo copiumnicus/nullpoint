@@ -116,6 +116,23 @@ export const packPyre   = o   => [Math.round(o.x), Math.round(o.y), Math.round(o
                                   +(1 - o.t / o.ttl).toFixed(3), 1];
 export const unpackPyre = arr => { const o = {}; for (let i = 0; i < PYRE_FIELDS.length; i++) o[PYRE_FIELDS[i]] = arr[i]; return o; };
 
+// A fix standing over the place a pilot is about to be put back to. Five numbers,
+// the same shape a pyre has and for the same reason: it is a thing at a place with a
+// countdown on it, and the countdown is the only part that matters. `own` is filled
+// in per viewer the way HIT_FIELDS does `mine`, because your own fix and somebody
+// else's are the same object and completely different news.
+//
+// It is a stream of its own rather than a field on the Kedge's row for the reason
+// SHIP_FIELDS is at 30 of a hard 31: a point in space is two more numbers and there
+// is one slot left in the whole wire format. It is ephemeral rather than keyed
+// because it lives three seconds, has no identity worth diffing, and the one field
+// on it that matters changes every single tick — which is exactly the measurement
+// EPHEMERAL below already states.
+export const FIX_FIELDS = ['x', 'y', 'r', 'p', 'own'];
+export const packFix   = (o, own) => [Math.round(o.x), Math.round(o.y), Math.round(o.r),
+                                      +Math.max(0, Math.min(1, o.p)).toFixed(3), own ? 1 : 0];
+export const unpackFix = arr => { const o = {}; for (let i = 0; i < FIX_FIELDS.length; i++) o[FIX_FIELDS[i]] = arr[i]; return o; };
+
 export const STREAMS = {
   ships: streamOf('s', SHIP_FIELDS, 'id'),
   pods:  streamOf('p', POD_FIELDS,  'id'),
@@ -130,7 +147,7 @@ export const STREAMS = {
 // single tick, so a keyed diff would be paying an id and a mask to save a
 // handful of numbers that were already stale. They go whole, and are simply
 // omitted when empty, which is 44 bytes a tick back for nothing.
-export const EPHEMERAL = ['bolts', 'rockets', 'blasts', 'hits', 'pyres'];
+export const EPHEMERAL = ['bolts', 'rockets', 'blasts', 'hits', 'pyres', 'fixes'];
 
 // Everything else in a snapshot is the viewer's own state — credits, loadout,
 // power, rank. Named keys, so this is a set difference rather than a list anyone

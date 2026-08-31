@@ -17,7 +17,8 @@ const bfs = (a, b) => { const q = [[a, [a]]], seen = new Set([a]);
 
 console.log('\nthe testing ground');
 {
-  const { DEV_ID, PROPS, PEN, PEN_SLOTS, DEV_BASE, LABELS, propFit, REACH } = await import('../shared/devmap.js');
+  const { DEV_ID, PROPS, PEN, PEN_SLOTS, BENCH_SLOTS, DEV_BASE, LABELS, propFit, REACH } = await import('../shared/devmap.js');
+  const { WILD } = await import('../shared/aliens.js');
   const { ALIENS } = await import('../shared/aliens.js');
   const { HULLS, slotsOf } = await import('../shared/ships.js');
   const { FORMATION_KEYS } = await import('../shared/formation.js');
@@ -40,9 +41,20 @@ console.log('\nthe testing ground');
   check('a mannequin carries a full rack of the best gun',
     Object.keys(HULLS).every(h => propFit(h).weapon.length === slotsOf(h).weapon),
     'so the gallery shows the top of the ladder, not a stub');
-  check('every hostile type is on the firing line',
-    Object.keys(ALIENS).every(k => PEN_SLOTS.some(sl => sl.kind === k)),
-    PEN_SLOTS.map(sl => sl.kind).join(' '));
+  // The Bulkhead Target is not on the line and should not be. It has aggro 0, damage 0
+// and 400,000 hull — it is range furniture, a thing you shoot AT to read a number
+// off, and the place you want it is beside the dock rather than out with the animals.
+// Taking it out of the grid is also what let an eleventh hostile fit inside the
+// room's own "one short burn" bound: eleven slots a full aggro radius apart do not
+// fit in 1,800px while starting east of the dock ring, and ten do.
+check('every hostile type is posted somewhere you can walk to',
+    WILD.every(k => [...PEN_SLOTS, ...BENCH_SLOTS].some(sl => sl.kind === k)),
+    [...PEN_SLOTS, ...BENCH_SLOTS].map(sl => sl.kind).join(' '));
+  check('and nothing that fights back is on the bench',
+    BENCH_SLOTS.every(sl => (ALIENS[sl.kind].aggro ?? 0) === 0
+                         && (ALIENS[sl.kind].attrs.damage ?? 0) === 0),
+    BENCH_SLOTS.map(sl => ALIENS[sl.kind].name).join(', ') +
+    ' — you stand in front of it with a stopwatch, so it must never shoot you');
 
   check('everything on the map is on the map', PROPS.every(inMap) && PEN_SLOTS.every(inMap)
     && LABELS.every(inMap) && inMap(DEV_BASE));
