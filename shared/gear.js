@@ -34,10 +34,40 @@ export const dronePrice = owned => 3000 + owned * 2600;
 // place to dump ore. It also puts a real shape on progress: the home ring takes
 // you as far as it takes you, and then you have to go somewhere.
 //
-// The rungs are where each ladder stops being starter kit. Emitters have five, so
-// the top three are frontier; launchers and technologies have three, so the top
-// two and the top one are.
-export const FRONTIER = { laser: 3, rocket: 2, tech: 3 };
+// The rungs are where each ladder stops being starter kit. Emitters have six, so
+// the top four leave the company ring; launchers have four and technologies three.
+//
+// TWO LEVELS, NOT A SPECIAL CASE. A ladder leaves the company ring at one rung and
+// leaves the frontier at another, and both are the same sentence said twice: this
+// is stocked further out than you are standing. So a ladder is a LIST of cut
+// points, deepest last, and a shelf is however many of them a tier has passed —
+// which makes a third kind of outpost a third number in a row rather than another
+// branch in whyNotSold. A ladder that never reaches the deeps simply has one entry.
+//
+// The deep rungs are the sixth emitter and the fourth launcher, which are sold at
+// the deep-sector outposts and nowhere else. Technology has no deep rung; the
+// shelf is twelve entries and a thirteenth was not asked for.
+export const SHELVES = ['station', 'frontier', 'deep'];
+export const STOCKED = { laser: [3, 6], rocket: [2, 4], tech: [3] };
+
+const ladderOf = e => e.slot === 'tech' ? 'tech' : e.kind === 'rocket' ? 'rocket' : 'laser';
+// Which shelf this thing is stocked on. 'station' is your own company ring, which
+// is also every outpost bay you rent; 'frontier' is any rented bay; 'deep' is a
+// rented bay in a deep sector.
+export function shelfOf(key) {
+  const e = EQUIPMENT[key];
+  if (!e) return 'station';
+  const cuts = STOCKED[ladderOf(e)] ?? [];
+  let n = 0;
+  for (const cut of cuts) if ((e.tier ?? 0) >= cut) n++;
+  return SHELVES[Math.min(n, SHELVES.length - 1)];
+}
+
+// Kept as the question most callers actually ask — "is this off-limits at a
+// company ring" — so the client's locked-row wording and the tooltip did not have
+// to learn a three-valued answer to keep working. `shelfOf` is the one that knows
+// how far out.
+export const FRONTIER = Object.fromEntries(Object.entries(STOCKED).map(([k, v]) => [k, v[0]]));
 
 // Which hull ability a technology tunes, or null if it is for every ship.
 //
@@ -59,17 +89,14 @@ export function tunesAbility(key) {
   return null;
 }
 
-export function frontierOnly(key) {
-  const e = EQUIPMENT[key];
-  if (!e) return false;
-  const ladder = e.slot === 'tech' ? 'tech' : e.kind === 'rocket' ? 'rocket' : 'laser';
-  const cut = FRONTIER[ladder];
-  return cut !== undefined && (e.tier ?? 0) >= cut;
-}
+export const frontierOnly = key => shelfOf(key) !== 'station';
+export const deepOnly = key => shelfOf(key) === 'deep';
 
 // Why this pilot cannot buy this here, or null. `berth` is whether they are stood
-// at an outpost bay they rent; `docked` is their own company ring.
-export function whyNotSold(key, { docked = false, berth = false, hull = null } = {}) {
+// at an outpost bay they rent; `docked` is their own company ring; `deep` is
+// whether that bay is in a deep sector. One walk down the shelves, so a third one
+// is a row in STOCKED rather than another clause here.
+export function whyNotSold(key, { docked = false, berth = false, deep = false, hull = null } = {}) {
   if (!EQUIPMENT[key]) return 'no such thing';
   // An ability technology is only a technology on the hull that has the ability.
   const tunes = tunesAbility(key);
@@ -77,7 +104,11 @@ export function whyNotSold(key, { docked = false, berth = false, hull = null } =
     const owner = { veil: 'Kestrel', anchor: 'Bulwark', drumfire: 'Vanguard' }[tunes];
     return `tunes the ${tunes} — only the ${owner} has one, and you fly a ${hull.name}`;
   }
-  if (frontierOnly(key)) {
+  const shelf = shelfOf(key);
+  if (shelf === 'deep') {
+    return deep ? null : 'deep stock — sold at a deep-sector outpost, to pilots with a bay there';
+  }
+  if (shelf === 'frontier') {
     return berth ? null : 'frontier stock — sold at a pirate outpost, to pilots with a bay there';
   }
   return docked || berth ? null : 'fly into your base ring';
@@ -100,6 +131,54 @@ export const EQUIPMENT = {
               mods: [['damage', 'add', 220]] },
   emitter5: { name: 'MK-V Emitter',  slot: 'weapon', kind: 'laser', tier: 5, price:  34000,
               blurb: 'About as much as a hardpoint will carry.', mods: [['damage', 'add', 400]] },
+  // --- and the one that is more than a hardpoint will carry ---------------------
+  //
+  // The sixth rung, sold only at a deep-sector outpost. Three numbers on it and
+  // every one of them is read off something rather than chosen.
+  //
+  // DAMAGE, 700. The ladder's steps have shrunk at every rung — x2.500, x2.444,
+  // x2.000, x1.818 — and test/ships.mjs states the floor they have kept: no rung
+  // may be less than 1.7 of the one below. x1.75 is the next step in a sequence
+  // that has decelerated four times, and it is the last one, because the ladder
+  // stops here.
+  //
+  // WHAT IT GIVES UP, 3.5 of your speed a mount, and this is the part that matters.
+  // It is the most expensive object in the game and the anti-pay-to-win rule is
+  // about money, so "the dearest gun is simply the best gun" is exactly the shape
+  // to avoid. The MK-V's blurb already says a hardpoint carries about 400 points
+  // of gun; this is 700, and the ship wears the difference.
+  //
+  // The number is a fifth of the speed of the hull the rung is for, spread over
+  // EVERY MOUNT that hull has: a Cruiser is 250 with four hardpoints and ten bays,
+  // so 250 x 0.20 / 14 = 3.57, and 3.5 is that. A fifth of your speed is the unit
+  // the technology shelf already uses and already justifies — "a fifth of your
+  // speed is a different ship" — and charging it per mount is what makes it scale
+  // with how much of the ship you commit rather than being a toll on the first one.
+  //
+  // Spread over the HARDPOINTS instead — 12.5 each, which is where this started —
+  // it was 175 off a Cruiser that carried one everywhere, and the ceiling build
+  // came out pinned at the 40 speed floor. That matters more than it looks: the
+  // fourth ammunition grade asks for every gun on the ship to be one of these,
+  // escort included, so a per-hardpoint cost would have made the grade it exists to
+  // feed unflyable. Measured, not reasoned: test/ships.mjs printed "Cruiser volley
+  // 10303 ehp 8222 speed 40".
+  //
+  // It is NOT reactor headroom, unlike a generator's speed cost — resolve() counts
+  // only generators there, deliberately, so this is a straight loss.
+  //
+  // PRICE, 1,500,000, and it is the second price in the game not denominated in
+  // what things cost. On the capability model it is 700 x 5 points x 10 cr x
+  // premiumAt(6) = 70,000, and test/balance.mjs used to hold every emitter within a
+  // tenth of that. This one is 21x it, and that gap is a finding rather than a
+  // mistake: the deep berth already broke the same way and said so — "by the deeps
+  // the shop has stopped being the constraint on anything" — and priced itself in
+  // deep-sector kills instead. So does this. A Crucible banked at the counter it
+  // stands next to is 1,474,596 credits (see DEEP_BERTH), so ONE GUN IS ONE KILL,
+  // and a Cruiser's full rack of four is 6,000,000 against the 10,000,000 bay you
+  // had to rent before you were allowed to buy one.
+  emitter6: { name: 'MK-VI Emitter', slot: 'weapon', kind: 'laser', tier: 6, price: 1500000,
+              blurb: 'More gun than the mount was built for. You wear the weight.',
+              mods: [['damage', 'add', 700], ['speed', 'add', -3.5]] },
 
   // Launchers — the other thing a weapon slot will take. Three to a ship, never on
   // a drone. Each rack shadows a rung of the emitter ladder and beats it: about a
@@ -118,6 +197,29 @@ export const EQUIPMENT = {
   pod3: { name: 'Swarm Rack',  slot: 'weapon', kind: 'rocket', tier: 3, price: 40000,
           blurb: 'Five. Turning away only buys you a second.',
           mods: [['rockets', 'add', 5], ['rocketVolley', 'add', 1050]] },
+  // The fourth rack, beside the sixth emitter and sold at the same counter. The
+  // shadow above is not a figure of speech — it is exact, and it is what this is
+  // derived from. Measured against the ladder it shadows, in delivered dps:
+  //
+  //   Sparrow Pod  66.0 against an MK-II's   54.0   x1.2222
+  //   Triad Rack  316.8 against an MK-IV's  264.0   x1.2000
+  //   Swarm Rack  577.5 against an MK-V's   480.0   x1.2031
+  //   Cyclone Rack 1006.5 against an MK-VI's 840.0  x1.1982
+  //
+  // so `rocketVolley` is 700 x FIRE_RATE x 1.20 / ROCKET_RATE = 1832.7, and 1830 is
+  // that to within 0.15% — the same rounding the Swarm Rack's 1050 already carries.
+  // Seven rails, because the ladder is odd numbers and an odd fan keeps a rocket
+  // down the middle with the rest arcing in around it.
+  //
+  // Price is the shadow's, in the shelf's own currency: the racks charge
+  // DELIVERY_PREMIUM over the emitter they beat — 1.231, 1.1875, 1.176 measured —
+  // so 1,500,000 x 1.18 = 1,770,000. It gives up what every launcher gives up and
+  // it is the reason the cap exists: never on a drone, and never more than the hull
+  // allows, so five of these on a Vanguard is 35 rockets a volley and no escort in
+  // the game can imitate it.
+  pod4: { name: 'Cyclone Rack', slot: 'weapon', kind: 'rocket', tier: 4, price: 1770000,
+          blurb: 'Seven, and the sky closes.',
+          mods: [['rockets', 'add', 7], ['rocketVolley', 'add', 1830]] },
 
   // generators — reactor gear. Capacitor, recharge and the free trickle.
   cellA: { name: 'A-Cell Generator', slot: 'generator', tier: 1, price:  1200,
@@ -142,6 +244,40 @@ export const EQUIPMENT = {
            blurb: 'More shield than most hulls have hull.',
            mods: [['capacitor', 'add', 42], ['recharge', 'add', 2.5], ['sustain', 'add', 0.08],
                   ['shield', 'add', 1400], ['speed', 'add', -30]] },
+  // --- and the sixth, which nobody asked for and the rule above insisted on -----
+  //
+  // The line four rows up is not decoration: "The shield ladder climbs with the
+  // weapon ladder, or the top of the game is two finished ships deleting each other
+  // on sight." A sixth emitter without a sixth generator breaks it immediately, and
+  // test/ships.mjs said so the moment the MK-VI landed —
+  //
+  //     Cruiser  volley 10303   ehp 8222
+  //
+  // — a finished Cruiser one-shotting another finished Cruiser, where the five-rung
+  // ladder left it 8222 against 5935. So this row exists because the invariant
+  // demands it, not because the shelf wanted another entry.
+  //
+  // SHIELD, 3420, and it is solved rather than stepped. The rule it has to keep is
+  // that the top of the game exchanges at the same rate it did before the ladder
+  // grew: at five rungs a finished Cruiser carried 1.385 times its own volley in
+  // effective hit points, and one point of a generator's shield is worth 3 points of
+  // that Cruiser's ehp (three slots, folded through a wedge). Holding 1.385 against
+  // the MK-VI's 10,303 volley asks for (1.385 x 10303 - 4022) / 3 = 3,418. So the
+  // sixth rung of each shelf together move the top-end exchange by nothing at all,
+  // which is the whole point of there being two of them.
+  //
+  // Everything else on the row is the ladder's own next step, because "capacitor and
+  // trickle climb gently" is already written above: capacitor +8 (8/16/26/34/42),
+  // recharge +0.6 (0.4/0.8/1.3/1.9/2.5), sustain +0.02, speed -6 (-8/-13/-18/-24/-30).
+  //
+  // PRICE. Same currency as the gun it is sold beside — see the MK-VI — with the
+  // capability model setting the ratio inside the shelf: 3420 points at premiumAt(6)
+  // is 68,400 against the MK-VI's 70,000, so 1,500,000 x 68400/70000 = 1,465,714,
+  // and 1,470,000 is that to the nearest ten thousand.
+  cellF: { name: 'F-Cell Generator', slot: 'generator', tier: 6, price: 1470000,
+           blurb: 'A bubble the size of a hull. You will not be going anywhere.',
+           mods: [['capacitor', 'add', 50], ['recharge', 'add', 3.1], ['sustain', 'add', 0.10],
+                  ['shield', 'add', 3420], ['speed', 'add', -36]] },
 
   // Collector rigs — the only modules that go on a drone and nowhere else. A bay
   // carrying one stops being a gun and starts being a hold: the drone reaches out

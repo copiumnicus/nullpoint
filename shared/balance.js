@@ -17,7 +17,7 @@
 // Move one and everything downstream moves with it — that is the test.
 
 import { HULLS, resolve, FIRE_RATE, ATTRS, DEFAULT_HULL } from './ships.js';
-import { EQUIPMENT, dronePrice, MAX_DRONES } from './gear.js';
+import { EQUIPMENT, dronePrice, MAX_DRONES, deepOnly } from './gear.js';
 import { AMMO } from './ammo.js';
 import { ROCKET_RATE } from './rockets.js';
 import { BOOST } from './power.js';
@@ -383,8 +383,15 @@ export function hullPriceFor(attrs, tier = 1, opts = {}) {
 // wrong in both directions. It is a small stated premium on damage you have
 // already bought, so the price per POINT climbs by the ladder premium and the
 // price per round is that times the multiplier.
-export function ammoPriceFor(mult, tier, { pack, perPoint, A = ANCHORS } = {}) {
-  const round = perPoint * premiumAt(tier, A) * mult;
+// `reach` is what the round multiplies the firing ship's weapon range by, and it
+// is what turns "price per point of damage" into "price per point of what the
+// round CARRIES". They were the same number while every round in the game reached
+// exactly as far as the gun did; a grade that buys distance instead of heat is
+// the first one where they part, and charging it on damage alone would hand the
+// distance away for free. Everything shipped before it has reach 1, so nothing
+// this has ever priced moves by a penny.
+export function ammoPriceFor(mult, tier, { pack, perPoint, reach = 1, A = ANCHORS } = {}) {
+  const round = perPoint * premiumAt(tier, A) * mult * reach;
   return { perRound: round, pack: round * pack };
 }
 // The base rate of a feed, read off its own cheapest grade: 0.200 cr per point
@@ -438,29 +445,72 @@ export const consumablePrice = (worth, tier, A = ANCHORS) => worth * premiumAt(t
 // `arrival` is a brand new account with nothing fitted; `anchor` is that account
 // after its first 900 credits; `finished` is the ceiling, and costs 874,200
 // credits before a collector rig.
-const droneStep = t => Math.round(MAX_DRONES * (t - 1) / (TIERS - 1));
+// How full the escort is at a rung of the ladder: MAX_DRONES spread evenly over the
+// rungs above the first, so the top is a full twelve and nothing in between is a
+// number anybody picked.
+//
+// Spread over the rungs A PILOT CLIMBS, which is not the same as every rung that
+// exists. The deep shelf is bought four hops out at a bay costing ten million, after
+// the ordinary climb is finished rather than partway up it — so counting it here
+// would tell the model that a mid-game pilot got weaker the day a shop they have
+// never stood in grew a shelf. It did exactly that when the sixth emitter landed:
+// the interceptor stage fell from 3 drones to 2 and 429 dps to 356, and the Lamprey
+// party test failed on a fight that had quietly got longer. Nothing about a mid-game
+// pilot had changed.
+export const CLIMB_TIERS = Math.max(...Object.entries(EQUIPMENT)
+  .filter(([k]) => !deepOnly(k)).map(([, e]) => e.tier ?? 1));      // 5
+const droneStep = t => Math.min(MAX_DRONES, Math.round(MAX_DRONES * (t - 1) / (CLIMB_TIERS - 1)));
 export const STAGES = Object.freeze({
   arrival:     { hull: 'hauler',   tier: 0, drones: 0,            note: 'a new account, nothing fitted' },
   anchor:      { hull: 'hauler',   tier: 1, drones: 0, anchor: true, note: 'the reference pilot: one MK-I Emitter' },
   interceptor: { hull: 'kestrel',  tier: 2, drones: droneStep(2), note: 'the first hull you buy' },
   fighter:     { hull: 'vanguard', tier: 3, drones: droneStep(3), note: 'the middle of the game' },
   cruiser:     { hull: 'bulwark',  tier: 4, drones: droneStep(4), note: 'the last hull' },
-  finished:    { hull: 'bulwark',  tier: 5, drones: MAX_DRONES,   note: 'the ceiling' },
+  // The top of the CLIMB, which is not the top of the shop any more and deliberately
+  // stays where it is. Every rung up to here is bought on the way out: you fly to a
+  // frontier outpost, rent a bay for 27,200 and work up the shelf. The sixth rung is
+  // not on that road at all — it is four hops further, behind a bay costing ten
+  // million and rank 39, and you buy it AFTER this rather than on the way to it.
+  //
+  // The distinction matters because things are pinned to `finished`. A Thresher's
+  // mirror is: its chamber returns the sharpest gun the shop sells, so that it can
+  // never throw what the game does not sell. Pinning that to the deep shelf makes
+  // the gate hostile scale with a gun you can only buy by first beating it —
+  // measured, it takes the chamber's slope past 1.0 and a weaving Kestrel that used
+  // to finish one with 40% of its ship left dies at 113s instead. berth.js already
+  // wrote the rule that forbids: "a gate you can only pass by already being through
+  // it is a wall, and this codebase has shipped one of those."
+  finished:    { hull: 'bulwark',  tier: CLIMB_TIERS, drones: MAX_DRONES, note: 'the ceiling of the climb' },
+  // And what the deep counter sells, which IS the top of the shop. Nothing is pinned
+  // to it; it exists so the ceiling of the game is a number this file can report
+  // rather than one somebody has to build by hand to find out.
+  deep:        { hull: 'bulwark',  tier: TIERS, drones: MAX_DRONES,   note: 'the deep shelf: the ceiling of the game' },
 });
 export const STAGE_KEYS = Object.keys(STAGES);
+
+// The rung a stage actually flies, which is no longer always the rung it names.
+// The ladders are different lengths — six emitters, five generators, four
+// launchers — so a stage standing at the top of the weapon shelf has to fall back
+// to the top of the generator shelf rather than fitting `undefined`, which
+// resolve() would silently ignore and quietly hand the ceiling build no reactor
+// at all.
+const rungUpTo = (slot, tier) => {
+  for (let t = tier; t >= 1; t--) { const k = rung(slot, t); if (k) return k; }
+  return null;
+};
 
 export function buildFor(stage) {
   const s = STAGES[stage] ?? STAGES.anchor;
   if (s.anchor) return ANCHOR;
   const h = HULLS[s.hull], fit = { weapon: [], generator: [], tech: [] };
   if (s.tier > 0) {
-    for (let i = 0; i < h.slots.weapon; i++)    fit.weapon.push(rung('weapon', s.tier));
-    for (let i = 0; i < h.slots.generator; i++) fit.generator.push(rung('generator', s.tier));
+    for (let i = 0; i < h.slots.weapon; i++)    fit.weapon.push(rungUpTo('weapon', s.tier));
+    for (let i = 0; i < h.slots.generator; i++) fit.generator.push(rungUpTo('generator', s.tier));
     const techs = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'tech');
     for (let i = 0; i < h.slots.tech; i++)      fit.tech.push(techs[i]);
   }
   return { hull: s.hull, fit,
-           drones: Array.from({ length: s.tier > 0 ? s.drones : 0 }, () => rung('weapon', s.tier)) };
+           drones: Array.from({ length: s.tier > 0 ? s.drones : 0 }, () => rungUpTo('weapon', s.tier)) };
 }
 export const stageDps  = stage => dpsOf(buildFor(stage));
 export const stageEhp  = stage => ehpOf(buildFor(stage));
@@ -655,8 +705,9 @@ export function report() {
   }
 
   for (const [k, a] of Object.entries(AMMO)) {
-    const m = ammoPriceFor(a.mult, a.tier, { pack: a.pack, perPoint: feedBase(a.for) });
-    out.push(row('ammunition', k, a.name, `x${a.mult}, ${a.pack} rounds`, a.price, m.pack,
+    const m = ammoPriceFor(a.mult, a.tier, { pack: a.pack, perPoint: feedBase(a.for), reach: a.reach ?? 1 });
+    out.push(row('ammunition', k, a.name,
+      `x${a.mult}${(a.reach ?? 1) !== 1 ? ` at x${a.reach} reach` : ''}, ${a.pack} rounds`, a.price, m.pack,
       { tier: a.tier, anchor: a.tier === 1,
         note: 'the ladder ANCHORS.premium was read off, so conformance here is definitional' }));
   }

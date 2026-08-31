@@ -1239,8 +1239,8 @@ export const hiveDps = () => {
        + (H.broods?.max ?? 0) * (B?.attrs.damage ?? 0) * (B?.attrs.fireRate ?? 0);
 };
 
-// The sharpest gun the shop sells, in points per second — the whole ladder bought
-// out, with nothing researched.
+// The sharpest gun the shop sells ON THIS SIDE OF THE GATE, in points per second —
+// the ordinary ladder bought out, with nothing researched.
 //
 // It is `stageDps('finished')` from balance.js, and it is written down here rather
 // than imported because balance.js imports THIS file (ANCHOR_FIGHT reads
@@ -1260,6 +1260,40 @@ export const hiveDps = () => {
 // which is the point of anchoring to the shop rather than to a constant, and
 // test/aliens.mjs pins the two equal to the penny so a hull change fails here
 // loudly rather than leaving the mirror quoting a gun nobody can buy any more.
+//
+// --- AND WHY IT IS `finished` RATHER THAN THE TOP OF THE SHOP -------------------
+//
+// The shop grew a sixth emitter, a fourth launcher and a sixth generator, sold only
+// at a deep-sector outpost. Bought out, that build throws stageDps('deep') =
+// 20,526.28, so "the sharpest gun the shop sells" is no longer this number and the
+// first line of this comment says so on purpose.
+//
+// Anchoring the chamber to the deep shelf was tried first, and measured, and it is
+// unshippable. The payload a pilot gets back is this constant times how full they
+// filled the chamber, and how full they fill it is their own dps over
+// soakOf x ln2 — so the SLOPE of what comes back against what you deal is
+//
+//      SHOP_DPS / (soakOf(thresher) x ln2)     0.88 at 11,306
+//                                              1.60 at 20,526
+//
+// and 1.0 is where a mirror stops returning less than it was given and starts
+// returning more. Past it every build that does not saturate the chamber is
+// punished for firing, and the punishment lands hardest on the smallest gun,
+// which is the exact opposite of the mechanic. Measured through the real fight
+// loop: a weaving Kestrel with nothing researched used to finish one in 693s
+// with 40% of its ship left, and at 20,526 it DIES at 113s.
+//
+// A Thresher stands on the gate sectors. The deep shelf is sold four hops past it,
+// at a bay costing ten million, to pilots who have already come through. Scaling
+// the gate with the reward for passing it is the thing berth.js already refused in
+// as many words — "a gate you can only pass by already being through it is a wall,
+// and this codebase has shipped one of those" — so the mirror is pinned to the
+// climb rather than to the ceiling, and a deep pilot simply out-throws it. They
+// earned that four hops ago.
+//
+// If the mirror is ever wanted at the deep ceiling, the thing to move is MIRROR.soak
+// with it: the slope above is the whole constraint, and holding it under 1.0 at
+// 20,526 asks for a soak of 0.145 rather than 0.09.
 //
 // A brute-force sweep of every legal fit finds one number above it: 16,967 on a
 // Bulwark carrying Siege Cadence AND Rapid Cadence, whose drawbacks cancel into a

@@ -769,13 +769,30 @@ console.log('\nthe mirror');
     `${f(effectiveHp('thresher'))} hp is ${f(effectiveHp('hive'))} / sqrt(10) — it used to take ` +
     `its gun from the Hive too, at ${f(hiveDps() / Math.sqrt(10))}, which is 12% of a finished ship a second`);
   // And the reason that is a CEILING and not an escalation. There is no fit, party,
-  // ammunition grade or research rung that puts a bigger bolt on the screen than the
-  // biggest thing the shop sells, because the ceiling IS the shop.
-  check('a mirror can never throw anything the game does not already sell',
+  // ammunition grade or research rung on the road to this thing that puts a bigger
+  // bolt on the screen than the biggest gun sold on that road, because the ceiling
+  // IS that shop.
+  //
+  // "On that road" is the part that had to be written down when the deep shelf
+  // landed. A Thresher stands on the gate sectors; the sixth emitter, the fourth
+  // launcher and the sixth generator are sold four hops PAST it, at a bay costing ten
+  // million. A deep build throws 20,526 and out-throws the chamber, and that is the
+  // right way round — scaling the gate with the reward for passing it is a wall, and
+  // berth.js already refused to build one. Measured, pinning the chamber to the deep
+  // ceiling takes its slope against your own dps from 0.88 to 1.60, past the 1.0
+  // where a mirror starts returning MORE than it was given, and a weaving Kestrel
+  // that finishes one with 40% of its ship left dies at 113s instead. So the claim is
+  // stated where it is load-bearing — everything up to and including the climb — and
+  // the deep stage is named as the one thing past it.
+  const CLIMB = STAGE_KEYS.filter(k => k !== 'deep');
+  check('a mirror can never throw anything the shop on this side of the gate already sells',
     payloadOf(T, 1) <= stageDps('finished') + T.attrs.damage + 1e-9 &&
-    STAGE_KEYS.every(k => payloadOf(T, 1) >= stageDps(k)),
+    CLIMB.every(k => payloadOf(T, 1) >= stageDps(k)) &&
+    payloadOf(T, 1) < stageDps('deep'),
     `a full chamber is ${f(payloadOf(T, 1))} — its own 80 plus ${f(stageDps('finished'))}, and every ` +
-    `build in the game from ${f(stageDps('arrival'))} dps up is under it`);
+    `build on the climb from ${f(stageDps('arrival'))} dps up is under it. The deep shelf throws ` +
+    `${f(stageDps('deep'))} and is not: a pilot four hops past this thing out-guns its chamber, ` +
+    'which is what they went out there for');
   check('a full chamber ends a finished ship faster than anything else in the game, and an empty one is a nuisance',
     (() => {
       const p = at('finished');

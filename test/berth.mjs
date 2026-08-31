@@ -66,13 +66,29 @@ console.log('\nand what one costs in the deeps');
   // It is not priced against the shop, and that is the point: by four hops out the
   // shop has stopped being anybody's constraint.
   {
-    const { EQUIPMENT } = await import('../shared/gear.js');
+    const { EQUIPMENT, deepOnly } = await import('../shared/gear.js');
     const { HULLS } = await import('../shared/ships.js');
-    const shop = Object.values(EQUIPMENT).reduce((t, e) => t + (e.price ?? 0), 0)
-               + Object.values(HULLS).reduce((t, h) => t + (h.price ?? 0), 0);
-    check('one of everything in the game is still not a fifth of it',
-      DEEP_BERTH > shop * 5,
-      `${DEEP_BERTH.toLocaleString('en-US')} against ${shop.toLocaleString('en-US')} for one of every hull and fitting`);
+    const sum = pick => Object.entries(EQUIPMENT).filter(([k]) => pick(k))
+      .reduce((t, [, e]) => t + (e.price ?? 0), 0);
+    const climb = sum(k => !deepOnly(k)) + Object.values(HULLS).reduce((t, h) => t + (h.price ?? 0), 0);
+    const deep = sum(deepOnly);
+    // Rewritten, and the rewrite is the point rather than a threshold moving. The
+    // claim was "one of everything in the game is not a fifth of this", and it stayed
+    // true right up until the shop grew a shelf that is priced the same way this is.
+    // So it is stated against the ORDINARY shop, which is what it always meant: the
+    // ladder you climb on the way out here costs 430,200 and this bay is 23 of it.
+    // The deep shelf is the exception and it is one on purpose — the gun and the door
+    // are both denominated in what the sector pays, so they land within a factor of
+    // two of each other, which is exactly the shape a price in kills produces.
+    check('one of everything on the ordinary shop is still not a fifth of it',
+      DEEP_BERTH > climb * 5,
+      `${DEEP_BERTH.toLocaleString('en-US')} against ${climb.toLocaleString('en-US')} for one of every hull ` +
+      `and fitting a pilot buys on the way here — x${(DEEP_BERTH / climb).toFixed(0)}`);
+    check('and the deep shelf is the one thing priced in the same currency as the bay',
+      deep > climb * 5 && deep > DEEP_BERTH * 0.3 && deep < DEEP_BERTH * 3,
+      `${deep.toLocaleString('en-US')} for the three deep rungs against ${DEEP_BERTH.toLocaleString('en-US')} ` +
+      'for the bay you must rent to be allowed to buy them — both in deep-sector kills, so both land ' +
+      'within a factor of two rather than the twenty-three the rest of the shop sits at');
   }
 }
 
@@ -262,6 +278,42 @@ console.log('\nwhat the frontier stocks');
   check('every technology is on a rung now',
     Object.values(EQUIPMENT).filter(e => e.slot === 'tech').every(e => e.tier > 0),
     'four things at one rung was a shelf with nothing to climb');
+}
+
+// --- and what the DEEPS stock, which is the same rule one level further out ----
+//
+// A ladder leaves the company ring at one rung and leaves the frontier at another.
+// Both sentences are "this is stocked further out than you are standing", so a
+// ladder is a list of cut points rather than a special case, and a third kind of
+// outpost would be a third number in a row. STOCKED is that list.
+{
+  const { STOCKED, SHELVES, shelfOf, deepOnly, whyNotSold, EQUIPMENT } = await import('../shared/gear.js');
+  const { MAPS } = await import('../shared/maps.js');
+  check('the shelves are a list of cut points, so a ladder that never reaches the deeps just has fewer',
+    SHELVES.join() === 'station,frontier,deep' &&
+    STOCKED.laser.length === 2 && STOCKED.rocket.length === 2 && STOCKED.tech.length === 1,
+    Object.entries(STOCKED).map(([k, v]) => `${k} ${v.join('/')}`).join(', ') +
+    ' — technology has no deep rung, and that is a missing number rather than a missing branch');
+  check('the sixth emitter and the fourth launcher are deep stock, and nothing below them is',
+    deepOnly('emitter6') && deepOnly('pod4') && deepOnly('cellF') &&
+    !deepOnly('emitter5') && !deepOnly('pod3') && !deepOnly('cellE'),
+    Object.keys(EQUIPMENT).filter(deepOnly).map(k => EQUIPMENT[k].name).join(', '));
+  check('deep stock is refused at a frontier bay, and the refusal says which bay it wants',
+    /deep-sector/.test(whyNotSold('emitter6', { berth: true })) &&
+    whyNotSold('emitter6', { berth: true, deep: true }) === null,
+    whyNotSold('emitter6', { berth: true }));
+  check('and refused at your own ring too, however docked you are',
+    whyNotSold('emitter6', { docked: true }) !== null && whyNotSold('emitter6', {}) !== null,
+    'the whole ladder above the frontier cut comes off a hulk, and the top of it off a deep one');
+  // The gate, and it is a gate rather than a multiplier: the price and the rank are
+  // the door, and a pilot who is through it flies the same ship as anybody else who
+  // is. berthTerms already holds both, so this only has to check the door exists.
+  const deepMaps = Object.keys(MAPS).filter(m => MAPS[m].deep);
+  check('and there is somewhere to buy it: every deep sector has an outpost with a bay for sale',
+    deepMaps.length > 0 && deepMaps.every(m => MAPS[m].outpost && berthPrice(m) === DEEP_BERTH),
+    `${deepMaps.length} deep sectors at ${DEEP_BERTH.toLocaleString('en-US')} cr and rank ` +
+    `${berthRank(deepMaps[0])} — the gun and the door cost about the same, and both are priced in ` +
+    'deep-sector kills rather than against the shop');
 }
 
 console.log('\nwhere a wreck comes back');

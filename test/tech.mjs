@@ -318,7 +318,12 @@ check('the cadences are not an ammunition trade, whatever it looks like', (() =>
       if (any / one > worst.ratio) worst = { ratio: any / one, hull, w, anyT, oneT, any, one };
     }
   }
-  const ceiling = stageDps('finished');
+  // The top of the SHOP, which since the deep outposts landed is `deep` rather than
+  // `finished`. `finished` is the top of the ordinary climb and the Thresher's mirror
+  // is pinned to it on purpose (see SHOP_DPS in aliens.js — a gate must not scale with
+  // the reward for passing it); what this claim is about is the widest gap any legal
+  // fit can open over the shelf, so it reads the shelf.
+  const ceiling = stageDps('deep');
   // THE claim. A second technology may SHAPE a build; it may never multiply it a
   // second time, and two of them may never hand each other their costs back.
   check('no combination of technologies out-damages the best single one, on any legal fit', (() => {
@@ -354,9 +359,10 @@ check('the cadences are not an ammunition trade, whatever it looks like', (() =>
         'and nothing the wrong way is two technologies handing each other their costs back, which is ' +
         'exactly what Siege and Rapid Cadence did while percentages summed');
 
-  // And what that ceiling actually is, because shared/aliens.js anchors the
-  // Thresher's mirror to it: a full chamber returns the sharpest gun the shop sells,
-  // so a fit the shop allows that is half again as sharp makes that sentence false.
+  // And what that ceiling actually is. It used to matter because the Thresher's
+  // mirror was anchored to it; the mirror is pinned to the climb now, and this claim
+  // stands on its own feet — a fit the shop allows that is half again as sharp as the
+  // shop's own top build means the ladder is not the ladder.
   check('and the sharpest legal fit in the game is a hull advantage, not a technology', (() => {
     return best.d / ceiling < 1.2 && best.hull === 'vanguard';
   })(), `${best.d.toFixed(2)} dps — a ${HULLS[best.hull].name} with ${best.w.length} racks and ` +

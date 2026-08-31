@@ -115,8 +115,10 @@ export function launch(a, b, dt, mag = null) {
   a.rocketFlash = Math.max(0, (a.rocketFlash ?? 0) - dt);
   const rated = Math.round(a.stats?.rockets ?? 0);
   if (!rated) return [];
+  // The warhead decides how far the rack reaches — see rangeOf. A long warhead
+  // in the racks and plain cells in the guns is a legal and sensible fit.
   const live = b && b.hp > 0 && a.hp > 0 &&
-               Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a);
+               Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a, mag);
   if (!live || a.rocketCool > 0) return [];
   // Short of warheads it throws what it has. Each one still hits for its full
   // share: you are firing fewer rockets, not weaker ones.

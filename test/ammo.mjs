@@ -9,6 +9,7 @@ import { slotsOf, resolve, gunsOf, FIRE_RATE } from '../shared/ships.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
 import { KITS, KIT_KEYS, whyNotRepair, KIT_QUIET, sanitiseKits } from '../shared/repair.js';
 import { ALIENS, WILD, effectiveHp, bountyFor, BOUNTY_RATE } from '../shared/aliens.js';
+import { premiumAt, ANCHORS, dpsOf } from '../shared/balance.js';
 import { BOOST } from '../shared/power.js';
 
 const fails = [];
@@ -28,26 +29,41 @@ for (const f of FEEDS) {
     `${AMMO[k].name} x${AMMO[k].mult.toFixed(2)} @${roundPrice(k).toFixed(2)}cr`).join('   '));
   check(`${f}s have grades, cheapest first by tier`,
     g.length >= 2 && g.every((k, i) => i === 0 || AMMO[k].tier > AMMO[g[i - 1]].tier));
-  check(`a better ${f} round hits harder and costs more`,
-    g.every((k, i) => i === 0 || (AMMO[k].mult > AMMO[g[i - 1]].mult
+  // REWRITTEN, because the ladder grew a rung that does not buy damage. It read
+  // "a better round hits harder and costs more", which was the whole truth while
+  // heat was the only thing a round could be spent on. The long grade buys
+  // DISTANCE instead, and hits softer for it — so the rule is not "harder" but
+  // "more of something, and never for free". What a round carries is damage times
+  // reach, and that is what has to climb.
+  const carries = k => AMMO[k].mult * (AMMO[k].reach ?? 1);
+  check(`no ${f} grade is a straight upgrade on the one below it`,
+    g.every((k, i) => i === 0 || (carries(k) > carries(g[i - 1])
                                && roundPrice(k) > roundPrice(g[i - 1]))),
-    'no grade is a straight upgrade at the same price');
+    g.map(k => `${AMMO[k].name} carries x${carries(k).toFixed(4)} at ${roundPrice(k).toFixed(2)}cr`).join('   '));
   check(`the default ${f} grade is the plain one`, AMMO[DEFAULT_AMMO[f]].mult === 1);
 
   // The number that decides whether anyone ever loads the good stuff. Fire rate
   // is fixed, so a grade's multiplier IS its dps — the only question is what the
   // extra damage costs. A Charged Cell used to be 1.25x the damage at 6.4x the
   // cost per point, which made two thirds of the shop decoration.
-  const perPoint = k => roundPrice(k) / AMMO[k].mult;
+  // Per point of what the round CARRIES, not per point of damage. See `carries`
+  // above: the two are the same number for every grade that reaches exactly as far
+  // as the gun does, and they part at the long one — which would read as 3.20x a
+  // punishment on damage alone while actually being the ladder's own next rung.
+  const perPoint = k => roundPrice(k) / carries(k);
   console.log(`     ${f.padEnd(7)}` + g.map(k =>
-    `${AMMO[k].name} ${perPoint(k).toFixed(3)}cr/dmg`).join('   '));
+    `${AMMO[k].name} ${perPoint(k).toFixed(3)}cr/pt`).join('   '));
   check(`a better ${f} round is a premium, not a punishment`,
-    g.every((k, i) => i === 0 || perPoint(k) < perPoint(g[0]) * 1.6),
-    `worst grade costs ${(perPoint(g.at(-1)) / perPoint(g[0])).toFixed(2)}x per point of damage, ` +
+    g.every((k, i) => i === 0 || perPoint(k) <= perPoint(g[0]) * premiumAt(AMMO[g.at(-1)].tier) + 1e-9),
+    `worst grade costs ${(perPoint(g.at(-1)) / perPoint(g[0])).toFixed(2)}x per point of what it carries, ` +
     'not the 6.4x that made it pointless');
+  // Stronger than "climbs": it climbs by exactly the ladder's stated premium, which
+  // is what makes a fourth rung a rung rather than a number somebody typed.
   check(`the ${f} premium climbs with the grade, so the plain one still has a job`,
-    g.every((k, i) => i === 0 || perPoint(k) > perPoint(g[i - 1])),
-    'paying more per point buys real dps — it is a trade, not a free upgrade');
+    g.every((k, i) => i === 0 || perPoint(k) > perPoint(g[i - 1])) &&
+    g.every(k => Math.abs(perPoint(k) / perPoint(g[0]) - premiumAt(AMMO[k].tier)) < 1e-9),
+    g.map(k => perPoint(k).toFixed(3)).join(' > ') +
+    ` cr per point — +${Math.round(ANCHORS.premium * 100)}% of the base a rung, on all ${g.length} of them`);
   // The invariant that would have caught this ladder being wrong in BOTH
   // directions. Damage tiers live in the emitters, which cost real money and take
   // a slot; a grade is a premium on whatever you already bought. So the entire
@@ -60,10 +76,16 @@ for (const f of FEEDS) {
   const smallestRung = Math.min(...rungs.slice(1).map((k, i) =>
     (EQUIPMENT[k].mods?.find(m => m[0] === 'damage')?.[2] ?? 1) /
     (EQUIPMENT[rungs[i]].mods?.find(m => m[0] === 'damage')?.[2] ?? 1)));
-  const ladder = AMMO[g.at(-1)].mult / AMMO[g[0]].mult;
+  // On DAMAGE, deliberately, and not on what the round carries. The rule is that a
+  // grade must never out-scale buying a better gun, and reach is not something the
+  // gun ladder sells at any price — so folding it in here would be comparing the
+  // ammunition shelf against a rung that does not exist. The best round in the game
+  // is still x1.50 of the plain one, and the cheapest step between two emitters is
+  // more than that.
+  const ladder = Math.max(...g.map(k => AMMO[k].mult)) / Math.min(...g.map(k => AMMO[k].mult));
   check(`the whole ${f} ammunition ladder is worth less than one rung of the gun ladder`,
     ladder < smallestRung,
-    `ammunition spans x${ladder.toFixed(2)} against x${smallestRung.toFixed(2)} for the ` +
+    `ammunition spans x${ladder.toFixed(2)} of damage against x${smallestRung.toFixed(2)} for the ` +
     `cheapest step between emitters — a grade is a premium, not a tier`);
   check(`every ${f} grade is telling them apart by colour`,
     g.every(k => /^#[0-9a-f]{6}$/i.test(AMMO[k].colour ?? '')) &&
@@ -130,8 +152,20 @@ console.log('\nwhat a grade is worth');
   const grades = forWeapon('laser');
   const dmgs = grades.map(dmgWith);
   console.log('     ' + grades.map((k, i) => `${AMMO[k].name} ${Math.round(dmgs[i])}`).join('   '));
-  check('a better round puts more on the target',
-    dmgs.every((d, i) => i === 0 || d > dmgs[i - 1]));
+  // REWRITTEN. It read "a better round puts more on the target", which was the
+  // whole of it while heat was the only thing a round could buy. The fourth grade
+  // buys distance and lands LESS than the third — that is the trade, and stating it
+  // as a rule is the point: the dearest ammunition in the game, sold behind the
+  // dearest gun in the game, is not the hardest-hitting ammunition in the game.
+  const hot = grades.filter(k => (AMMO[k].reach ?? 1) === 1);
+  check('a hotter round puts more on the target',
+    hot.map(dmgWith).every((d, i, a2) => i === 0 || d > a2[i - 1]),
+    hot.map(k => `${AMMO[k].name} ${Math.round(dmgWith(k))}`).join('  '));
+  check('and the long round lands less than the hottest one, which is what it is buying reach with',
+    dmgWith(grades.at(-1)) < dmgWith(hot.at(-1)),
+    `${Math.round(dmgWith(grades.at(-1)))} against ${Math.round(dmgWith(hot.at(-1)))} — ` +
+    `${Math.round(100 * (1 - AMMO[grades.at(-1)].mult / AMMO[hot.at(-1)].mult))}% off the top grade, ` +
+    'and nobody pays 1,560 credits a crate for that unless the distance is worth it');
   check('and exactly as much more as it claims',
     grades.every((k, i) => Math.abs(dmgs[i] / dmgs[0] - AMMO[k].mult) < 1e-6));
 
@@ -149,12 +183,164 @@ console.log('\nwhat a grade is worth');
   // a minute it was not a decision, it was a wrong answer, and nobody ever loaded
   // it. The premium has to be real — or the plain grade has no job — but it has
   // to stay under what the extra damage is worth.
-  const top = grades.at(-1);
-  check('the best grade costs more to hold down, but less than it delivers',
+  // REWRITTEN as an identity rather than a ceiling, because the ceiling had a
+  // number in it — x1.5 of the damage multiplier — and the grade that buys reach
+  // instead of damage read 3.9x against a 1.83x bar and failed a rule it was not
+  // breaking. What the bar was really asking is that the cost per point of what the
+  // round carries is the LADDER'S premium and nothing else, which is a stronger
+  // claim and has no slack in it to be wrong about.
+  const top = grades.at(-1), carried = k => AMMO[k].mult * (AMMO[k].reach ?? 1);
+  check('the best grade costs more to hold down, by exactly the ladder\'s premium and no more',
     perMin(top) > perMin(grades[0]) &&
-    perMin(top) / perMin(grades[0]) < AMMO[top].mult * 1.5,
-    `${(perMin(top) / perMin(grades[0])).toFixed(1)}x a minute for ${AMMO[top].mult}x the damage ` +
-    `— it was 34x for 1.25x, which is why the shop's top two shelves went untouched`);
+    Math.abs(perMin(top) / perMin(grades[0]) / carried(top) - premiumAt(AMMO[top].tier)) < 1e-9,
+    `${(perMin(top) / perMin(grades[0])).toFixed(1)}x a minute for ${carried(top).toFixed(2)}x of what a ` +
+    `round carries, which is the ladder's x${premiumAt(AMMO[top].tier).toFixed(2)} at rung ${AMMO[top].tier} ` +
+    '— it was 34x for 1.25x, which is why the shop\'s top two shelves went untouched');
+}
+
+// --- the round that buys distance ---------------------------------------------
+//
+// The fourth rung of both ladders, and the first grade in the game that spends its
+// premium on something other than heat. Everything below is measured through the
+// real fire()/launch() loop rather than read off the table, because "twice the
+// reach" is a claim about what the gun does and not about what the row says.
+console.log('\nthe round that buys distance');
+{
+  const { REACH_EDGE, REACH_MULT } = await import('../shared/ammo.js');
+  const { rangeOf } = await import('../shared/sim.js');
+  const { DRUMFIRE_GAIN, DRUMFIRE_REACH } = await import('../shared/ability.js');
+  const { launcherCap } = await import('../shared/rockets.js');
+
+  const LONG = { laser: 'cell4', rocket: 'head4' }, HOT = { laser: 'cell3', rocket: 'head3' };
+  const mag = k => ({ key: k, n: 1e9, mult: AMMO[k].mult, reach: AMMO[k].reach ?? 1, tier: AMMO[k].tier });
+
+  // A gun rack and a launcher rack, both on the hull with the longest reach.
+  const guns = () => { const s = newShip(0, 0, 'bulwark',
+      sanitiseFit(slotsOf('bulwark'), fit({ weapon: Array(4).fill('emitter6') }))); s.heading = 0; return s; };
+  const racks = () => { const s = newShip(0, 0, 'bulwark',
+      sanitiseFit(slotsOf('bulwark'), fit({ weapon: Array(launcherCap('bulwark')).fill('pod4') }))); s.heading = 0; return s; };
+  const shoots = (make, at, k, go) => {
+    const s = make();
+    for (let i = 0; i < 300; i++) if (go(s, mark(at, 0), dt, mag(k)).length) return true;
+    return false;
+  };
+  const REACH = guns().stats.weaponRange;
+
+  check('the long round doubles the reach of the gun that fires it, and the hot one does not',
+    shoots(guns, REACH * 1.8, LONG.laser, fire) && !shoots(guns, REACH * 1.8, HOT.laser, fire) &&
+    shoots(guns, REACH * 0.9, HOT.laser, fire),
+    `${Math.round(REACH)}px of hull becomes ${Math.round(REACH * REACH_MULT)}px loaded — a Cruiser ` +
+    `shooting something at ${Math.round(REACH * 1.8)}px, which nothing in the game could reach before`);
+  check('and a rack fed the long warhead reaches exactly as far',
+    shoots(racks, REACH * 1.8, LONG.rocket, launch) && !shoots(racks, REACH * 1.8, HOT.rocket, launch),
+    'one rule for both feeds — rangeOf takes the magazine, so a bolt and a rocket read the same number');
+
+  // The bug this shape exists to avoid: a ship carries TWO magazines, and a grade
+  // loaded into one of them must not lengthen the other.
+  check('guns and racks reach independently, because the reach rides the magazine',
+    Math.abs(rangeOf(guns(), mag(LONG.laser)) - REACH * REACH_MULT) < 1e-9 &&
+    Math.abs(rangeOf(guns(), mag(HOT.laser)) - REACH) < 1e-9 &&
+    Math.abs(rangeOf(guns()) - REACH) < 1e-9,
+    'long cells in the guns and plain warheads in the racks is a legal fit, and it is two different reaches');
+
+  // --- the price of a metre, and why it is not conserved -----------------------
+  //
+  // The game already charges for reach, once, and states the rate: a Drum Governor
+  // trades a Vanguard's cadence for its reach and holds rate x range constant to
+  // within 0.6% (test/tech.mjs asserts it inside 2%). At that rate doubling your
+  // reach costs half your output, and Fusion's x1.50 would become x0.75.
+  //
+  // That answer is rejected, and the reason is written down in ability.js: it is
+  // exactly what Drumfire was before it shipped, and conservation produced an
+  // ability nobody would ever switch on. So the grade is priced at the margin the
+  // shipped ability itself sits at, which is a number the game already carries.
+  const carriedOf = k => AMMO[k].mult * (AMMO[k].reach ?? 1);
+  check('the conserved answer would have been x0.75, and this is deliberately not it',
+    Math.abs(AMMO.cell4.mult - AMMO.cell3.mult / REACH_MULT * REACH_EDGE) < 1e-9 &&
+    AMMO.cell4.mult > AMMO.cell3.mult / REACH_MULT,
+    `conservation says x${(AMMO.cell3.mult / REACH_MULT).toFixed(4)} and the grade is ` +
+    `x${AMMO.cell4.mult.toFixed(5)} — a real gain rather than a reshaping, because a sidegrade ` +
+    'that is never worth loading is a grade that does not exist');
+  check('and the margin it beats conservation by is the one a full Drumfire beats it by',
+    Math.abs(REACH_EDGE - (1 + DRUMFIRE_GAIN) * (1 - DRUMFIRE_REACH)) < 1e-12 &&
+    Math.abs(carriedOf('cell4') / carriedOf('cell3') - REACH_EDGE) < 1e-9,
+    `a full drum is x${(1 + DRUMFIRE_GAIN).toFixed(2)} of your cycle at ` +
+    `${Math.round((1 - DRUMFIRE_REACH) * 100)}% of your reach, which is x${REACH_EDGE.toFixed(3)} of ` +
+    'damage-times-reach against a cold ship — and so is this round against the round it shadows. ' +
+    'One rate for a metre of reach everywhere in the game, and it moves if the ability is retuned');
+
+  // --- and the invariant, which is the reason any of this is allowed -----------
+  //
+  // The dearest ammunition in the game is not the strongest ammunition in the game.
+  // There is a range at which each of the two top grades wins, the crossover is the
+  // ship's own reach, and neither is ever the answer everywhere.
+  const dpsAt = (k, d) => (d <= REACH * (AMMO[k].reach ?? 1) ? AMMO[k].mult : 0);
+  const ranges = [200, 400, 600, REACH - 1, REACH + 1, 1000, 1400, REACH * 2 - 1, REACH * 2 + 1];
+  check('neither top grade wins at every range, which is what stops the dear one being an auto-include',
+    ranges.some(d => dpsAt(HOT.laser, d) > dpsAt(LONG.laser, d)) &&
+    ranges.some(d => dpsAt(LONG.laser, d) > dpsAt(HOT.laser, d)) &&
+    ranges.every(d => dpsAt(HOT.laser, d) === 0 || dpsAt(HOT.laser, d) > dpsAt(LONG.laser, d)),
+    `Fusion wins everywhere inside ${Math.round(REACH)}px and fires nowhere outside it; the long round ` +
+    `is ${Math.round(100 * (1 - AMMO.cell4.mult / AMMO.cell3.mult))}% weaker at every range they share. ` +
+    'Load it for something that outranges you; do not load it to farm');
+
+  // The full-spec rule, unchanged and asked of the new top rung. You may BUY a
+  // grade with one qualifying gun and you may not FIRE it until every gun qualifies.
+  const { whyNotLoad, whyNotBuy, NEEDS } = await import('../shared/ammo.js');
+  const ctx = (weapon, drones = []) => ({ fit: { weapon }, drones, EQUIPMENT });
+  check('the long round asks for the whole ship at the top rung, escort included',
+    NEEDS.cell4 === EQUIPMENT.emitter6.tier && NEEDS.head4 === EQUIPMENT.pod4.tier &&
+    !whyNotLoad('cell4', ctx(['emitter6', 'emitter6'], ['emitter6'])) &&
+    !!whyNotLoad('cell4', ctx(['emitter6', 'emitter6'], ['emitter5'])) &&
+    !whyNotBuy('cell4', ctx(['emitter6', 'emitter5'])),
+    whyNotLoad('cell4', ctx(['emitter6', 'emitter6'], ['emitter5'])) +
+    ' — and one MK-VI is enough to BUY the crate, which is the rule the third grade already lives by');
+
+  // --- what it costs to feed, against what the sector it is sold in pays -------
+  //
+  // The failure mode worth measuring: a grade that burns more per fight than the
+  // thing it is fired at drops is unusable in the only place it can be bought.
+  {
+    const rack = sanitiseFit(slotsOf('bulwark'), fit({ weapon: Array(4).fill('emitter6') }));
+    const escort = Array(10).fill('emitter6');
+    const perSec = gunsOf(rack, escort) * FIRE_RATE;
+    const st = resolve('bulwark', rack, escort);
+    const dps = st.damage * st.fireRate * (1 + BOOST) * AMMO.cell4.mult;
+    const secs = effectiveHp('crucible') / dps;
+    const bill = secs * perSec * roundPrice('cell4');
+    console.log(`     a full deep rack burns ${perSec.toFixed(1)} rounds a second — ` +
+      `${(perSec * roundPrice('cell4') * 60).toFixed(0)} cr a minute of ${AMMO.cell4.name}`);
+    console.log(`     one Crucible is ${secs.toFixed(0)}s of that, ${bill.toFixed(0)} cr, ` +
+      `against a ${ALIENS.crucible.bounty.toLocaleString('en-US')} cr bounty`);
+    check('the dearest round in the game still turns a profit where it is sold',
+      bill < ALIENS.crucible.bounty / 20,
+      `${bill.toFixed(0)} cr of cells against ${ALIENS.crucible.bounty.toLocaleString('en-US')} — ` +
+      `${(ALIENS.crucible.bounty / bill).toFixed(0)}x back. It is a rounding error on the bounty and it ` +
+      'cannot honestly be anything else: bounties span a thousandfold across the game and a round ' +
+      'spans 3.9, because the ammunition ladder is a premium on a gun you already bought and pricing ' +
+      'it any other way made two thirds of the shop decoration, twice');
+  }
+
+  // Why the technology sweep in test/tech.mjs does not sweep ammunition, stated
+  // rather than assumed. A grade is a scalar on a dps product, so loading one on
+  // both feeds cannot change which of two fits out-damages the other.
+  {
+    const builds = [
+      { hull: 'bulwark',  fit: fit({ weapon: Array(4).fill('emitter6') }), drones: Array(10).fill('emitter6') },
+      { hull: 'vanguard', fit: fit({ weapon: Array(5).fill('pod4') }),     drones: [] },
+      { hull: 'kestrel',  fit: fit({ weapon: ['emitter3', 'pod2'] }),      drones: Array(4).fill('emitter3') },
+    ];
+    const order = k => builds.map(b => dpsOf(b, { ammo: k, head: k.replace('cell', 'head') }));
+    const base = order('cell1');
+    check('no ammunition grade can change which fit out-damages which, which is why the sweep need not see one',
+      forWeapon('laser').every(k => {
+        const got = order(k);
+        return got.every((v, i) => Math.abs(v / base[i] - got[0] / base[0]) < 1e-9);
+      }),
+      'a grade multiplies both terms of damage x rate + volley x rate by the same number, so it cancels ' +
+      'out of every ratio the sweep compares. Reach does NOT appear in dpsOf at all, and the crossover ' +
+      'claim above is what covers it instead');
+  }
 }
 
 // A grade you can only tell apart in the HUD is a grade you cannot tell apart in
@@ -209,9 +395,15 @@ console.log('\nseeing what is loaded');
   const { gradeColour, GRADE_COLOUR, magazine } = await import('../shared/ammo.js');
   check('a magazine says which grade it is, not just how strong',
     magazine({ cell3: 10 }, { laser: 'cell3' }, 'laser').tier === AMMO.cell3.tier);
+  const tiers = new Set(AMMO_KEYS.map(k => AMMO[k].tier));
   check('every grade has a colour and no two share one',
-    Object.keys(GRADE_COLOUR).length === 3 &&
-    new Set(Object.values(GRADE_COLOUR)).size === 3, Object.values(GRADE_COLOUR).join(' '));
+    Object.keys(GRADE_COLOUR).length === tiers.size &&
+    new Set(Object.values(GRADE_COLOUR)).size === tiers.size, Object.values(GRADE_COLOUR).join(' '));
+  // One colour for the fourth rung of BOTH feeds, because a purple bolt and a
+  // purple rocket have to mean the same thing to somebody watching from outside.
+  check('and the top grade is the same purple whichever weapon throws it',
+    AMMO.cell4.colour === AMMO.head4.colour && AMMO.cell4.colour === GRADE_COLOUR[4],
+    `${AMMO.cell4.name} and ${AMMO.head4.name} both ${AMMO.cell4.colour}`);
   check('the bar and the round in flight read the same table',
     forWeapon('laser').every(k => AMMO[k].colour === gradeColour(AMMO[k].tier)),
     'one table, so the HUD and the sky cannot disagree about what is loaded');

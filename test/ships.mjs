@@ -728,6 +728,56 @@ console.log('\nthe power curve');
     shOf(cells.at(-1)) / shOf(cells[0]) > dmgOf(ladder.at(-1)) / dmgOf(ladder[0]) * 0.4,
     `shields ${(shOf(cells.at(-1)) / shOf(cells[0])).toFixed(0)}x across the ladder, ` +
     `guns ${(dmgOf(ladder.at(-1)) / dmgOf(ladder[0])).toFixed(0)}x`);
+
+  // --- and what the deep rung gives up ----------------------------------------
+  //
+  // The anti-pay-to-win rule is about MONEY: no purchase strictly dominates, and
+  // credits never turn into an unanswerable ship. The MK-VI is the most expensive
+  // object in the game — 1,500,000, one deep-sector kill — so "the dearest gun is
+  // simply the best gun" is precisely the shape it exists to prevent.
+  //
+  // What it gives up is weight, and it is the only weapon in the game that gives up
+  // anything. A generator has always been a straight trade of shields for thrust; a
+  // gun never was, because up to the fifth rung a gun was about as much as the mount
+  // would carry. This one is 700 points of gun in a mount rated for 400, so the ship
+  // wears the difference — charged PER MOUNT, so a pilot who puts one everywhere
+  // pays it fourteen times.
+  {
+    const heavy = k => (EQUIPMENT[k].mods.find(([a]) => a === 'speed')?.[2] ?? 0);
+    const bare = resolve('bulwark');
+    const four = resolve('bulwark', fit({ weapon: Array(4).fill('emitter6') }));
+    const all = resolve('bulwark', fit({ weapon: Array(4).fill('emitter6') }), Array(10).fill('emitter6'));
+    check('the sixth emitter is the only gun in the game that costs you something',
+      heavy('emitter6') < 0 &&
+      Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'weapon' && k !== 'emitter6')
+        .every(k => heavy(k) === 0),
+      `${heavy('emitter6')} speed a mount — a Cruiser's rack of four flies at ` +
+      `${Math.round(four.speed)} against ${Math.round(bare.speed)}, and one on every mount it has ` +
+      `flies at ${Math.round(all.speed)}, a fifth of its speed gone`);
+    check('and the cost is a fifth of the hull it is for, spread over every mount that hull has',
+      Math.abs(-heavy('emitter6') * (slotsOf('bulwark').weapon + baysOf('bulwark')) / bare.speed - 0.20) < 0.02,
+      `${slotsOf('bulwark').weapon} hardpoints and ${baysOf('bulwark')} bays is ` +
+      `${slotsOf('bulwark').weapon + baysOf('bulwark')} mounts at ${heavy('emitter6')} each, which is ` +
+      `${Math.round(-100 * heavy('emitter6') * (slotsOf('bulwark').weapon + baysOf('bulwark')) / bare.speed)}% ` +
+      'of a Cruiser — "a fifth of your speed is a different ship" is the technology shelf\'s own unit');
+    check('and it is not reactor headroom in disguise: only a generator gets that back',
+      resolve('bulwark', fit({ weapon: Array(4).fill('emitter6') })).boost ===
+      resolve('bulwark', fit({ weapon: Array(4).fill('emitter5') })).boost,
+      'resolve() counts generators when it raises the ceiling, deliberately — a gun that paid for ' +
+      'its own weight in reactor would be a free lunch with a price tag on it');
+    // The two sixth rungs are one change, and this is why there are two of them.
+    check('the sixth rungs of the two shelves together leave the top of the game exactly where it was',
+      (() => {
+        const at = (gun, cell) => { const st = resolve('bulwark',
+            fit({ weapon: Array(4).fill(gun), generator: Array(3).fill(cell), tech: ['plating'] }),
+            Array(6).fill(gun), 'wedge');
+          return (st.hull + st.shield) / (st.damage * (1 + BOOST)); };
+        return Math.abs(at('emitter6', 'cellF') / at('emitter5', 'cellE') - 1) < 0.05;
+      })(),
+      'a finished Cruiser carried 1.385 times its own volley in effective hit points at five rungs ' +
+      'and does at six — the F-Cell\'s 3,420 shield is solved from exactly that, because a sixth ' +
+      'emitter without a sixth generator is two finished ships deleting each other on sight');
+  }
 }
 
 // ------------------------------------------------------------ what mods may do

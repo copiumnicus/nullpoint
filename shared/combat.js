@@ -62,8 +62,12 @@ export function fire(a, b, dt, mag = null) {
 
   const guns = Math.max(1, a.guns ?? 1);
   const dry = mag ? mag.n <= 0 : false;
+  // The magazine decides how far this gun reaches, not just how hard it hits: a
+  // grade that buys distance is loaded per weapon, so the guns and the racks can
+  // be holding two different reaches at once. Passing `mag` here and nowhere else
+  // is what keeps them separate.
   const live = !dry && b && b.hp > 0 && a.hp > 0 &&
-               Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a);
+               Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a, mag);
 
   // The hull's own rate, not the resolved stat: a Vanguard running Drumfire cycles
   // faster than its fireRate says. Read ONCE and used for both clocks below — the

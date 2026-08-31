@@ -4,6 +4,7 @@ import { scroller, wheel, ease, rowsIn, stackIn, barIn, spanOf, heightOf,
 import { bayLayout, STORE_ROW } from '../shared/hangar.js';
 import { filePanel } from '../shared/threats.js';
 import { WILD } from '../shared/aliens.js';
+import { AMMO_KEYS } from '../shared/ammo.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -122,13 +123,19 @@ console.log('\nand every list in the game uses it');
   // a five-item shelf claimed to be showing item 418.
   const foot = sc => { const q = bayLayout(900, 380, { ...state, tab: 'store', page: 'ammo', scroll: sc }).scroll;
                        return `${q.first + 1}-${Math.min(q.total, q.first + q.per)} of ${q.total}`; };
+  // The totals are read off the shelf rather than typed, because they were typed
+  // ("of 6") and the ammunition shelf grew a fourth grade on each feed. A footer
+  // test that has to be edited every time a shop row is added is a test that will be
+  // edited without being read.
+  const N = AMMO_KEYS.length;
+  const per = bayLayout(900, 380, { ...state, tab: 'store', page: 'ammo', scroll: 0 }).scroll.per;
   check('the shelf footer counts rows, not the pixels it scrolled',
-    foot(0) === '1-3 of 6' && foot(99999) === '4-6 of 6',
+    foot(0) === `1-${Math.min(N, per)} of ${N}` && foot(99999) === `${N - per + 1}-${N} of ${N}`,
     `top reads "${foot(0)}", bottom reads "${foot(99999)}" — it read "${
       Math.round(bayLayout(900, 380, { ...state, tab: 'store', page: 'ammo', scroll: 99999 }).scroll.at)
-    }-… of 6" while at was pixels`);
+    }-… of ${N}" while at was pixels`);
   check('and the bottom of the list is the bottom of the count',
-    foot(99999).startsWith('4-6'),
+    foot(99999).endsWith(`${N} of ${N}`),
     'the last row is numbered last — off-by-one at the end reads as a row you cannot reach');
 }
 

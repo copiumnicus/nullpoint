@@ -27,7 +27,7 @@ import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowStat
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
 import { ATTRS, HULLS, resolve, slotsOf, baysOf } from '/shared/ships.js';
 import { bonusBays, questLine, questBar } from '/shared/quests.js';
-import { whyNotSold, frontierOnly } from '/shared/gear.js';
+import { whyNotSold, frontierOnly, deepOnly } from '/shared/gear.js';
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from '/shared/scrap.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, dronePrice,
          isCollector, collectorReach } from '/shared/gear.js';
@@ -71,7 +71,7 @@ import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, devicePrice, whyNotDevice } from '/shared/devices.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
-         barLayout, feedMenu, gradeColour, whyNotBuy, whyNotLoad,
+         barLayout, feedMenu, gradeColour, gradeReach, whyNotBuy, whyNotLoad,
          promptRect, TIP_H, TIP_UP } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
@@ -1902,6 +1902,18 @@ const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, my
                          gear: myGear, hulls: myHulls, formations: myForms, credits,
                          unlocked: myUnlocked,
                          ammo: myAmmo, kits: myKits, devices: myDevices });
+// How far the weapon fed by `feed` actually reaches right now, and how far the
+// FURTHEST of them does. A grade that buys distance multiplies the ship's reach
+// per weapon, so `stats.weaponRange` alone stopped being the answer the moment
+// one existed — and the two places that read it are the OUT OF RANGE label on
+// the reticle and the GUN line in the corner, both of which would have gone on
+// saying 820 while the server happily shot something at 1,600. That is the
+// workshop dock exactly: one rule, two copies, and the client's copy says no.
+//
+// gradeReach is the shared lookup rather than a second table here, and it takes
+// the key the SERVER told us is loaded, so the label and the shot agree.
+const reachFor = feed => (myStats().weaponRange ?? 0) * gradeReach(myUsing?.[feed]);
+const myReach  = () => Math.max(...FEEDS.map(reachFor));
 
 function bayClick(v) {
   const G = bayGeom();
@@ -2021,7 +2033,12 @@ function bayClick(v) {
       return credits >= d.price ? send({ t: 'buydevice', key: it.k })
         : say(`A ${d.name} costs ${fmtCredits(d.price)} ${CURRENCY.short}`, '#e0a53f');
     }
-    const gated = whyNotSold(it.k, { docked: atRing && !inMyOutpost(), berth: !berthWhy() });
+    // The deep shelf asks not just for a bay but for WHICH bay, so the client has
+    // to pass the same three facts the server checks. Two copies of "may I buy this
+    // here" is the workshop dock, and this one would have drawn a counter that took
+    // the click and got a refusal back.
+    const gated = whyNotSold(it.k, { docked: atRing && !inMyOutpost(), berth: !berthWhy(),
+                                     deep: !berthWhy() && !!mapOf(mapId).deep });
     if (gated) return say(`${EQUIPMENT[it.k].name} — ${gated}`, '#e0a53f');
     return credits >= EQUIPMENT[it.k].price ? send({ t: 'buy', item: it.k })
       : say(`A ${EQUIPMENT[it.k].name} costs ${fmtCredits(EQUIPMENT[it.k].price)} ${CURRENCY.short}`, '#e0a53f');
@@ -2248,8 +2265,16 @@ function drawBay() {
       g.fillStyle = on ? '#fff' : '#93a3b5'; g.font = '12px ui-monospace, monospace';
       g.fillText(H.name, r.x + 36, r.y + 20);
       g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
-      g.fillText(`${H.cls}   W${sl.weapon} G${sl.generator} T${sl.tech}   ${H.attrs.hull} hull  ` +
-                 `${H.attrs.cargo} hold`, r.x + 36, r.y + 35);
+      // TWO LINES, because the one line did not fit its own column and never had.
+      // The row is `colW` wide — 236.7px on the 770px panel a 820x560 window gets —
+      // the text starts 36px in, and "Fighter   W5 G2 T1   1100 hull  60 hold" is
+      // 234px, so it ran 33px past the row and printed through the RACKS column's
+      // TECH header. It only showed once a pilot owning a Vanguard was swept at the
+      // smallest window; the geometry was wrong from the day the second column was
+      // put beside it. The row is 54px tall wherever four hulls fit in the column,
+      // so a second line at +48 clears its own floor with room.
+      g.fillText(`${H.cls}   W${sl.weapon} G${sl.generator} T${sl.tech}`, r.x + 36, r.y + 34);
+      g.fillText(`${H.attrs.hull} hull   ${H.attrs.cargo} hold`, r.x + 36, r.y + 47);
       if (on) { g.fillStyle = '#7fd4ff'; g.textAlign = 'right';
                 g.fillText('FLYING', r.x + r.w - 10, r.y + 20); g.textAlign = 'left'; }
       g.font = '11px ui-monospace, monospace';
@@ -2556,7 +2581,12 @@ function drawBay() {
     // "1 in your inventory" is 114px, which fits a 690px row on a full-width panel
     // and not the 535px one at 820x560 — 22.6px of the two were printed through
     // each other there.
-    const why = it.kind === 'item' && frontierOnly(it.k) && berthWhy()
+    const deepHere = !berthWhy() && !!mapOf(mapId).deep;
+    const why = it.kind === 'item' && deepOnly(it.k) && !deepHere
+        ? ['Sold only at a deep-sector outpost, and only to pilots who rent a bay there',
+           'Only at a deep-sector outpost, and only with a bay rented there',
+           'Deep outpost only, with a rented bay']
+      : it.kind === 'item' && frontierOnly(it.k) && berthWhy()
         ? ['Sold only at a pirate outpost, and only to pilots who rent a bay there',
            'Only at a pirate outpost, and only with a bay rented there',
            'Pirate outpost only, with a rented bay']
@@ -4641,7 +4671,10 @@ function drawFrame(now) {
         const a0 = q * Math.PI / 2 + Math.PI / 4;
         g.beginPath(); g.arc(s.rx, s.ry, rr, a0 - 0.42, a0 + 0.42); g.stroke();
       }
-      const inRange = Math.hypot(s.rx - me.rx, s.ry - me.ry) <= st.weaponRange;
+      // The furthest of the two weapons, not the hull's own number: a pilot with
+      // long cells in the guns is in range of something at 1,600px and the label
+      // has to say so, or it is telling them not to shoot while they are shooting.
+      const inRange = Math.hypot(s.rx - me.rx, s.ry - me.ry) <= myReach();
       g.fillStyle = inRange ? '#ff5c6b' : '#7a5a60';
       g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
       const running = s.hp <= 10;
@@ -5321,7 +5354,7 @@ function drawFrame(now) {
     g.fillText(depth > 0 ? (driftDps(depth, grace) > 0 ? `SHEAR ${driftDps(depth, grace) | 0}/s`
                                                        : `COMPENSATING ${depth | 0}/${grace | 0}m`) :
                `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
-               `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
+               `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${reachFor('laser') | 0}`, 16 + w + 10, 84);
   }
   // The hotkey strip, laid out around the bottom of the window rather than over
   // it. It is 1022px at 12px and it is drawn LAST, so everything down there was

@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.77';
+export const VERSION = '0.78';
 
 export const PATCHES = [
+  { v: '0.78', notes: [
+    'The deep outposts sell a sixth emitter, a fourth rack and a sixth generator',
+    'An MK-VI is 700 damage and 1.5M credits — and heavy, so a ship of them crawls',
+    'A Cyclone Rack throws seven. Five on a Vanguard is thirty-five rockets a volley',
+    'Fly them all and you can load the fourth grade: purple rounds, twice the reach',
+    'Collimated Cells and Sustainer Heads hit four fifths as hard for double the range',
+  ] },
   { v: '0.77', notes: [
     'Kill a hundred Corsair Hives and the Brood Frame is yours: two more drone berths',
     'Every hull flies them, they are permanent, and there is nothing to buy at the end',
