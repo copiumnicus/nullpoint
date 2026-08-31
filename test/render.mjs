@@ -563,9 +563,47 @@ const dismiss = () => {
     else if (P.y < 0 || P.x < 0 || P.x + P.w > w)
       errs.push(`at ${w}x${h} the SPACE prompt is off the screen`);
   }
+  // Every chooser that opens out of a box crosses this strip — measured, all of
+  // them, at every height from two rows to five. So the prompt is not drawn at all
+  // while one is open, and that is checked by driving the real menu rather than by
+  // comparing rectangles: what matters is that nothing reaches the canvas.
+  {
+    const B = barLayout(innerWidth, innerHeight);
+    dismiss();
+    feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard',
+           fit: { weapon: [], generator: [], tech: [] } });
+    feed({ t: 'map', map: 'm1' });
+    feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+             hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, name: 'Vy' })],
+           hold: { iron: 6 }, docked: true,
+           ammo: { cell1: 4000, cell3: 250, head1: 400 }, using: { laser: 'cell1', rocket: 'head1' } });
+    trace = []; frame(t += 16); frames++;
+    const shut = trace; trace = null;
+    if (!shut.some(c => /^fillText SPACE /.test(c)))
+      errs.push('the SPACE prompt was missing with nothing open and ore to stow');
+    // Via another box first: two clicks on the SAME box inside 320ms is the
+    // safe-this-weapon gesture, and the whole suite runs inside that window. This
+    // is the third time that has caught me, so it is now written down twice.
+    click(B.boxes.find(b => b.feed === 'repair').r);
+    frame(t += 16); frames++;
+    click(B.boxes.find(b => b.feed === 'laser').r);          // open the grade chooser
+    trace = []; frame(t += 16); frames++;
+    const open = trace; trace = null;
+    if (open.some(c => /^fillText SPACE /.test(c)))
+      errs.push('the SPACE prompt was drawn underneath an open ammunition menu');
+    click({ x: 4, y: 4, w: 1, h: 1 });                       // shut it again
+    frame(t += 16); frames++;
+    // And leave the double-tap latch on a box nobody downstream uses, or the
+    // ammunition block's own first click on the laser box becomes a double and
+    // safes the weapon instead of opening the chooser. State leaks between blocks.
+    click(B.boxes.find(b => b.feed === 'repair').r);
+    frame(t += 16); frames++;
+    dismiss();
+  }
   const L0 = barLayout(innerWidth, innerHeight), P0 = promptRect(innerWidth, innerHeight, 300);
   console.log(`prompt: SPACE sits at ${P0.y}..${P0.y + P0.h}, clear of the tooltips at ` +
-              `${L0.r.y - TIP_UP}..${L0.r.y - TIP_UP + TIP_H} and the bar at ${L0.r.y}`);
+              `${L0.r.y - TIP_UP}..${L0.r.y - TIP_UP + TIP_H} and the bar at ${L0.r.y}, ` +
+              'and not drawn at all while a chooser is open');
 }
 
 // The safe-zone badge. Sanctuary has been in the game since the beginning and had

@@ -8,9 +8,13 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.42';
+export const VERSION = '0.43';
 
 export const PATCHES = [
+  { v: '0.43', notes: [
+    'The SPACE prompt gets out of the way while you are choosing ammunition',
+    'Same for the repair rack and the beacon\'s list of hangars — all of them covered it',
+  ] },
   { v: '0.42', notes: [
     'The SPACE prompt sits clear of the weapon tooltips instead of under them',
     'Combat music holds for 14 seconds, not 7 — long enough to reach the next kill',

@@ -2458,6 +2458,16 @@ function roundIcon(feed, cx, cy, col, k = 1) {
 // The one thing SPACE would do, said plainly, right above the bar. It reads the
 // same function the key does, so it can never offer something the key refuses.
 function drawSpacePrompt() {
+  // Not while a chooser is open. The ammunition grades, the repair rack and the
+  // beacon's list of hangars all open upward out of their box and all of them cross
+  // this strip — a four-hangar beacon menu is 128px tall and starts above it.
+  //
+  // Hidden rather than moved. Moving it above whatever is open means it jumps by a
+  // different amount for every menu height, and a prompt that moves is harder to
+  // read than one that is briefly absent. And the absence is honest: while a menu is
+  // up, clicking a row is what you are doing, not pressing SPACE — the menu closes
+  // on the next click either way and the prompt comes back where it always is.
+  if (feedOpen) return;
   const act = spaceAction();
   if (act.kind === 'none') return;
   const L = barLayout(VIEW_W, VIEW_H);
