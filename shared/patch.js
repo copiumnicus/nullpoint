@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.64';
+export const VERSION = '0.65';
 
 export const PATCHES = [
+  { v: '0.65', notes: [
+    'The hotkey strip no longer runs across the minimap and the star chart button',
+    'It wraps onto a second line instead, and keeps clear of the reactor dial too',
+    'Tooltips wrap what they have to say rather than writing it past their own frame',
+    'The sector name, the cargo count and the beacon label all have room to breathe',
+  ] },
   { v: '0.64', notes: [
     'Claims got hard. Nothing in one ever breaks off — you cannot walk away and wait',
     'And your shields do not come back in there, so the ship you arrive in is all you get',
