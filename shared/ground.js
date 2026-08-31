@@ -58,31 +58,43 @@ export const sowOf = def => def?.sow ?? null;
 // target, the rockets, a repair drone, a Recall Beacon, your heading, your shields.
 // A still takes the one thing and takes all of it.
 //
-// HOLD is five seconds, and it is the designer's number rather than a derived one —
-// it is the length of trouble they want a pilot to be in. Everything below is
-// derived FROM it, which is the arrangement that matters: one argued number and the
-// rest following, so moving it moves the whole promise together.
-export const HOLD = 5.0;
+// HOLD is the designer's number rather than a derived one — it is the length of
+// trouble they want a pilot to be in — and it has now been set twice. It was five
+// seconds, flown, measured, and reported back as unbeatable at any party size; it is
+// two and a half because that was the lever picked off that report. The rest of this
+// file derives FROM it, which is the arrangement that matters: one argued number and
+// the others following, so moving it moves the whole promise together and nothing has
+// to be re-argued by hand.
+//
+// What deliberately did NOT follow it down are the two patch cadences in aliens.js.
+// They were 10s and 15s when they read `CALM` and `HOLD + CALM`, and halving the hold
+// would have halved them too — ground landing twice as often, which is the encounter
+// getting HARDER off a change made to make it easier. The identities are retired
+// rather than honoured; see the note on each.
+export const HOLD = 2.5;
 
-// THE PROPERTY THAT IS GONE, said out loud rather than quietly dropped. The old
-// hold was JUMP_TIME / 2, and the half was the argument: "the longest hold that can
-// never deny a door you already opened", because three seconds is what a portal
-// takes to spool. Five seconds is longer than a portal, so that reasoning is dead.
+// THE DOOR, and it is now held twice over rather than once.
 //
-// The promise survives anyway, and it survives on the rule rather than on the
-// clock: a still is refused sanctuary outright, provoked or not — see server.js,
-// which gates the hold on inHaven() — and a pilot spooling a jump is inside a
-// portal mouth by definition. PORTAL_R is 120 and HAVEN_R is 288, so anybody who
-// has committed to a door is more than twice as deep into the peace as they need to
-// be. A door you have already opened still cannot be taken from you.
+// The original hold was JUMP_TIME / 2, and the half WAS the argument: "the longest
+// hold that can never deny a door you already opened", because three seconds is what
+// a portal takes to spool. At five seconds that reasoning died and the promise had to
+// stand on the rule alone. At two and a half it is back — 2.5 is under JUMP_TIME, so
+// even a hold landing on the tick you committed cannot outlast the spool.
 //
-// What IS new is that a door you have NOT yet reached is further away. Stopped dead
-// at 300px from a mouth you were running for, you are five seconds later to it than
-// you were, and under the old coast you would have kept going. That is a real cost
-// and it is the cost the change was asked for. Leaving still works — both sowers
-// are slower than every hull in the game and their leash is 2,600 — it is simply
-// dearer now, which is the whole of what the deeps are for.
-export const PORTAL_KEPT = 'sanctuary, not duration';
+// The rule is the stronger of the two and it never went anywhere: a still is refused
+// sanctuary outright, provoked or not — server.js gates the hold on inHaven() — and a
+// pilot spooling a jump is inside a portal mouth by definition. PORTAL_R is 120 and
+// HAVEN_R is 288, so anybody who has committed to a door is more than twice as deep
+// into the peace as they need to be. The duration is the belt and the haven is the
+// braces; a door you have already opened cannot be taken from you by either reading.
+//
+// What is still true is that a door you have NOT yet reached is further away. Stopped
+// dead at 300px from a mouth you were running for, you are two and a half seconds
+// later to it than you were, and under the coast this replaced you would have kept
+// going. That is a real cost and it is the cost the change was asked for. Leaving
+// still works — both sowers are slower than every hull in the game and their leash is
+// 2,600 — it is simply dearer, which is the whole of what the deeps are for.
+export const PORTAL_KEPT = 'duration and sanctuary, both';
 
 // And CALM is what a pilot is owed back. TWICE the hold, which is not a taste: it
 // is the invariant the first version stated and the only part of it worth keeping —
@@ -96,14 +108,23 @@ export const PORTAL_KEPT = 'sanctuary, not duration';
 // worst case any arrangement of stills, hostiles or pilots can produce is stated
 // and bounded:
 //
-//   longest unbroken stop         =  HOLD                        =  5.0s
-//   thrust owed after every stop  =  CALM  =  2 x HOLD           = 10.0s
+//   longest unbroken stop         =  HOLD                        = 2.5s
+//   thrust owed after every stop  =  CALM  =  2 x HOLD           = 5.0s
 //   stopped over t seconds        <= HOLD + t x HOLD/(HOLD+CALM)
 //
 // The first two are exact and hold whatever is standing on the field. The third is
-// the first two added up and it is deliberately NOT stated as a flat third: a
-// window that opens mid-stop pays for that stop as well. test/ground.mjs
-// brute-forces the arrangements and asserts all three against the sweep.
+// the first two added up and it is deliberately NOT stated as a flat third: a window
+// that opens mid-stop pays for that stop as well. test/ground.mjs brute-forces the
+// arrangements and asserts all three against the sweep.
+//
+// ONE PROPERTY WENT AND ONE CAME BACK when the hold halved, and they are worth
+// separating. What went: at 5s and 10s the cycle was 15 seconds, so two stops could
+// not fall inside one ten-second window at all — a pilot was stopped at most once
+// per ten seconds. At 2.5 and 5 the cycle is 7.5s and two CAN. What did not change is
+// how much of that window is lost, because the duty cycle is HOLD/(HOLD+CALM) either
+// way and it is a third either way: the same immobility arrives as two short stops
+// rather than one long one, which is strictly the better of the two for a pilot who
+// needs a moment of steering between them.
 export const CALM = 2 * HOLD;                      // 10.0s
 
 // How long a marker stands before the ground under it goes live.
@@ -128,8 +149,8 @@ export const WARN = JUMP_TIME / 2;                 // 1.5s
 export const mayHold = s => !((s?.snare ?? 0) > 0) && !((s?.calm ?? 0) > 0);
 
 // Stops the ship. The calm is set when the hold ENDS rather than here, so a pilot
-// held for the full five seconds and one held for a tick both get the same ten
-// afterwards.
+// held for the full two and a half seconds and one held for a tick both get the same
+// five afterwards.
 //
 // The velocity is not zeroed here. It is zeroed in step(), every tick the clock is
 // running, and that is deliberate: killing it once would let anything that touches

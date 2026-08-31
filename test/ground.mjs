@@ -71,10 +71,17 @@ console.log('\nthe root');
   // refused sanctuary outright, provoked or not, so a pilot who has committed to a
   // door is inside a haven and cannot be held at all. That is what these two check
   // now — the arithmetic claim became a geometric one.
-  check('a hold is no longer short enough to be safe, so sanctuary is what keeps a door open',
-    HOLD > JUMP_TIME && CALM === 2 * HOLD,
-    `${HOLD}s held against a ${JUMP_TIME}s spool — the old hold was ${JUMP_TIME / 2}s and could not ` +
-    `outlast a jump; this one can, so it is barred from havens instead. ${CALM}s owed back`);
+  // RESTORED. This claim has been written three ways and that is the point of keeping
+  // it rather than deleting it. At 1.5s it read "a hold is half a portal, so it can
+  // never deny a door you already opened"; at 5.0s that was false and it read
+  // "sanctuary is what keeps a door open"; at 2.5s the duration is under a spool again
+  // and BOTH hold at once. The rule was always the stronger of the two and never went
+  // anywhere — the duration is the one that came and went.
+  check('a hold is shorter than a portal again, so the door is held twice over',
+    HOLD < JUMP_TIME && CALM === 2 * HOLD,
+    `${HOLD}s held against a ${JUMP_TIME}s spool, so even a stop landing on the tick you committed ` +
+    `cannot outlast it — and a still is barred from havens anyway. ${CALM}s owed back, which is ` +
+    '2 x HOLD: a pilot always has at least twice as much control as they lose');
   check('and a pilot spooling a jump is twice as deep into the peace as they need to be',
     HAVEN_R > PORTAL_R * 2,
     `you must be inside ${PORTAL_R}px of a mouth to commit to it and the peace runs to ` +
@@ -118,10 +125,21 @@ console.log('\nthe root');
   // 6.0s of thrust in it; at 5 and 10 a ten-second window cannot contain two stops at
   // all, because they are fifteen seconds apart — so the worst ten is one whole stop
   // and no more, and the bound that binds is the CYCLE rather than the window.
-  check('and two stops can never fall inside one ten-second window',
-    runs.every(r => r.win <= HOLD + TICK + 1e-6),
-    `${Math.max(...runs.map(r => r.win)).toFixed(2)}s stopped in the worst ten seconds — one stop, ` +
-    `never two, because ${HOLD} + ${CALM} is ${HOLD + CALM}s apart. Over a whole minute it is a third`);
+  // REWRITTEN, and this is the one thing halving the hold COST rather than bought. At
+  // 5s and 10s the cycle was fifteen seconds, so two stops could not fall inside one
+  // ten-second window at all. At 2.5 and 5 the cycle is 7.5s and they can.
+  //
+  // What did not change is how much of that window is lost, and that is the number
+  // that matters: the duty cycle is HOLD/(HOLD+CALM) and it is a third either way, so
+  // the worst ten seconds holds 4.97s of stop against 5.03s before. The same
+  // immobility arrives as two short stops rather than one long one — which is strictly
+  // better for a pilot, because it hands the steering back in the middle of it.
+  check('the worst ten seconds costs the same as it did, in smaller pieces',
+    runs.every(r => r.win <= HOLD + 10 * HOLD / (HOLD + CALM) + TICK + 1e-6) &&
+    runs.every(r => r.win < 5.5),
+    `${Math.max(...runs.map(r => r.win)).toFixed(2)}s stopped in the worst ten seconds against 5.03s ` +
+    `when the hold was ${2 * HOLD}s — but as two stops of ${HOLD}s now rather than one, because the ` +
+    `cycle is ${HOLD + CALM}s and no longer clears a ten-second window. Over a minute it is a third either way`);
   // REWRITTEN, and this is the design call that was reversed rather than a number that
   // moved. It used to read "a hold takes the throttle and nothing else" and asserted
   // that the velocity did not change by a thousandth — momentum kept, ship coasting,
@@ -647,10 +665,11 @@ console.log('\nthe fight, through the real loop');
     cases.every(([, , r]) => r.pct < 55) && cases.some(([, , r]) => r.pct > 30) &&
     Math.abs(cases.find(c => c[0] === 'finished' && c[1] === 'x1')[2].pct
            - cases.find(c => c[0] === 'finished' && c[1] === 'x32')[2].pct) < 0.05,
-    `${Math.max(...cases.map(c => c[2].pct)).toFixed(1)}% of the ship at worst — held at rest for ` +
-    `${HOLD}s with a pool on the spot, which is now the NORMAL case rather than the worst one, ` +
-    'because the pair travels together and both sow at the same feet. It was 5.1% when the hold ' +
-    'was a 1.5s coast and the plasma was 165px wide. Identical at x1 and x32, to the tenth');
+    `${Math.max(...cases.map(c => c[2].pct)).toFixed(1)}% of the ship at worst — stopped for ` +
+    `${HOLD}s with a pool on the spot, which is the NORMAL case rather than the worst one, because ` +
+    'the pair travels together and both sow at the same feet. It has been 5.1% (a 1.5s coast, 165px ' +
+    'of plasma), then 46.0% (a 5s stop, 560px), and halving the hold took it to this. Identical at ' +
+    'x1 and x32, to the tenth, which is the property that survived all three');
   // The bound is the coast plus the walk out of a still, and the walk is the slowest
   // fitted hull crossing 420px of it — 420 + 17 over 128 px/s is 3.4s, so 1.5 + 3.4
   // is 4.9 and there is no arrangement that can be slower. Written as HOLD plus that
@@ -704,8 +723,11 @@ console.log('\nthe fight, driven by the real AI');
     `kiting lasts ${solo['crucible/kite'].t.toFixed(0)}s against ${solo['crucible/orbit'].t.toFixed(0)}s ` +
     `circling and ${solo['crucible/quit'].t.toFixed(0)}s giving up the shot to leave the ground. A pool ` +
     'is 560px and the orbit only flexes by 120, so leaving means leaving GUN RANGE, and a fight you ' +
-    'cannot end is one the ground wins. Measured: the plasma has to come under about 320px, or the ' +
-    'rates under about half what was asked, before movement pays again');
+    'cannot end is one the ground wins.\n' +
+    '       Swept: standing still wins at 560, 450, 380, 320, 250 AND 200px of plasma, and only ' +
+    'loses at 165 — the width this replaced. So the inversion is not the orbit flex, it is that the ' +
+    'plasma lands at your FEET: moving buys nothing unless the pool is small enough to walk out of ' +
+    'inside the warning, and that is the thing the designer asked to stop being true');
   check('but the PAIR kills that same pilot, which is what the deeps are for',
     solo['crucible+doldrum/fly'].dead === 1,
     `dead at ${solo['crucible+doldrum/fly'].t.toFixed(0)}s with ${solo['crucible+doldrum/fly'].inG.toFixed(0)}s ` +
@@ -750,8 +772,16 @@ console.log('\nthe fight, driven by the real AI');
       `${n}p ${at(n).map(r => r.dead).join('/')} dead`).join(', ')}. A gun shoots one pilot and a ` +
     'pool burns everybody in it, so time-to-die is flat in party size while time-to-clear falls as ' +
     '1/n. The pair is 4,110,960 ehp: 86s of shooting from four finished pilots, against a ship that ' +
-    'is gone in 35-50s of this ground. Measured levers, everything else held: plasma at 250px makes ' +
-    'one soloable again, and the rates at half the ask make the pair clearable by four');
+    'is gone in 35-70s of this ground.\n' +
+    '       Halving the hold from 5s to 2.5s did not move it, and was not expected to — the sweep ' +
+    'said radius first and rates second, and the hold barely at all. Measured at 2.5s, worst of ' +
+    'three arrangements, everything else held:\n' +
+    '         plasma 320px          3 pilots clear it losing 2, 4 clear it losing 1\n' +
+    '         rates x0.35           the same, one lever the other way\n' +
+    '         320px and rates x0.75 3 pilots clear it losing ONE, which is the best of them\n' +
+    '       NOTHING on that menu is clearable by two: the best a pair of pilots managed anywhere ' +
+    'was to survive 238 seconds at a quarter of the asked-for rates and still be wiped. Three is ' +
+    'the floor');
   check('nothing costs a shot, which is why neither carries an effort multiplier',
     solo['crucible/fly'].uptime > 0.97 && solo['doldrum/fly'].uptime > 0.97,
     `the trigger is held for ${(100 * solo['crucible/fly'].uptime).toFixed(0)}% of the fight — circling ` +
