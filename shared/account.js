@@ -5,7 +5,7 @@
 // without a server or a file.
 
 import { DEFAULT_HULL, sanitiseFit, slotsOf, HULLS } from './ships.js';
-import { EQUIPMENT, emptyFit, sanitiseDrones, sanitiseRig, isCollector } from './gear.js';
+import { EQUIPMENT, emptyFit, reseat, sanitiseDrones, sanitiseRig, isCollector } from './gear.js';
 import { FORMATIONS, DEFAULT_FORMATION } from './formation.js';
 import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
          DEFAULT_AMMO, STARTING_AMMO } from './ammo.js';
@@ -78,17 +78,29 @@ export function sanitiseAccount(a, seq, now) {
     .filter(([k, n]) => MATERIALS[k] && Number.isFinite(n) && n > 0)
     .map(([k, n]) => [k, Math.floor(n)]));
   const base = MAPS[co + '1'].base;
-  const gear = Object.fromEntries(Object.entries(a?.gear ?? {})
+  const locker = o => Object.fromEntries(Object.entries(o ?? {})
     .filter(([k, n]) => EQUIPMENT[k] && Number.isFinite(n) && n > 0)
     .map(([k, n]) => [k, Math.floor(n)]));
   const forms = [...new Set([DEFAULT_FORMATION, ...(Array.isArray(a?.formations) ? a.formations : [])]
     .filter(f => FORMATIONS[f]))];
   const hulls = [...new Set([DEFAULT_HULL, ...(Array.isArray(a?.hulls) ? a.hulls : [])].filter(h => HULLS[h]))];
   const flying = hulls.includes(hull) ? hull : DEFAULT_HULL;
+  // Whatever no longer fits comes back to the locker instead of evaporating.
+  //
+  // This read `sanitiseFit(flying, a?.fit)`, which silently DELETES the surplus,
+  // and every login reads a save through here — so the day a hull's slot table
+  // moved, everyone flying that hull quietly lost the difference, with nothing
+  // said and nothing to say it to. This commit is that day: the Vanguard drops
+  // from two technology bays to one, and a pilot with two fitted would have
+  // signed back in owning one. reseat is the identical call the hangar's
+  // hull-swap already makes. Cleaned afterwards because reseat hands back
+  // whatever the fit named, and a hand-edited file can name anything.
+  const seated = reseat(slotsOf(flying), a?.fit, locker(a?.gear));
+  const gear = locker(seated.gear);
   return {
     token: a.token, seq, co, name: typeof a?.name === 'string' ? a.name : callsign(seq),
-    hull: flying, fit: sanitiseFit(flying, a?.fit), gear, hulls,
-    drones: sanitiseDrones(a?.drones, sanitiseFit(flying, a?.fit), undefined, slotsOf(flying).tech),
+    hull: flying, fit: seated.fit, gear, hulls,
+    drones: sanitiseDrones(a?.drones, seated.fit, undefined, slotsOf(flying).tech),
     // Collectors used to live in a combat bay. Anyone who fitted one before this
     // keeps it — it moves into the rig bay rather than being dropped on the floor,
     // and sanitiseDrones has already refused to leave it in the rack.

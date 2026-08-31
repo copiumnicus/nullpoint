@@ -76,8 +76,16 @@ check('an oversized rack is truncated to the hull actually being flown',
   junk.fit.weapon.length === 1 && !junk.fit.weapon.includes('wat')
   && junk.fit.tech.length === 1 && junk.fit.generator.length === 0,
   'fell back to a Hauler (W1 G1 T1); duplicate tech collapsed, wrong-slot item dropped');
-check('the locker is cleaned the same way',
-  JSON.stringify(junk.gear) === JSON.stringify({ emitter1: 2 }));
+// Rewritten, not deleted: the locker is still cleaned the same way, and what
+// changed is that the rack no longer DELETES what it cannot seat. sanitiseFit
+// dropped the surplus on the floor and every login reads a save through this
+// function, so the day a hull's slot table moved, everyone flying that hull lost
+// the difference in silence. reseat returns it instead, and the cleaning happens
+// after the return, so an invented item is still refused rather than minted.
+check('the locker is cleaned the same way, and takes back whatever the rack could not seat',
+  JSON.stringify(junk.gear) === JSON.stringify({ emitter1: 6, plating: 1 }),
+  'two owned emitters plus the four the Hauler had no hardpoint for, and the duplicate plating — ' +
+  'while the invented "wat" it was fitted with is dropped, not credited');
 check('negative credits become zero', junk.credits === 0);
 check('invented materials are dropped from the hangar',
   JSON.stringify(junk.vault) === JSON.stringify({ iron: 3, iridium: 4 }),

@@ -148,7 +148,7 @@ export const ALIENS = {
   // A gate sector held one Thresher and nothing else. That made it a corridor: the
   // only thing standing on it deals back every point you put into it — 205,550 over
   // the fight, whatever you fly — and a pilot arriving from the frontier in a
-  // finished hull with no research carries 7,050. One mirrored volley is 5,291 at
+  // finished hull with no research carries 9,305. One mirrored volley is 5,595 at
   // the stage that gets there. You do not fight it; you fly past it. The frontier
   // solved exactly this problem by standing Harriers beside the Bandits, and this is
   // that move again one hop out: something workable to hunt on the map you are
@@ -184,12 +184,22 @@ export const ALIENS = {
   // can still leave — see escapeTax in shared/kedge.js, it costs exactly twice as
   // long and never more — but you cannot leave for free, and that is the animal.
   //
-  // 258.75 dps is not a chosen number either: it is ANCHORS.pressure x the effective
+  // 330.975 dps is not a chosen number either: it is ANCHORS.pressure x the effective
   // hit points of the stage it is posted for, which is the model's own definition of
-  // a hostile that is exactly on model. 345 x 0.75 is the only clean pair that makes
-  // it. What is new is that for this one the number is a FLOOR rather than a
-  // ceiling: every other armed hostile's dps is what it would do if you let it, and
-  // this one collects because you cannot hold range on it.
+  // a hostile that is exactly on model. What is new is that for this one the number
+  // is a FLOOR rather than a ceiling: every other armed hostile's dps is what it
+  // would do if you let it, and this one collects because you cannot hold range on
+  // it.
+  //
+  // It was 258.75 — 345 x 0.75 — and it moved because the stage under it moved. The
+  // hull rework gave the Bulwark a third generator bay and a second technology bay,
+  // so the cruiser stage went from 5,750 effective hit points to 7,355, and a gun
+  // defined as a share of that pilot has to follow or it is no longer the thing the
+  // comment above says it is. That is the whole point of deriving it: test/kedge.mjs
+  // asserts the equality to 1e-9, so a hull change cannot leave this quietly reading
+  // 0.78 of the fight it claims to be. The rate is unchanged, so 441.3 x 0.75 is the
+  // pair — 330.975 has no factorisation with a whole-number bolt at any rate worth
+  // firing, and a tenth of a point on the bolt is the smaller lie.
   //
   // Reach 900 is the Leviathan's and the Thresher's, and it is the same number for
   // the same reason: past every hull in the game (620-820), so you cannot out-range
@@ -226,7 +236,7 @@ export const ALIENS = {
     },
     attrs: { hull: 40000, shield: 25000, shieldRegen: 0.012, shieldDelay: 5,
              speed: 150, accel: 300, signature: 8,
-             damage: 345, fireRate: 0.75, weaponRange: 900 },
+             damage: 441.3, fireRate: 0.75, weaponRange: 900 },
     aggro: 540,       // the Thresher's, still inside SIGHT_R, so it is on screen first
     leash: 1800,      // a picket has no business chasing you across a sector
     patience: 4.0,
@@ -252,9 +262,14 @@ export const ALIENS = {
   // the whole of what "it is not supposed to be harder than the Hive" means here:
   //
   //                         full chamber      lived, standing still
-  //   Corsair Hive          2,450 dps         2.9s
-  //   Thresher                855 dps         9.1s     (it was 0.58s)
-  //   on model, balance.js    317 dps        22.2s
+  //   Corsair Hive          2,450 dps         3.8s
+  //   Thresher                855 dps        10.9s     (it was 0.58s)
+  //   on model, balance.js    419 dps        22.2s
+  //
+  // Read against a finished hull with no research, which the hull rework moved
+  // from 7,050 effective hit points to 9,305 — so the seconds went up and the
+  // on-model row with them, while the last one stayed at 22.2s because it is
+  // 1/ANCHORS.pressure and cannot move whatever the pilot is flying.
   //
   // What it gave back USED to be one for one and uncapped, which is a one-shot by
   // arithmetic rather than by intent: your damage spans 256x across the shop and

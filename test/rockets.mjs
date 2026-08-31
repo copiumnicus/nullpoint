@@ -38,10 +38,20 @@ check('two racks of a model land that rocket twice, not one twice as hard', (() 
   return two.rockets === one.rockets * 2 && two.rocketVolley / two.rockets === one.rocketVolley / one.rockets;
 })());
 
-console.log('\nthree to a ship, and never on a drone');
-check(`a rack takes at most ${MAX_LAUNCHERS} launchers`,
+console.log('\nas many as the hull allows, and never on a drone');
+// Rewritten, not deleted: the rule was "three to a ship, however many weapon slots
+// the hull has", and it existed because the Cruiser had the most hardpoints and
+// would otherwise be tiled with racks. The Cruiser still has four and the Fighter
+// now has five, so the slot table does most of that job and the cap's remaining
+// work is to say which hull is ALLOWED a fourth and a fifth. MAX_LAUNCHERS is
+// still the default every hull gets by saying nothing.
+check(`a rack takes at most ${MAX_LAUNCHERS} launchers unless the hull says otherwise`,
   sanitiseFit(slotsOf('bulwark'), fit({ weapon: Array(4).fill(PODS[2]) })).weapon.length === MAX_LAUNCHERS,
-  'on a W4 hull, which has the room for a fourth');
+  'on the Cruiser\'s four hardpoints, which have the room for a fourth');
+check('and the Vanguard is the hull that says otherwise',
+  sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(6).fill(PODS[2]) })).weapon.length === 5 &&
+  slotsOf('vanguard').launchers === 5,
+  'five hardpoints and five racks — 25 rockets a volley, and the one loadout no escort can imitate');
 check('the fourth is dropped, not the first',
   sanitiseFit(slotsOf('bulwark'), fit({ weapon: [PODS[0], PODS[1], PODS[2], PODS[2]] }))
     .weapon.join() === [PODS[0], PODS[1], PODS[2]].join());
@@ -51,10 +61,17 @@ check('lasers alongside them are untouched',
 check('a drone refuses a launcher outright',
   sanitiseDrones([PODS[2], 'emitter5', PODS[0]], {}).join() === ',emitter5,',
   'six drones with swarm racks would put thirty rockets up on one trigger');
-check('launcherRoom counts down and floors at zero',
-  launcherRoom(fit()) === MAX_LAUNCHERS &&
-  launcherRoom(fit({ weapon: [PODS[0]] })) === MAX_LAUNCHERS - 1 &&
-  launcherRoom(fit({ weapon: Array(9).fill(PODS[0]) })) === 0);
+check('launcherRoom counts down and floors at zero, per hull',
+  launcherRoom('bulwark', fit()) === MAX_LAUNCHERS &&
+  launcherRoom('bulwark', fit({ weapon: [PODS[0]] })) === MAX_LAUNCHERS - 1 &&
+  launcherRoom('bulwark', fit({ weapon: Array(9).fill(PODS[0]) })) === 0 &&
+  launcherRoom('vanguard', fit()) === 5 &&
+  launcherRoom('vanguard', fit({ weapon: Array(9).fill(PODS[0]) })) === 0);
+check('and the hull is a required argument, so the shop and the server cannot disagree',
+  launcherRoom('vanguard', fit({ weapon: Array(3).fill(PODS[0]) })) === 2 &&
+  launcherRoom('bulwark',  fit({ weapon: Array(3).fill(PODS[0]) })) === 0,
+  'the same rack reads "two racks left" on a Vanguard and "full" on a Bulwark — a defaulted cap ' +
+  'here is the workshop-dock bug: a counter that will not sell what the server would accept');
 check('a launcher is not a barrel', (() => {
   const f = fit({ weapon: [PODS[2], PODS[2], 'emitter5'] });
   return gunsOf(f) === 1;                          // the one emitter, not three "guns"

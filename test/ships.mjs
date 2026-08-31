@@ -1,4 +1,5 @@
-import { ATTRS, HULLS, DEFAULT_HULL, resolve, sanitiseFit, slotsOf, FIRE_RATE } from '../shared/ships.js';
+import { ATTRS, HULLS, DEFAULT_HULL, resolve, sanitiseFit, slotsOf, baysOf,
+         DAMAGE_PER_HARDPOINT, FIRE_RATE } from '../shared/ships.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat, topTier, MAX_DRONES } from '../shared/gear.js';
 import { SPENDS } from '../shared/tech.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
@@ -86,13 +87,74 @@ check('prices climb with the ship', (() => {
   const p2 = BOUGHT.map(([, h]) => h.price);
   return p2.every((v, i) => i === 0 || v > p2[i - 1]);
 })(), BOUGHT.map(([, h]) => h.price).join(' < '));
-const totals = BOUGHT.map(([h]) => SLOTS.reduce((n, s2) => n + slotsOf(h)[s2], 0));
-check('every purchasable hull has the same TOTAL slots, distributed differently',
+const fixed  = h => SLOTS.reduce((n, s2) => n + slotsOf(h)[s2], 0);
+const mounts = h => fixed(h) + baysOf(h);
+const totals = BOUGHT.map(([h]) => mounts(h));
+// Rewritten, not deleted. The claim was "the same total SLOTS, distributed
+// differently", and it was counting the wrong thing: a drone bay takes any weapon
+// and any generator, so twelve free-form bays sat beside seven fixed slots and
+// went uncounted. Measured at the top of both ladders with each hull's escort
+// optimised for it, three completely different racks — W5G1T1, W3G2T2, W1G4T2 —
+// score 5.09, 4.42 and 5.14: the split is worth about 2% and the COUNT is worth
+// everything. So the invariant is the same invariant, over the right total.
+check('every purchasable hull carries the same total MOUNTS, ship and escort together',
   new Set(totals).size === 1 && new Set(BOUGHT.map(([h]) => JSON.stringify(slotsOf(h)))).size === BOUGHT.length,
-  `${totals[0]} slots each: ` + BOUGHT.map(([h]) => {
-    const s2 = slotsOf(h); return `${h} W${s2.weapon}G${s2.generator}T${s2.tech}`; }).join(', '));
-check('the starter has fewer slots than any of them',
-  SLOTS.reduce((n, s2) => n + slotsOf(DEFAULT_HULL)[s2], 0) < totals[0]);
+  `${totals[0]} mounts each: ` + BOUGHT.map(([h]) => {
+    const s2 = slotsOf(h); return `${h} W${s2.weapon}G${s2.generator}T${s2.tech}+${baysOf(h)} bays`; }).join(', '));
+check('and the bigger the hull, the more of them are welded in place',
+  BOUGHT.every(([h], i) => i === 0 || fixed(h) > fixed(BOUGHT[i - 1][0])),
+  BOUGHT.map(([h]) => `${h} ${fixed(h)} fixed / ${baysOf(h)} free`).join(', ') +
+  ' — a bay you can re-purpose is worth more than a slot you cannot, so the ship that ' +
+  'welds more in has to be better at the thing it welded them into');
+check('the starter has fewer mounts than any of them',
+  mounts(DEFAULT_HULL) < totals[0], `${mounts(DEFAULT_HULL)} against ${totals[0]}`);
+// The anti-domination rule extended to the thing that now differs. Base attributes
+// alone stopped being the whole story the moment the racks did — and the two checks
+// together are exactly the check over the union, because a hull that were better at
+// everything would have to carry its one strict advantage in one list or the other.
+{
+  const cmp = (a, b) => [slotsOf(a).weapon - slotsOf(b).weapon, slotsOf(a).generator - slotsOf(b).generator,
+                         slotsOf(a).tech - slotsOf(b).tech, baysOf(a) - baysOf(b)];
+  const bad = [];
+  for (const [ka] of BOUGHT) for (const [kb] of BOUGHT) if (ka !== kb) {
+    const c = cmp(ka, kb);
+    if (c.every(v => v >= 0) && c.some(v => v > 0)) bad.push(`${ka} > ${kb}`);
+  }
+  check('and no purchasable hull has more of every kind of mount than another',
+    bad.length === 0, bad.join(', ') ||
+    'each of the three is best at exactly one kind and gives up another for it');
+}
+// The measurement the rework was argued from, kept as the test. Nothing in the
+// shop ADDS hull, so a chassis keeps its hull spread forever; every generator adds
+// flat shield and every emitter adds flat damage, so those two are diluted to
+// nothing. A hull that tried to differentiate itself on base damage was claiming
+// an advantage its first emitter erased.
+check('base damage is decoration and base hull is not, which is why the slots do the work', (() => {
+  const TOP = topTier('weapon'), CELL = topTier('generator');
+  const full = h => { const sl = slotsOf(h);
+    return resolve(h, fit({ weapon: Array(sl.weapon).fill(TOP), generator: Array(sl.generator).fill(CELL),
+                            tech: sl.tech ? ['plating'] : [] }), Array(6).fill(TOP), 'wedge'); };
+  const share = (k, h) => HULLS[h].attrs[k] / full(h)[k];
+  const dmg = Object.keys(HULLS).map(h => share('damage', h));
+  const hl  = Object.keys(HULLS).map(h => share('hull', h));
+  return Math.max(...dmg) < 0.03 && Math.min(...hl) > 0.6;
+})(), (() => {
+  const TOP = topTier('weapon'), CELL = topTier('generator');
+  const full = h => { const sl = slotsOf(h);
+    return resolve(h, fit({ weapon: Array(sl.weapon).fill(TOP), generator: Array(sl.generator).fill(CELL),
+                            tech: sl.tech ? ['plating'] : [] }), Array(6).fill(TOP), 'wedge'); };
+  return Object.keys(HULLS).map(h =>
+    `${h} ${(100 * HULLS[h].attrs.damage / full(h).damage).toFixed(1)}% of its damage`).join(', ') +
+    ' — against 60-100% of its hull, because no module in the game adds hull, only multiplies it';
+})());
+// Which is also the rule that makes the monotonicity check below arithmetic
+// rather than luck: every purchasable hull's guns are its hardpoints.
+check('a hull\'s own guns are worth one emitter per hardpoint, and the starter is the exception',
+  BOUGHT.every(([h, H]) => H.attrs.damage === DAMAGE_PER_HARDPOINT * slotsOf(h).weapon) &&
+  HULLS[DEFAULT_HULL].attrs.damage === 30,
+  `${DAMAGE_PER_HARDPOINT} a hardpoint — ` + BOUGHT.map(([h, H]) => `${h} ${H.attrs.damage}`).join(', ') +
+  '; the Hauler keeps 30 because balance.js\'s ANCHOR is a Hauler with one MK-I and its 74.88 dps ' +
+  'is the zero point of every bounty in the game');
 
 console.log('\nfit validation');
 check('unknown items are dropped',
@@ -105,6 +167,16 @@ check('weapons and generators stack, technologies do not',
   'or an interceptor with three tech slots out-tanks a cruiser');
 check('a rack cannot exceed the hull\'s slot count',
   sanitiseFit('vanguard', fit({ weapon: Array(9).fill('emitter1') })).weapon.length === slotsOf('vanguard').weapon);
+check('the launcher cap is the hull\'s, not the shelf\'s', (() => {
+  const racks = h => sanitiseFit(h, fit({ weapon: Array(9).fill('pod3') })).weapon.length;
+  // A Vanguard is the only hull with more than four hardpoints and the only one
+  // allowed more than three racks, so the cap now PERMITS rather than restricts.
+  return racks('vanguard') === 5 && racks('bulwark') === 3 && racks('kestrel') === 2 && racks('hauler') === 1;
+})(), 'vanguard 5, bulwark 3 (of 4 hardpoints), kestrel 2, hauler 1');
+check('a Vanguard is the only hull that can put five racks in the air',
+  Object.entries(HULLS).filter(([h]) => slotsOf(h).launchers > 3).map(([h]) => h).join() === 'vanguard',
+  'a launcher is the one module sanitiseDrones will never let a drone carry, which is what makes ' +
+  'a hardpoint worth having over a bay');
 check('garbage input yields an empty rack',
   fitCount(sanitiseFit('vanguard', 'not-an-array')) === 0 && fitCount(sanitiseFit('vanguard', null)) === 0);
 check('changing hull returns whatever no longer fits to the locker', (() => {

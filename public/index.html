@@ -22,10 +22,10 @@ import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowStat
          shortOf, tiersOf,
          applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
-import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
+import { ATTRS, HULLS, resolve, slotsOf, baysOf } from '/shared/ships.js';
 import { whyNotSold, frontierOnly } from '/shared/gear.js';
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from '/shared/scrap.js';
-import { EQUIPMENT, SLOTS, emptyFit, fitCount, MAX_DRONES, dronePrice,
+import { EQUIPMENT, SLOTS, emptyFit, fitCount, dronePrice,
          isCollector, collectorReach } from '/shared/gear.js';
 import { levelFor, progress } from '/shared/level.js';
 import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
@@ -1515,7 +1515,7 @@ let bayTab = 'hangar', bayPage = 'ships';
 // Which empty slot is asking to be filled. Null unless a chooser is open.
 let picking = null;
 
-const lockerFor = slot => fitsIn(slot, { gear: myGear, fit: myFit, drones: myDrones });
+const lockerFor = slot => fitsIn(slot, { hull: myHull, gear: myGear, fit: myFit, drones: myDrones });
 const pickGeom = () => {
   if (!picking) return null;
   const G = bayGeom();
@@ -1861,7 +1861,7 @@ function drawBay() {
       const r = row.r;
       if (row.header) {
         g.fillStyle = '#3d4757'; g.font = '10px ui-monospace, monospace';
-        g.fillText(row.slot === 'drone' ? `DRONE BAYS  ${myDrones.length}/${MAX_DRONES}`
+        g.fillText(row.slot === 'drone' ? `DRONE BAYS  ${Math.min(myDrones.length, baysOf(myHull))}/${baysOf(myHull)}`
                  : row.slot === 'rig'   ? 'COLLECTOR RIG  (its own bay)'
                  : row.slot === 'form'  ? `FORMATION${myDrones.length ? '' : '  (needs drones)'}`
                                         : row.slot.toUpperCase(),
@@ -2088,9 +2088,9 @@ function drawBay() {
     // shelf advertising last week's figures — see modSummary.
     const blurb = it.kind === 'own' ? EQUIPMENT[it.k].blurb
                 : it.kind === 'ownhull' ? `${HULLS[it.k].cls} — a hull you own and are not flying`
-                : it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech}   ${HULLS[it.k].blurb}`
+                : it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech} +${baysOf(it.k)} bays   ${HULLS[it.k].blurb}`
                 : it.kind === 'form' ? `${FORMATIONS[it.k].blurb}   ${modSummary(FORMATIONS[it.k].mods) || 'no bonus'}`
-                : it.kind === 'drone' ? `An escort ship carrying one module of yours.   bay ${myDrones.length + 1} of ${MAX_DRONES}`
+                : it.kind === 'drone' ? `An escort ship carrying one module of yours.   bay ${myDrones.length + 1} of ${baysOf(myHull)}`
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
                 : it.kind === 'device' ? `${DEVICES[it.k].blurb}   ${DEVICES[it.k].secs}s to fold`

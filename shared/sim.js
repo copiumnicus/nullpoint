@@ -2,7 +2,7 @@
 // file so the two can never drift. Pure, deterministic, no I/O, no wall-clock.
 
 import { MAP_W, MAP_H, PORTAL_R } from './maps.js';
-import { resolve, radiusOf, gunsOf, DEFAULT_HULL, HULLS } from './ships.js';
+import { resolve, radiusOf, gunsOf, berthed, baysOf, DEFAULT_HULL, HULLS } from './ships.js';
 import { DEFAULT_FORMATION } from './formation.js';
 import { emptyFit, techSet } from './gear.js';
 import { newPower, stepPower, boostOf, levelOf, BOOST } from './power.js';
@@ -93,11 +93,12 @@ export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit =
   const s = newBody(x, y, applyResearch(resolve(hull, fit, escortOf(drones, rig), formation), research), radiusOf(hull));
   s.research = research;
   s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
-  s.guns = gunsOf(fit, drones);                     // ship rack plus whatever the escort carries
+  s.bays = Math.min(baysOf(hull), (drones ?? []).length);   // berths flown, not bays owned — see refit
+  s.guns = gunsOf(fit, berthed(hull, drones));      // ship rack plus whatever the escort carries
   // What this ship can DO, as opposed to what its numbers are. Resolved once here
   // and once in refit, because a capability is asked about every tick by things
   // that must not be walking a fit list to find out — see shared/tech.js.
-  s.tech = techSet(fit, drones);
+  s.tech = techSet(fit, berthed(hull, drones));
   return s;
 }
 
@@ -110,8 +111,16 @@ export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.forma
   s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
   s.stats = applyResearch(resolve(hull, fit, escortOf(drones, rig), formation), s.research ?? 0);
   s.r = radiusOf(hull);
-  s.guns = gunsOf(fit, drones);
-  s.tech = techSet(fit, drones);
+  // How many of the bays this pilot owns the hull actually berths. Stamped on the
+  // ship, beside `guns` and `r`, so that the escort resolve() counted, the escort
+  // that is DRAWN and the escort that SHOOTS are the same escort. Without it a
+  // Bulwark carrying a Kestrel's twelve bays flew ten drones' worth of statistics
+  // behind twelve drawn hulls, and put its bolts out of two of them that were not
+  // there. The bays themselves are untouched: ship.drones stays the full owned
+  // list, so capture() still writes every bay a pilot paid for back to the account.
+  s.bays = Math.min(baysOf(hull), (drones ?? []).length);
+  s.guns = gunsOf(fit, berthed(hull, drones));
+  s.tech = techSet(fit, berthed(hull, drones));     // a parked bay does not lend you its technology
   s.volley = 0; s.volleyCool = 0;
   s.hp = s.stats.hull;
   s.shieldMult = 1;

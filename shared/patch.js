@@ -8,9 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.56';
+export const VERSION = '0.57';
 
 export const PATCHES = [
+  { v: '0.57', notes: [
+    'Hulls are different ships now, not the same ship at four prices',
+    'A Vanguard has five hardpoints and may fill all five with rocket racks',
+    'A Bulwark has three generators, and its shields come back in 30s instead of 56',
+    'Every ship still has nineteen mounts — the bigger it is, the more are welded in',
+    'So a Vanguard berths eleven drones and a Bulwark ten; bays you own are never lost',
+    'Fixed: buying a hull left a rack on it the hull cannot hold, until your next save',
+    'Fixed: a hull with fewer slots than your last one quietly deleted the difference',
+  ] },
   { v: '0.56', notes: [
     'Everything that scrolls now scrolls the way the threat file does',
     'The shop, the locker and the stats page move by pixels, eased, with a proper bar',

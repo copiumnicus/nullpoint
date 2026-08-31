@@ -5,7 +5,8 @@
 // new attribute means adding one line to ATTRS; adding a new module means one
 // entry in MODULES. No other file changes.
 
-import { EQUIPMENT, emptyFit, fitList, droneItems, sanitiseFit as cleanFit } from './gear.js';
+import { EQUIPMENT, emptyFit, fitList, droneItems, sanitiseFit as cleanFit,
+         isCollector, MAX_LAUNCHERS, MAX_DRONES } from './gear.js';
 import { FORMATIONS, DEFAULT_FORMATION, BONUS_AT, escortScale } from './formation.js';
 import { BOOST } from './power.js';
 // The shipped setting of each ability, imported rather than restated: these are
@@ -21,6 +22,25 @@ import { VEIL_DEPTH, VEIL_RECOVER, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_TIGHTEN, LOCK
 // weapon slots stopped meaning anything. Hulls differ by base damage, reach and
 // how many hardpoints they carry; not by how fast the trigger works.
 export const FIRE_RATE = 1.2;
+
+// A hull's own guns are worth one MK-I Emitter per hardpoint, and that is where
+// every purchasable hull's base damage comes from: 19 x weapon slots. Read off the
+// Kestrel, which already carried 38 across two mounts, and one point over the
+// MK-I's 18 so the integral guns are worth having.
+//
+// It stops base damage pretending to differentiate. Measured on the shipped game,
+// a finished ship's damage is 0.9%-2.1% its chassis and 98%+ its rack, while its
+// hull is 70.4% chassis all the way up — because nothing in the shop ADDS hull,
+// it only multiplies it. So a hull that carried more base damage than its
+// hardpoints justify was quietly claiming an advantage its first emitter erased,
+// and the bare spread it claimed it with (3.17x) collapsed to 1.45x once fitted.
+// Derived, "more hardpoints means more damage" is arithmetic instead of luck.
+//
+// The Hauler is the exception and has to be: balance.js's ANCHOR is a Hauler with
+// one MK-I, its 74.88 dps is the zero point of every bounty, ammunition price and
+// hostile in the game, and moving it re-prices the economy. Its single hardpoint
+// stays worth 30.
+export const DAMAGE_PER_HARDPOINT = 19;
 
 export const ATTRS = {
   hull:        { label: 'Hull',         unit: '',    dflt: 1000, better: 'high', min: 1 },
@@ -82,14 +102,28 @@ export const ATTRS = {
   lockReach:   { label: 'Lock cost',    unit: '',    dflt: LOCK_REACH,   better: 'low',  min: 0,   max: 0.8 },
 };
 
-// Every hull carries the same TOTAL number of slots, distributed differently.
-// A cruiser gets more hardpoints and generators; an interceptor gets more
-// technology slots, which is where the interesting choices are. Nobody simply
-// gets more of everything.
+// Every hull carries the same total number of MOUNTS — its own slots plus its
+// drone bays — and the bigger the hull, the more of them are welded in place.
+//
+// The old rule was "the same total SLOTS, distributed differently", and it was
+// counting the wrong thing. A drone bay takes any weapon or any generator, so
+// twelve free-form bays sat alongside seven fixed slots and the escort simply
+// re-balanced around whatever the hull's rack happened to be. Measured, at the top
+// of both ladders with the escort optimised for each hull: W5G1T1 scores 5.09,
+// W3G2T2 4.42 and W1G4T2 5.14 — the slot SPLIT is worth about 2%. What the hull
+// actually owns is how many mounts exist at all, and the two kinds of mount a
+// drone can never stand in for: a launcher (sanitiseDrones refuses one) and a
+// technology (capped ship-wide at slots.tech).
+//
+// So: nineteen mounts each, set by the Kestrel — the seven slots and twelve bays
+// it already had. Each step up the price ladder welds one more bay into the
+// hull, and a hull spends what it welds in, plus its spare technology bays, on
+// the one thing it is for. Bays are still bought and still owned; a hull with
+// fewer berths flies fewer of them, and the rest wait in the hangar.
 export const HULLS = {
   // The one you start with. Visibly worse at everything that wins a fight, but
   // nimble, quiet and roomy enough to earn the price of a real ship.
-  hauler:   { slots: { weapon: 1, generator: 1, tech: 1 }, price: 0,
+  hauler:   { slots: { weapon: 1, generator: 1, tech: 1 }, bays: 12, price: 0,
               name: 'Hauler', cls: 'Tender', r: 12,
               blurb: 'The starter. The biggest hold, the weakest guns.',
               attrs: { hull: 650, shield: 450, shieldRegen: 0.0667, shieldDelay: 6, speed: 300, accel: 1000,
@@ -98,29 +132,87 @@ export const HULLS = {
 
   // Radar deliberately runs WITH size: a big hull carries a big sensor array but
   // cannot shake anyone, a small one is a ghost that is half blind.
-  kestrel:  { ability: 'veil', slots: { weapon: 2, generator: 2, tech: 3 }, price: 18000,
+  kestrel:  { ability: 'veil', slots: { weapon: 2, generator: 2, tech: 3 }, bays: 12, price: 18000,
               name: 'Kestrel', cls: 'Interceptor', r: 10,
               blurb: 'Fastest and quietest. It cannot take a beating.',
               attrs: { hull: 700, shield: 500, shieldRegen: 0.12, shieldDelay: 4, speed: 430, accel: 1600,
                        radar: 2000, signature: 1.5, damage: 38, fireRate: FIRE_RATE, weaponRange: 620,
                        cargo: 30, capacitor: 45, recharge: 2.2, sustain: 0.33 } },
-  vanguard: { ability: 'lock', slots: { weapon: 3, generator: 2, tech: 2 }, price: 26000,
+  // The gun platform, and the only hull that can fill every hardpoint with a
+  // rack. Five is not a round number: it is the Kestrel's two plus the two
+  // technology bays it gives up plus the one bay it welds in, and it is the whole
+  // reason the slots matter — a launcher is the one module a drone may never
+  // carry, so five hardpoints of rockets is capability nothing else can buy.
+  vanguard: { ability: 'lock', slots: { weapon: 5, generator: 2, tech: 1 }, bays: 11, launchers: 5, price: 26000,
               name: 'Vanguard', cls: 'Fighter', r: 13,
-              blurb: 'The all-rounder. Good at everything, best at none.',
+              blurb: 'Five hardpoints, and it may fill all five with racks.',
               attrs: { hull: 1100, shield: 900, shieldRegen: 0.0444, shieldDelay: 6, speed: 340, accel: 1200,
-                       radar: 2600, signature: 3.0, damage: 55, fireRate: FIRE_RATE, weaponRange: 700,
+                       radar: 2600, signature: 3.0, damage: 95, fireRate: FIRE_RATE, weaponRange: 700,
                        cargo: 60, capacitor: 45, recharge: 1.8, sustain: 0.33 } },
-  bulwark:  { ability: 'anchor', slots: { weapon: 4, generator: 2, tech: 1 }, price: 40000,
+  // The wall: half again the generators of anything else, two technology bays, and
+  // the only shield in the game that comes back inside a patrol.
+  //
+  // THREE generators, not four or five, and the ceiling is the game's own. A
+  // finished Bulwark must survive between 60% and 100% of what parking in a full
+  // Corsair brood costs — test/research.mjs, "so you still have to fly". Measured
+  // at every base shield from 1400 down to 700: G2 is 75%, G3 is 92%, and G4 is
+  // 109% at 1400 and still 101% at 700. Four generator bays is a ship that can
+  // hold the trigger in the hardest content in the game and walk away, which is
+  // the one thing the research ladder was explicitly built not to sell.
+  //
+  // Its regeneration was 0.0179/s: 56 seconds to refill, against 8, 15 and 22 on
+  // the other three. Three hulls sit on a straight ladder seven seconds apart and
+  // the fourth is two and a half times off the end of it — so the ship named for
+  // absorbing damage was the one that could never get any of it back. 30s is where
+  // that ladder actually goes. It costs nothing in a duel: the clock only runs
+  // after shieldDelay untouched, so this is hit points per patrol, not per fight.
+  bulwark:  { ability: 'anchor', slots: { weapon: 4, generator: 3, tech: 2 }, bays: 10, price: 40000,
               name: 'Bulwark', cls: 'Cruiser', r: 17,
-              blurb: 'The most hull and the most guns, and the slowest.',
-              attrs: { hull: 1900, shield: 1400, shieldRegen: 0.0179, shieldDelay: 8, speed: 250, accel: 800,
-                       radar: 3400, signature: 5.5, damage: 95, fireRate: FIRE_RATE, weaponRange: 820,
+              blurb: 'Twice the generators, and shields that come back.',
+              attrs: { hull: 1900, shield: 1400, shieldRegen: 0.0333, shieldDelay: 6, speed: 250, accel: 800,
+                       radar: 3400, signature: 5.5, damage: 76, fireRate: FIRE_RATE, weaponRange: 820,
                        cargo: 120, capacitor: 60, recharge: 1.5, sustain: 0.36 } },
 };
 export const DEFAULT_HULL = 'hauler';
 
 
-export const slotsOf  = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).slots;
+// The rack a hull carries, and the launcher cap travels WITH it.
+//
+// It has to. sanitiseFit is in gear.js, which imports nothing at all on purpose,
+// so it cannot ask HULLS how many launchers this hull may fly — and a defaulted
+// cap would be the workshop-dock bug again: the shop counter saying "full at
+// three" while the server happily seats a fourth. Hanging `launchers` on the slot
+// record means every existing `sanitiseFit(slotsOf(h), fit)` and
+// `reseat(slotsOf(h), ...)` call site gets the right answer with no edit, and
+// SLOTS is what everything else iterates, so the extra key is inert.
+export const slotsOf  = hullKey => {
+  const h = HULLS[hullKey] ?? HULLS[DEFAULT_HULL];
+  return { ...h.slots, launchers: h.launchers ?? MAX_LAUNCHERS };
+};
+// Berths, not bays owned. A pilot keeps every bay they paid for; the hull says how
+// many of them fly. Switching to a smaller hull parks the surplus in the hangar
+// instead of deleting a purchase, and switching back brings them out again.
+export const baysOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).bays ?? MAX_DRONES;
+
+// The escort this hull actually flies, out of the bays a pilot owns.
+//
+// Applied inside resolve() rather than at each caller because resolve is the one
+// funnel both sides run, and a pilot whose Bulwark berths ten reading a
+// twelve-drone stat panel is the same class of bug as a client with its own copy
+// of canDock(). Nothing a pilot paid for is destroyed: the bays stay bought and
+// the surplus waits in the hangar until they fly something with room for it.
+//
+// A rig is exempt, and that is not a nicety. sim.js's escortOf() appends the
+// collector AFTER the escort, so a plain slice(0, bays) would eat the rig of any
+// pilot whose bays are full — a Bulwark with ten drones and a Scavenger silently
+// losing 40 of hold, with the panel and the server agreeing about it. A rig has
+// its own bay (sanitiseDrones refuses one in the rack), so it does not spend a
+// berth. Empty bays still count: an empty berth is a berth.
+export const berthed = (hullKey, drones = []) => {
+  const n = baysOf(hullKey);
+  let seated = 0;
+  return (drones ?? []).filter(k => isCollector(k) || ++seated <= n);
+};
 export const radiusOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).r;
 export const hullPrice = hullKey => HULLS[hullKey]?.price ?? Infinity;
 
@@ -138,6 +230,7 @@ export const sanitiseFit = (hullKey, fit) => cleanFit(slotsOf(hullKey), fit);
 // times one, instead of spiralling — the usual way stacking becomes pay-to-win.
 export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION) {
   const hull = HULLS[hullKey] ?? HULLS[DEFAULT_HULL];
+  drones = berthed(hullKey, drones);
   const out = {}, pct = {};
   for (const [k, a] of Object.entries(ATTRS)) out[k] = hull.attrs[k] ?? a.dflt;
 

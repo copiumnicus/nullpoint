@@ -9,14 +9,15 @@
 // guns and the flight takes real seconds, so rockets are the punch you commit to
 // early in a fight rather than the pressure you hold someone under.
 //
-// A launcher occupies a weapon slot, at most three to a ship, and never rides a
-// drone — a drone is a gun platform, and six of them carrying swarm racks would
-// put thirty rockets in the air off one trigger.
+// A launcher occupies a weapon slot, as many to a ship as the hull allows, and
+// never rides a drone — a drone is a gun platform, and six of them carrying swarm
+// racks would put thirty rockets in the air off one trigger.
 
 import { applyDamage, rangeOf, hullOf } from './sim.js';
 import { lockOf } from './ability.js';
 import { boostOf } from './power.js';
 import { EQUIPMENT, MAX_LAUNCHERS } from './gear.js';
+import { slotsOf } from './ships.js';
 import { hardpoints } from './combat.js';
 import { aspectOf, alphaAt, dutyAt, shownAt } from './stealth.js';
 
@@ -87,11 +88,17 @@ export const isLauncher = key => EQUIPMENT[key]?.kind === 'rocket';
 
 // Launchers in the rack. Drones are excluded on purpose (see the header), and the
 // cap is applied here so every caller — resolve, the client, the server — agrees
-// on which three are actually live.
-export const launchersIn = fit =>
-  (fit?.weapon ?? []).filter(isLauncher).slice(0, MAX_LAUNCHERS);
+// on which racks are actually live.
+//
+// The hull is a required argument, not a defaulted one. A default of three would
+// have the Vanguard's shop counter read "full" on the fourth rack while the server
+// seated a fifth, which is the one-rule-in-two-places bug this codebase is built
+// to avoid; an unknown key still falls back through slotsOf rather than throwing.
+export const launcherCap = hullKey => slotsOf(hullKey).launchers ?? MAX_LAUNCHERS;
+export const launchersIn = (hullKey, fit) =>
+  (fit?.weapon ?? []).filter(isLauncher).slice(0, launcherCap(hullKey));
 
-export const launcherRoom = fit => MAX_LAUNCHERS - launchersIn(fit).length;
+export const launcherRoom = (hullKey, fit) => launcherCap(hullKey) - launchersIn(hullKey, fit).length;
 
 // Advances the rack and returns the rockets released this tick. A volley leaves
 // all at once — the fan is the whole point, and dribbling it out one at a time

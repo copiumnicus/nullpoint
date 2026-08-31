@@ -110,7 +110,11 @@ export function slots(kind, n) {
 
 // World position of a drone, given the ship it escorts.
 export function droneAt(ship, i) {
-  const list = slots(ship.formation ?? DEFAULT_FORMATION, (ship.drones ?? []).length);
+  // `bays` is what the hull berths, which is not always what the pilot owns — see
+  // berthed() in ships.js. Laying the formation out over the owned count would put
+  // the escort in different places on the server and on the client, because the
+  // wire carries the berthed count.
+  const list = slots(ship.formation ?? DEFAULT_FORMATION, ship.bays ?? (ship.drones ?? []).length);
   const s = list[i];
   if (!s) return { x: ship.x, y: ship.y };
   const c = Math.cos(ship.heading), sn = Math.sin(ship.heading), R = ship.r;

@@ -444,11 +444,18 @@ export function sanitiseFit(slots, fit) {
     // Weapons and generators stack; a technology is either fitted or it is not.
     // Without that, an interceptor with three plating slots out-tanks a cruiser.
     if (slot === 'tech') keep = [...new Set(keep)];
-    // Three launchers to a ship, however many weapon slots the hull has. They are
-    // a commitment, not a thing you tile a Cruiser with.
+    // How many launchers this hull may fly, which is no longer three for everyone.
+    // The cap rides on the slot record (see slotsOf) because gear.js imports
+    // nothing and must not learn about hulls; MAX_LAUNCHERS is the default any
+    // hull gets by saying nothing, and the Vanguard is the one that speaks up.
+    //
+    // The old flat three existed because the Cruiser had the most hardpoints and
+    // would otherwise have been tiled with racks. The Cruiser still has four and
+    // the Fighter now has five, so the slot table already does most of that job
+    // and the cap's remaining work is to PERMIT the Vanguard's fourth and fifth.
     if (slot === 'weapon') {
-      let pods = 0;
-      keep = keep.filter(k => EQUIPMENT[k].kind !== 'rocket' || ++pods <= MAX_LAUNCHERS);
+      let pods = 0, cap = slots?.launchers ?? MAX_LAUNCHERS;
+      keep = keep.filter(k => EQUIPMENT[k].kind !== 'rocket' || ++pods <= cap);
     }
     out[slot] = keep.slice(0, slots?.[slot] ?? 0);
   }

@@ -16,7 +16,7 @@ import { MAPS, MAP_W, MAP_H } from './maps.js';
 import { HULLS } from './ships.js';
 import { FORMATION_KEYS, FORMATIONS } from './formation.js';
 import { ALIENS } from './aliens.js';
-import { MAX_DRONES, topTier } from './gear.js';
+import { topTier } from './gear.js';
 
 export const DEV_ID = 'dev';
 export const DEV_BASE = MAPS[DEV_ID].base;          // one definition, in the map itself
@@ -109,7 +109,7 @@ export const PEN = {
 // The dock labels itself, so it is not in here.
 export const LABELS = [
   { x: row(HULL_KEYS.length, 0) - 240, y: NORTH - 260, text: 'HULLS',
-    sub: `every ship, full rack, ${MAX_DRONES} drones` },
+    sub: 'every ship, full rack, every bay it berths' },
   { x: row(FORMATION_KEYS.length, 0) - 240, y: SOUTH + 300, text: 'FORMATIONS',
     sub: `${HULLS[SHOWCASE].name}, one of each` },
   { x: PEN.x + 20, y: PEN.y - 30, text: 'FIRING LINE', sub: 'one of each, posted, quick respawn' },
