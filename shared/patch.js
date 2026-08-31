@@ -8,9 +8,12 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.75';
+export const VERSION = '0.76';
 
 export const PATCHES = [
+  { v: '0.76', notes: [
+    'Signing out takes five seconds now instead of ten, and a fight still cancels it',
+  ] },
   { v: '0.75', notes: [
     'A Doldrum holds you for two and a half seconds now, not five. It was too much',
     'That is under a portal spool again, so a jump you have committed to always lands',
