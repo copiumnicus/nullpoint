@@ -247,28 +247,44 @@ export const ALIENS = {
   // given — and the chamber it returns it out of is MIRROR, below.
   //
   // 205,550 is 650 x 10^2.5 to the nearest ten — half a rung under the Corsair Hive,
-  // the same relation the Harrier has to the Ironhusk. MIRROR.dps puts it half a
-  // rung under the Hive on the other axis too, by the same sqrt(10), and that is
-  // the whole of what "it is not supposed to be harder than the Hive" means here:
+  // the same relation the Harrier has to the Ironhusk. That is the HP axis and it
+  // has not moved. The damage axis has: a full chamber is what the shop's sharpest
+  // gun does, so at the top of the ladder this is the hardest thing in the game to
+  // stand in front of, and it is hardest precisely for the pilot who has bought the
+  // most gun:
   //
-  //                         full chamber      lived, standing still
+  //                         full chamber      lived, standing still, finished ship
+  //   Thresher             12,083 dps         3.7s
   //   Corsair Hive          2,450 dps         2.9s
-  //   Thresher                855 dps         9.1s     (it was 0.58s)
   //   on model, balance.js    317 dps        22.2s
+  //
+  // The chamber only reads full when you fill it, though, and that is the whole
+  // fight. A Thresher's own barrel is 80. Everything above that came out of you.
   //
   // What it gave back USED to be one for one and uncapped, which is a one-shot by
   // arithmetic rather than by intent: your damage spans 256x across the shop and
   // your hit points span 6.4x, so at the top of the ladder one returned bolt was
   // 9,011 into a 7,050 ship, and buying a bigger gun bought a proportionally harder
-  // fight. Measured against the real AI: a finished Bulwark died standing still in
-  // 2.7s, kiting in 2.8s and weaving in 3.8s, at every research tier below x32.
+  // fight. Then the chamber capped it at 855, which is 12% of that ship — the thing
+  // at the gates stopped being a fight at all, and a pilot who weaved beat it with
+  // 39% left and no research. Both of those are wrong in the same way: the ceiling
+  // was picked off the bestiary instead of off the shop.
   //
-  // The answer is still a behaviour rather than a purchase, and now there is one.
-  // Measured, a finished Bulwark with NO research: standing still it dies at 17.2s;
-  // weaving across the line of fire it kills the thing with 36% of its ship left.
-  // At x8 it survives standing still, down 21%. The chamber it is being shot with
-  // is drawn over its head the whole time, so which of those you are doing is
-  // something you can see rather than something you read in a threat file.
+  // The answer is still a behaviour rather than a purchase. Measured, finished
+  // Bulwark, NO research: it dies to all four lines of play — 3.7s standing, 3.8s
+  // kiting, 5.8s weaving, 3.7s holding fire a second in three. Weaving is the one
+  // that scales: it wins from x8 hull and shields, keeps 52% at x16 and 76% at x32,
+  // while standing still needs x32. Holding fire buys nothing on its own, and that
+  // falls out of the identity rather than being a surprise — the total returned
+  // over a whole fight does not depend on your dps, so a longer fight is the same
+  // damage spread thinner. Weaving is different because a missed bolt is damage
+  // that never arrives at all.
+  //
+  // And the fight is easiest for the pilot with the least gun, which is the mechanic
+  // working: a Kestrel with no research, weaving, kills one in 678.7s without ever
+  // dropping below 84% of its ship. The chamber it is being shot with is drawn over
+  // its head the whole time, so which of those you are doing is something you can
+  // see rather than something you read in a threat file.
   //
   // Speed 200 is under every bare hull, like a Leviathan: it can kill you but it
   // can never trap you. Reach 900 is over every hull, also like a Leviathan, so you
@@ -574,9 +590,14 @@ export const threatDps = (kind, ehp, hull = ehp) => {
        + (a.burn?.rate ?? 0) * ehp
        + (a.siphon?.rate ?? 0) * hull
        // A mirror's barrel reads 80 x 1.0 and it is not an 80 dps hostile: the
-       // chamber is the gun. This is the worst it can ever be — a full chamber —
-       // so pressureOf(), report() and bestiaryReport() stop calling the hardest
-       // thing at the gates harmless. It had a Thresher at 80 dps.
+       // chamber is the gun. This is the worst it can ever be — a full chamber, so
+       // 12,083 — and it is deliberately the worst rather than the typical, because
+       // pressureOf(), report() and bestiaryReport() are asked "how bad can this
+       // get", not "how bad is this usually". It had a Thresher at 80 dps, and
+       // reading it that way is what let the hardest thing at the gates be filed as
+       // harmless. Note what it therefore means: a Thresher is off model on the
+       // damage axis BY DESIGN and by a wide margin, and it is the only hostile in
+       // the game whose off-model number is a number the pilot chose.
        + (a.returns ?? 0) * MIRROR.dps
        // And a mothership's gun is not its fight either. A Hive read as 110 dps
        // here while twelve Bandits sat around it throwing 2,340, which made the
@@ -891,35 +912,71 @@ export function stepAlienRepair(a, dt) {
 //    codebase has learned always disagrees. There is nothing to normalise against
 //    because the number already is a share.
 //
-// 3. THE PAYLOAD HAS A CEILING, AND THE CEILING IS THE HIVE. See MIRROR.dps.
+// 3. THE PAYLOAD HAS A CEILING, AND THE CEILING IS THE SHOP. See MIRROR.dps.
 //
 // What comes out of all three is one identity, and it is stronger than the one it
 // replaces. Under sustained fire the chamber settles at (your dps / SOAK x its hp)
 // / lambda, the fight lasts (its hp / your dps), and the product drops both: a
 // pilot who stands still and never stops shooting takes
 //
-//      MIRROR.dps / (MIRROR.soak x ln2 / MIRROR.half)  =  11,182 points
+//      MIRROR.dps x its hp / (MIRROR.soak x its hp x ln2 / MIRROR.half)
+//        =  MIRROR.dps / (0.10 x ln2)  =  173,163 points
 //
-// whatever they fly and however long it takes them. A bigger gun no longer costs
-// you anything at all — it makes the fight shorter and louder, not dearer.
+// whatever they fly and however long it takes them. Measured with the same
+// harness, an indestructible reader that never stops shooting: 165,554 points
+// returned with the anchor's 75 dps against 159,568 with a finished Bulwark's
+// 12,003 — 1.04x across a 160x span of player gun. A bigger gun does not cost you
+// more; it makes the fight shorter and louder, and the bolts arrive bigger.
 
-// What the top of the ladder throws: the Hive's own gun plus a full brood of
+// What the top of the BESTIARY throws: the Hive's own gun plus a full brood of
 // twelve Bandits. Read off the definitions rather than written down, so a Bandit
 // rebalance carries into this without anyone remembering.
+//
+// MIRROR.dps used to be this over sqrt(10). It is not any more — a mirror is
+// measured against the shop rather than against the bestiary, for the reason set
+// out there — but this stays, because it is still the sentence "the Hive is the
+// hardest gun in the game" written as code, and test/aliens.mjs compares the two.
 export const hiveDps = () => {
   const H = ALIENS.hive, B = ALIENS[H.broods?.kind];
   return (H.attrs.damage ?? 0) * (H.attrs.fireRate ?? 0)
        + (H.broods?.max ?? 0) * (B?.attrs.damage ?? 0) * (B?.attrs.fireRate ?? 0);
 };
 
+// The sharpest gun the shop sells, in points per second — the whole ladder bought
+// out, with nothing researched.
+//
+// It is `stageDps('finished')` from balance.js, and it is written down here rather
+// than imported because balance.js imports THIS file (ANCHOR_FIGHT reads
+// effectiveHp at module scope), so importing it back is a cycle that would blow up
+// in the TDZ on whichever of the two happened to load first. test/aliens.mjs
+// imports both and pins them equal to the penny, which is the same arrangement
+// every hand-written bounty in this file already lives under.
+//
+// Measured, not chosen — a Bulwark with four MK-V Emitters, two E-Cells, Plating
+// and twelve MK-V drones:
+//
+//      damage 6,495  x  fireRate 1.2  x  (1 + 0.54 boost)  =  12,002.76
+//
+// A brute-force sweep of every legal fit finds one number above it: 16,099 on a
+// Vanguard carrying Siege Cadence AND Rapid Cadence, whose drawbacks cancel into a
+// free x1.50 (each is a trade of damage against rate, and `pct` entries SUM, so
+// +0.60/-0.375 and -0.375/+0.60 land as x1.225 on both). That is a defect in that
+// pair of technologies, not a statement about what the shop is for, and anchoring
+// the bestiary to it would bake it in. Named here so the next person measuring
+// this does not think the sweep and the anchor disagree by accident.
+const SHOP_DPS = 12002.76;
+
 export const MIRROR = Object.freeze({
   // How much of itself, dealt inside the decay window, fills the chamber. A tenth
   // — one rung of the bestiary's own ladder of tens. It is also the only number
-  // here with any slack in it, and the slack is deliberate: at a tenth, the
-  // sharpest gun the shop sells (a finished Bulwark's 12,003 dps) holds the
-  // chamber at 84%, so the top of the shop very nearly fills the meter and
-  // nothing available can push it past. A party of four saturates it, and
-  // saturating it is the ceiling doing its job rather than a bug.
+  // here with any slack in it, and the slack is deliberate: at a tenth, SHOP_DPS
+  // holds the chamber at
+  //
+  //      12,002.76 / (0.10 x 205,550 x ln2 / 1.0)  =  0.842
+  //
+  // so the top of the shop very nearly fills the meter and nothing available can
+  // push it past. A party of four saturates it, and saturating it is the ceiling
+  // doing its job rather than a bug.
   soak: 0.10,
 
   // And it halves in one of its own firing cycles, 1 / fireRate. Not picked: the
@@ -932,21 +989,52 @@ export const MIRROR = Object.freeze({
   // whole chamber at the bottom of the shop and a rounding error at the top.
   half: 1.0,
 
-  // WHAT A FULL CHAMBER THROWS, per second, and the number that answers "it is not
-  // supposed to be harder than the Hive".
+  // WHAT A FULL CHAMBER THROWS, per second.
   //
-  // A Hive throws 2,450 — 110 from its own gun and 2,340 from twelve Bandits. This
-  // sits half a rung under a Hive in hit points already: 205,550 against 650,000
-  // is x1/sqrt(10), and test/aliens.mjs pins it there. So put it half a rung under
-  // on the OTHER axis too, by the same sqrt(10). One relation, both axes, nothing
-  // chosen twice:
+  // A FULL CHAMBER RETURNS THE SHARPEST GUN THE SHOP SELLS. That is the derivation,
+  // and it replaces "half a rung under the Hive by the same sqrt(10) as its hull".
+  // The sqrt(10) relation on the HP axis stays exactly as it was — 205,550 against
+  // the Hive's 650,000 — because that one is a statement about how much ship this
+  // is. This is a statement about the gun, and the gun is not the bestiary's.
   //
-  //      2,450 / sqrt(10) = 775 dps at a full chamber
+  // The reason is the identity it buys: THE MIRROR CAN NEVER THROW ANYTHING THE
+  // GAME DOES NOT ALREADY SELL. It is a ceiling rather than an escalation. There is
+  // no fit, party, ammunition grade or research rung that puts a bolt on the screen
+  // bigger than the biggest thing money can buy, and there never will be, because
+  // the ceiling IS the shop and it moves when the shop does.
   //
-  // Against a finished Bulwark with no research that is 11% of the ship a second —
-  // 9.1 seconds of standing still, against 2.9 in a Hive and the 22.2 an on-model
-  // hostile is allowed by balance.js. It was 0.58 seconds.
-  dps: hiveDps() / Math.sqrt(10),
+  // At 775 the ceiling was set so low that nobody ever met it. The chamber is a
+  // share of your own gun, so taking the cap from the bestiary — a rung under a
+  // Hive's gun, matching the rung under a Hive's hull — made the hardest bolt at the
+  // top of the shop 855, which is 12% of a finished Bulwark. This is the thing at
+  // the gates. It should not be 12% of anybody.
+  //
+  //      full chamber   80 + 12,002.76           =  12,083 a bolt
+  //      what a finished pilot actually holds it at, 0.842:
+  //                     80 + 0.842 x 12,002.76   =  10,191 a bolt
+  //
+  // Measured against the real AI, real bolts and real movement, finished Bulwark,
+  // no research: the biggest bolt that ACTUALLY lands is 5,304 into 7,050 — well
+  // under the 10,191 the algebra allows, because a Thresher moves and roughly a
+  // third of your fire never reaches it, so the chamber peaks at 48% rather than
+  // 84%. Standing still it dies in 3.7s, kiting 3.8s, weaving 5.8s, holding fire
+  // two seconds in three 3.7s. Weaving is the one that scales: it wins from x8 hull
+  // and shields (3% of the ship left), x16 leaves 52% and x32 leaves 76%; standing
+  // still wins only at x32. It was 17.2s and a comfortable weave at x1, which is
+  // the complaint this answers.
+  //
+  // Verified over a real socket against a real server, same build, same room: dead
+  // in 3.6s standing, biggest single hit the wire carried 4,916, chamber peaked
+  // 48%. The dial fell 45% -> 33% -> 17% -> 8% over the three seconds after the
+  // trigger came off, which is MIRROR.half doing exactly what it says. Weaving at
+  // x8 killed it in 25.2s and never went below 54% of the ship.
+  //
+  // And the fight it makes is the one the mechanic promised, which is the test that
+  // matters more than any of those: a KESTREL with no research at all, weaving,
+  // kills one in 678.7s and never drops below 84% of its ship, because 429 dps
+  // holds the chamber at 3%. The same pilot in the best ship money can buy is
+  // deleted in under four seconds. The danger is your own gun.
+  dps: SHOP_DPS,
 });
 
 // The share of its own hit points that fills the chamber, in points.

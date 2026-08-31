@@ -35,14 +35,23 @@ const full = s => s.stats.hull + s.stats.shield;
 // `hold` is a predicate on t: true means the pilot has their finger OFF the
 // trigger, which is the one disengage available against something you cannot
 // outrun.
-function fight(a, p, secs, { playerFires = false, drive = null, hold = null } = {}) {
+//
+// `immortal` puts the pilot's hit points back every tick. It is not a cheat mode,
+// it is a MEASURING INSTRUMENT, and it exists for exactly one claim: that the
+// total a mirror returns over a whole fight does not depend on your dps. Reading
+// that off a mortal pilot only works while the pilot survives, and a Thresher's
+// chamber now kills every build below the top of the research ladder — so the
+// four rows being compared were four fights that ended at different points, which
+// compares nothing. This is the Bulkhead Target from /dev, in a test.
+function fight(a, p, secs, { playerFires = false, drive = null, hold = null, immortal = false } = {}) {
   let t = 0, everTargeted = false, air = [], fired = 0;
-  let took = 0, biggest = 0, peak = 0, mirrored = 0;
+  let took = 0, biggest = 0, peak = 0, mirrored = 0, lowest = Infinity;
   while (t < secs && a.hp > 0 && p.hp > 0) {
     if (drive) drive(p, t);
     const tgt = stepAlienAI(a, map, con(p), dt);
     if (tgt) everTargeted = true;
     step(a, dt); step(p, dt); stepVitals(a, dt); stepVitals(p, dt);
+    if (immortal) { p.hp = p.stats.hull; p.shield = shieldMax(p); }
     faceTarget(a, tgt ? p : null);
     peak = Math.max(peak, stepMirror(a, dt));
     const base = a.def?.attrs?.damage ?? 0;
@@ -57,9 +66,14 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null } = 
       if (h.target === a) storeHit(a, n);
       else { took += n; biggest = Math.max(biggest, n); }
     }
+    // The lowest the pilot's whole pool ever got. `took` is cumulative and counts
+    // shield that regenerated and was spent again, so against something that only
+    // trickles damage it reads well over 100% of a ship that was never in danger.
+    lowest = Math.min(lowest, Math.max(0, p.hp) + Math.max(0, p.shield));
     t += dt;
   }
-  return { t, everTargeted, fired, took, biggest, peak, mirrored, won: a.hp <= 0, died: p.hp <= 0 };
+  return { t, everTargeted, fired, took, biggest, peak, mirrored, lowest,
+           won: a.hp <= 0, died: p.hp <= 0 };
 }
 
 console.log('\nsanctuary');
@@ -677,27 +691,57 @@ console.log('\nthe mirror');
   const pool = p => p.stats.hull + shieldMax(p);
 
   // --- what the numbers claim ------------------------------------------------
-  check('a Thresher is not harder than a Hive, which is what it is FOR',
-    threatDps('thresher', 7050, 2850) < threatDps('hive', 7050, 2850),
+  //
+  // This used to read "a Thresher is not harder than a Hive, which is what it is
+  // FOR", at 855 a bolt. That call was reversed: 855 is 12% of the ship it is meant
+  // to be the last gate in front of, and a pilot who weaved beat it with 39% left
+  // and nothing researched. The claim is rewritten to the one that is now true, and
+  // it is a stronger claim rather than a weaker one — BOTH ends of the range are
+  // pinned, because "the hardest gun in the game" and "the softest gun in the game"
+  // are the same hostile and which one you are fighting is your doing.
+  //
+  // "Its size" is measured against soakOf — a tenth of its own hit points, the same
+  // number the chamber is a share of — so the peer group is read off the mechanic
+  // rather than listed by hand and a new heavyweight joins it automatically.
+  const heavies = WILD.filter(k => ALIENS[k].attrs.damage > 0 && effectiveHp(k) >= soakOf(T));
+  const barrel = k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate;
+  check('a Thresher is the hardest gun in the game, and its own barrel is the softest thing its size',
+    threatDps('thresher', 7050, 2850) > threatDps('hive', 7050, 2850) &&
+    heavies.every(k => k === 'thresher' || barrel(k) > barrel('thresher')),
     `${f(threatDps('thresher', 7050, 2850))} dps at a full chamber against a Hive's ` +
-    `${f(threatDps('hive', 7050, 2850))} — and it used to be the same 80 dps barrel and ` +
-    '9,011 a bolt, which is why nobody believed the bestiary');
-  check('and it is exactly half a rung under it, on the same axis as its hull',
-    Math.abs(MIRROR.dps - hiveDps() / Math.sqrt(10)) < 1e-9 &&
+    `${f(threatDps('hive', 7050, 2850))}, and ${f(barrel('thresher'))} dps at an empty one against ` +
+    heavies.filter(k => k !== 'thresher').map(k => `${ALIENS[k].name} ${f(barrel(k))}`).join(', ') +
+    '. Everything between the two came out of you');
+  // Two axes, two different anchors, and that is the change. The HP axis is
+  // unchanged and still reads against the Hive; the damage axis used to read
+  // against the Hive too, by the same sqrt(10), and now reads against the SHOP.
+  check('its hull is half a rung under a Hive, and its chamber is the whole shop',
+    Math.abs(MIRROR.dps - stageDps('finished')) < 0.01 &&
     Math.abs(effectiveHp('thresher') - effectiveHp('hive') / Math.sqrt(10)) <= 10,
-    `${f(MIRROR.dps)} dps against ${f(hiveDps())}, and ${f(effectiveHp('thresher'))} hp against ` +
-    `${f(effectiveHp('hive'))} — one sqrt(10), both axes, nothing chosen twice`);
-  check('you live eight seconds standing in front of one, and three in a Hive',
+    `${f(MIRROR.dps)} dps is the sharpest gun money buys to the penny, and ` +
+    `${f(effectiveHp('thresher'))} hp is ${f(effectiveHp('hive'))} / sqrt(10) — it used to take ` +
+    `its gun from the Hive too, at ${f(hiveDps() / Math.sqrt(10))}, which is 12% of a finished ship a second`);
+  // And the reason that is a CEILING and not an escalation. There is no fit, party,
+  // ammunition grade or research rung that puts a bigger bolt on the screen than the
+  // biggest thing the shop sells, because the ceiling IS the shop.
+  check('a mirror can never throw anything the game does not already sell',
+    payloadOf(T, 1) <= stageDps('finished') + T.attrs.damage + 1e-9 &&
+    STAGE_KEYS.every(k => payloadOf(T, 1) >= stageDps(k)),
+    `a full chamber is ${f(payloadOf(T, 1))} — its own 80 plus ${f(stageDps('finished'))}, and every ` +
+    `build in the game from ${f(stageDps('arrival'))} dps up is under it`);
+  check('a full chamber ends a finished ship faster than anything else in the game, and an empty one is a nuisance',
     (() => {
       const p = at('finished');
-      const mine = pool(p) / threatDps('thresher', pool(p), p.stats.hull);
+      const full = pool(p) / threatDps('thresher', pool(p), p.stats.hull);
       const hive = pool(p) / threatDps('hive', pool(p), p.stats.hull);
-      return mine > 2.5 * hive && mine > 7;
+      const bare = pool(p) / (T.attrs.damage * T.attrs.fireRate);
+      return full < hive && bare > 22.2;
     })(),
     (() => { const p = at('finished');
              return `${(pool(p) / threatDps('thresher', pool(p), p.stats.hull)).toFixed(1)}s against ` +
-                    `${(pool(p) / threatDps('hive', pool(p), p.stats.hull)).toFixed(1)}s in a Hive and the ` +
-                    '22.2s balance.js allows an on-model hostile — it was 0.58s'; })());
+                    `${(pool(p) / threatDps('hive', pool(p), p.stats.hull)).toFixed(1)}s in a Hive — and ` +
+                    `${(pool(p) / (T.attrs.damage * T.attrs.fireRate)).toFixed(0)}s if you never load it, against the ` +
+                    '22.2s balance.js allows an on-model hostile. The spread between those two IS the fight'; })());
 
   // --- the chamber -----------------------------------------------------------
   check('a mirror is loaded by what you take off it, and a tenth of it fills the chamber',
@@ -758,24 +802,28 @@ console.log('\nthe mirror');
 
   // --- the fight, measured ---------------------------------------------------
   // One line per stage so a regression prints the number it broke, not just a name.
+  //
+  // A CHANGE of course is the dodge — a bolt leads your velocity, so a steady
+  // circle-strafe is aimed at perfectly and only a reversal misses.
+  const weaving = { drive: (p, t) => { p.dx = 0; p.dy = Math.floor(t / 0.6) % 2 ? 1 : -1; } };
+  // Two seconds on the trigger, one off. One second is MIRROR.half, so the chamber
+  // halves every cycle — the most disengage a ship that cannot outrun this has.
+  const holding = { hold: t => (t % 3) >= 2 };
   const runs = {};
   for (const [key, stage, mul, opt] of [
     ['stand', 'finished', 1, {}],
     ['stand8', 'finished', 8, {}],
     ['stand32', 'finished', 32, {}],
-    ['weave', 'finished', 1, { drive: (p, t) => {
-      // A CHANGE of course is the dodge — a bolt leads your velocity, so a steady
-      // circle-strafe is aimed at perfectly and only a reversal misses.
-      const sgn = Math.floor(t / 0.6) % 2 ? 1 : -1;
-      p.dx = 0; p.dy = sgn;
-    } }],
+    ['weave', 'finished', 1, weaving],
+    ['weave8', 'finished', 8, { ...weaving, secs: 900 }],
+    ['weave32', 'finished', 32, { ...weaving, secs: 900 }],
+    ['hold', 'finished', 1, holding],
     ['cruiser', 'cruiser', 1, {}],
-    // Four completed fights at x32, so nobody dies half way and the returned total
-    // is the whole fight rather than a slice of one. 429 dps to 12,003 is a 28x
-    // span of player gun, and that span is the point of the claim below.
-    ['x32 interceptor', 'interceptor', 32, { secs: 900 }],
-    ['x32 fighter', 'fighter', 32, {}],
-    ['x32 cruiser', 'cruiser', 32, {}],
+    // The pilot who bought the LEAST gun, weaving, with nothing researched. It is
+    // the whole mechanic in one row: 429 dps holds the chamber at 3%, so a Kestrel
+    // takes eleven minutes and is never in danger where the best ship money can buy
+    // is deleted in under four seconds.
+    ['kestrel weave', 'interceptor', 1, { ...weaving, secs: 900 }],
   ]) {
     const p = at(stage, mul), a = mirror(p.x + 700, p.y);
     const { secs = 400, ...rest } = opt;
@@ -783,33 +831,78 @@ console.log('\nthe mirror');
                   r: fight(a, p, secs, { playerFires: true, ...rest }) };
   }
   for (const [k, v] of Object.entries(runs))
-    console.log(`     ${k.padEnd(12)} ${(v.r.won ? 'killed it' : v.r.died ? 'DIED' : 'timeout').padEnd(10)}` +
-      ` ${v.r.t.toFixed(1).padStart(6)}s  took ${f(v.r.took).padStart(7)} of ${f(v.full).padStart(7)}` +
-      `  biggest ${f(v.r.biggest).padStart(5)}  chamber peaked ${(100 * v.r.peak).toFixed(0)}%`);
+    console.log(`     ${k.padEnd(14)} ${(v.r.won ? 'killed it' : v.r.died ? 'DIED' : 'timeout').padEnd(10)}` +
+      ` ${v.r.t.toFixed(1).padStart(6)}s  worst ${f(Math.max(0, v.r.lowest)).padStart(7)} of ${f(v.full).padStart(7)}` +
+      `  biggest ${f(v.r.biggest).padStart(6)}  chamber peaked ${(100 * v.r.peak).toFixed(0)}%`);
 
-  check('one bolt is no longer most of your ship',
-    runs.stand.r.biggest < runs.stand.full * 0.12,
+  // This used to read "one bolt is no longer most of your ship", at 855 into 7,050.
+  // It is most of your ship again, and it is supposed to be — the complaint that
+  // moved it was that a mirror capped at 12% of a finished pilot is not a mirror.
+  // What replaces the cap is not "no cap", which is where this started and which
+  // one-shot everyone at 9,011: it is a cap the shop sets. So the claim is rewritten
+  // to the pair that actually matters — how big the bolt gets, and that it cannot
+  // get bigger than something you could have bought.
+  check('one bolt is most of your ship, and it is the bolt you loaded',
+    runs.stand.r.biggest > runs.stand.full * 0.5 &&
+    runs.stand.r.biggest <= payloadOf(T, 1) &&
+    runs.cruiser.r.biggest < runs.stand.r.biggest * 0.7,
     `${f(runs.stand.r.biggest)} into a finished Bulwark's ${f(runs.stand.full)} — ` +
-    `${(100 * runs.stand.r.biggest / runs.stand.full).toFixed(0)}% of it, where it was 9,011 and 128%`);
+    `${(100 * runs.stand.r.biggest / runs.stand.full).toFixed(0)}% of it, under the ${f(payloadOf(T, 1))} ceiling. ` +
+    `The same Thresher throws ${f(runs.cruiser.r.biggest)} at a cruiser, because a cruiser loaded it less`);
   check('standing still in front of one is still what kills you',
     runs.stand.r.died && !runs.stand.r.won,
     `dead in ${runs.stand.r.t.toFixed(1)}s with a finished ship and no research — ` +
     'the identity is "do not stand still", and softening it must not remove it');
-  check('but moving is now an answer rather than a delay',
-    runs.weave.r.won && !runs.weave.r.died,
-    `weaving across the line of fire kills it in ${runs.weave.r.t.toFixed(1)}s with ` +
-    `${(100 * (1 - runs.weave.r.took / runs.weave.full)).toFixed(0)}% of the ship left. Before this ` +
-    'every line of play died: 2.7s standing, 2.8s kiting, 3.8s weaving');
-  check('and one rung of research carries a pilot who does neither',
-    runs.stand8.r.won && runs.stand8.r.took < runs.stand8.full * 0.5,
-    `x8 hull and shields, never moving: kills it down ${(100 * runs.stand8.r.took / runs.stand8.full).toFixed(0)}%. ` +
-    'It used to take x32 to survive at all, and x32 cost 88%');
+  // This used to read "but moving is now an answer rather than a delay", when
+  // weaving won outright at x1 with 39% of the ship left. At the top of the shop it
+  // no longer does: nothing wins there. Moving is still the answer — it is the only
+  // thing that helps AT ALL — but it is now an answer that needs a rung of research
+  // behind it, and the claim says which rung so a regression prints the tier.
+  check('moving is the only thing that helps, and it wins from the middle of the research ladder',
+    !runs.weave.r.won && runs.weave.r.t > runs.stand.r.t &&
+    runs.weave8.r.won && !runs.weave8.r.died,
+    `weaving dies in ${runs.weave.r.t.toFixed(1)}s against ${runs.stand.r.t.toFixed(1)}s standing at x1, and at x8 hull ` +
+    `and shields it kills the thing with ${(100 * Math.max(0, runs.weave8.r.lowest) / runs.weave8.full).toFixed(0)}% of ` +
+    `the ship left — ${(100 * Math.max(0, runs.weave32.r.lowest) / runs.weave32.full).toFixed(0)}% at x32`);
+  // And this used to read "one rung of research carries a pilot who does neither",
+  // at x8. It does not any more, and that is the point of the change: the last rung
+  // of the ladder is what it costs to be careless in front of the thing at the gates.
+  check('and standing still is carried by nothing short of the last rung of the ladder',
+    !runs.stand8.r.won && runs.stand32.r.won,
+    `x8 hull and shields, never moving, still dies at ${runs.stand8.r.t.toFixed(1)}s; x32 kills it with ` +
+    `${(100 * Math.max(0, runs.stand32.r.lowest) / runs.stand32.full).toFixed(0)}% left. At 855 a bolt x8 won it down 21%`);
+  // Holding fire is the disengage the fiction offers and it is measurably worth
+  // nothing on its own, which is not a bug — it falls straight out of the identity
+  // below. The total returned over a whole fight does not depend on your dps, so
+  // firing less is the same damage spread over a longer fight. Weaving is different
+  // because a bolt that misses is damage that never arrives at all.
+  check('holding fire lengthens the fight without winning it, and that is the identity working',
+    !runs.hold.r.won && runs.hold.r.biggest < runs.stand.r.biggest,
+    `two seconds on the trigger and one off: dead at ${runs.hold.r.t.toFixed(1)}s with the biggest bolt down to ` +
+    `${f(runs.hold.r.biggest)} from ${f(runs.stand.r.biggest)} and the chamber peaking ` +
+    `${(100 * runs.hold.r.peak).toFixed(0)}% against ${(100 * runs.stand.r.peak).toFixed(0)}%`);
+  check('the pilot with the smallest gun has the easiest fight, which is the whole mechanic',
+    runs['kestrel weave'].r.won && runs['kestrel weave'].r.lowest > runs['kestrel weave'].full * 0.5,
+    `a Kestrel at ${f(stageDps('interceptor'))} dps, weaving, nothing researched: kills one in ` +
+    `${runs['kestrel weave'].r.t.toFixed(0)}s and never drops below ` +
+    `${(100 * runs['kestrel weave'].r.lowest / runs['kestrel weave'].full).toFixed(0)}% of its ship, biggest bolt ` +
+    `${f(runs['kestrel weave'].r.biggest)}. The finished Bulwark beside it dies in ${runs.stand.r.t.toFixed(1)}s`);
   {
-    const span = ['x32 interceptor', 'x32 fighter', 'x32 cruiser', 'stand32'].map(k => runs[k]);
+    // Read off an indestructible pilot. The claim is about the WHOLE fight, and at
+    // 12,083 a bolt every build below the top of the research ladder dies part way
+    // through one — so four mortal runs would be four fights of four different
+    // lengths, which compares nothing. Immortal, they all run to the alien's death
+    // and the span widens from the 28x this used to measure to 160x.
+    const span = ['anchor', 'interceptor', 'fighter', 'cruiser', 'finished'].map(stage => {
+      const p = at(stage), a = mirror(p.x + 700, p.y);
+      return { stage, dps: stageDps(stage), r: fight(a, p, 20000, { playerFires: true, immortal: true }) };
+    });
+    const ms = span.map(v => v.r.mirrored);
     check('buying a bigger gun never makes a Thresher cost more',
-      span.every(v => v.r.won) && Math.max(...span.map(v => v.r.mirrored)) < Math.min(...span.map(v => v.r.mirrored)) * 1.4,
-      span.map(v => `${f(v.r.mirrored)}`).join(' / ') + ' points of returned fire across a ' +
-      `${(Math.max(...span.map(v => v.dps)) / Math.min(...span.map(v => v.dps))).toFixed(0)}x span of player damage ` +
+      span.every(v => v.r.won) && Math.max(...ms) < Math.min(...ms) * 1.15,
+      ms.map(f).join(' / ') + ' points of returned fire across a ' +
+      `${(Math.max(...span.map(v => v.dps)) / Math.min(...span.map(v => v.dps))).toFixed(0)}x span of player damage, ` +
+      `against the ${f(MIRROR.dps / (MIRROR.soak * Math.LN2 / MIRROR.half))} the identity predicts ` +
       '— a sharper gun makes the fight shorter and louder, not dearer. It used to be 205,550 for everyone, ' +
       'delivered one ship at a time');
   }

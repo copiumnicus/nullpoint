@@ -36,9 +36,18 @@ console.log('\nand it quotes the worst it can be');
   check('a mirror is filed at what a full chamber throws, not at its barrel',
     T.dps > 800 && Math.abs(T.dps - (ALIENS.thresher.attrs.damage + MIRROR.dps)) < 1,
     `${T.dps} dps at ${T.reach} — it read 80, which is the barrel and not the fight`);
-  check('and that is still under a Hive, which is the whole claim',
-    T.dps < hiveDps(),
-    `${T.dps} against a Hive and its brood at ${hiveDps()}`);
+  // This used to read "and that is still under a Hive, which is the whole claim",
+  // when a full chamber was 855 against a Hive's 2,450. That call was reversed: a
+  // chamber now returns the sharpest gun the shop sells, so the Thresher's row is
+  // the biggest number in the file by a factor of five and it is meant to be. The
+  // claim is rewritten to the one that keeps the file honest either way — the row
+  // says the worst it can get, and the line beside it says who made it that bad.
+  check('and it is now the biggest number in the file, with the line that explains why',
+    WILD.every(k => k === 'thresher' || dossierOf(k, {}).dps < T.dps) &&
+    /chamber/.test(ALIENS.thresher.tell),
+    `${T.dps.toLocaleString('en-US')} against a Hive and its brood at ${hiveDps().toLocaleString('en-US')} — ` +
+    'it was 855, and a file that quotes a hostile softer than it is has the same problem as one ' +
+    'that quotes it harder');
 }
 
 console.log('\nevery hostile can be filed');

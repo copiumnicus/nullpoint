@@ -277,7 +277,10 @@ function drawFile(now) {
     g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
     g.fillText(`hull ${d.hull.toLocaleString('en-US')}   shield ${d.shield.toLocaleString('en-US')}   ` +
                `speed ${d.speed}   ` +
-               (d.armed ? `${d.dps} dps at ${d.reach}` : 'no gun'),
+               // Grouped, like the hull and shield beside it. A mirror's chamber
+               // reads 12083 and sat unpunctuated next to "hull 175,550" as if it
+               // were a different kind of quantity.
+               (d.armed ? `${d.dps.toLocaleString('en-US')} dps at ${d.reach}` : 'no gun'),
                tx, row.r.y + 38);
 
     g.fillStyle = '#8ea3bd';

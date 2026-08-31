@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.56';
+export const VERSION = '0.57';
 
 export const PATCHES = [
+  { v: '0.57', notes: [
+    'A loaded Thresher now throws back the sharpest gun in the shop — 12,083 a bolt',
+    'It was capped at 855. Stand still in a finished ship and you are gone in 3.7s',
+    'It still cannot throw more than money can buy, and it still empties if you stop',
+    'Bring a smaller gun: a Kestrel that weaves kills one without breaking a sweat',
+  ] },
   { v: '0.56', notes: [
     'Everything that scrolls now scrolls the way the threat file does',
     'The shop, the locker and the stats page move by pixels, eased, with a proper bar',

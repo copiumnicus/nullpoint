@@ -74,6 +74,14 @@ export const unpackPod = arr => { const o = {}; for (let i = 0; i < POD_FIELDS.l
 // A damage number, floating up from where it landed. `sh` marks a hit the shields
 // swallowed whole; `mine` is filled in per viewer, since the same hit reads
 // differently depending on which end of it you were on.
+//
+// `p` runs 0 -> 1 over the number's life, because a hit is created with t == ttl
+// and this sends 1 - t/ttl. Worth saying out loud: a hit is EPHEMERAL, so it rides
+// every snapshot until it expires, and anything counting hits off the wire has to
+// take the frame at 0 and skip the rest. Reading it the other way round counts each
+// hit once at the very end and misses every one the socket stopped before — which
+// is exactly what a live check of the Thresher's payload did, reporting a 913-point
+// mirror bolt for one that was actually 5,028.
 export const HIT_FIELDS = ['x', 'y', 'n', 'sh', 'mine', 'p'];
 export const packHit   = (o, mine) => [Math.round(o.x), Math.round(o.y), Math.round(o.n),
                                        o.sh ? 1 : 0, mine ? 1 : 0, +(1 - o.t / o.ttl).toFixed(2)];

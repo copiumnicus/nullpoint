@@ -53,6 +53,13 @@ export function dossierOf(kind, kills = {}) {
   // which is a threat file actively misleading the pilot reading it. The number here
   // is the worst it can be — a full chamber — because that is what a threat file is
   // for, and it is MIRROR.dps rather than a second copy of it.
+  //
+  // It reads 12,083 now, which is five digits where every other entry has three. It
+  // is meant to: it is the largest number in the file by a factor of five and the
+  // Thresher's row should be the one a pilot stops on. The row lays out as one 10px
+  // monospace line inside a 588px card with ~510px of usable width, so the whole
+  // stats line is 58 characters against about 85 that fit — two more digits than
+  // before cost 12px and nothing wraps.
   const gun = (a.attrs.damage ?? 0) * (a.attrs.fireRate ?? 0)
             + (a.returns ?? 0) * MIRROR.dps;
   return {
