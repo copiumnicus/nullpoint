@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.56';
+export const VERSION = '0.57';
 
 export const PATCHES = [
+  { v: '0.57', notes: [
+    'A mining rig is a rock somebody is holding. Fight for it before you can buy it',
+    'The claim drops you alone in a sector with the rock and a field around it',
+    'Dying there costs nothing — no toll, no cargo — and you keep nothing either',
+    'A freed rock can be flown again from the CLAIMS tab: practice, paying nothing',
+  ] },
   { v: '0.56', notes: [
     'Everything that scrolls now scrolls the way the threat file does',
     'The shop, the locker and the stats page move by pixels, eased, with a proper bar',

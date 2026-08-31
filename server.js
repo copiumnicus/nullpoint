@@ -52,7 +52,10 @@ import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL, mayScoop,
          pirateValue, PIRATE_RATE, claimLapsed, CLAIM_TIME, tollOn, DEATH_TOLL } from './shared/cargo.js';
-import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD } from './shared/maps.js';
+import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD,
+         mapOf, arenaId, isArena } from './shared/maps.js';
+import { ARENAS, countOf, postsFor, arrivalAt,
+         whyNotClaim, whyNotReplay, LINGER, LIMIT } from './shared/arena.js';
 
 const PORT = Number(process.env.PORT) || 3000, TICK_HZ = 30;
 
@@ -309,7 +312,7 @@ let alienId = 1_000_000;
 const seed = (mapId, kind, n) => {
   const list = aliens.get(mapId) ?? [];
   for (let i = 0; i < n; i++)
-    list.push(newAlien(kind, alienId++, MAPS[mapId], mapId.charCodeAt(0) * 977 + i * 7919 + kind.length));
+    list.push(newAlien(kind, alienId++, mapOf(mapId), mapId.charCodeAt(0) * 977 + i * 7919 + kind.length));
   aliens.set(mapId, list);
 };
 // The firing line, plus the bench west of the dock where the range furniture
@@ -375,6 +378,77 @@ for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'kedge', 4);
 // contested ground too, so three companies can still arrive at once.
 for (const d of GALAXY.filter(id => MAPS[id].deep)) seed(d, 'hive', 2);
 
+// --- claims -------------------------------------------------------------------
+//
+// An arena is a sector that exists while one pilot is standing in it. It is keyed
+// by `arena:<token>:<tier>`, so two pilots freeing the same rock are in different
+// sectors and neither can help or hinder the other.
+//
+// Everything the world already does per sector — hostiles, bolts, pods, pyres,
+// snapshots, radar — works on an arena without knowing it is one, because all of
+// it is keyed on a map id string and nothing else. The only two things that had
+// to change are the ones that read the SECTOR rather than its id: `mapOf` instead
+// of `MAPS[...]`, and the seven per-sector lists created together.
+const arenas = new Map();   // mapId -> { key, owner, back, opened, cleared, leaveIn, total, replay }
+let arenaAlienId = 3_000_000;   // clear of ship ids, alien ids and lab ids alike
+
+function openArena(p, key, replay = false) {
+  const id = arenaId(p.token, key);
+  if (arenas.has(id)) return null;            // one at a time, per pilot
+  openLists(id);
+  // Its own counter. `row` in the snapshot builder is keyed by id across EVERY
+  // sector at once, so two arenas handing out the same id would draw one pilot's
+  // Censer at the other pilot's coordinates.
+  let nid = arenaAlienId;
+  aliens.set(id, postsFor(key).map(sl => {
+    const a = newAlien(sl.kind, nid++, mapOf(id), nid * 7919, { x: sl.x, y: sl.y });
+    // `spawned` is the hive-escort flag and it means exactly what is wanted here:
+    // this one is not a fixture of the sector, so when it dies it is GONE rather
+    // than counted down and put back. An arena whose field respawned would never
+    // end, and "never ends" is the failure this feature has to not have.
+    a.spawned = true; a.post = null;
+    return a;
+  }));
+  arenaAlienId = nid;
+  // Where they come out, decided NOW rather than when they leave. A berth can be
+  // sold and a company can be changed mid-fight; the way home should not depend on
+  // anything that can still move.
+  const home = respawnAt(p, MAPS);
+  arenas.set(id, { key, owner: p.token, back: home, opened: Date.now(),
+                   cleared: false, leaveIn: 0, total: countOf(key), replay });
+  return id;
+}
+
+const closeArena = id => {
+  aliens.delete(id);
+  closeLists(id);
+  arenas.delete(id);
+};
+
+// How many are still standing. On `dead` rather than on the list length, because
+// killAlien stamps `a.dead = respawn` first and the row is only swept out of the
+// list a frame later — reading length would leave the counter stuck for a
+// Leviathan's ninety seconds after the last kill.
+const leftIn = id => (aliens.get(id) ?? []).filter(a => a.dead <= 0 && !a.gone).length;
+
+// Put a pilot somewhere real. Used by every exit that is not a wreck — winning,
+// running out of time, and the sweep below.
+function leaveArena(p, why) {
+  const at = arenas.get(p.mapId)?.back ?? respawnAt(p, MAPS);
+  p.mapId = at.map;
+  p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
+  // Inside the ring, not on its rim: `r` is why homePorts carries one at all —
+  // dropping it once produced `Math.random() * undefined`, a NaN position, and
+  // pilots who could not move and could not die out of it.
+  const a2 = Math.random() * Math.PI * 2, rr = Math.random() * (at.r ?? 0) * 0.6;
+  Object.assign(p.ship, { x: at.x + Math.cos(a2) * rr, y: at.y + Math.sin(a2) * rr,
+                          vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
+                          charge: 0, chargeTo: null });
+  touch(p);
+  sendMap(p);
+  if (why && p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'chat', from: '', text: why }));
+}
+
 // The hull and formation galleries, resolved once at boot. They never move, take
 // damage or shoot, so there is nothing to step — just rows to hand out.
 const PROP_ROWS = PROPS.map(p2 => {
@@ -405,18 +479,31 @@ const pyres = new Map();     // mapId -> reactors that have died and not yet let
 // life of its own: it exists exactly while a Kedge is holding one, and a stale one
 // left lying about would be a marker for a collapse that is never coming.
 const fixes = new Map();
-for (const id of Object.keys(MAPS)) { bolts.set(id, []); rockets.set(id, []); blasts.set(id, []); pyres.set(id, []); fixes.set(id, []); }
-
 const pods = new Map();      // mapId -> cargo adrift
-for (const id of Object.keys(MAPS)) pods.set(id, []);
+const hits = new Map();      // mapId -> damage numbers still climbing
+
+// Every per-sector list, named once.
+//
+// These were four separate `for (const id of Object.keys(MAPS))` loops, which was
+// fine while every sector existed at boot. An instanced sector has to create and
+// destroy all SEVEN together: six of the seven are pushed to without a `?? []`
+// guard — `bolts.get(p.mapId).push(shot)` and its siblings — so a claim arena that
+// got six of them would throw on the frame somebody fired, and take the tick down
+// with it. `fixes` is the seventh and it arrived after this list was first
+// written, which is exactly the failure the list exists to stop: it is emptied and
+// refilled every tick by the sightings pass, and a sector missing from it throws
+// on `here.length = 0`.
+const SECTOR_LISTS = [bolts, rockets, blasts, pyres, pods, hits, fixes];
+const openLists  = id => { for (const L of SECTOR_LISTS) L.set(id, []); };
+const closeLists = id => { for (const L of SECTOR_LISTS) L.delete(id); };
+for (const id of Object.keys(MAPS)) openLists(id);
+
 let podId = 1;
 const drop = (mapId, x, y, mat, n, own = 0) => {
   if (n > 0) pods.get(mapId).push({ id: podId++, x: x + (Math.random() - .5) * 70,
                                     y: y + (Math.random() - .5) * 70, mat, n, own, t: POD_LIFE });
 };
 
-const hits = new Map();      // mapId -> damage numbers still climbing
-for (const id of Object.keys(MAPS)) hits.set(id, []);
 const HIT_TIME = 0.95;
 
 const BLAST_TIME = 0.8;
@@ -434,10 +521,15 @@ const tally = (target, by, amount) => {
 // One place that kills an alien, so the flash can never be forgotten at a call site.
 const killAlien = (mapId, a, byId = null) => {
   if (a.dead > 0) return;
+  // A claim pays nothing: no bounty, no experience, no ore, no entry in the threat
+  // file — see PAYS in shared/arena.js for the arithmetic. You are not being paid
+  // to be here, you are buying a rock, and a field worth six figures that can be
+  // re-entered after every death and replayed forever is a faucet no rate survives.
+  const paying = !isArena(mapId);
   // A kill with an empty ledger still pays whoever finished it: shear, a dev
   // command, anything that damages an alien without a bolt of its own.
   if (!a.dealt.size && byId !== null) a.dealt.set(byId, 1);
-  const cuts = splitKill(a.dealt, a.def.bounty, a.def.xp ?? a.def.bounty);
+  const cuts = paying ? splitKill(a.dealt, a.def.bounty, a.def.xp ?? a.def.bounty) : [];
   for (const cut of cuts) {                       // your company pays out on confirmation
     const paid = players.get(cut.id);
     if (!paid) continue;                          // signed off between the last hit and the kill
@@ -470,7 +562,7 @@ const killAlien = (mapId, a, byId = null) => {
   // discipline through the whole fight is the answer to a Censer and nothing else is.
   if (burnOf(a.def) && (a.spin ?? 0) > 0) pyres.get(mapId).push(pyreFor(a, 1));
 
-  const loot = rollDrop(a.kind, a.rand);          // seeded, so drops replay with the alien
+  const loot = paying ? rollDrop(a.kind, a.rand) : null;   // seeded, so drops replay with the alien
   if (loot && cuts.length) {
     const shares = shareOut(cuts, loot.n);
     cuts.forEach((c, i) => drop(mapId, a.x, a.y, loot.mat, shares[i], c.id));
@@ -547,7 +639,15 @@ wss.on('connection', (ws, req) => {
 
   // The workshop has no portals, so anyone who ends up there without the rights
   // to type /dev would be stuck in it. Log them in at their own dock instead.
-  if (MAPS[acct.mapId]?.dev && !isAdmin(acct)) {
+  //
+  // And the same door catches two more cases, which is why it is one test on
+  // `MAPS` rather than a test on `.dev`: a claim arena stopped existing the moment
+  // the socket that opened it closed, and a save may name a sector this build has
+  // never heard of. Both would be a pilot standing in a sector with no portals,
+  // no dock and — for an arena — nothing else in it at all. The coordinates go
+  // home with the sector, because a position only means anything together with
+  // the map it was taken in.
+  if (!MAPS[acct.mapId] || (MAPS[acct.mapId].dev && !isAdmin(acct))) {
     acct.mapId = acct.co + '1';
     acct.x = MAPS[acct.mapId].base.x; acct.y = MAPS[acct.mapId].base.y;
   }
@@ -569,6 +669,7 @@ wss.on('connection', (ws, req) => {
                     foldTo: acct.foldTo ?? null, lab: acct.lab ?? null,
                     kills: { ...(acct.kills ?? {}) },
                     berths: [...(acct.berths ?? [])], lastDock: acct.lastDock ?? null,
+                    claims: [...(acct.claims ?? [])],   // rocks this pilot has freed
                     scoop: null, want: null, dead: false, lobby,
                     // Composite Plating starts seated. You sign in at a dock or a
                     // hangar either way, and the tick would re-seat it a frame
@@ -631,7 +732,7 @@ wss.on('connection', (ws, req) => {
   else {
     sendWelcome();
     console.log(`+ ${acct.name} [${COMPANIES[acct.co].tag}] ${HULLS[acct.hull].name} ` +
-                `back in ${MAPS[acct.mapId].name} (${players.size} online)`);
+                `back in ${mapOf(acct.mapId).name} (${players.size} online)`);
   }
 
   // Clients send INTENT only — never position. The server owns the truth.
@@ -671,7 +772,7 @@ wss.on('connection', (ws, req) => {
     // sent every tick until now.
     if (m.t === 'need') { if (P) P.base = newBase(); return; }
 
-    if (m.t === 'jump') return beginJump(ship, MAPS[P.mapId]);
+    if (m.t === 'jump') return beginJump(ship, mapOf(P.mapId));
 
     // --- station: everything below needs you sitting in your own base ring ---
     // Your own dock, or a berth you rent at a pirate outpost. The berth is the
@@ -679,10 +780,10 @@ wss.on('connection', (ws, req) => {
     // it closes the moment anything hits you, because a shop you can use mid-fight
     // is a shop that ends fights. It is not a haven and it does not repair.
     const atBerth = () => !whyNotBerth({
-      owned: P.berths.includes(P.mapId), inside: inOutpost(MAPS[P.mapId], ship),
+      owned: P.berths.includes(P.mapId), inside: inOutpost(mapOf(P.mapId), ship),
       sinceHit: ship.sinceHit,
     });
-    const atStation = () => canDock(MAPS[P.mapId], P.co, ship) || atBerth();
+    const atStation = () => canDock(mapOf(P.mapId), P.co, ship) || atBerth();
 
     if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
 
@@ -707,8 +808,8 @@ wss.on('connection', (ws, req) => {
             .filter(([, c]) => !c.admin || isAdmin(acct))
             .map(([k, c]) => '/' + k + (c.args ? ' ' + c.args : '')).join('   '));
         case 'where':
-          return tell(`${MAPS[P.mapId].name} — ${MAPS[P.mapId].owner
-            ? COMPANIES[MAPS[P.mapId].owner].tag + ' space' : 'contested'}`);
+          return tell(`${mapOf(P.mapId).name} — ${mapOf(P.mapId).owner
+            ? COMPANIES[mapOf(P.mapId).owner].tag + ' space' : 'contested'}`);
         case 'money':
           P.credits += amount(a1); touch(P); outfit();
           return tell(`credits: ${P.credits}`);
@@ -798,7 +899,7 @@ wss.on('connection', (ws, req) => {
           db.accounts[token] = acct;
 
           P.acct = acct; P.mapId = acct.mapId; P.co = co;
-          P.credits = 0; P.xp = 0;
+          P.credits = 0; P.xp = 0; P.claims = [];
           P.gear = {}; P.hulls = [...acct.hulls]; P.formations = [...acct.formations];
           P.ammo = { ...acct.ammo }; P.using = { ...acct.using }; P.armed = { ...acct.armed };
           P.kits = {}; P.kit = acct.kit;
@@ -820,6 +921,42 @@ wss.on('connection', (ws, req) => {
           ship.power.charge = ship.stats.capacitor;
           ship.sinceHit = 1e9;
           return tell('hull, shields and capacitor back to full');
+        // The other half of /heal. The wreck path is the hardest thing in the game
+        // to reach deliberately, and it settles on the next tick exactly as a bolt
+        // would settle it — this only sets the hull to zero, so nothing about how a
+        // death works is duplicated here.
+        case 'kill':
+          ship.shield = 0; ship.hp = 0;
+          return tell('scuttled');
+        // Empties the sector. The bounty is settled on the ledger and this touches
+        // no ledger, so nothing is paid for it anywhere — which is the same answer
+        // a claim gives, and the reason this is safe to point at either.
+        case 'clear': {
+          const list = aliens.get(P.mapId) ?? [];
+          let n2 = 0;
+          for (const a of list) if (a.dead <= 0) { killAlien(P.mapId, a, null); n2++; }
+          return tell(`${n2} cleared in ${mapOf(P.mapId).name}`);
+        }
+        // Standing at your own plot, which is where the whole research ladder and
+        // every claim is refused from anywhere else.
+        case 'tolab': {
+          if (!P.lab) return tell('no station — stake a plot in your own ring first');
+          const spot = plotAt(MAPS[P.co + '1']?.base, P.lab.slot);
+          if (!spot) return tell('your plot is not in the yard any more');
+          const moved = P.mapId !== P.co + '1';
+          P.mapId = P.co + '1';
+          Object.assign(ship, { x: spot.x, y: spot.y, vx: 0, vy: 0, tx: null, ty: null,
+                                dx: null, dy: null, charge: 0, chargeTo: null });
+          touch(P);
+          if (moved) sendMap(P);
+          return tell('standing at your station');
+        }
+        // What instanced sectors are open. There is no other way to ask: an arena
+        // is not in MAPS, not on the chart, and only ever visible to one pilot.
+        case 'arenas':
+          return tell(JSON.stringify({ open: arenas.size, list: [...arenas].map(([k, a]) =>
+            ({ id: k, key: a.key, left: leftIn(k), cleared: a.cleared, replay: a.replay,
+               lists: SECTOR_LISTS.filter(L => L.has(k)).length })) }));
       }
       return;
     }
@@ -1012,7 +1149,7 @@ wss.on('connection', (ws, req) => {
       if (!item) return;
       // Your company stocks what it issues. The upper half of every ladder comes
       // off a pirate hulk, and only to a pilot who rents a bay there.
-      const why = whyNotSold(m.item, { docked: canDock(MAPS[P.mapId], P.co, ship), berth: atBerth() });
+      const why = whyNotSold(m.item, { docked: canDock(mapOf(P.mapId), P.co, ship), berth: atBerth() });
       if (why) return tell(why);
       if (P.credits < item.price) return;
       P.credits -= item.price;
@@ -1095,7 +1232,7 @@ wss.on('connection', (ws, req) => {
     // this is allowed exactly where a purchase is — your own ring, or a bay you
     // rent — and never in open space.
     if (m.t === 'scrap') {
-      const where = canDock(MAPS[P.mapId], P.co, ship) ? 'dock' : atBerth() ? 'berth' : null;
+      const where = canDock(mapOf(P.mapId), P.co, ship) ? 'dock' : atBerth() ? 'berth' : null;
       const why = whyNotScrap(m.item, { held: P.gear[m.item] ?? 0, where });
       if (why) return tell(why);
       const paid = scrapOfItem(m.item);
@@ -1106,7 +1243,7 @@ wss.on('connection', (ws, req) => {
       return outfit();
     }
     if (m.t === 'scraphull') {
-      const where = canDock(MAPS[P.mapId], P.co, ship) ? 'dock' : atBerth() ? 'berth' : null;
+      const where = canDock(mapOf(P.mapId), P.co, ship) ? 'dock' : atBerth() ? 'berth' : null;
       const why = whyNotScrapHull(m.key, { owned: P.hulls, flying: ship.hull, where });
       if (why) return tell(why);
       const paid = scrapOfHull(m.key);
@@ -1137,7 +1274,7 @@ wss.on('connection', (ws, req) => {
       const mod = MODULES[m.key];
       if (!mod || !P.lab) return tell('no station — stake a plot in your own ring first');
       const at = plotAt(MAPS[P.co + '1']?.base, P.lab.slot);
-      const why = whyNotBuild(m.key, { credits: P.credits, mask: P.lab.mods,
+      const why = whyNotBuild(m.key, { credits: P.credits, mask: P.lab.mods, claims: P.claims,
                                        near: P.mapId === P.co + '1' && nearLab(at, ship) });
       if (why) return tell(why);
       P.credits -= mod.price;
@@ -1152,21 +1289,57 @@ wss.on('connection', (ws, req) => {
       receipt(mod.name, mod.price, mod.does);
       return outfit();
     }
+    // Going to free a rock, or going back to one you already freed. The station
+    // launches you; there is no other door into an arena, and this is the only
+    // line in the file that assigns an arena id to a pilot — everything else can
+    // only take one away.
+    //
+    // ONE handler for both, because everything after the refusal is identical and
+    // two copies of "put this pilot in an instanced sector" is exactly the shape
+    // rule one exists to stop. The only thing that differs is which question is
+    // asked, and both questions live in shared/arena.js so the panel refuses in
+    // the same words the server does.
+    if (m.t === 'claim' || m.t === 'replay') {
+      if (!ARENAS[m.key]) return tell('no claim on this');
+      if (!P.lab) return tell('no station — stake a plot in your own ring first');
+      const back = m.t === 'replay';
+      const at2 = plotAt(MAPS[P.co + '1']?.base, P.lab.slot);
+      const where = { mask: P.lab.mods, claims: P.claims, hold: P.hold,
+                      inArena: isArena(P.mapId),
+                      near: P.mapId === P.co + '1' && nearLab(at2, ship) };
+      const why = back ? whyNotReplay(m.key, where) : whyNotClaim(m.key, where);
+      if (why) return tell(why);
+      const id2 = openArena(P, m.key, back);
+      if (!id2) return tell('that claim is already open — you are on your way');
+      P.mapId = id2;
+      P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
+      const a3 = arrivalAt();
+      Object.assign(ship, { x: a3.x, y: a3.y, vx: 0, vy: 0, tx: null, ty: null,
+                            dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: 0 });
+      // NOT touched. An arena id must never reach the account file: a pilot who
+      // was in one when the process died would come back to a sector that does not
+      // exist, and the only thing standing between that and a black screen is a
+      // sanitiser that has to guess where they meant to be.
+      sendMap(P);
+      return tell(back
+        ? `${MODULES[m.key].name} — the field is back. Nothing is paid for this one.`
+        : `${MODULES[m.key].name} — ${countOf(m.key)} hostiles hold the rock. Clear them.`);
+    }
     if (m.t === 'buyberth') {
       const why = whyNotBuyBerth({ xp: P.xp, credits: P.credits,
                                    owned: P.berths.includes(P.mapId),
-                                   inside: inOutpost(MAPS[P.mapId], ship) });
+                                   inside: inOutpost(mapOf(P.mapId), ship) });
       if (why) return tell(why);
       P.credits -= berthPrice();
       P.berths = [...P.berths, P.mapId];
-      receipt('Berth · ' + MAPS[P.mapId].name, berthPrice(), 'you may refit and buy here now');
+      receipt('Berth · ' + mapOf(P.mapId).name, berthPrice(), 'you may refit and buy here now');
       touch(P);
       return outfit();
     }
     // Ore straight to credits, at the pirates' rate, without flying home. The
     // hold is what it empties — the company hangar is none of their business.
     if (m.t === 'fence') {
-      if (!inOutpost(MAPS[P.mapId], ship)) return tell('no outpost in range — fly into the ring');
+      if (!inOutpost(mapOf(P.mapId), ship)) return tell('no outpost in range — fly into the ring');
       const paid = pirateValue(P.hold);
       const units = Object.values(P.hold).reduce((t, n) => t + n, 0);
       if (!units) return tell('nothing in the hold to sell them');
@@ -1249,7 +1422,7 @@ setInterval(() => {
     // reactor for it, so how far out you can hold is how much tank you have left.
     // Nothing fitted and holdShear returns 0, which is the curve sim.js always had.
     stepDrift(p.ship, dt, holdShear(p.ship, dt));
-    const map = MAPS[p.mapId];
+    const map = mapOf(p.mapId);
     p.docked = canDock(map, p.co, p.ship);
     // The last hangar you actually stood in, which is where a wreck comes back.
     // Recorded from the same question the station panel asks, so you can never
@@ -1355,12 +1528,22 @@ setInterval(() => {
 
     if (p.ship.hp <= 0) {                         // destroyed: the hold goes with it
       boom(p.mapId, p.ship, false, id);
-      const lost = { ...p.hold };
-      for (const [m, n] of Object.entries(p.hold)) drop(p.mapId, p.ship.x, p.ship.y, m, n);
-      p.hold = {};
+      // Dying on a claim costs nothing. You came out here with an empty hold —
+      // whyNotClaim and whyNotReplay both insist on it — so there is nothing to
+      // spill, and a tenth of the credits off a fight you are MEANT to lose two or
+      // three times before you win it would make the whole thing something to
+      // avoid rather than something to try. The claim you did not free is the
+      // punishment; on a replay there is not even that, which is exactly what
+      // makes a replay a practice range rather than a gamble.
+      const stake = !isArena(p.mapId);
+      const lost = stake ? { ...p.hold } : {};
+      if (stake) {
+        for (const [m, n] of Object.entries(p.hold)) drop(p.mapId, p.ship.x, p.ship.y, m, n);
+        p.hold = {};
+      }
       // The cargo was the only stake, so flying empty made a wreck a free ride
       // home. A tenth of the credits goes down with the ship.
-      const toll = tollOn(p.credits);
+      const toll = stake ? tollOn(p.credits) : 0;
       p.credits -= toll;
       p.dead = true;
       p.targetId = null; p.want = null; p.scoop = null; p.contacts.clear();
@@ -1372,7 +1555,7 @@ setInterval(() => {
       continue;
     }
 
-    const dest = stepJump(p.ship, MAPS[p.mapId], dt);
+    const dest = stepJump(p.ship, mapOf(p.mapId), dt);
     if (!dest) continue;
     const a = arrivalFor(p.mapId, MAPS[dest]);
     dropRocketsAt(p.mapId, p.ship);              // nothing follows you through a portal
@@ -1387,7 +1570,7 @@ setInterval(() => {
 
   // --- hostiles -------------------------------------------------------------
   for (const [mapId, list] of aliens) {
-    const map = MAPS[mapId];
+    const map = mapOf(mapId);
     const here = [];
     const born = [];                              // escorts launched this tick
     for (const [id, p] of players)
@@ -1727,7 +1910,7 @@ setInterval(() => {
       boom(mapId, { x: py.x, y: py.y, r: py.r }, true, null);
       for (const [id, p] of players) {
         if (p.mapId !== mapId || p.dead || p.lobby || p.ship.hp <= 0) continue;
-        if (inHaven(MAPS[mapId], p.ship) || !inPyre(py, p.ship)) continue;
+        if (inHaven(mapOf(mapId), p.ship) || !inPyre(py, p.ship)) continue;
         const took = py.dmg * poolOf(p.ship);
         const split = applyDamage(p.ship, took);
         hits.get(mapId).push({ x: p.ship.x, y: p.ship.y - p.ship.r - 6, n: took,
@@ -1752,6 +1935,51 @@ setInterval(() => {
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
   for (const [, list] of hits)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
+
+  // --- claims ---------------------------------------------------------------
+  //
+  // ONE SWEEP, NOT A LIST OF EXITS. Every way out of an arena — clearing it, being
+  // destroyed in it, a Recall Beacon, /tp, closing the tab, being signed in from
+  // another tab, the process deciding fifteen minutes is enough — is the same fact
+  // from here: nobody is standing in it any more. The first draft enumerated the
+  // exits instead and had already missed two of them (the beacon, and a second tab
+  // taking the account over) before it was written down. An arena that outlives its
+  // pilot is a sector full of hostiles nobody will ever see, stepped thirty times a
+  // second, forever.
+  for (const [aid, ar] of [...arenas]) {
+    const who = [...players.values()].find(q => q.token === ar.owner && q.mapId === aid);
+    if (!who) { closeArena(aid); continue; }
+
+    const left = leftIn(aid);
+    if (!ar.cleared && left === 0) {
+      ar.cleared = true;
+      ar.leaveIn = LINGER;
+      // A replay writes nothing down. The rock is already theirs, and a claim that
+      // could be re-won would be a claim that could be re-lost.
+      if (!ar.replay && !who.claims.includes(ar.key)) {
+        who.claims = [...who.claims, ar.key];
+        touch(who);
+      }
+      if (who.ws.readyState === 1) who.ws.send(JSON.stringify(
+        { t: 'freed', key: ar.key, what: MODULES[ar.key].name, secs: LINGER,
+          replay: ar.replay ? 1 : 0 }));
+    }
+    if (ar.cleared) {
+      // No portals, so there is nothing to fly to: an automatic return is the only
+      // honest way out of a claim you have won. The linger is so the rock can be
+      // watched coming apart rather than snatched away on the last kill.
+      if ((ar.leaveIn -= dt) <= 0) leaveArena(who, ar.replay
+        ? `${MODULES[ar.key].name} — cleared again. Nothing paid, nothing lost.`
+        : `${MODULES[ar.key].name} is yours — build it at your station`);
+      continue;
+    }
+    // The wall. A pilot parked in a corner of a claim is not stuck — nothing in
+    // here heals and they can always die — but the sector they are holding open
+    // has no other way to close. Fifteen minutes is nine times the longest clear
+    // measured, so nothing that is actually a fight is ever cut short by it.
+    if ((Date.now() - ar.opened) / 1000 > LIMIT)
+      leaveArena(who, 'the claim held. Come back with a better ship.');
+  }
 
   // Where a player's collector drone is this tick, in absolute coordinates, so any
   // client that can see the ship can draw the lift — the pod itself may be out of
@@ -1885,6 +2113,20 @@ setInterval(() => {
       // The threat file: what this pilot has killed, and how many. It changes only
       // on a kill, so the bag diff sends it once and then stays quiet.
       kills: V.kills,
+      // Which rocks are already theirs, so the station panel knows whether the
+      // mining row's button says CLAIM or BUY without asking a second question —
+      // and so the CLAIMS page knows which ones can be flown again.
+      claims: V.claims,
+      // The claim they are standing on, or nothing at all. A bag field rather than
+      // a stream because it is one small object about the viewer: `bagKeys` is a
+      // set difference over the snapshot's own keys, so it is diffed for free and
+      // goes quiet between kills. `left` is here because a pilot who cannot see how
+      // many are standing cannot tell whether they are winning.
+      arena: arenas.has(V.mapId)
+        ? { key: arenas.get(V.mapId).key, left: leftIn(V.mapId),
+            total: arenas.get(V.mapId).total, cleared: arenas.get(V.mapId).cleared ? 1 : 0,
+            replay: arenas.get(V.mapId).replay ? 1 : 0 }
+        : undefined,
       played: (V.acct.played ?? 0) + sessionSeconds(V.banked ?? V.acted, V.acted),
       // Who else is out there. A world with nobody in it should say so rather
       // than leave you wondering whether the game is empty or just quiet.

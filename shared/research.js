@@ -283,7 +283,15 @@ export function whyNotStake({ credits = 0, docked = false, has = false, room = t
   return null;
 }
 
-export function whyNotBuild(key, { credits = 0, mask = 0, near = false } = {}) {
+// A mining tier is a rock somebody is already sitting on: you have to free it
+// before you can build the rig that works it. `claims` is which ones this pilot
+// has freed — see shared/arena.js — and it is checked BEFORE the price on purpose.
+// A row that only offers the claim once you can already afford the module would
+// hide the whole fight from every pilot who has not saved up yet, and the fight is
+// the thing you are meant to go and do while you save.
+export const needsClaim = key => MODULES[key]?.line === 'mine';
+
+export function whyNotBuild(key, { credits = 0, mask = 0, near = false, claims = [] } = {}) {
   const m = MODULES[key];
   if (!m) return 'no such module';
   if (!near) return 'fly to your station to build on it';
@@ -291,6 +299,7 @@ export function whyNotBuild(key, { credits = 0, mask = 0, near = false } = {}) {
   const want = tierOn(mask, m.line) + 1;
   if (m.tier > want) return `build the tier below it first`;
   if (m.tier < want) return 'you are already past this one';
+  if (needsClaim(key) && !claims.includes(key)) return 'the claim is contested — free the rock first';
   if (credits < m.price) return `costs ${m.price} cr — you cannot pay yet`;
   return null;
 }
@@ -337,11 +346,27 @@ export const partsOf = mask => modsOf(mask).map(k => LOOKS[k]).filter(Boolean);
 // you are. The price used to REPLACE the gain when you could not afford it, which
 // is precisely backwards: the moment a pilot most needs to know what they are
 // saving toward is the moment they cannot buy it yet.
-export const LAB_ROW = 78, LAB_HEAD = 96, LAB_W = 560, LAB_PAD = 18;
+// 124 rather than 96: the header carries a tab strip now. A cleared claim is
+// replayable, and a replay is not a rung — it buys nothing, so it cannot be a
+// button on the ladder without lying about what the ladder is. It is its own page.
+export const LAB_ROW = 78, LAB_HEAD = 124, LAB_W = 560, LAB_PAD = 18;
+export const TAB_H = 26, TAB_TOP = 82;
+// The two pages of the research station, as data rather than as two functions:
+// what you are building, and what you have to fight for the right to build.
+export const LAB_TABS = [
+  { key: 'ladder', name: 'RESEARCH' },
+  { key: 'claims', name: 'CLAIMS' },
+];
+export const LAB_TAB_KEYS = LAB_TABS.map(t => t.key);
 
-export function labPanel(VIEW_W, VIEW_H) {
+// Both pages have exactly three rows — three ladders, three mining tiers — so the
+// panel is one size and a tab switch never moves the rows under the cursor.
+export function labPanel(VIEW_W, VIEW_H, tab = 'ladder') {
+  const page = LAB_TAB_KEYS.includes(tab) ? tab : 'ladder';
+  const keys = page === 'claims' ? tiersOf('mine') : LINES;
+  const n = Math.max(LINES.length, tiersOf('mine').length);
   const w = Math.min(LAB_W, VIEW_W - 40);
-  const want = LAB_HEAD + LINES.length * (LAB_ROW + 10) + LAB_PAD;
+  const want = LAB_HEAD + n * (LAB_ROW + 10) + LAB_PAD;
   const h = Math.min(VIEW_H - 80, want);
   const x = Math.round((VIEW_W - w) / 2), y = Math.round((VIEW_H - h) / 2);
   // On a window too short for the full list the rows CLOSE UP rather than running
@@ -349,13 +374,21 @@ export function labPanel(VIEW_W, VIEW_H) {
   // is the same bug as a row outside its panel, and this codebase has shipped that
   // twice — so the spacing is derived from the height that actually exists.
   const room = h - LAB_HEAD - LAB_PAD;
-  const step = Math.min(LAB_ROW + 10, Math.floor(room / LINES.length));
+  const step = Math.min(LAB_ROW + 10, Math.floor(room / n));
   const rowH = Math.max(28, step - 10);
-  const rows = LINES.map((line, i) => ({
-    line,
+  const rows = keys.map((k, i) => ({
+    line: page === 'claims' ? 'mine' : k, key: page === 'claims' ? k : null,
     r: { x: x + LAB_PAD, y: y + LAB_HEAD + i * step, w: w - LAB_PAD * 2, h: rowH },
   }));
-  return { panel: { x, y, w, h }, rows,
+  // The strip, laid out in the header rather than over the first row. A tab you can
+  // see and cannot click is the same bug as a row outside its panel; both come from
+  // the caller drawing one rectangle and hit-testing another, so there is one.
+  const tw = Math.floor((w - LAB_PAD * 2) / LAB_TABS.length);
+  const tabs = LAB_TABS.map((t, i) => ({
+    ...t, on: t.key === page,
+    r: { x: x + LAB_PAD + i * tw, y: y + TAB_TOP, w: tw, h: TAB_H },
+  }));
+  return { tab: page, panel: { x, y, w, h }, rows, tabs,
            close: { x: x + w - 30, y: y + 10, w: 20, h: 20 } };
 }
 
@@ -402,7 +435,7 @@ export function shortOf(mask, line, credits) {
   return gap > 0 ? gap : 0;
 }
 
-export function rowState(mask, line, credits) {
+export function rowState(mask, line, credits, claims = []) {
   const at = tierOn(mask, line), next = nextOn(mask, line);
   const m = next ? MODULES[next] : null;
   return {
@@ -410,6 +443,10 @@ export function rowState(mask, line, credits) {
     built: at ? MODULES[tiersOf(line).find(k => MODULES[k].tier === at)].name : null,
     next, nextName: m?.name ?? null, price: m?.price ?? 0, does: m?.does ?? null,
     afford: !!m && credits >= m.price,
+    // What the row's one button does. A mining rung whose rock is still held is a
+    // CLAIM before it is a purchase, and the panel needs to know which without
+    // working it out a second time.
+    claim: !!m && needsClaim(next) && !claims.includes(next),
     done: !m,
   };
 }

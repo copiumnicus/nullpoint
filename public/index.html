@@ -7,7 +7,8 @@
 </style>
 <canvas id="c"></canvas>
 <script type="module">
-import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
+import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES, mapOf, isArena } from '/shared/maps.js';
+import { mission, BAR_TONE, whyNotClaim, whyNotReplay, claimState } from '/shared/arena.js';
 import { LAYER_NAME, STAT_STEP } from '/shared/breakdown.js';
 import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
@@ -127,7 +128,10 @@ let myBerths = [];                // outposts you rent a bay at
 let myFoldTo = null;              // and which hangar a beacon takes you to
 let labs = new Map();             // every research station in this sector
 let myLab = null;                 // { mods, income } if you have one
+let myClaims = [];                // mining rocks already freed
+let arena = null;                 // { key, left, total, cleared, replay } while standing on a claim
 let labOpen = false;              // the research panel
+let labTab = 'ladder';            // RESEARCH, or the CLAIMS page you go back out from
 // Staking is permanent and costs 500,000, and a pilot doing it for the first time
 // has no idea the plot is for good. One click was the whole transaction, which is
 // the wrong shape for the most expensive irreversible thing in the game.
@@ -336,11 +340,79 @@ function fileClick(v) {
 // The research panel: three ladders, one rung at a time.
 //
 // Not the station panel's machinery — that is shelves you browse, this is a ladder
+// Why the station will not send you to a claim, in the same words the server uses.
+// One call site for both questions, so a row can never offer what the server then
+// declines — the workshop dock refused to sell anything for a day because that was
+// two functions.
+const claimWhy = (key, freed) => {
+  const where = { mask: myLab?.mods ?? 0, near: atMyLab(), claims: myClaims,
+                  hold, inArena: isArena(mapId) };
+  return freed ? whyNotReplay(key, where) : whyNotClaim(key, where);
+};
+
+// The CLAIMS page. Three rocks, and what each of them is right now.
+//
+// A separate page rather than three more rows on the ladder, because a replay is
+// not a rung: it costs nothing, buys nothing and can be done forever. Putting a
+// button that spends no credits on a list of prices would make the list a lie.
+function drawClaims(L) {
+  const mask = myLab?.mods ?? 0;
+  for (const row of L.rows) {
+    const st = claimState(row.key, { claims: myClaims, mask });
+    const why = claimWhy(row.key, st.freed);
+    const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
+                      && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
+    g.fillStyle = st.locked ? 'rgba(255,255,255,0.02)'
+                : !why ? (hot ? 'rgba(255,143,107,0.16)' : 'rgba(255,255,255,0.03)')
+                : 'rgba(255,255,255,0.02)';
+    g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+    g.strokeStyle = st.locked ? '#243448' : why ? '#243448' : st.freed ? '#4a6785' : '#7a4a3a';
+    g.lineWidth = 1;
+    g.strokeRect(row.r.x + .5, row.r.y + .5, row.r.w - 1, row.r.h - 1);
+
+    g.font = '12px ui-monospace, monospace';
+    g.fillStyle = st.locked ? '#66748c' : '#cfe4ff';
+    g.fillText(st.name, row.r.x + 12, row.r.y + 20);
+    g.font = '11px ui-monospace, monospace';
+    g.fillStyle = st.freed ? '#7de08a' : st.locked ? '#66748c' : '#ff8f6b';
+    g.fillText(st.locked ? 'HELD — free the claim below it first'
+             : st.freed ? (st.built ? 'FREED · the rig is built' : 'FREED · buy the rig on the RESEARCH page')
+             : `CONTESTED · ${st.count} hostiles hold the rock`,
+               row.r.x + 12, row.r.y + 38);
+    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+    g.fillText(st.asks, row.r.x + 12, row.r.y + 54);
+    // What a replay pays, said out loud on the row rather than discovered by
+    // flying one. A practice range that looks like a bounty run is a trap.
+    if (st.freed) {
+      g.fillStyle = '#66748c'; g.font = '9px ui-monospace, monospace';
+      g.fillText('a replay pays nothing and costs nothing — it is a proving ground',
+                 row.r.x + 12, row.r.y + 68);
+    }
+    g.textAlign = 'right'; g.font = '11px ui-monospace, monospace';
+    if (why) {
+      g.fillStyle = '#66748c'; g.font = '9px ui-monospace, monospace';
+      g.fillText(why.length > 34 ? why.slice(0, 33) + '…' : why,
+                 row.r.x + row.r.w - 12, row.r.y + 24);
+    } else {
+      g.fillStyle = st.freed ? '#7de08a' : '#ff8f6b';
+      g.fillText(st.verb, row.r.x + row.r.w - 12, row.r.y + 24);
+    }
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+  g.font = '12px ui-monospace, monospace';
+}
+
+// The research panel: two pages, and three ladders on the first of them.
+//
+// Not the station panel's machinery — that is shelves you browse, this is a ladder
 // you climb, and forcing one into the other would mean a page of one-item shelves.
 // Geometry comes from shared/research.js so the row you can see is the row you can
 // click, which is a bug this codebase has shipped twice.
 function drawLab() {
-  const L = labPanel(VIEW_W, VIEW_H), P = L.panel;
+  // No station and there is nothing to claim either, so the page cannot be
+  // reachable — a tab that opens an empty box is worse than no tab.
+  const tab = myLab ? labTab : 'ladder';
+  const L = labPanel(VIEW_W, VIEW_H, tab), P = L.panel;
   const mask = myLab?.mods ?? 0, near = atMyLab();
   g.fillStyle = 'rgba(4,7,12,0.94)'; g.fillRect(P.x, P.y, P.w, P.h);
   g.strokeStyle = '#7de08a'; g.lineWidth = 1.4;
@@ -395,10 +467,29 @@ function drawLab() {
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     return;
   }
+
+  // The two pages. Drawn from the same rectangles the click handler tests, so a
+  // tab you can see is a tab you can press.
+  for (const t of L.tabs) {
+    const hotT = hover && hover.x > t.r.x && hover.x < t.r.x + t.r.w
+                       && hover.y > t.r.y && hover.y < t.r.y + t.r.h;
+    g.fillStyle = t.on ? 'rgba(125,224,138,0.14)' : hotT ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)';
+    g.fillRect(t.r.x, t.r.y, t.r.w, t.r.h);
+    g.strokeStyle = t.on ? '#7de08a' : '#243448'; g.lineWidth = 1;
+    g.strokeRect(t.r.x + .5, t.r.y + .5, t.r.w - 1, t.r.h - 1);
+    g.font = '11px ui-monospace, monospace'; g.textAlign = 'center';
+    g.fillStyle = t.on ? '#cfe4ff' : '#7f8fa6';
+    g.fillText(t.name, t.r.x + t.r.w / 2, t.r.y + 17);
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+  if (L.tab === 'claims') return drawClaims(L);
+
   const tips = [];
   for (const row of L.rows) {
-    const st = rowState(mask, row.line, credits);
-    const why = st.next ? whyNotBuild(st.next, { credits, mask, near }) : null;
+    const st = rowState(mask, row.line, credits, myClaims);
+    const why = st.next
+      ? (st.claim ? claimWhy(st.next, false) : whyNotBuild(st.next, { credits, mask, near, claims: myClaims }))
+      : null;
     const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
                       && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
     g.fillStyle = st.done ? 'rgba(125,224,138,0.10)'
@@ -420,8 +511,12 @@ function drawLab() {
       g.fillStyle = '#7de08a';
       g.fillText(`${st.built} — the top of this ladder`, row.r.x + 12, row.r.y + 40);
     } else {
-      g.fillStyle = why ? '#66748c' : '#cfe4ff';
-      g.fillText(st.nextName, row.r.x + 12, row.r.y + 40);
+      // A mining rung whose rock is still held is a FIGHT before it is a purchase,
+      // and the row has to say so where the price would be — a pilot who saves two
+      // million credits and then finds out there is a claim to fly first has been
+      // lied to by the shelf.
+      g.fillStyle = why ? '#66748c' : st.claim ? '#ff8f6b' : '#cfe4ff';
+      g.fillText(st.claim ? `${st.nextName} — CLAIM THE ROCK` : st.nextName, row.r.x + 12, row.r.y + 40);
       // What it does to the ship you are actually flying, in the numbers on your own
       // bar. "Twice the hull" is a fact about the module; "1,100 -> 2,200" is a fact
       // about you, and it is the one that decides whether a million credits is worth
@@ -502,10 +597,11 @@ function drawLab() {
 }
 
 function labClick(v) {
-  const L = labPanel(VIEW_W, VIEW_H);
+  const L = labPanel(VIEW_W, VIEW_H, myLab ? labTab : 'ladder');
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
   if (inside(L.close) || !inside(L.panel)) { labOpen = false; labConfirm = false; return true; }
   const mask = myLab?.mods ?? 0, near = atMyLab();
+  if (myLab) for (const t of L.tabs) if (inside(t.r)) { labTab = t.key; labConfirm = false; return true; }
   if (!myLab) {
     // Anywhere but the row takes the offer back off the table, so a stray click
     // cannot be the second half of a confirmation the pilot has forgotten about.
@@ -521,12 +617,32 @@ function labClick(v) {
     send({ t: 'stake' });
     return true;
   }
+  // The CLAIMS page: every row is a flight out, and which flight depends only on
+  // whether the rock is already yours. Nothing here spends credits.
+  if (L.tab === 'claims') {
+    for (const row of L.rows) {
+      if (!inside(row.r)) continue;
+      const st = claimState(row.key, { claims: myClaims, mask });
+      const why = claimWhy(row.key, st.freed);
+      if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+      send({ t: st.freed ? 'replay' : 'claim', key: row.key });
+      labOpen = false;                      // you are leaving; the panel should not follow
+      return true;
+    }
+    return true;
+  }
   for (const row of L.rows) {
     if (!inside(row.r)) continue;
-    const st = rowState(mask, row.line, credits);
+    const st = rowState(mask, row.line, credits, myClaims);
     if (!st.next) { say('That ladder is finished', '#7de08a'); return true; }
-    const why = whyNotBuild(st.next, { credits, mask, near });
+    // A mining rung whose rock is still held is a fight before it is a purchase.
+    // One row, two buttons at different times — the refusal comes from the same
+    // function the server will use, so the panel can never offer something the
+    // server then declines.
+    const why = st.claim ? claimWhy(st.next, false)
+                         : whyNotBuild(st.next, { credits, mask, near, claims: myClaims });
     if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+    if (st.claim) { send({ t: 'claim', key: st.next }); labOpen = false; return true; }
     send({ t: 'build', key: st.next });
     return true;
   }
@@ -617,7 +733,7 @@ function drawLabs() {
 function drawHaven() {
   const me = ships.get(myId);
   if (!me || dead || signup) return;
-  const map = MAPS[mapId];
+  const map = mapOf(mapId);
   const line = havenLine(havenKind(map, me), {
     mine: canDock(map, myCo, me),                // your ring mends you; nowhere else does
     hunted: fightState().hunted,                 // peace stops one STARTING, not one already on you
@@ -801,14 +917,14 @@ function spaceAction() {
   // The gate outranks everything. Sitting in a portal mouth with ore under you,
   // the thing you came to the gate to do is leave — and hauling a pod first, then
   // pressing again, was a fight with the key rather than with anything in space.
-  if (nearPortal(MAPS[mapId], { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump through the gate' };
+  if (nearPortal(mapOf(mapId), { x: me2.x, y: me2.y, jumpCd: 0 })) return { kind: 'jump', label: 'jump through the gate' };
   // Somewhere you flew TO outranks whatever happens to be lying beside it. This is
   // the same rule the gate needed: standing in a place you came to use, the thing
   // you came to do is the thing the key should do. Hauling first meant a full hold
   // beside a wreck field could not sell to the outpost it was parked in — which is
   // exactly the situation you go to an outpost to get out of.
   const mats = Object.keys(hold).filter(mt => (hold[mt] ?? 0) > 0);
-  if (mats.length && inOutpost(MAPS[mapId], { x: me2.x, y: me2.y })) {
+  if (mats.length && inOutpost(mapOf(mapId), { x: me2.x, y: me2.y })) {
     const n = mats.reduce((t, mt) => t + hold[mt], 0);
     return { kind: 'fence', label: `sell ${n} of ore to the outpost for ${fmtCredits(pirateValue(hold))} ${CURRENCY.short}` };
   }
@@ -913,6 +1029,15 @@ ws.onmessage = e => {
     toast(m.what, m.cost, m.note);
     return;
   }
+  // The field is clear. The mission bar has already flipped and the rock has
+  // already come apart — this is the sentence saying what it was for, and it says
+  // something different on a replay because a replay buys nothing. Telling a pilot
+  // CLAIM FREED for the fourth time would be promising a purchase already made.
+  if (m.t === 'freed') {
+    say(m.replay ? `FIELD CLEAR — ${String(m.what).toUpperCase()} · NOTHING PAID, NOTHING LOST`
+                 : `THE CLAIM IS YOURS — ${String(m.what).toUpperCase()} MAY COMMENCE`, '#7de08a');
+    return;
+  }
   if (m.t === 'award') {
     credits = m.total;
     // A shared bounty that reads exactly like a solo one teaches nobody the system
@@ -965,6 +1090,15 @@ ws.onmessage = e => {
   // whole snapshot either way, so this is just a read.
   labs = new Map((m.labs ?? []).map(unpackLab).map(l => [l.id, l]));
   if ('lab' in m) myLab = m.lab;
+  if (m.claims) myClaims = m.claims;
+  // Read UNCONDITIONALLY, like `scoop` and `want` beside it, and this is the one
+  // line here that a live socket had to teach. A bag field that goes away is
+  // reported in the delta's `gone` list and deleted from the baseline, and
+  // decodeDelta hands back the WHOLE bag — so absence is information, not silence.
+  // Guarding it with `'arena' in m` left the mission bar on screen for the rest of
+  // the session after the station pulled the pilot home, which is the same bug as
+  // one that never appears.
+  arena = m.arena ?? null;
   hold = m.hold ?? {}; cargoCap = m.cap ?? cargoCap;
   vault = m.vault ?? vault;
   // The balance, and the moment it was true. Everything between banks is drawn by
@@ -1055,14 +1189,14 @@ const toScreen = p => ({ x: (p.x - cam.x) * zoom, y: (p.y - cam.y) * zoom });
 // does — and it shuts the instant something hits you, which your own ring does not.
 const inMyOutpost = () => {
   const me = ships.get(myId);
-  return !!me && inOutpost(MAPS[mapId], { x: me.x, y: me.y });
+  return !!me && inOutpost(mapOf(mapId), { x: me.x, y: me.y });
 };
 const berthWhy = () => whyNotBerth({
   owned: myBerths.includes(mapId), inside: inMyOutpost(), sinceHit: sinceHitSecs(),
 });
 const docked = () => {
   const me = ships.get(myId);
-  return (!!me && canDock(MAPS[mapId], myCo, { x: me.x, y: me.y })) || !berthWhy();
+  return (!!me && canDock(mapOf(mapId), myCo, { x: me.x, y: me.y })) || !berthWhy();
 };
 
 // Nearest hostile to a world point, within a forgiving radius. Demanding a direct
@@ -1807,7 +1941,7 @@ function drawBay() {
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = home ? '#66748c' : '#e0a53f';
   g.fillText(home ? 'docked — every change takes effect at once'
-           : MAPS[mapId].dev ? 'fly into the workshop ring to outfit'
+           : mapOf(mapId).dev ? 'fly into the workshop ring to outfit'
                              : 'out here only ammunition sells — the rest wants a dock or a rented bay',
              P.x + 236, P.y + 32);
 
@@ -3046,7 +3180,7 @@ requestAnimationFrame(function frame(now) {
 });
 
 function drawFrame(now) {
-  const map = MAPS[mapId], me = ships.get(myId);
+  const map = mapOf(mapId), me = ships.get(myId);
   // myStats(), not a bare resolve(). This printed the hull the SHOPS sold you — 1,900
   // on a Bulwark the server was flying at 15,200 — and it dropped the escort and the
   // formation too, so it read GUN 113 on a ship doing 2,815. It is the readout a pilot
@@ -3198,6 +3332,46 @@ function drawFrame(now) {
       g.font = '9px ui-monospace, monospace'; g.fillStyle = '#8a6a3a';
       g.fillText('refit here, and buy the gear your company will not sell', o.x, by + 40);
     }
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+
+  // The rock the whole fight is about. It is not a wire object: its place is a
+  // fact about the sector — mapOf() hands the server the same one — and its only
+  // state is whether the field is cleared, which already rides in the viewer's own
+  // bag. Nothing to pack, nothing to diff, and both sides draw the same circle.
+  if (map.rock) {
+    const k = map.rock, won = !!arena?.cleared;
+    const grd = g.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r * 2.4);
+    grd.addColorStop(0, (won ? '#7de08a' : map.tint) + '2a');
+    grd.addColorStop(1, 'transparent');
+    g.fillStyle = grd; g.fillRect(k.x - k.r * 2.4, k.y - k.r * 2.4, k.r * 4.8, k.r * 4.8);
+    // Held, it is one closed lump inside a locked ring. Freed, the ring opens out
+    // and the rock is cracked along its seams — clearing the field has to LOOK
+    // like something happened, or it reads as nothing having happened.
+    g.save(); g.translate(k.x, k.y); g.rotate(now / (won ? 5000 : 22000));
+    g.lineWidth = 3; g.strokeStyle = won ? '#7de08a' : '#8a7a5a';
+    g.fillStyle = won ? '#0d1a12' : '#0b0f14';
+    g.beginPath();
+    for (let i = 0; i < 9; i++) {
+      const a2 = (i / 9) * Math.PI * 2, rr = k.r * (0.72 + ((i * 5) % 7) / 20);
+      i ? g.lineTo(Math.cos(a2) * rr, Math.sin(a2) * rr) : g.moveTo(Math.cos(a2) * rr, Math.sin(a2) * rr);
+    }
+    g.closePath(); g.fill(); g.stroke();
+    if (won) for (let i = 0; i < 4; i++) {           // the seams it came apart along
+      const a2 = (i / 4) * Math.PI * 2 + 0.4;
+      g.beginPath(); g.moveTo(Math.cos(a2) * k.r * 0.2, Math.sin(a2) * k.r * 0.2);
+      g.lineTo(Math.cos(a2) * k.r * 0.95, Math.sin(a2) * k.r * 0.95); g.stroke();
+    }
+    g.restore();
+    g.strokeStyle = won ? 'rgba(125,224,138,0.75)' : 'rgba(255,143,107,0.55)';
+    g.lineWidth = 1.5; g.setLineDash(won ? [26, 18] : [6, 10]);
+    g.lineDashOffset = won ? -now / 60 : now / 300;
+    g.beginPath(); g.arc(k.x, k.y, k.r * 1.7, 0, 7); g.stroke();
+    g.setLineDash([]); g.lineDashOffset = 0;
+    g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
+    g.fillStyle = won ? '#7de08a' : '#a8785a';
+    g.fillText(won ? (arena?.replay ? 'THE FIELD IS CLEAR' : 'THE ROCK IS YOURS') : 'CONTESTED CLAIM',
+               k.x, k.y - k.r * 1.7 - 14);
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
@@ -4119,7 +4293,11 @@ function drawFrame(now) {
   g.restore();
 
   // --- jump button (screen space) ---
-  if (atPortal || charge > 0) {
+  // `map.portals.length` is not belt and braces, it is the arena. A claim has no
+  // portals at all, so `map.portals[0]` is undefined and `MAPS[undefined].tint`
+  // throws inside drawFrame — which catches, sets the flag that suppresses every
+  // later error, and leaves a permanently black canvas with the socket still up.
+  if ((atPortal || charge > 0) && map.portals.length) {
     const p = atPortal ?? map.portals[0], tint = MAPS[p.to].tint, b = btn();
     const prog = charge > 0 ? 1 - charge / JUMP_TIME : 0;
     g.fillStyle = 'rgba(6,10,16,0.9)';
@@ -4146,6 +4324,11 @@ function drawFrame(now) {
     g.strokeStyle = '#8a6a3a'; g.lineWidth = 1; g.setLineDash([2, 3]);
     g.beginPath(); g.arc(MM_X + o.x * sx, MM_Y + o.y * sy, Math.max(3, o.r * sx), 0, 7); g.stroke();
     g.setLineDash([]);
+  }
+  if (map.rock) {                                  // the only landmark a claim has
+    const k = map.rock;
+    g.strokeStyle = arena?.cleared ? '#7de08a' : '#a8785a'; g.lineWidth = 1;
+    g.beginPath(); g.arc(MM_X + k.x * sx, MM_Y + k.y * sy, Math.max(3, k.r * sx), 0, 7); g.stroke();
   }
   if (map.base) {
     const b = map.base, col = COMPANIES[map.owner ?? myCo].color;
@@ -4465,6 +4648,24 @@ function drawFrame(now) {
       g.fillStyle = notice.colour; g.fillText(notice.text, VIEW_W / 2, 47);
       g.textAlign = 'left'; g.globalAlpha = 1; g.font = '12px ui-monospace, monospace';
     }
+  }
+
+  // The mission line. Top centre, in the band under the `say()` notice and clear
+  // of both HUD columns — the rectangle comes from shared/arena.js because the
+  // render harness asserts it does not land on the changelog icon, the safe-zone
+  // badge or the first receipt, and it can only assert that against one source.
+  if (arena) {
+    const b = mission(VIEW_W, { key: arena.key, left: arena.left, total: arena.total,
+                                cleared: !!arena.cleared, replay: !!arena.replay });
+    const col = BAR_TONE[b.tone] ?? BAR_TONE.task;
+    g.fillStyle = 'rgba(6,10,16,0.93)'; g.fillRect(b.x, b.y, b.w, b.h);
+    g.strokeStyle = col; g.lineWidth = 1;
+    g.strokeRect(b.x + .5, b.y + .5, b.w - 1, b.h - 1);
+    g.fillStyle = col; g.fillRect(b.x, b.y, 3, b.h);   // the same spine the badge wears
+    g.font = '12px ui-monospace, monospace'; g.textAlign = 'center';
+    g.fillStyle = col;
+    g.fillText(b.text, b.x + b.w / 2, b.y + 19);
+    g.textAlign = 'left';
   }
 
   stirMusic(now);
