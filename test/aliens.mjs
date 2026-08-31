@@ -43,15 +43,22 @@ const full = s => s.stats.hull + s.stats.shield;
 // chamber now kills every build below the top of the research ladder — so the
 // four rows being compared were four fights that ended at different points, which
 // compares nothing. This is the Bulkhead Target from /dev, in a test.
-function fight(a, p, secs, { playerFires = false, drive = null, hold = null, immortal = false } = {}) {
+// `route` holds a power routing down for the whole fight, the way a pilot actually
+// flies one. It defaults to nothing because that is what every other fight in this
+// file was measured with, and it is passed for the mirror because there it is not a
+// detail: dpsOf quotes the BOOSTED gun, so a bench pilot who never routes delivers
+// 6,450 of a finished Bulwark's 11,307 and holds the chamber at 49% where a real
+// one holds it at 91%. That gap was read as "a Thresher dodges a third of your
+// fire" for a whole revision. It does not — 97% of what you fire reaches it.
+function fight(a, p, secs, { playerFires = false, drive = null, hold = null, immortal = false, route = null } = {}) {
   let t = 0, everTargeted = false, air = [], fired = 0;
   let took = 0, biggest = 0, peak = 0, mirrored = 0, lowest = Infinity;
   while (t < secs && a.hp > 0 && p.hp > 0) {
     if (drive) drive(p, t);
+    if (route) p.power.to = route;
     const tgt = stepAlienAI(a, map, con(p), dt);
     if (tgt) everTargeted = true;
     step(a, dt); step(p, dt); stepVitals(a, dt); stepVitals(p, dt);
-    if (immortal) { p.hp = p.stats.hull; p.shield = shieldMax(p); }
     faceTarget(a, tgt ? p : null);
     peak = Math.max(peak, stepMirror(a, dt));
     const base = a.def?.attrs?.damage ?? 0;
@@ -66,6 +73,12 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
       if (h.target === a) storeHit(a, n);
       else { took += n; biggest = Math.max(biggest, n); }
     }
+    // AFTER the damage is applied, not before it. Restoring at the top of the tick
+    // leaves the loop condition to see a pilot one bolt below zero, so the reader
+    // stopped dead the moment a single bolt outgrew a whole ship — which is the
+    // exact case this instrument exists to measure, and it read a 28-second fight
+    // as three seconds without saying anything was wrong.
+    if (immortal) { p.hp = p.stats.hull; p.shield = shieldMax(p); }
     // The lowest the pilot's whole pool ever got. `took` is cumulative and counts
     // shield that regenerated and was spent again, so against something that only
     // trickles damage it reads well over 100% of a ship that was never in danger.
@@ -432,12 +445,46 @@ console.log('\nthe mothership');
 // and a Jackdaw would have to a Drifter. The ladder is tens, and the half rungs are
 // where the interesting fights live — so the claim is now about the SHAPE of the
 // ladder rather than about a gap, which is a stronger thing to be able to say.
-check('the Hive is the top of the ladder, and the next thing down is half a rung below it',
-    WILD.every(k => k === 'hive' || effectiveHp(k) * 3 <= effectiveHp('hive')) &&
-    Math.abs(effectiveHp('thresher') - effectiveHp('hive') / Math.sqrt(10)) <= 10,
+// REWRITTEN, not deleted, per rule five: the Hive is no longer the top of the ladder
+// and the claim it was making — "the shape of the ladder is half rungs of sqrt(10)" —
+// is exactly the claim worth keeping. It is now made about the whole ladder at once
+// instead of about one pair, which is strictly stronger: every rung any hostile
+// stands on has to BE a rung, and the two the deeps added are tested by the same line
+// that tests the Harrier and the Thresher.
+const onRung = k => {
+    const n = Math.log10(effectiveHp(k) / effectiveHp('drifter')) * 2;
+    return Math.abs(n - Math.round(n)) < 0.02;                   // whole half-decades only
+  };
+  // The Bandit is the one exception and it is a stated one rather than a hole: its
+  // weight is in `effort` — 3.8, measured, because only 28% of what is fired at it
+  // ever lands — so its hit points are deliberately NOT where its rung is. Everything
+  // that stands and trades has its rung in its hull, and this says so.
+  check('every hostile you can actually hit stands on a rung of the ladder',
+    WILD.filter(k => (ALIENS[k].effort ?? 1) === 1).every(onRung),
     WILD.map(k => `${ALIENS[k].name} ${Math.round(effectiveHp(k))}`).sort().join(', ') +
-    ` — a Thresher is ${(effectiveHp('hive') / effectiveHp('thresher')).toFixed(2)}x below the Hive, ` +
-    'and sqrt(10) is what half a rung means');
+    ' — 650 x 10^(n/2), and sqrt(10) is what half a rung means');
+  check('and the one that is off it is off it because it dodges, not because somebody typed it',
+    WILD.filter(k => !onRung(k)).every(k => (ALIENS[k].effort ?? 1) > 1),
+    WILD.filter(k => !onRung(k)).map(k => `${ALIENS[k].name} x${ALIENS[k].effort} effort`).join(', ')
+      || 'nothing is off the ladder');
+  // WHERE THE DEEPS LAND, and the one place this design deviates from what was asked
+  // for. The brief said "five times stronger than the hive", which is 3,250,000, and
+  // that is not on the ladder at all — the rungs either side of it are these 2,055,480
+  // and 6,500,000. This one is nearer on both readings: linearly it is 1.19M away
+  // against 3.25M, and in the logarithm the ladder is actually built in it is 0.199 of
+  // a rung away against 0.301.
+  //
+  // The other rung is also the wrong FIGHT, which is the part that settles it — see
+  // test/ground.mjs, which measures both against the real AI. Overriding this is one
+  // edit: change the two `attrs` splits in aliens.js so they sum to the number you
+  // want, and bounty, experience, the ore rung and the posting all follow, because
+  // every one of them is derived from effectiveHp rather than typed.
+  check('and the deeps are half a rung above the mothership, which is where the ladder puts them',
+    Math.abs(effectiveHp('vitriol') - effectiveHp('hive') * Math.sqrt(10)) <= 25 &&
+    effectiveHp('doldrum') === effectiveHp('vitriol'),
+    `${effectiveHp('vitriol').toLocaleString()} against a Hive's ${effectiveHp('hive').toLocaleString()} — ` +
+    `x${(effectiveHp('vitriol') / effectiveHp('hive')).toFixed(2)}. The ask was x5, which is 3,250,000 ` +
+    'and is not a rung; this is the nearer of the two that are');
   check('it notices you no further out than you can see it',
     H.aggro <= SIGHT_R, `${H.aggro} against ${SIGHT_R}px of sight`);
 
@@ -744,7 +791,7 @@ console.log('\nthe mirror');
                     '22.2s balance.js allows an on-model hostile. The spread between those two IS the fight'; })());
 
   // --- the chamber -----------------------------------------------------------
-  check('a mirror is loaded by what you take off it, and a tenth of it fills the chamber',
+  check('a mirror is loaded by what you take off it, and a measured share of it fills the chamber',
     (() => {
       const a = mirror(0, 0);
       storeHit(a, soakOf(T));
@@ -813,22 +860,29 @@ console.log('\nthe mirror');
   for (const [key, stage, mul, opt] of [
     ['stand', 'finished', 1, {}],
     ['stand8', 'finished', 8, {}],
+    ['stand16', 'finished', 16, {}],
     ['stand32', 'finished', 32, {}],
+    // The same fight with the reactor idle, which is what this bench used to
+    // measure without knowing it. Kept as a row because the gap IS a claim.
+    ['cold reactor', 'finished', 8, { route: null }],
     ['weave', 'finished', 1, weaving],
     ['weave8', 'finished', 8, { ...weaving, secs: 900 }],
     ['weave32', 'finished', 32, { ...weaving, secs: 900 }],
     ['hold', 'finished', 1, holding],
     ['cruiser', 'cruiser', 1, {}],
     // The pilot who bought the LEAST gun, weaving, with nothing researched. It is
-    // the whole mechanic in one row: 429 dps holds the chamber at 3%, so a Kestrel
-    // takes eleven minutes and is never in danger where the best ship money can buy
+    // the whole mechanic in one row: 429 dps holds the chamber at 4%, so a Kestrel
+    // takes nine minutes and is never in danger where the best ship money can buy
     // is deleted in under four seconds.
     ['kestrel weave', 'interceptor', 1, { ...weaving, secs: 900 }],
   ]) {
     const p = at(stage, mul), a = mirror(p.x + 700, p.y);
     const { secs = 400, ...rest } = opt;
+    // Reactor on weapons, for every row. See `route` on fight(): without it the
+    // pilot delivers 57% of the gun the shop sold them and every number in this
+    // block is a measurement of a pilot who forgot to turn their ship on.
     runs[key] = { p, a, full: pool(p), dps: stageDps(stage),
-                  r: fight(a, p, secs, { playerFires: true, ...rest }) };
+                  r: fight(a, p, secs, { playerFires: true, route: 'weapons', ...rest }) };
   }
   for (const [k, v] of Object.entries(runs))
     console.log(`     ${k.padEnd(14)} ${(v.r.won ? 'killed it' : v.r.died ? 'DIED' : 'timeout').padEnd(10)}` +
@@ -870,13 +924,47 @@ console.log('\nthe mirror');
     `weaving dies in ${runs.weave.r.t.toFixed(1)}s against ${runs.stand.r.t.toFixed(1)}s standing at x1, and at x8 hull ` +
     `and shields it kills the thing with ${(100 * Math.max(0, runs.weave8.r.lowest) / runs.weave8.full).toFixed(0)}% of ` +
     `the ship left — ${(100 * Math.max(0, runs.weave32.r.lowest) / runs.weave32.full).toFixed(0)}% at x32`);
-  // And this used to read "one rung of research carries a pilot who does neither",
-  // at x8. It does not any more, and that is the point of the change: the last rung
-  // of the ladder is what it costs to be careless in front of the thing at the gates.
-  check('and standing still is carried by nothing short of the last rung of the ladder',
-    !runs.stand8.r.won && runs.stand32.r.won,
-    `x8 hull and shields, never moving, still dies at ${runs.stand8.r.t.toFixed(1)}s; x32 kills it with ` +
-    `${(100 * Math.max(0, runs.stand32.r.lowest) / runs.stand32.full).toFixed(0)}% left. At 855 a bolt x8 won it down 21%`);
+  // This has now read three things, and each rewrite is the design moving rather
+  // than the test being wrong. "One rung of research carries a pilot who does
+  // neither" (x8, at 855 a bolt). Then "nothing short of the last rung" (x32, when
+  // the chamber first took its ceiling from the shop). It is x16 now, and that is
+  // the shape the fight is meant to have: not moving costs you exactly two rungs of
+  // research over moving, and the claim pins the GAP rather than either tier, so a
+  // change that shifts both together does not read as a regression.
+  //
+  // Pinned as the GAP, and to the tiers that are not coin flips. x16 standing still
+  // finishes on 19 hit points of 148,880 at this seed and dies at another, so it is
+  // deliberately NOT what the claim rests on: weaving winning at x8 and standing
+  // still needing the top of the ladder are both stable across seeds, and a claim
+  // built on a margin of 0.01% is a claim that will fail for no reason.
+  check('and standing still costs more research than moving does',
+    runs.weave8.r.won && !runs.stand8.r.won && runs.stand32.r.won,
+    `weaving wins at x8 with ${(100 * Math.max(0, runs.weave8.r.lowest) / runs.weave8.full).toFixed(0)}% left; ` +
+    `standing still at x8 dies at ${runs.stand8.r.t.toFixed(1)}s, scrapes x16 with ` +
+    `${(100 * Math.max(0, runs.stand16.r.lowest) / runs.stand16.full).toFixed(1)}% and only really has it at x32, ` +
+    `with ${(100 * Math.max(0, runs.stand32.r.lowest) / runs.stand32.full).toFixed(0)}%`);
+  // The complaint this whole line of work answers, as a number: "he seems to cap out
+  // at 800 dmg back, make it like 10k". So pin what a pilot SEES, not what the
+  // algebra allows — those are different, and quoting the second one is how a
+  // 4,312 shipped believing it was a 10,191.
+  check('and the biggest number a pilot ever sees off one is near ten thousand',
+    runs.stand8.r.biggest > 9000 && runs.stand8.r.biggest <= payloadOf(T, 1),
+    `${f(runs.stand8.r.biggest)} on the screen, against a ${f(payloadOf(T, 1))} ceiling and the ` +
+    `${f(80 + MIRROR.dps * Math.min(1, stageDps('finished') / (soakOf(T) * Math.LN2)))} the equilibrium predicts. ` +
+    'It was 855, and it read 4,312 on a bench whose pilot never routed power');
+  // The discovery that made the number above make sense, kept as a claim because it
+  // cost a revision. A pilot who leaves the reactor idle delivers a little over half
+  // the gun the shop sold them, so the chamber they load is half the size — and yet
+  // the fight costs them the SAME, because the total is invariant in your dps. The
+  // reactor is free against a mirror. It buys you a shorter, louder fight.
+  check('the reactor is most of your gun, and against a mirror it is free',
+    runs['cold reactor'].r.peak < runs.stand8.r.peak * 0.75 &&
+    runs['cold reactor'].r.biggest < runs.stand8.r.biggest * 0.75 &&
+    runs['cold reactor'].r.t > runs.stand8.r.t,
+    `reactor idle: the chamber peaks ${(100 * runs['cold reactor'].r.peak).toFixed(0)}% and the bolt is ` +
+    `${f(runs['cold reactor'].r.biggest)}, against ${(100 * runs.stand8.r.peak).toFixed(0)}% and ` +
+    `${f(runs.stand8.r.biggest)} with it on — over a fight ${runs['cold reactor'].r.t.toFixed(1)}s long instead of ` +
+    `${runs.stand8.r.t.toFixed(1)}s. It is not that a Thresher dodges: 97% of what you fire reaches it`);
   // Holding fire is the disengage the fiction offers and it is measurably worth
   // nothing on its own, which is not a bug — it falls straight out of the identity
   // below. The total returned over a whole fight does not depend on your dps, so
@@ -901,7 +989,7 @@ console.log('\nthe mirror');
     // and the span widens from the 28x this used to measure to 160x.
     const span = ['anchor', 'interceptor', 'fighter', 'cruiser', 'finished'].map(stage => {
       const p = at(stage), a = mirror(p.x + 700, p.y);
-      return { stage, dps: stageDps(stage), r: fight(a, p, 20000, { playerFires: true, immortal: true }) };
+      return { stage, dps: stageDps(stage), r: fight(a, p, 20000, { playerFires: true, immortal: true, route: 'weapons' }) };
     });
     const ms = span.map(v => v.r.mirrored);
     check('buying a bigger gun never makes a Thresher cost more',
@@ -978,10 +1066,23 @@ console.log('\nthe mirror');
     ceiling('m2') === ceiling('m3'),
     `co2 ${Math.round(ceiling('m2')).toLocaleString()} against co3 ${Math.round(ceiling('m3')).toLocaleString()} — ` +
     'it was 6,500 against 65,000, so which sibling you flew into decided the curve');
+  // REWRITTEN, not deleted. It used to say the deeps end the ladder because the Hive
+  // was posted there; the Hive is at the gates now and the claim is the same claim
+  // with a stronger right-hand side — the deeps hold the hardest thing in the WHOLE
+  // bestiary, whatever that turns out to be, rather than one named hostile.
   check('the deeps are the end of the ladder, not one map short of it',
-    ceiling('deep') > ceiling('gate') && ceiling('deep') === farmHp('hive'),
+    ceiling('deep') > ceiling('gate') &&
+    ceiling('deep') === Math.max(...WILD.map(farmHp)),
     `${Math.round(ceiling('gate')).toLocaleString()} at the gates and ` +
-    `${Math.round(ceiling('deep')).toLocaleString()} past them — it used to be the other way round`);
+    `${Math.round(ceiling('deep')).toLocaleString()} past them — it was 205,550 behind 650,000, ` +
+    'which is the curve running backwards at the one place a pilot has earned it not to');
+  // And the gates GAINED the Hive rather than merely losing their ceiling to the
+  // deeps. A sector whose hardest posting is a mirror nobody can farm is a corridor.
+  check('a gate is still the biggest step in the galaxy',
+    ceiling('gate') === farmHp('hive') && ceiling('gate') / ceiling('m4') > 5,
+    `${Math.round(ceiling('m4')).toLocaleString()} at the frontier to ` +
+    `${Math.round(ceiling('gate')).toLocaleString()} at the gate — ` +
+    `x${(ceiling('gate') / ceiling('m4')).toFixed(1)}, the widest rung anybody crosses`);
   check('and no sector further out than the home ring is left empty',
     Object.keys(hops).every(k => (posted[k] ?? []).length > 0),
     Object.entries(posted).map(([k, v]) => `${k}: ${[...new Set(v)].join('/')}`).join('  '));

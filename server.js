@@ -6,7 +6,7 @@ import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
-         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp } from './shared/aliens.js';
+         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, BENCH_SLOTS, propFit } from './shared/devmap.js';
 import { respawnDelay } from './shared/spawn.js';
 import { sanitiseKills } from './shared/threats.js';
@@ -29,11 +29,14 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix } from './shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix,
+         packSown, groundK } from './shared/net.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror } from './shared/aliens.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
+import { sowOf, stepSow, sowHolds, groundFor, inGround, groundBite, stepGround,
+         stepSnare, holdEngines, BITE_TELL } from './shared/ground.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture, carried } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -371,12 +374,44 @@ for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'thresher', 2);
 for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'kedge', 4);
 
 
-// The deeps were seeded with nothing at all — three sectors past the gates, which a
-// pilot can only reach by getting through one, and there was nothing there when
-// they arrived. They hold the Hive now: it is the biggest thing in the game and it
-// belongs at the furthest thing from home, not one map short of it. They are
-// contested ground too, so three companies can still arrive at once.
-for (const d of GALAXY.filter(id => MAPS[id].deep)) seed(d, 'hive', 2);
+// And the Hive moved back one hop, onto the gates, beside the Thresher and the
+// Kedges. It is not a demotion. A gate held a mirror you cannot farm and a surveyor
+// you can — 205,550 against 65,000 — with nothing above them, so the sector's ceiling
+// was a fight nobody has a reason to take twice. A mothership is the right ceiling
+// for it, and putting it there is the move the frontier already made when Harriers
+// were stood beside the Bandits: put something on the map that asks a different
+// question from everything else on it.
+//
+// It also lands where a Hive is meant to be MET. Four hops out was the furthest map
+// in the game, which is the emptiest possible place for the only boss with a five
+// minute respawn; three hops is the first contested ground three companies reach, and
+// a mothership is a thing you want other people to see.
+for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'hive', 2);
+
+// The deeps. Two of each, per the rule above: nothing in this game is posted alone.
+//
+// They belong here rather than one hop in for the reason the sector exists at all —
+// it is the only place past a gate, so it is the only place that can hold something a
+// pilot has to get through a gate to meet. And because neither of them chases you:
+// both are slower than every hull in the game, both fight by taking ground, and
+// ground is only frightening on a map you have chosen to work rather than one you are
+// passing through.
+//
+// Two Vitriols and two Doldrums on each, and the PAIRING is the fight. Either alone
+// is answerable — you steer out of a pool, and a still on its own barely burns. Both
+// at once is what the deeps are for: a Doldrum's Slack Water takes your steering for
+// a second and a half, and a Vitriol lays its ground where you were standing when the
+// wind-up began. Neither of them has to know the other exists for that to happen —
+// they both sow at their target's feet, so if they are both fighting YOU their ground
+// lands in the same place by construction. See shared/ground.js.
+//
+// SEAM, and it is a design hole rather than a bug: measured, a party of four flying
+// the counter clears the pair and is WIPED by all four at once, so the deeps are the
+// first sector in the game that has to be pulled rather than brawled — and nothing in
+// this game teaches pulling. There is no aggro tell, no leash indicator and no line in
+// the threat file about it. Whoever adds one should start here, because this is the
+// posting that made it matter.
+for (const d of GALAXY.filter(id => MAPS[id].deep)) { seed(d, 'vitriol', 2); seed(d, 'doldrum', 2); }
 
 // --- claims -------------------------------------------------------------------
 //
@@ -481,19 +516,27 @@ const pyres = new Map();     // mapId -> reactors that have died and not yet let
 const fixes = new Map();
 const pods = new Map();      // mapId -> cargo adrift
 const hits = new Map();      // mapId -> damage numbers still climbing
+// Ground somebody sowed and has not yet expired. It is per SECTOR rather than per
+// hostile for the reason that IS the mechanic: a pool outlives the Vitriol that laid
+// it, so hanging it off the alien would delete it on the tick that made it matter
+// most — the one where you finally killed the thing and flew into what it left.
+const sown = new Map();      // mapId -> patches of Aqua Regia and Slack Water
+let groundId = 1;
 
 // Every per-sector list, named once.
 //
 // These were four separate `for (const id of Object.keys(MAPS))` loops, which was
 // fine while every sector existed at boot. An instanced sector has to create and
-// destroy all SEVEN together: six of the seven are pushed to without a `?? []`
+// destroy all EIGHT together: six of them are pushed to without a `?? []`
 // guard — `bolts.get(p.mapId).push(shot)` and its siblings — so a claim arena that
 // got six of them would throw on the frame somebody fired, and take the tick down
 // with it. `fixes` is the seventh and it arrived after this list was first
 // written, which is exactly the failure the list exists to stop: it is emptied and
 // refilled every tick by the sightings pass, and a sector missing from it throws
-// on `here.length = 0`.
-const SECTOR_LISTS = [bolts, rockets, blasts, pyres, pods, hits, fixes];
+// on `here.length = 0`. `sown` is the eighth and it arrived the same way — the
+// deeps' ground pass reads it per sector with no guard, and a claim arena missing
+// from it would throw on the first frame anybody sowed anything in one.
+const SECTOR_LISTS = [bolts, rockets, blasts, pyres, pods, hits, fixes, sown];
 const openLists  = id => { for (const L of SECTOR_LISTS) L.set(id, []); };
 const closeLists = id => { for (const L of SECTOR_LISTS) L.delete(id); };
 for (const id of Object.keys(MAPS)) openLists(id);
@@ -855,7 +898,7 @@ wss.on('connection', (ws, req) => {
           P.mapId = to; P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
           const at = b ? { x: b.x, y: b.y } : arrivalFor(P.mapId, MAPS[to]);
           Object.assign(ship, { x: at.x, y: at.y, vx: 0, vy: 0, tx: null, ty: null,
-                                dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: JUMP_CD });
+                                dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0, jumpCd: JUMP_CD });
           touch(P);
           sendMap(P);
           return tell(to === DEV_ID ? 'testing ground — /dev again to go back'
@@ -866,7 +909,7 @@ wss.on('connection', (ws, req) => {
           const at = arrivalFor(P.mapId, MAPS[a1]);
           P.mapId = a1; P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
           Object.assign(ship, { x: at.x, y: at.y, vx: 0, vy: 0, tx: null, ty: null,
-                                dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: JUMP_CD });
+                                dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0, jumpCd: JUMP_CD });
           touch(P);
           sendMap(P);
           return tell(`jumped to ${MAPS[a1].name}`);
@@ -913,7 +956,7 @@ wss.on('connection', (ws, req) => {
           refit(ship, acct.hull, acct.fit, [], acct.formation, null);
           ship.research = 0;
           Object.assign(ship, { x: b2.x, y: b2.y, vx: 0, vy: 0, tx: null, ty: null,
-                                dx: null, dy: null, charge: 0, chargeTo: null });
+                                dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0 });
           store.save(db);
           reyard();                     // the plot goes back to the ring with it
           sendWelcome();
@@ -952,7 +995,7 @@ wss.on('connection', (ws, req) => {
           const moved = P.mapId !== P.co + '1';
           P.mapId = P.co + '1';
           Object.assign(ship, { x: spot.x, y: spot.y, vx: 0, vy: 0, tx: null, ty: null,
-                                dx: null, dy: null, charge: 0, chargeTo: null });
+                                dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0 });
           touch(P);
           if (moved) sendMap(P);
           return tell('standing at your station');
@@ -1224,7 +1267,11 @@ wss.on('connection', (ws, req) => {
       refit(ship, ship.hull, ship.fit);           // rebuilt and repaired at your own dock
       Object.assign(ship, { x: at.x + Math.cos(ang) * dist, y: at.y + Math.sin(ang) * dist,
                             vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null,
-                            charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0 });
+                            charge: 0, chargeTo: null, jumpCd: JUMP_CD, shieldHit: 0,
+                            // A wreck comes back with its engines its own. Ground it
+                            // died in is still standing where it died, and inheriting
+                            // the hold would mean respawning unable to steer.
+                            snare: 0, calm: 0 });
       touch(P);
       return sendMap(P, { respawned: true });
     }
@@ -1332,7 +1379,7 @@ wss.on('connection', (ws, req) => {
       P.contacts.clear(); P.targetId = null; P.want = null; P.scoop = null;
       const a3 = arrivalAt();
       Object.assign(ship, { x: a3.x, y: a3.y, vx: 0, vy: 0, tx: null, ty: null,
-                            dx: null, dy: null, charge: 0, chargeTo: null, jumpCd: 0 });
+                            dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0, jumpCd: 0 });
       // NOT touched. An arena id must never reach the account file: a pilot who
       // was in one when the process died would come back to a sector that does not
       // exist, and the only thing standing between that and a black screen is a
@@ -1435,6 +1482,11 @@ setInterval(() => {
   for (const [id, p] of players) {
     if (p.lobby) continue;                        // still choosing a name
     step(p.ship, dt);
+    // The engines-out clock and the calm that is owed after it. AFTER step(), so the
+    // tick a hold is spent is a tick that actually had no thrust in it — advancing it
+    // first would hand every hold one free frame of acceleration back and make the
+    // guarantee in shared/ground.js a third of a tick short of true.
+    stepSnare(p.ship, dt);
     // A Shear Compensator nulls the first half of the drift margin and charges the
     // reactor for it, so how far out you can hold is how much tank you have left.
     // Nothing fitted and holdShear returns 0, which is the curve sim.js always had.
@@ -1447,7 +1499,12 @@ setInterval(() => {
     if (isHangar(p.mapId, map, p.co, p.ship, p.berths)) {
       if (p.lastDock !== p.mapId) { p.lastDock = p.mapId; touch(p); }
     }
-    stepVitals(p.ship, dt, p.docked);
+    // Shields do not come back inside a claim. See stepVitals's `dry`: the loop the
+    // designer complained about — kill one, walk out, wait, walk in again — is
+    // percentage-based regeneration, not the hostiles, and this is the whole of it.
+    // Hostiles are deliberately NOT dried out: one that heals is one you stopped
+    // shooting, and the measurement in test/arena.mjs is taken with them healing.
+    stepVitals(p.ship, dt, p.docked, isArena(p.mapId));
     // The mine, paid out once a second rather than once a tick — see bankLab.
     //
     // Date.now(), NOT the tick's `now`. The tick runs on performance.now(), which
@@ -1499,7 +1556,7 @@ setInterval(() => {
           const b = foldTo(p, MAPS, p.foldTo), home = b.map;
           p.mapId = home; p.contacts.clear(); p.targetId = null; p.want = null; p.scoop = null;
           Object.assign(p.ship, { x: b.x, y: b.y, vx: 0, vy: 0, tx: null, ty: null,
-                                  dx: null, dy: null, charge: 0, chargeTo: null });
+                                  dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0 });
           touch(p);
           // The beacon is spent here, so the bar has to be told — touch() saves it
           // but says nothing, and the box went on reading the old count.
@@ -1566,7 +1623,7 @@ setInterval(() => {
       p.targetId = null; p.want = null; p.scoop = null; p.contacts.clear();
       dropRocketsAt(p.mapId, p.ship);
       for (const list of aliens.values()) forgetPlayer(list, id);   // death settles every grudge
-      Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, charge: 0, chargeTo: null });
+      Object.assign(p.ship, { vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0 });
       touch(p);                                   // a lost hold must survive a hard kill
       if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'dead', lost, toll, where: p.mapId }));
       continue;
@@ -1580,7 +1637,7 @@ setInterval(() => {
     p.contacts.clear();
     p.targetId = null;             // jumping out breaks the engagement
     p.want = null; p.scoop = null;
-    Object.assign(p.ship, { x: a.x, y: a.y, vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, jumpCd: JUMP_CD, charge: 0, chargeTo: null });
+    Object.assign(p.ship, { x: a.x, y: a.y, vx: 0, vy: 0, tx: null, ty: null, dx: null, dy: null, jumpCd: JUMP_CD, charge: 0, chargeTo: null, snare: 0, calm: 0 });
     touch(p);
     sendMap(p);
   }
@@ -1775,6 +1832,35 @@ setInterval(() => {
           }
         }
       }
+      // Ground. It winds up visibly and then a patch lands where its target was
+      // STANDING when the wind-up began — see shared/ground.js for why that is the
+      // dodgeable end of the choice, and why the wind-up is exactly as long as a hold.
+      //
+      // Sanctuary is gated on the SAME `haven` the AI was just handed rather than on a
+      // second lookup, the way the tether and the fix above both are: one predicate,
+      // one answer. Two copies of "where is it safe to stand" is exactly how the
+      // workshop dock ended up refusing to sell anything for a day.
+      //
+      // Placed after fire() rather than before it because sowing is what these
+      // hostiles do INSTEAD of shooting, and reading it in that order is what makes
+      // the ordering obvious to whoever adds the third one.
+      if (sowOf(a.def)) {
+        const may = victim ? sowHolds(a, victim.ship, victim.haven) : false;
+        const drop = stepSow(a, victim?.ship ?? null, may, dt);
+        // A definition may not have more patches alive than it says. The OLDEST goes
+        // rather than the newest being refused: refusing would mean a Vitriol that had
+        // saturated the field stopped doing the only thing it does, and a pilot could
+        // farm one from a corner it had already used up.
+        if (drop) {
+          const here = sown.get(mapId);
+          const mine = here.filter(g => g.owner === a.id);
+          if (mine.length >= (a.def.sow.max ?? 1)) {
+            const oldest = mine.reduce((w, g) => (g.t < w.t ? g : w));
+            here.splice(here.indexOf(oldest), 1);
+          }
+          here.push(Object.assign(groundFor(a, drop.at), { id: groundId++, owner: a.id }));
+        }
+      }
       // Not while it is chasing somebody: a provoked alien follows you in.
       if (a.target === null) shoveFromBase(a, map);
       if (a.hp <= 0) killAlien(mapId, a);
@@ -1935,6 +2021,65 @@ setInterval(() => {
       }
     }
   }
+  // Ground. In the same pass the pyres are settled in, and for the same reason: it
+  // runs after every hull in the sector has moved, so "who is standing in this" is
+  // asked of where everybody actually IS rather than of where they were before the
+  // tick. A ship the ground kills is settled by the wreck block at the top of the
+  // next tick, exactly the way a ship a bolt kills is — nothing here has to know what
+  // dying costs.
+  //
+  // The engines-out it hands out is read by step() on the NEXT tick, 33ms later. That
+  // is deliberate and it is the only order that works: applying it before the ships
+  // had moved would snare a pilot for crossing a rim they had not crossed yet.
+  for (const [mapId, list] of sown) {
+    for (let i = list.length - 1; i >= 0; i--) if (!stepGround(list[i], dt)) list.splice(i, 1);
+    if (!list.length) continue;
+    const map = mapOf(mapId);
+    for (const [id, p] of players) {
+      if (p.mapId !== mapId || p.dead || p.lobby || p.ship.hp <= 0) continue;
+      const haven = inHaven(map, p.ship);
+      let worst = 0, grab = 0;
+      for (const g of list) {
+        // Sanctuary, and it is TWO rules on purpose because they answer two different
+        // questions.
+        //
+        // The BURN goes through mayHarm() — the same predicate stepAlienAI targets
+        // with — so a pool cannot cook somebody parked in a portal mouth who never
+        // touched the thing, and it CAN reach somebody who shot it and ran there.
+        // `g.by` is the sower's provoked set by reference, so that answer keeps being
+        // right for the thirty seconds a pool outlives the Vitriol that laid it.
+        //
+        // The HOLD does not. Sanctuary is refused to a still outright, provoked or
+        // not, and that is shared/kedge.js's rule rather than a new one: fixHolds()
+        // has broken on a haven since the day it was written, with no provocation
+        // exception, because taking a pilot's position away from them inside a portal
+        // mouth is taking the mouth away from them. A pool that burns you there is a
+        // price you chose to stand in. A still that holds you there is a door shut.
+        const inside = inGround(g, p.ship);
+        const bit = groundBite(g, id, p.ship, inside && mayHarm({ provoked: g.by }, { id, haven }),
+                               poolOf(p.ship), dt);
+        // Patches do NOT stack. A ship standing where two pools overlap takes the
+        // worse of them and not the sum — which is what stops six of a Vitriol's own
+        // patches being a delete button, and it is the same claim threatDps makes when
+        // it counts a sower's rate once rather than `max` times.
+        if (bit.burn > worst) worst = bit.burn;
+        if (bit.hold > grab && !haven) grab = bit.hold;
+      }
+      if (worst > 0) {
+        const split = applyDamage(p.ship, worst);
+        p.sear = (p.sear ?? 0) + worst;
+        // One floating number a second rather than thirty, the same as a Censer's
+        // field: a rate that printed every tick buried the screen and said nothing
+        // anybody could read.
+        if ((p.searT = (p.searT ?? 0) + dt) >= BITE_TELL) {
+          hits.get(mapId).push({ x: p.ship.x, y: p.ship.y - p.ship.r - 6, n: p.sear,
+                                 sh: split.hull === 0, by: null, t: HIT_TIME, ttl: HIT_TIME });
+          p.sear = 0; p.searT = 0;
+        }
+      }
+      if (grab > 0) holdEngines(p.ship, grab);
+    }
+  }
   // Rebuild the sightings from whoever is actually holding one. Placed here, in the
   // same pass the pyres are settled in, so a fix and the hostile that owns it can
   // never be a frame apart.
@@ -2071,7 +2216,16 @@ setInterval(() => {
       // arrives here already 0..1 and there is no normalising constant for the
       // client to be told. That is why it is a share: `abl` is one integer, and a
       // second copy of the scale would be a rule kept twice.
-      abl: Math.round(100 * (a.draw ?? a.spin ?? a.fix ?? a.load ?? 0)), name: '' });
+      //
+      // WHICH of the five it is is dialOf()'s answer, not a chain of `??` here. It
+      // was `a.draw ?? a.spin ?? a.fix ?? a.load ?? 0`, reading the live fields in a
+      // fixed order — which silently keeps the first a hostile happens to have, so
+      // the second one's dial would never reach the client at all. Nothing throws and
+      // nothing is logged; what a pilot sees is a mechanic that is running and
+      // invisible, which is precisely what the Thresher's chamber was until 0.54.
+      // dialOf reads the DEFINITION, which is static and can be counted, and
+      // test/ground.mjs asserts off the same table that no hostile has two.
+      abl: Math.round(100 * dialOf(a)), name: '' });
     if (!byMap.has(mapId)) byMap.set(mapId, []);
     byMap.get(mapId).push({ id: a.id, co: 'x', ship: a });   // 'x' == hostile to every company
   }
@@ -2117,9 +2271,36 @@ setInterval(() => {
     // is furniture in a haven — one popping into being at 2200px would read as a
     // bug rather than as stealth.
     const yardHere = labs.get(V.mapId) ?? [];
+    // Ground is drawn from OUTSIDE its own radius, exactly the way a pyre is: you have
+    // to be able to see the thing you are deciding not to fly into, and a 420px still
+    // that appeared once your nose was already over the rim would be the one hazard in
+    // the game with no tell at all.
+    const field = (sown.get(V.mapId) ?? []).map(g => ({
+      id: g.id, x: g.x, y: g.y, r: g.r, k: groundK(g.kind), on: 1,
+      p: Math.max(0, Math.min(1, 1 - g.t / g.ttl)),
+    }));
+    // And the ones being laid right now, taken off whoever is holding a wind-up. A
+    // pending patch borrows its sower's id, which cannot collide because alien ids
+    // start at a million and ground ids start at one — so the ghost has a stable
+    // identity for the whole wind-up and vanishes on the tick the real row appears
+    // with an id of its own.
+    for (const a of aliens.get(V.mapId) ?? []) {
+      if (a.dead > 0 || !a.sowAt || !((a.sow ?? 0) > 0)) continue;
+      field.push({ id: a.id, x: a.sowAt.x, y: a.sowAt.y, r: a.def.sow.r,
+                   k: groundK(a.def.sow.kind), on: 0, p: Math.max(0, Math.min(1, a.sow)) });
+    }
     const streams = { ships, pods: new Map(cans.map(c => [c.id, packPod(c)])),
-                      labs: new Map(yardHere.map(l => [l.id, packLab(l, l.token === V.token)])) };
+                      labs: new Map(yardHere.map(l => [l.id, packLab(l, l.token === V.token)])),
+                      sown: new Map(field
+                        .filter(g => Math.hypot(g.x - V.ship.x, g.y - V.ship.y) <= reach + g.r)
+                        .map(g => [g.id, packSown(g)])) };
     const bag = { hold: V.hold, cap: V.ship.stats.cargo,
+      // Seconds of engines-out left, for the pilot it is happening to. It rides the
+      // bag rather than the ship row because the bag is a set difference — anything
+      // that is not a stream and not ephemeral is diffed for free — and because
+      // SHIP_FIELDS is at 30 of a hard 31. It is 0 for everybody who is not currently
+      // coasting, so it is sent once and then never mentioned again.
+      snare: +Math.max(0, V.ship.snare ?? 0).toFixed(2),
       credits: V.credits, docked: !!V.docked, vault: V.vault, gear: V.gear,
       // What the station earns per second, and what it has built. `income` moves
       // only when a module is bought, so it costs nothing per tick — and it is

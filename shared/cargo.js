@@ -95,6 +95,8 @@ export const husk = (rung, k) => {
 //   thresher     5   Platinum     48   144 of a 240     ~28600 cr
 //   leviathan    5   Platinum     15    45 of a 240     ~8940 cr
 //   hive         5   Platinum     80   240 of a 240     ~47680 cr   (capped)
+//   vitriol      5   Platinum     80   240 of a 240     ~47680 cr   (capped)
+//   doldrum      5   Platinum     80   240 of a 240     ~47680 cr   (capped)
 //
 // The k column is min(value target, hold ceiling), rounded. test/cargo.mjs
 // re-derives every one of these from shared/aliens.js and fails if a number here
@@ -110,6 +112,14 @@ export const DROPS = {
   thresher:  husk(5, 48),
   leviathan: husk(5, 15),
   hive:      husk(5, 80),
+  // The deeps, and they are the same k as the Hive because the same thing binds:
+  // the value target asks for 0.14 credits per point of 2,055,480, which is 287,767
+  // and about six Ore Tenders of platinum, and six trips is not a reward. Both drop
+  // exactly one full hold and keep the rest in the bounty, where a party splits it
+  // without anybody ferrying. The ceiling binds on three hostiles now rather than
+  // one, which is the rule working rather than a coincidence.
+  vitriol:   husk(5, 80),
+  doldrum:   husk(5, 80),
 };
 
 // A pod dropped by a shared kill belongs to one of the pilots who earned it, so

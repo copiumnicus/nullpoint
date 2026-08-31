@@ -143,7 +143,20 @@ export function step(s, dt) {
   if (s.jumpCd > 0) s.jumpCd -= dt;
   stepPower(s.power, dt, s.stats);
   const thr = boostOf(s.power, 'thrusters', s.stats);
-  const MAX = speedOf(s) * thr, ACC = s.stats.accel * thr;
+  // Engines out. `snare` is seconds of no thrust left on the clock, put there by a
+  // Doldrum's Slack Water and taken off by stepSnare in shared/ground.js.
+  //
+  // It zeroes the ACCELERATION and nothing else, which is the whole of what makes it
+  // shippable. Zeroing MAX instead would ask the ship to brake to a stop, which is a
+  // stun with extra steps; leaving both alone and clearing the destination brakes it
+  // just as hard, because a body with nowhere to go is a body decelerating at full
+  // thrust. With no acceleration there is nothing to change the velocity with, so the
+  // ship keeps exactly the momentum it had and coasts — there is no drag anywhere in
+  // this function to take it away. The pilot keeps their guns, their target, their
+  // drone, their beacon and their heading; what they lose is the ability to change
+  // their mind for a second and a half. See shared/ground.js for why that is the only
+  // version of a root this game is allowed to have.
+  const MAX = speedOf(s) * thr, ACC = (s.snare ?? 0) > 0 ? 0 : s.stats.accel * thr;
 
   let wantVx = 0, wantVy = 0;
   if (s.dx !== null) {
@@ -236,7 +249,15 @@ export const DOCK_HULL_RATE   = 0.12; // × max hull per second, so ~8s from scr
 // in the last frame.
 export const DOCK_INTERRUPT   = 4.0;  // s of quiet before the dock will work on you
 
-export function stepVitals(s, dt, docked = false) {
+// `dry` is a sector where shields do not come back. It is the exact and whole fix
+// for "kill one, walk out, let the shields refill, walk in again": percentage-based
+// regeneration (0.50) puts 3.33% of the pool back every second once nothing has
+// hit you for shieldDelay, which refills a finished ship in half a minute and turns
+// a closed field into a fight with a rest button. Nothing else about the fight
+// changes — you still take the same damage in the same order, you simply do not
+// get it back by leaving. A property of the SECTOR, passed in by the caller, so an
+// Ironhusk is an Ironhusk everywhere.
+export function stepVitals(s, dt, docked = false, dry = false) {
   s.sinceHit += dt;
   s.sinceShot = (s.sinceShot ?? 1e9) + dt;   // a veil rebuilds from this
   if (s.shieldHit > 0) s.shieldHit = Math.max(0, s.shieldHit - dt);
@@ -261,7 +282,7 @@ export function stepVitals(s, dt, docked = false) {
     s.hp     = Math.min(s.stats.hull, s.hp + s.stats.hull * DOCK_HULL_RATE * dt);
     return;
   }
-  if (s.sinceHit < s.stats.shieldDelay / m || s.shield >= max) return;
+  if (dry || s.sinceHit < s.stats.shieldDelay / m || s.shield >= max) return;
   // A SHARE of the pool, so the seconds to full do not change when the pool does.
   // `max` already carries the power boost and the hull ability, so a bigger shield
   // refills proportionally faster and an Anchored Bulwark is not punished for the

@@ -58,7 +58,12 @@ check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
   const oreOf    = t => t.reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
   // The hold of a pilot who has any business being in that sector.
   const HOLD = { drifter: 60, harrier: 60, ironhusk: 100, lamprey: 100, bandit: 240, leviathan: 240,
-                 thresher: 240, hive: 240, lamprey: 100, censer: 100, kedge: 240 };
+                 thresher: 240, hive: 240, lamprey: 100, censer: 100, kedge: 240,
+                 // The deeps. A pilot with any business four hops out is flying the
+                 // same Ore Tender they took to a gate, so the ceiling is the same 240
+                 // — which is the point of this row: it is the hold of the PILOT, not a
+                 // property of the hostile, and it stops climbing once the hold does.
+                 vitriol: 240, doldrum: 240 };
 
   for (const k of WILD) {
     const ehp = effectiveHp(k), rung = oreRung(ehp), t = DROPS[k];
@@ -75,14 +80,32 @@ check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
   check('a pod always fits the hold of a pilot equipped to be there',
     WILD.every(k => worstPod(DROPS[k]) <= HOLD[k]),
     WILD.map(k => `${k} ${worstPod(DROPS[k])}/${HOLD[k]}`).join('  '));
+  // Which hostiles the VALUE target binds on and which the HOLD binds on is read off
+  // the two rules now rather than listed by hand. The list had to be edited every time
+  // a hostile was added, which is a test quietly ceasing to cover the thing it was
+  // written for — it named nine of ten, and would have named nine of twelve.
+  const capped = k => worstPod(DROPS[k]) >= HOLD[k];
   check('ore is about a fifth of the kill, until the hold stops it',
-    ['drifter', 'harrier', 'ironhusk', 'bandit', 'leviathan', 'thresher', 'lamprey', 'censer', 'kedge']
+    WILD.filter(k => !capped(k))
       .every(k => oreOf(DROPS[k]) > ORE_RATE * effectiveHp(k) * 0.75
                && oreOf(DROPS[k]) < ORE_RATE * effectiveHp(k) * 1.25),
-    `at ${ORE_RATE} cr per ehp — the Hive is exempt because 47 Ore Tenders of platinum is not a reward`);
-  check('and the Hive is the one the ceiling binds on',
-    worstPod(DROPS.hive) === HOLD.hive && oreOf(DROPS.hive) < ORE_RATE * effectiveHp('hive'),
-    `exactly one Ore Tender, and the other ${Math.round(ORE_RATE * effectiveHp('hive') - oreOf(DROPS.hive))} cr stays in the bounty`);
+    `at ${ORE_RATE} cr per ehp across ${WILD.filter(k => !capped(k)).length} hostiles — ` +
+    `${WILD.filter(capped).join(', ')} are exempt because six Ore Tenders of platinum is not a reward`);
+  // REWRITTEN, not deleted. It named the Hive because the Hive was the only thing the
+  // ceiling bound on; three hostiles are past that line now and the claim is the same
+  // one — above a certain rung the value target stops being a reward and starts being
+  // a second trip, so everything up there pays one full hold and keeps the rest in the
+  // bounty, where a party splits it without anybody ferrying.
+  check('past a certain rung the hold binds instead, and the rest stays in the bounty',
+    WILD.filter(capped).length >= 3 &&
+    WILD.filter(capped).every(k => worstPod(DROPS[k]) === HOLD[k]
+                                && oreOf(DROPS[k]) < ORE_RATE * effectiveHp(k)) &&
+    // and it binds from the TOP down: nothing capped may be easier than anything not
+    WILD.filter(capped).every(k => WILD.filter(j => !capped(j))
+      .every(j => effectiveHp(k) > effectiveHp(j))),
+    WILD.filter(capped).map(k =>
+      `${k} keeps ${Math.round(ORE_RATE * effectiveHp(k) - oreOf(DROPS[k])).toLocaleString()} cr in the bounty`)
+      .join(', '));
   check('the rung never runs off the end of the metals',
     oreRung(1e12) === TOP_RUNG && oreRung(1) === 1 && oreRung(BASE_HP) === 1,
     'clamped at platinum — a table with one row left is a fixed drop, not a table');

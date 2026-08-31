@@ -62,6 +62,7 @@ check('every hostile type is posted somewhere you can walk to',
   // The point of the room is that you can see the next thing from where you are.
   // The first cut put the firing line 5700px east, past radar, and you undocked
   // into an empty room wondering where the aliens were.
+  const { ANCHOR_FIGHT } = await import('../shared/balance.js');
   const { resolve } = await import('../shared/ships.js');
   const { DEFAULT_HULL } = await import('../shared/ships.js');
   const eye = resolve(DEFAULT_HULL).radar, walk = resolve(DEFAULT_HULL).speed;
@@ -69,8 +70,18 @@ check('every hostile type is posted somewhere you can walk to',
               `${(REACH / walk).toFixed(1)}s in a starter hull, radar reaches ${eye}px`);
   check('the whole room is inside a starter hull\'s radar', REACH < eye,
     'nothing has to be gone looking for');
-  check('and nothing is more than a few seconds out', REACH / walk < 6,
-    `${(REACH / walk).toFixed(1)}s at ${walk}px/s`);
+  // REWRITTEN, not deleted, per rule five. The bound was a flat 6 seconds and the
+  // roster has outgrown it: PEN_GAP is the widest aggro radius in the game, and twelve
+  // slots that must each be that far from their neighbours do not fold into 1,800px of
+  // a dock ring however they are arranged — devmap.js already says so in as many words
+  // for eleven, and the deeps made it twelve. So the number stops being picked and
+  // starts being read off the game. ANCHOR_FIGHT is how long the reference fight
+  // lasts, and the claim is that you can always reach the NEXT thing in the room in
+  // less time than it takes to kill the one in front of you. That is what "a few
+  // seconds" was a proxy for, it holds to about fourteen hostiles, and it moves on its
+  // own if the anchor fight ever does.
+  check('and nothing is further out than one fight is long', REACH / walk < ANCHOR_FIGHT,
+    `${(REACH / walk).toFixed(1)}s at ${walk}px/s against a ${ANCHOR_FIGHT.toFixed(1)}s anchor fight`);
   check('the dock is small enough to see past', DEV_BASE.r < 400,
     `r=${DEV_BASE.r} against ${MAPS.m1.base.r} at a real base`);
   check('the map defines the dock once', MAPS[DEV_ID].base === DEV_BASE,

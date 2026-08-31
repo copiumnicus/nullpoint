@@ -10,7 +10,7 @@ import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu,
 import { settingsLayout } from '../shared/settings.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packSown } from '../shared/net.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS } from '../shared/cargo.js';
 import { ALIENS, WILD } from '../shared/aliens.js';
@@ -25,7 +25,7 @@ import { countOf, mission, ARENA_MODULES } from '../shared/arena.js';
 import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
 import { Tracker, textWidth, alphaOf } from './uibox.mjs';
-import { collisions, say, key } from './uilint.mjs';
+import { collisions, crossings, crowding, say, sayCross, sayTight, key, same } from './uilint.mjs';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -220,21 +220,28 @@ await import('./.client.mjs');
 
 const ws = socks[0];
 const feed = o => ws.onmessage({ data: JSON.stringify(o) });
-const FOUND = new Map();
+const FOUND = new Map(), CROSS = new Map(), TIGHT = new Map();
 // Every window a player might actually have. Panels are laid out from the
 // viewport, so a line that clears its neighbour at 1600x900 can sit on top of
 // it at 1366x768, and the harness has only ever run at one size.
 const SIZES = [[2560, 1440], [1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 640], [820, 560]];
 let SEEN = 0, SIZE = '1600x900';
 // One report per pair of strings, not per frame: the threat file drawn at
-// twenty-six eased scroll offsets is one overlap, not twenty-six.
+// twenty-six eased scroll offsets is one overlap, not twenty-six. Numbers are
+// collapsed in the key, so "x240" against a price and "x241" against the same
+// price is one finding.
+const keep = (m, k, v) => {
+  if (!m.has(k)) m.set(k, { v, n: 0, sizes: new Set() });
+  const f = m.get(k); f.n++; f.sizes.add(SIZE);
+};
 const analyse = () => {
   SEEN++;
-  for (const c of collisions(T.els, innerWidth, innerHeight)) {
-    const k = key(c);
-    if (!FOUND.has(k)) FOUND.set(k, { c, n: 0, sizes: new Set() });
-    const f = FOUND.get(k); f.n++; f.sizes.add(SIZE);
-  }
+  const els = T.els;
+  for (const c of collisions(els, innerWidth, innerHeight)) keep(FOUND, key(c), c);
+  for (const c of crossings(els, innerWidth, innerHeight))
+    keep(CROSS, `${same(c.a.text)}|${Math.round(c.r.w)}x${Math.round(c.r.h)}`, c);
+  for (const c of crowding(els, innerWidth, innerHeight))
+    keep(TIGHT, `${same(c.a.text)}|${same(c.b.text)}|${c.way}`, c);
 };
 const frame = t => { audio.now = t / 1000; const cb = raf; raf = null;
                      T.reset(); cb(t); analyse(); };
@@ -624,6 +631,71 @@ const dismiss = () => {
   console.log(`mirror: the chamber drawn over ${drew} frames from empty to full, plus a missing dial and a NaN`);
 }
 
+// Sown ground, through the real draw path — both kinds, the wind-up ghost and the
+// live patch, over frames far enough apart that every animated part actually moves.
+//
+// This exists because ground is the first thing in this game drawn from a stream
+// that is EMPTY on every map but three. A draw path nothing ever enters is a draw
+// path nobody has run, which is exactly how two helper functions went missing while
+// every frame still rendered — `hover` starts null, and the render short-circuited
+// before ever reaching them.
+//
+// The last rows are the guards, and each is a real wire state: a kind the client has
+// never heard of (an older client, a newer server), a radius of zero, `p` absent and
+// `p` NaN. Every one must draw something or nothing and never a NaN, because the
+// harness rejects any draw call carrying one.
+{
+  dismiss();
+  feed({ t: 'map', map: 'd1' });
+  const mine = (extra = {}) => packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+    hull: 'bulwark', hp: 70, sh: 90, flash: 0, tgt: 0, shot: 0, rk: 0, guns: 4, lvl: 9, drones: 0,
+    form: 0, dmask: 0, psys: 0, plvl: 0, vis: 2, name: 'you', ...extra });
+  const me4 = mine();
+  const sower = (hull, extra) => packShip({ id: 1_000_900 + (hull === 'doldrum' ? 1 : 0),
+    x: 6700, y: 4000, heading: 3.1, charge: 0, co: 'x', hull, hp: 100, sh: 100, flash: 0,
+    tgt: 1, shot: 0, rk: 0, vis: 1, name: '', ...extra });
+  const patch = (id, k, on, p, extra = {}) =>
+    packSown({ id, x: 6100, y: 4100, r: k ? 420 : 195, p, k, on, ...extra });
+  let drew = 0;
+  // both kinds, from the moment the marker appears to the moment the ground goes out
+  for (const k of [0, 1])
+    for (const [on, p] of [[0, 0.02], [0, 0.4], [0, 0.99], [1, 0], [1, 0.3], [1, 0.7], [1, 0.99]]) {
+      feed({ t: 's', ships: [me4, sower(k ? 'doldrum' : 'vitriol', { abl: on ? 0 : Math.round(p * 100) })],
+             sown: [patch(50 + k, k, on, p)] });
+      frame(t += 16); frames++; drew++;
+      frame(t += 40); frames++; drew++;           // and again, so the blisters and the ripple move
+    }
+  // the combo, on one screen: a pool inside a still, both sowers winding
+  feed({ t: 's', ships: [me4, sower('vitriol', { abl: 60 }), sower('doldrum', { abl: 30 })],
+         sown: [patch(60, 1, 1, 0.5), packSown({ id: 61, x: 6100, y: 4100, r: 195, p: 0.2, k: 0, on: 1 }),
+                packSown({ id: 62, x: 6000, y: 4000, r: 195, p: 0.6, k: 0, on: 0 })] });
+  frame(t += 16); frames++;
+  // and the pilot's own engines-out, which is drawn off the bag rather than a row —
+  // with a previous frame behind it so the velocity vector has something to read
+  feed({ t: 's', ships: [me4, sower('doldrum', { abl: 0 })], sown: [patch(70, 1, 1, 0.4)], snare: 1.5 });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [mine({ x: 6040, y: 4020 }), sower('doldrum', { abl: 0 })],
+         sown: [patch(70, 1, 1, 0.5)], snare: 0.9 });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me4], sown: [], snare: 0 });
+  frame(t += 16); frames++;
+  // the guards
+  feed({ t: 's', ships: [me4], sown: [packSown({ id: 80, x: 6100, y: 4100, r: 195, p: 0.5, k: 7, on: 1 })] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me4], sown: [[81, 6100, 4100, 0, 0.5, 0, 1]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me4], sown: [[82, 6100, 4100, 195, undefined, 0, 1]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me4], sown: [[83, 6100, 4100, 195, NaN, 1, 1], [84, 6100, 4100, NaN, 0.5, 0, 0]] });
+  frame(t += 16); frames++;
+  // and put the client back where it found it. This block is the only one that flies
+  // to a deep sector, and leaving it there hands whatever runs next a different world.
+  feed({ t: 'map', map: 'm1' });
+  frame(t += 16); frames++;
+  console.log(`ground: both kinds drawn over ${drew} frames from marker to expiry, plus the combo, ` +
+              'the engines-out vector, an unknown kind, a zero radius, a missing phase and a NaN');
+}
+
 // The SPACE prompt, and the strip of screen it has been fighting over since it was
 // added. It sat 34px above the bar; a box tooltip covers r.y-24 to r.y-4, so hovering
 // a weapon to read what is loaded printed the tooltip straight through the sentence
@@ -884,8 +956,17 @@ const dismiss = () => {
     const scrolled = topRow();
     if (scrolled === before) errs.push('the threat file did not scroll when the wheel was turned');
     // Far past the end, then all the way back: it must return, not owe steps.
-    for (let i = 0; i < 40; i++) { evt('wheel', { deltaY: 240 }); frame(t += 16); frames++; }
-    for (let i = 0; i < 4; i++) { evt('wheel', { deltaY: -240 }); frame(t += 16); frames++; }
+    //
+    // SYMMETRIC, rather than forty notches down and four up. Four happened to clear a
+    // ten-hostile file, and stopped clearing it at twelve — so the claim had quietly
+    // become "the list is short", and it started failing on a roster change and on
+    // anything that ran enough frames before it, rather than on the bug it was
+    // written for. The same count both ways cannot: what this is looking for is
+    // phantom steps counted past the end, and if any are owed the file does not come
+    // back however long the list is or whatever has happened before it.
+    const NOTCHES = 40;
+    for (let i = 0; i < NOTCHES; i++) { evt('wheel', { deltaY: 240 }); frame(t += 16); frames++; }
+    for (let i = 0; i < NOTCHES; i++) { evt('wheel', { deltaY: -240 }); frame(t += 16); frames++; }
     const back = topRow();
     if (back !== before)
       errs.push(`scrolling to the end and back left the threat file on ${back} instead of ${before}`);
@@ -2375,15 +2456,22 @@ const dismiss = () => {
 // index.html line number on each of them, which costs about eight seconds and is
 // why it is off here.
 {
-  const R = [...FOUND.values()].sort((a, b) => b.n - a.n);
-  if (process.env.LAYOUT)
-    for (const f of R) console.log(`  [${String(f.n).padStart(4)} frames] {${[...f.sizes].join(' | ')}}\n      ${say(f.c)}`);
-  if (R.length)
-    errs.push(`${R.length} places print two labels through each other:\n    ` +
-              R.slice(0, 8).map(f => say(f.c)).join('\n    '));
-  else
-    console.log(`  ok   nothing is printed through anything else  — ${SEEN.toLocaleString('en-US')} frames, ` +
-                `${SIZES.length} window sizes, no two labels share a pixel`);
+  const report = (m, tell, claim, detail) => {
+    const R = [...m.values()].sort((a, b) => b.n - a.n);
+    if (process.env.LAYOUT)
+      for (const f of R) console.log(`  [${String(f.n).padStart(4)} frames] {${[...f.sizes].join(' | ')}}\n      ${tell(f.v)}`);
+    if (R.length) errs.push(`${R.length} ${claim}:\n    ` + R.slice(0, 8).map(f => tell(f.v)).join('\n    '));
+    else console.log(`  ok   ${detail}`);
+  };
+  const where = `${SEEN.toLocaleString('en-US')} frames, ${SIZES.length} window sizes`;
+  report(FOUND, say, 'places print two labels through each other',
+    `nothing is printed through anything else  — ${where}, no two labels share a pixel`);
+  report(CROSS, sayCross, 'labels are written across something that is not their own frame',
+    `nothing is written across a control it has nothing to do with  — ${where}, the minimap, ` +
+    'the STAR SYSTEM button and the now-playing tag included');
+  report(TIGHT, sayTight, 'pairs of labels are crammed together',
+    `every two labels have room to be read apart  — ${where}, a character between them side by side ` +
+    'and a descender stacked');
 }
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));

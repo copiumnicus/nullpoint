@@ -8,10 +8,10 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.64';
+export const VERSION = '0.67';
 
 export const PATCHES = [
-  { v: '0.64', notes: [
+  { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
     'Half again the shots at full, and your reach drops to 65% to pay for it',
     'Lock is gone: an Aspect Filter already found a Bandit, and any hull can buy one',
@@ -19,6 +19,31 @@ export const PATCHES = [
     'Siege and Rapid Cadence no longer cancel into a free half-again of damage',
     'Percentages compound now, so a trade and its opposite come out at exactly x1.00',
     'A Kedge hits for 467 a bolt: its gun is a share of the ship it is posted against',
+  ] },
+  { v: '0.66', notes: [
+    'The Corsair Hive has moved to the gates. Something worse holds the deeps now',
+    'A Vitriol lays pools of Aqua Regia where you were standing, and they stay there',
+    'A Doldrum lays stills: cross one and your engines cut for a second and a half',
+    'You keep your speed and your guns — you just cannot change course. Watch your line',
+  ] },
+  { v: '0.65', notes: [
+    'The hotkey strip no longer runs across the minimap and the star chart button',
+    'It wraps onto a second line instead, and keeps clear of the reactor dial too',
+    'Tooltips wrap what they have to say rather than writing it past their own frame',
+    'The sector name, the cargo count and the beacon label all have room to breathe',
+  ] },
+  { v: '0.64', notes: [
+    'Claims got hard. Nothing in one ever breaks off — you cannot walk away and wait',
+    'And your shields do not come back in there, so the ship you arrive in is all you get',
+    'Clearing one now costs about nine tenths of your ship instead of a third',
+    'Flying into the middle of a claim kills you, at every tier, not just the first',
+    'Kedges hold the upper two rocks: they haul you back onto ground you just gave up',
+  ] },
+  { v: '0.63', notes: [
+    'A Thresher fills its chamber faster: the bolt it throws back now reads 9,706',
+    'Route power to your weapons and it loads harder — that is where the size is',
+    'Routing power costs you nothing over a fight — the same damage, fewer pieces',
+    'Weaving still beats one from x8 hull and shields; standing still needs x16',
   ] },
   { v: '0.62', notes: [
     'Eight places printed two labels on top of each other. None of them do now',

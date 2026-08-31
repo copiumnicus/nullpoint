@@ -318,9 +318,20 @@ console.log('\nwhat is deliberately not deltaed');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost
   // 1,570 bytes once on the keyframe and exactly nothing per tick.
-  check('ships, pods and research stations are the ones that are worth diffing',
-    same(Object.keys(STREAMS), ['ships', 'pods', 'labs']),
+  // REWRITTEN, not deleted: sown ground joined them, and it is the case the argument
+  // was always making rather than an exception to it. A patch of Aqua Regia lives
+  // thirty-six seconds, has an id, and SIX of its seven fields never change once it is
+  // laid — the exact inverse of the ephemeral claim above, which is "no identity,
+  // under a second, every field stale". Measured at the steady state of a deep
+  // sector, sixteen patches at 30Hz: 12.76 KiB/s sent whole against 0.61 keyed, and
+  // the whole figure is more than every bolt, rocket, blast and hit in a twenty-pilot
+  // brawl, which the line above already prices at 3.5.
+  check('ships, pods, research stations and sown ground are the ones worth diffing',
+    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown']),
     'long-lived, keyed, and 82% of the traffic in a crowded sector');
+  check('and nothing is in both lists',
+    !Object.keys(STREAMS).some(k => EPHEMERAL.includes(k)),
+    'a stream that was also ephemeral would be sent twice and diffed against itself');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — the wire'}\n`);

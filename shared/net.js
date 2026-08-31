@@ -144,10 +144,58 @@ export const packFix   = (o, own) => [Math.round(o.x), Math.round(o.y), Math.rou
                                       +Math.max(0, Math.min(1, o.p)).toFixed(3), own ? 1 : 0];
 export const unpackFix = arr => { const o = {}; for (let i = 0; i < FIX_FIELDS.length; i++) o[FIX_FIELDS[i]] = arr[i]; return o; };
 
+// A patch of sown ground. Where, how big, how far through its life, and which of
+// the two kinds it is — so the client picks a palette from one integer rather than
+// from a colour on the wire.
+//
+// It is a keyed STREAM and not an EPHEMERAL, and that is a measurement rather than
+// a preference. Read the note on EPHEMERAL below: those go whole every tick because
+// they have no identity, live under a second, and the one field on them that
+// matters changes every tick. A patch is the exact opposite of all three — it lives
+// twelve to thirty-six seconds, it has an id, and SIX of its seven fields never change
+// once it is laid. Measured, at the steady state of a deep sector — two Vitriols at
+// six pools each and two Doldrums at two stills, sixteen patches at 30Hz:
+//
+//     sent whole every tick   12.76 KiB/s     more than every bolt, rocket, blast
+//     keyed and diffed         0.61 KiB/s     and hit in a twenty-pilot brawl, which
+//                                             net.js already measures at 3.5
+//
+// Being able to say that in one line of data here is the whole point of STREAMS.
+// `on` is whether the ground is LIVE or still being laid, and it is the reason a
+// sower has a tell at all. A patch that only appeared once it was already burning
+// would be the one hazard in the game you find out about by being in it — so the
+// place it is going to land is on the wire for the whole wind-up, at the radius it
+// will have, tightening. That is shared/kedge.js's rule for a fix marker restated:
+// a marker you can see that is not where you end up is the same bug as a row you
+// can see and cannot click, and this codebase has shipped that twice.
+//
+// `p` therefore means "how far through whatever this row is currently doing" — the
+// wind-up while `on` is 0, and the patch's own life once it is 1. One field, two
+// phases, and the phase is the field next to it rather than something the client
+// has to infer from a radius that has not changed.
+export const SOWN_FIELDS = ['id', 'x', 'y', 'r', 'p', 'k', 'on'];
+// `p` is fixed to TWO places, not the three every other phase on this wire uses,
+// and that is a measurement rather than sloppiness. It is the only field on a patch
+// that ever changes, so it alone decides what the stream costs: at three places a
+// thirty-six-second pool ticks a new value every frame and sixteen patches cost 4.90
+// KiB/s; at two it changes only every eleventh frame and they cost 0.61. One percent
+// of a thirty-six-second life is 0.36s of a countdown arc, which is under the resolution of
+// the thing it is drawing.
+export const packSown   = o   => [o.id, Math.round(o.x), Math.round(o.y), Math.round(o.r),
+                                  +Math.max(0, Math.min(1, o.p)).toFixed(2), o.k | 0, o.on ? 1 : 0];
+export const unpackSown = arr => { const o = {}; for (let i = 0; i < SOWN_FIELDS.length; i++) o[SOWN_FIELDS[i]] = arr[i]; return o; };
+
+// Which kind of ground, as an integer. Declared here rather than as a string on the
+// row because the client draws from it and the server writes it, and a spelling
+// kept in two places is the drift this file exists to prevent.
+export const GROUND_KINDS = ['regia', 'slack'];
+export const groundK = kind => Math.max(0, GROUND_KINDS.indexOf(kind));
+
 export const STREAMS = {
   ships: streamOf('s', SHIP_FIELDS, 'id'),
   pods:  streamOf('p', POD_FIELDS,  'id'),
   labs:  streamOf('l', LAB_FIELDS,  'id'),
+  sown:  streamOf('g', SOWN_FIELDS, 'id'),
 };
 
 // Deliberately NOT deltaed, and this is the measurement that says so rather than

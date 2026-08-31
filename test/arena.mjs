@@ -29,7 +29,8 @@ import { newShip, step, stepVitals, stepDrift, applyDamage, drainHull, havenKind
 import { fire, stepBolts, faceTarget } from '../shared/combat.js';
 import { launch, stepRockets } from '../shared/rockets.js';
 import { newAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading, mayHarm,
-         effectiveHp, threatDps, ALIENS, WILD, storeHit, stepMirror } from '../shared/aliens.js';
+         effectiveHp, threatDps, ALIENS, WILD, storeHit, stepMirror,
+         noLeash, noHorizon } from '../shared/aliens.js';
 import { stepSiphon, tetherHolds } from '../shared/siphon.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from '../shared/kedge.js';
 import { burnOf, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from '../shared/burn.js';
@@ -41,7 +42,7 @@ import { MODULES, tiersOf, addMod, incomeOf, whyNotBuild, rowState, labPanel,
          LAB_TAB_KEYS } from '../shared/research.js';
 import { ARENAS, ARENA_MODULES, rosterOf, countOf, fieldEhp, fieldBounty, fieldDps,
          postsFor, arrivalAt, assumedFor, whyNotClaim, whyNotReplay, claimState,
-         missionText, mission, PAYS, RING_R, ARRIVE_R, LINGER, LIMIT,
+         missionText, mission, PAYS, RING_R, ARRIVE_R, LINGER, LIMIT, weightOf,
          BAR_TOP, BAR_LOW, BAR_H, HUD_LEFT, HUD_RIGHT } from '../shared/arena.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
 
@@ -91,7 +92,7 @@ function run(map, ship, list, policy, { limit = 600 } = {}) {
     const live = list.filter(a => a.dead <= 0 && a.hp > 0);
     if (!live.length || ship.hp <= 0) break;
 
-    step(ship, DT); stepDrift(ship, DT, holdShear(ship, DT)); stepVitals(ship, DT, false);
+    step(ship, DT); stepDrift(ship, DT, holdShear(ship, DT)); stepVitals(ship, DT, false, !!map.arena);
     const foe = policy(ship, live, DT);
     if (foe) {
       faceTarget(ship, foe);
@@ -287,6 +288,37 @@ console.log('\nthe field');
     + ' — holding pressure alone made the third one unwinnable 12 times out of 12');
 }
 
+console.log('\nthe chase, and what it must not touch');
+{
+  const open = MAPS.m1, claim = arenaFor('mine1');
+  check('inside a claim nothing ever breaks off, however far you go',
+    noLeash(claim) && !noLeash(open),
+    'you cannot walk out to 2,400px and wait — which was half of "kill one, run away, heal"');
+  check('and an ordinary sector still forgets you at its leash, exactly as it did',
+    !noLeash(open) && !noHorizon(open) && ALIENS.ironhusk.leash === 1500,
+    'the flag is a property of the SECTOR, so an Ironhusk is an Ironhusk everywhere — '
+    + 'nothing in the open world starts chasing from across a sector because claims exist');
+  // Measured and rejected. Left as a named seam rather than deleted, per rule seven.
+  check('everything-sees-you-from-anywhere is a seam, and it is off',
+    !noHorizon(claim) && !claim.hunt,
+    'a finished pilot moves at 128 and the bestiary moves at 150 to 400, so a horizon-wide '
+    + 'aggro is not a chase, it is the whole field arriving at once — measured 0 of 12 at '
+    + 'every tier, and 0 of 12 again with the field posted in depth');
+
+  // The other half, and the bigger one. Regeneration is a share of the pool, so a
+  // finished ship refills in half a minute — a rest button, not a repair.
+  const b = buildFor('finished');
+  const dryShip = newShip(0, 0, b.hull, b.fit, b.drones), wetShip = newShip(0, 0, b.hull, b.fit, b.drones);
+  dryShip.shield = wetShip.shield = 0;
+  dryShip.sinceHit = wetShip.sinceHit = 1e9;
+  for (let i = 0; i < 300; i++) { stepVitals(dryShip, 1 / 30, false, true); stepVitals(wetShip, 1 / 30, false, false); }
+  check('shields do not come back inside a claim',
+    dryShip.shield === 0 && wetShip.shield > wetShip.stats.shield * 0.25,
+    `ten seconds of quiet puts ${Math.round(wetShip.shield).toLocaleString('en-US')} of `
+    + `${Math.round(wetShip.stats.shield).toLocaleString('en-US')} back everywhere else and `
+    + 'nothing back here — the loop the designer complained about was regeneration, not the hostiles');
+}
+
 console.log('\nwhat a claim pays, and why it is nothing');
 {
   check('a claim pays no bounty, no experience, no ore and no entry in the threat file',
@@ -333,9 +365,14 @@ console.log('\nthe ship a claim assumes, derived rather than written down');
 console.log('\nthe fight, twelve spawn rotations per claim');
 {
   const ROT = 12;
-  const table = [];
+  const table = [], pilots = {};
   for (const key of ARENA_MODULES) {
     const map = arenaFor(key), mask = assumedFor(key).mask;
+    {
+      const b = buildFor('finished');
+      const sh = newShip(0, 0, b.hull, b.fit, b.drones, 'line', null, mask);
+      pilots[key] = { ehp: sh.stats.hull + sh.stats.shield, hull: sh.stats.hull };
+    }
     let died = 0, cleared = 0, over = 0, secs = 0;
     for (let i = 0; i < ROT; i++) {
       const phase = (i / ROT) * Math.PI * 2;
@@ -357,26 +394,43 @@ console.log('\nthe fight, twelve spawn rotations per claim');
     table.push({ key, cleared, died, inDied, inCleared,
                  over: cleared ? over / cleared : 0, secs: cleared ? secs / cleared : 0 });
   }
+  // REWRITTEN. This said "winnable every time" and asserted 12 of 12 with no
+  // deaths, which was true while a claim had a rest button in it: shields came back
+  // at 3.33% of the pool a second, so a floor policy that never used that loop
+  // still finished with two thirds of the ship. With the chase and dry shields the
+  // same policy — no repair kit, no ability, no power routing, no ammunition above
+  // cell1 — loses 1 or 2 runs in 12 at the upper tiers. That is the claim now: it
+  // is winnable without any of the four things a real pilot carries, most of the
+  // time, and it costs nearly the whole ship either way.
   for (const row of table) {
-    check(`${row.key} is winnable by a competent pilot, every time`,
-      row.cleared === ROT && row.died === 0,
-      `${row.cleared} of ${ROT} cleared, ${(row.over * 100).toFixed(0)}% of the ship left, `
-      + `${row.secs.toFixed(0)}s of fire`);
+    check(`${row.key} is winnable carrying none of the four things a real pilot has`,
+      row.cleared >= ROT - 2 && row.over < 0.35,
+      `${row.cleared} of ${ROT} cleared with ${(row.over * 100).toFixed(0)}% of the ship left, `
+      + `${row.secs.toFixed(0)}s — no repair kit, no ability, no power routing, cell1 ammunition`);
   }
-  // REWRITTEN, and the reason is not the arena. This asked for 9 of 12 dead, which
-  // was true when a finished ship was 7,050 effective hp. The hull rework moved
-  // stageEhp('finished') to 9,305, `assumedFor` derives the assumed pilot FROM that,
-  // so the pilot got 32% tougher while the roster stayed the size somebody wrote
-  // down — 5 of 12 now. The claim underneath is the one worth keeping: going
-  // through the middle costs you the ship, and staying out of the rings never does.
-  // The roster sizes want re-deriving against the new hull table; until they are,
-  // this says what is measured rather than what was intended.
-  check('flying into the middle of the first claim costs ships, and staying out of it does not',
-    table[0].inDied >= ROT * 0.3 && table[0].inDied > table[0].died
-    && table[0].inCleared < table[0].cleared,
-    `${table[0].inDied} of ${ROT} dead through the middle against ${table[0].died} of ${ROT} `
-    + `around it, and ${table[0].inCleared} cleared against ${table[0].cleared} — it was 9 of 12 `
-    + 'dead before the hull rework made the pilot this arena assumes 32% tougher');
+  // REWRITTEN AGAIN, and this time upward. The weakened version asked only that the
+  // middle "costs ships", because the hull rework had made the assumed pilot 32%
+  // tougher and taken it from 9 of 12 dead to 5. The chase and dry shields put it
+  // back past where it started, at every tier rather than only the first: an all-in
+  // pilot eats the field's whole nominal pressure and no longer gets any of it
+  // back, so the middle is lethal 11 or 12 times in 12. That is the sharp claim and
+  // it should not need weakening again.
+  for (const row of table)
+    check(`flying into the middle of ${row.key} kills you`,
+      row.inDied >= ROT - 1 && row.inCleared <= 1,
+      `${row.inDied} of ${ROT} dead through the middle against ${row.died} of ${ROT} around it — `
+      + `it was ${row.key === 'mine1' ? '5' : '0'} of ${ROT} before nothing in a claim broke off `
+      + 'and shields stopped coming back');
+  // The reading the multipliers are stated in, and the one a player feels, side by
+  // side — because they disagree and the disagreement is the point.
+  for (const row of table)
+    check(`${row.key} costs a competent pilot most of their ship`,
+      1 - row.over > 0.6,
+      `${((1 - row.over) * 100).toFixed(0)}% of the ship consumed by a clean clear, and the `
+      + `field weighs ${(weightOf(row.key, pilots[row.key].ehp, pilots[row.key].hull) / 1e6).toFixed(0)}M `
+      + '(hit points x incoming dps) — the consumed reading saturates at 100% and cannot say '
+      + '"twice as hard" about a claim that already costs nine tenths of the ship');
+
   // REWRITTEN. This said "the margin narrows as the ladder climbs" and it does not
   // any more, because shields now come back as a SHARE of the pool rather than a
   // number per second (0.50). A pilot with hull2 + shld2 regenerates four times as
@@ -389,10 +443,11 @@ console.log('\nthe fight, twelve spawn rotations per claim');
   // shares. The escalation is a new question each time, not a bigger number.
   const shares = table.map(r => r.over);
   check('every claim costs a competent pilot about the same share of their ship',
-    Math.max(...shares) / Math.min(...shares) < 1.4,
+    Math.max(...shares) - Math.min(...shares) < 0.15,
     table.map(r => `${r.key} ${(r.over * 100).toFixed(0)}% left`).join('  ')
     + ' — a Censer and a Lamprey both bill in shares, which is what makes one roster '
-    + 'correct at all three tiers');
+    + 'correct at all three tiers, and dry shields are what stopped a bigger pool '
+    + 'quietly refunding the difference');
   check('an arena is a fight, not a siege',
     table.every(r => r.secs < LIMIT / 4),
     `the longest clear is ${Math.max(...table.map(r => r.secs)).toFixed(0)}s against a `

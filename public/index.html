@@ -38,7 +38,7 @@ import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/h
 import { tipFor, modSummary } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { outlineFor, accentFor, canopyFor } from '/shared/silhouette.js';
-import { VERSION, PATCHES, patchIcon, patchPanel,
+import { VERSION, PATCHES, patchIcon, patchPanel, wrapNote,
          PAD as PATCH_PAD, HEAD_H as PATCH_HEAD } from '/shared/patch.js';
 import { audioReady, setThrust, laser, rocket, explosion,
          toggleAudio, toggleSfx, toggleMusic, audioOn, sfxOnly, musicOnly,
@@ -46,8 +46,9 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown } from '/shared/net.js';
 import { burnOf, burnR } from '/shared/burn.js';
+import { sowOf, HOLD } from '/shared/ground.js';
 import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
@@ -93,10 +94,22 @@ addEventListener('resize', resize); resize();
 const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 // The bottom line of the window, as the separate hints it is made of — the strip
-// is laid out around the ammunition bar and has to know where it may break.
+// is laid out around everything else down there and has to know where it may
+// break.
 const HOTKEYS = ['TAB engage', 'TAB TAB break off', 'click cargo to haul it in',
                  'I cargo', 'H station', 'R research', 'L threats', 'M star system',
                  'Q E ammo', 'O sound'];
+// The reactor dial's own corner, bottom left. The dial draws from these; the
+// hotkey strip reads them so it can start to the right of it.
+const REACTOR = { cx: 62, r0: 34, halo: 13 };
+const DIAL_R = REACTOR.cx + REACTOR.r0 + REACTOR.halo;
+// The now-playing tag grows leftward out of the STAR SYSTEM button, and the
+// widest it can ever be is a truncated title plus the mood badge plus the gap it
+// keeps from the button. Thirty characters of 11px ui-monospace is 30 x 6.6.
+// Reserved whether or not anything is playing: a hotkey strip that reflowed the
+// moment a track started would be worse than one that is short.
+const TAG_CHARS = 30, TAG_MOOD = 52;
+const TAG_MAX = TAG_CHARS * 6.6 + TAG_MOOD + 18;
 let sysOpen = false;
 let patchOpen = false;                    // the changelog, top right
 const patchScr = scroller();              // on the same scroll as everything else
@@ -179,7 +192,8 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [];   // rebuilt every snapshot
+let mySnare = 0;                                  // s of engines-out left, from the bag
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
 let invOpen = false, notice = null;
@@ -1109,6 +1123,12 @@ ws.onmessage = e => {
   // never mentions them again after the keyframe — but the decoder hands back a
   // whole snapshot either way, so this is just a read.
   labs = new Map((m.labs ?? []).map(unpackLab).map(l => [l.id, l]));
+  // Sown ground. A keyed stream like the labs, because a patch lives twelve to
+  // thirty seconds and five of its seven numbers never move once it is laid — see the
+  // note in net.js. The decoder hands back a whole snapshot either way, so this is
+  // just a read.
+  ground = (m.sown ?? []).map(unpackSown);
+  if ('snare' in m) mySnare = m.snare ?? 0;
   if ('lab' in m) myLab = m.lab;
   if (m.claims) myClaims = m.claims;
   // Read UNCONDITIONALLY, like `scoop` and `want` beside it, and this is the one
@@ -1670,14 +1690,23 @@ function drawSystem(me) {
     g.fillText(text, lx + SWATCH, 53);
     lx += step;
   }
-  g.strokeStyle = '#8a94a8'; g.lineWidth = 1.4; g.setLineDash([4, 3]);
-  g.strokeRect(lx0 + .5, 62.5, 11, 11); g.setLineDash([]);
-  g.fillStyle = '#7f8ea8';
-  const says = ['CONTESTED — nobody holds it.   The fill is the region; the outline is its owner.',
-                'CONTESTED — nobody holds it. Fill is the region, outline its owner.',
-                'CONTESTED — nobody holds it.'];
-  g.fillText(says.find(s => g.measureText(s).width <= capR - lx0 - SWATCH) ?? says[says.length - 1],
-             lx0 + SWATCH, 72);
+  // The second header row exists only when the grid leaves room for one. At
+  // 820x560 both floors in chartLayout are holding the cells open — 46px a step,
+  // 50px a cell — so the top row starts at y 63.8 and this line was printed
+  // across it. The swatch legend above still says what a dashed outline means;
+  // this is the sentence explaining it, and a sentence over a map is worse than
+  // no sentence.
+  const gridTop = Math.min(...[...rects.values()].map(r => r.y));
+  if (gridTop > 76) {
+    g.strokeStyle = '#8a94a8'; g.lineWidth = 1.4; g.setLineDash([4, 3]);
+    g.strokeRect(lx0 + .5, 62.5, 11, 11); g.setLineDash([]);
+    g.fillStyle = '#7f8ea8';
+    const says = ['CONTESTED — nobody holds it.   The fill is the region; the outline is its owner.',
+                  'CONTESTED — nobody holds it. Fill is the region, outline its owner.',
+                  'CONTESTED — nobody holds it.'];
+    g.fillText(says.find(s => g.measureText(s).width <= capR - lx0 - SWATCH) ?? says[says.length - 1],
+               lx0 + SWATCH, 72);
+  }
   g.textAlign = 'center'; g.fillStyle = '#5b6b85'; g.font = '12px ui-monospace, monospace';
   g.fillText('click anywhere or press M to close', VIEW_W / 2, VIEW_H - 18);
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
@@ -1899,14 +1928,47 @@ function drawTip(tip, at) {
   const lines = tip.lines.slice(0, 12);
   const cut = tip.lines.length - lines.length;
   const notes = tip.notes ?? [];
+  // Right edges, measured back from the tip's own right edge, each column a
+  // character clear of the next. The gaps used to be 4px against a 6.6px
+  // character, which is two numbers touching; the value column used to be a flat
+  // 40px against values 46.2px wide, which is a number over the arrow pointing at
+  // it. Measured rather than picked: a space in the row's own font is the unit,
+  // and the percentage column is as wide as the widest percentage in this tip.
+  const GAP = g.measureText(' ').width;
+  g.font = '10px ui-monospace, monospace';
+  const pctW = Math.max(0, ...lines.map(l => l.pct === null ? 0
+                 : g.measureText(`${l.pct > 0 ? '+' : ''}${l.pct}%`).width));
+  g.font = '11px ui-monospace, monospace';
+  const VAL = Math.max(44, 10 + pctW + GAP);
+  const valW = Math.max(40, ...lines.map(l => g.measureText(`${l.to}${l.unit}`).width));
+  const ARROW = VAL + valW + GAP, FROM = ARROW + g.measureText('\u2192').width + GAP;
+
   const widest = Math.max(g.measureText(tip.title).width + 90,
                           g.measureText(tip.blurb ?? '').width,
                           g.measureText(tip.does ?? '').width,
                           ...notes.map(n => g.measureText(n).width),
-                          ...lines.map(l => g.measureText(`${l.label}  ${l.from} → ${l.to}${l.unit}`).width + 54));
+                          ...lines.map(l => g.measureText(l.label).width +
+                                            g.measureText(String(l.from)).width + FROM + GAP));
   const w = Math.min(340, Math.max(190, widest + 24));
-  const h = 40 + (tip.blurb ? 15 : 0) + (tip.does ? 15 : 0) + lines.length * 15 + (cut ? 14 : 0)
-          + (notes.length ? 6 + notes.length * 14 : 0);
+  // Prose WRAPS to the box instead of running out of it. "The plating takes it,
+  // you keep 30% of your hull, and it is spent until you dock." is 480px at 10px
+  // in a box that stops at 340, so it was drawn 150px past its own frame and
+  // across the station panel behind it — twelve of the twenty-four labels the
+  // overlap test found written over something that is not their own frame.
+  // wrapNote is the changelog's, for the same reason it is the changelog's: a
+  // wrap worked out where the height is worked out cannot disagree with it.
+  const cols = Math.floor((w - 20) / 6);           // 10px monospace, 10px of padding a side
+  const subL = wrapNote(tip.sub ?? '', cols);
+  const blurbL = tip.blurb ? wrapNote(tip.blurb, cols) : [];
+  const doesL = tip.does ? wrapNote(tip.does, cols) : [];
+  const noteL = notes.flatMap(n => wrapNote(n, cols));
+  // The bottom baseline, worked out with the arithmetic the draw below uses, so
+  // the frame cannot come out shorter than what goes in it. It was a separate sum
+  // and it was a pixel short: every tip hung its last line's descenders through
+  // its own bottom edge.
+  const last = 33 + 12 * (subL.length - 1) + (blurbL.length ? 8 + 15 * blurbL.length : 6) + 15 * doesL.length
+             + 15 * lines.length + (cut ? 14 : 0) + (noteL.length ? 4 + 14 * noteL.length : 0);
+  const h = last + 8;
   const x = Math.min(at.x + 18, VIEW_W - w - 8), y = Math.min(at.y + 14, VIEW_H - h - 8);
 
   g.fillStyle = 'rgba(6,10,16,0.97)'; g.fillRect(x, y, w, h);
@@ -1919,24 +1981,18 @@ function drawTip(tip, at) {
                    g.fillText(`${fmtCredits(tip.price)} ${CURRENCY.short}`, x + w - 10, ty); g.textAlign = 'left'; }
   ty += 14;
   g.font = '10px ui-monospace, monospace'; g.fillStyle = '#66748c';
-  g.fillText(tip.sub ?? '', x + 10, ty); ty += tip.blurb ? 15 : 6;
-  if (tip.blurb) { g.fillStyle = '#8ea3bd'; g.fillText(tip.blurb, x + 10, ty); ty += 8; }
+  for (let i = 0; i < subL.length; i++) { if (i) ty += 12; g.fillText(subL[i], x + 10, ty); }
+  ty += blurbL.length ? 0 : 6;
+  if (blurbL.length) { g.fillStyle = '#8ea3bd';
+                       for (const b of blurbL) { ty += 15; g.fillText(b, x + 10, ty); }
+                       ty += 8; }
   // What it lets you do, in the colour the readouts use for a gain. It is above
   // the numbers on purpose: on the technology shelf the sentence is the thing
   // being sold and the percentages are what it cost.
-  if (tip.does) { ty += 15; g.fillStyle = '#7de08a'; g.fillText(tip.does, x + 10, ty); }
+  if (doesL.length) { g.fillStyle = '#7de08a';
+                      for (const d of doesL) { ty += 15; g.fillText(d, x + 10, ty); } }
 
   g.font = '11px ui-monospace, monospace';
-  // Right edges, measured back from the tip's own right edge. The value column
-  // used to be a flat 40px — from x+w-84 to x+w-44 — and "0.07%/s" is 46.2px at
-  // 11px, so a seven-character value printed straight over the arrow pointing at
-  // it. The stats page prints values in exactly that shape now, so seven
-  // characters is the common case rather than the odd one: the column is as wide
-  // as the widest value in this tip, and the arrow and the old value step back
-  // from it.
-  const VAL = 44;
-  const valW = Math.max(40, ...lines.map(l => g.measureText(`${l.to}${l.unit}`).width));
-  const ARROW = VAL + valW + 4, FROM = ARROW + 12;
   for (const l of lines) {
     ty += 15;
     g.fillStyle = '#7b8ba3'; g.fillText(l.label, x + 10, ty);
@@ -1954,9 +2010,9 @@ function drawTip(tip, at) {
              g.fillText(`+${cut} more`, x + 10, ty); }
   // Every note on its own line. They used to be one string, which meant the one
   // that mattered most — where the thing is even sold — had to be left out.
-  if (notes.length) {
+  if (noteL.length) {
     g.font = '10px ui-monospace, monospace'; ty += 4;
-    for (const n of notes) { ty += 14; g.fillStyle = '#5b6b85'; g.fillText(n, x + 10, ty); }
+    for (const n of noteL) { ty += 14; g.fillStyle = '#5b6b85'; g.fillText(n, x + 10, ty); }
   }
   g.font = '11px ui-monospace, monospace';
 }
@@ -2497,7 +2553,16 @@ function drawInventory() {
   g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
   g.fillText(`SHIP HOLD   ${vol}/${cargoCap}` + (vol ? `   ${fmtCredits(holdValue(hold))} ${CURRENCY.short}` : '') +
              (atDock ? '   → click to stow' : ''), P.x + 20, G.top - 12);
-  g.fillText('COMPANY HANGAR   unlimited' + (atDock ? '   → left half loads, right half sells' : ''),
+  // Its own column, and not a character wider. It ran 42px past the right edge of
+  // the panel at every window size — the label was written straight across the
+  // frame it lives in — because the sentence was assembled and never measured.
+  const bankSays = atDock
+    ? ['COMPANY HANGAR   unlimited   → left half loads, right half sells',
+       'COMPANY HANGAR   → left half loads, right half sells',
+       'COMPANY HANGAR   → left loads, right sells', 'COMPANY HANGAR']
+    : ['COMPANY HANGAR   unlimited', 'COMPANY HANGAR'];
+  const bankRoom = P.x + P.w - 20 - (P.x + 40 + G.colW);
+  g.fillText(bankSays.find(s => g.measureText(s).width <= bankRoom) ?? bankSays[bankSays.length - 1],
              P.x + 40 + G.colW, G.top - 12);
 
   if (!G.ship.length) { g.fillStyle = '#3d4757'; g.fillText('the hold is empty', P.x + 20, G.top + 18); }
@@ -3129,11 +3194,18 @@ function drawDeviceBox(b) {
   const ports = foldPorts(), dest = foldDest();
   if (ports.length > 1) {
     g.fillStyle = over ? '#8ab4e6' : '#3d4757'; g.font = '9px ui-monospace, monospace';
+    const markW = g.measureText('\u25b2').width;
     g.fillText('\u25b2', r.x + r.w - 9, r.y + 12);
     // And the destination is written on the box rather than hidden in the menu.
     // Spending 3400 to find out where you were pointed is the whole complaint.
+    //
+    // Centred in what the marker LEAVES, and cut to what that will hold. Centred
+    // in the whole 64px box, nine characters ended 3.5px short of the marker,
+    // which at 8px is less than a character and reads as one smudge.
     g.font = '8px ui-monospace, monospace'; g.fillStyle = folding ? '#7fd4ff' : '#7f8fa6';
-    g.fillText(dest.name.split(' · ').pop().slice(0, 9), cx, r.y + 12);
+    const edge = r.x + r.w - 9 - markW - g.measureText(' ').width;
+    const most = Math.max(3, Math.floor((edge - r.x - 4) / g.measureText('x').width));
+    g.fillText(dest.name.split(' · ').pop().slice(0, Math.min(9, most)), (r.x + 4 + edge) / 2, r.y + 12);
   }
   if (over && !feedOpen) {
     const t = folding ? `folding to ${dest.name} — one hit ends it`
@@ -3292,8 +3364,11 @@ function drawBar() {
                  row.r.x + (kit ? 12 : 28), row.r.y + row.r.h / 2 + 10);
       g.globalAlpha = 1;
       g.textAlign = 'right';
+      // On the name's line, not between the two. Centred it sat 0.3px above a
+      // locked row's reason — "every emitter must be tier 5" is 151px and runs
+      // right under it — which is two numbers in one place at a 30px row pitch.
       g.fillStyle = on ? '#7de08a' : '#8ea3bd'; g.font = '11px ui-monospace, monospace';
-      g.fillText(String((kit ? myKits : myAmmo)[row.k] ?? 0), row.r.x + row.r.w - 10, row.r.y + row.r.h / 2 + 3);
+      g.fillText(String((kit ? myKits : myAmmo)[row.k] ?? 0), row.r.x + row.r.w - 10, row.r.y + row.r.h / 2 - 1);
       g.textAlign = 'left';
     }
     g.font = '12px ui-monospace, monospace';
@@ -3710,6 +3785,180 @@ function drawFrame(now) {
     }
   }
 
+  // --- sown ground --------------------------------------------------------------
+  //
+  // Two kinds, drawn so they cannot be confused with each other at a glance, and so
+  // that neither can be confused with a Censer's ring. Everything is in WORLD
+  // coordinates — this pass runs inside the camera transform, the same as the pyres
+  // and the fixes below — and every moving part is driven by `now`, the timestamp
+  // the frame was handed, so a paused tab does not accumulate a spin.
+  //
+  //   Aqua Regia   boils. It is bright, it is filled, and it moves OUTWARD: nine
+  //                blisters crawl from the middle to the rim and start again. Read
+  //                it as something under pressure.
+  //   Slack Water  is glassy. It is nearly unfilled, its rim is doubled like a
+  //                meniscus, and its one moving part falls INWARD, slowly, and
+  //                arrives at nothing. Read it as something that has stopped.
+  //
+  // The RIM never moves and never dims, whatever else is happening, because the rim
+  // is the only thing a pilot has to read: inside it, the ground has you. How long
+  // it has left is a bright arc sweeping the rim instead — a circle that faded out
+  // as it aged would be a circle that lied about its own edge, which is the same
+  // bug as a row you can see and cannot click.
+  //
+  // NOTHING HERE CAN PRODUCE undefined, NaN OR A BAD COLOUR. `p` is clamped and
+  // fixed to three places before it reaches a string; every radius goes through
+  // Math.max(1, ...); `k` is an index into a two-element table with a default, so an
+  // unknown kind draws the first palette rather than `undefined`; every alpha goes
+  // through al(), which clamps and fixes; and the loop body never runs at all on the
+  // ticks the array is empty, which is every tick outside the deeps.
+  {
+    const PALETTE = [
+      { rim: '255,255,60',  fill: '210,255,30',  live: 0.20 },   // regia
+      { rim: '150,110,255', fill: '107,60,255',  live: 0.05 },   // slack
+    ];
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    for (const gr of ground) {
+      const R = Math.max(1, gr.r ?? 10);
+      const p = Math.max(0, Math.min(1, gr.p ?? 0));
+      const pal = PALETTE[gr.k === 1 ? 1 : 0];
+      const live = gr.on === 1;
+
+      // The wind-up: the circle it is ABOUT to be, falling onto the place from four
+      // radii out and arriving exactly as it goes live. Dashed, because a dashed
+      // ring in this game has always meant "not yet" — see the fix marker.
+      if (!live) {
+        const fall = R * (3.2 - 2.2 * p);
+        g.strokeStyle = `rgba(${pal.rim},${al(0.20 + 0.55 * p)})`;
+        g.lineWidth = 1 + 2.5 * p;
+        g.setLineDash([18, 14]);
+        g.lineDashOffset = -now / 40;
+        g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, fall), 0, 7); g.stroke();
+        g.setLineDash([]);
+        // and the ground it will cover, faint, so the decision is about the right
+        // circle rather than about the one still falling
+        g.strokeStyle = `rgba(${pal.rim},${al(0.12 + 0.30 * p)})`;
+        g.lineWidth = 1;
+        g.beginPath(); g.arc(gr.x, gr.y, R, 0, 7); g.stroke();
+        continue;
+      }
+
+      // the wash
+      const grd = g.createRadialGradient(gr.x, gr.y, 0, gr.x, gr.y, R);
+      grd.addColorStop(0, `rgba(${pal.fill},${al(pal.live)})`);
+      grd.addColorStop(0.78, `rgba(${pal.fill},${al(pal.live * 0.55)})`);
+      grd.addColorStop(1, `rgba(${pal.fill},0)`);
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(gr.x, gr.y, R, 0, 7); g.fill();
+
+      // THE RIM. Constant, always.
+      g.strokeStyle = `rgba(${pal.rim},0.850)`;
+      g.lineWidth = 2;
+      g.beginPath(); g.arc(gr.x, gr.y, R, 0, 7); g.stroke();
+      if (gr.k === 1) {                       // the meniscus: a second line just inside
+        g.strokeStyle = `rgba(${pal.rim},0.300)`;
+        g.lineWidth = 1;
+        g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, R - 7), 0, 7); g.stroke();
+      }
+
+      // how long is left, as an arc off the rim rather than as a fade
+      g.strokeStyle = `rgba(${pal.rim},0.550)`;
+      g.lineWidth = 4;
+      g.beginPath(); g.arc(gr.x, gr.y, R, -Math.PI / 2, -Math.PI / 2 + (1 - p) * Math.PI * 2); g.stroke();
+
+      if (gr.k === 1) {
+        // Slack Water: one ring falling inward every two seconds, arriving at
+        // nothing. The phase is offset by the patch's own place so two stills side
+        // by side do not pulse in lockstep — `gr.x` is an integer off the wire, so
+        // the modulus is finite by construction.
+        const ph = ((now / 2000) + (gr.x % 719) / 719) % 1;
+        g.strokeStyle = `rgba(${pal.rim},${al(0.42 * (1 - ph))})`;
+        g.lineWidth = 1.5;
+        g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, R * (1 - ph)), 0, 7); g.stroke();
+        // and four dead-straight spokes that never turn. Everything else in this
+        // game that is drawn as a disc rotates; this is the one that does not, and
+        // that stillness is the whole tell.
+        g.strokeStyle = `rgba(${pal.rim},0.180)`;
+        g.lineWidth = 1;
+        for (let i = 0; i < 4; i++) {
+          const a0 = i * Math.PI / 2 + Math.PI / 4;
+          g.beginPath();
+          g.moveTo(gr.x + Math.cos(a0) * R * 0.25, gr.y + Math.sin(a0) * R * 0.25);
+          g.lineTo(gr.x + Math.cos(a0) * R * 0.94, gr.y + Math.sin(a0) * R * 0.94);
+          g.stroke();
+        }
+      } else {
+        // Aqua Regia: nine blisters crawling out to the rim and starting again. The
+        // angle is fixed per blister so the pool has a texture rather than a swarm,
+        // and the phase is offset by index so they do not all arrive together.
+        g.fillStyle = `rgba(${pal.rim},0.320)`;
+        for (let i = 0; i < 9; i++) {
+          const a0 = (i / 9) * Math.PI * 2 + (gr.y % 61) / 61 * Math.PI * 2;
+          const ph = ((now / 1400) + i / 9) % 1;
+          const rr = Math.max(1, R * (0.12 + 0.84 * ph));
+          g.globalAlpha = Number(al(0.55 * (1 - ph) + 0.10));
+          g.beginPath();
+          g.arc(gr.x + Math.cos(a0) * rr, gr.y + Math.sin(a0) * rr,
+                Math.max(1, R * 0.05 * (0.5 + ph)), 0, 7);
+          g.fill();
+        }
+        g.globalAlpha = 1;
+      }
+    }
+
+    // ENGINES OUT. The one thing on this screen that has to be unmissable, because
+    // it is the only second and a half in this game where clicking somewhere does
+    // nothing — and a control that has silently stopped working is indistinguishable
+    // from a bug. It gets three tells at once, all of them off `mySnare`, which is
+    // seconds and arrives in the bag.
+    //
+    //   the hull       a bracket around your own ship in the Doldrum's violet
+    //   the vector     a line out along the velocity you are keeping, to the place
+    //                  you will actually be when it lets go — which is the whole
+    //                  answer to the ability, drawn
+    //   the clock      the bracket closes as the hold runs out
+    //
+    // The vector is drawn from the SMOOTHED render position and the smoothed
+    // previous one, which is the same pair the speed readout is taken from, so it can
+    // never disagree with what the ship is visibly doing. prevSelf is null on the
+    // first frame after a jump, and the guard is `Number.isFinite` rather than a
+    // truthiness test because 0 is a perfectly good coordinate.
+    const self = ships.get(myId);
+    if (mySnare > 0 && self && Number.isFinite(self.rx)) {
+      const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+      const left = Math.max(0, Math.min(1, mySnare / HOLD));
+      const R2 = Math.max(6, rOf(self));
+      const vx = prevSelf ? self.rx - prevSelf.x : 0;
+      const vy = prevSelf ? self.ry - prevSelf.y : 0;
+      const sp = Math.hypot(vx, vy);
+      if (sp > 0.4 && frameDt > 0) {
+        // where the hull will be when the engines come back: velocity x time left
+        const ahead = (sp / frameDt) * mySnare;
+        g.strokeStyle = `rgba(150,110,255,${al(0.25 + 0.4 * left)})`;
+        g.lineWidth = 1.5;
+        g.setLineDash([10, 8]);
+        g.lineDashOffset = -now / 45;
+        g.beginPath();
+        g.moveTo(self.rx, self.ry);
+        g.lineTo(self.rx + (vx / sp) * ahead, self.ry + (vy / sp) * ahead);
+        g.stroke();
+        g.setLineDash([]);
+        g.strokeStyle = `rgba(150,110,255,${al(0.30 + 0.45 * left)})`;
+        g.beginPath();
+        g.arc(self.rx + (vx / sp) * ahead, self.ry + (vy / sp) * ahead, Math.max(2, R2 * 0.9), 0, 7);
+        g.stroke();
+      }
+      g.strokeStyle = `rgba(150,110,255,${al(0.45 + 0.45 * left)})`;
+      g.lineWidth = 2;
+      for (let q = 0; q < 4; q++) {
+        const a0 = q * Math.PI / 2 + Math.PI / 4;
+        g.beginPath();
+        g.arc(self.rx, self.ry, Math.max(2, R2 * (1.4 + 0.9 * left)), a0 - 0.34, a0 + 0.34);
+        g.stroke();
+      }
+    }
+  }
+
   for (const [id, s] of ships) {
     const R = rOf(s), lost = s.vis === STALE, foe = s.co === 'x';
     const lvl = (s.plvl ?? 0) / 100, sys = s.psys ?? 0;
@@ -3946,6 +4195,35 @@ function drawFrame(now) {
     // The victim is radar-filtered per viewer, so a Kedge can legitimately be sighting
     // somebody this client was never sent — ships.get misses, `mark` is null, and only
     // the arms are drawn, which is the radar rule as much as the arithmetic one.
+    // A sower charging its next patch. The ghost circle already drawn on the ground
+    // says WHERE; this says WHICH HOSTILE, which matters the moment there are two of
+    // them on the field and only one of the two kinds of ground can be steered out
+    // of. It rides `abl` — the fifth thing on that one dial — and `tgt` is already on
+    // the wire, so this cost no new SHIP_FIELDS entry. The row is at 30 of a hard 31.
+    //
+    // It cannot put a bad number into a draw call: `wind` is 0 unless ALIENS[hull]
+    // has a `sow` block, which is undefined for every other hostile and for a ship,
+    // `(s.abl ?? 0) / 100` is clamped into 0..1, and `wind > 0.02` is false for NaN.
+    const wind = foe && sowOf(ALIENS[s.hull]) ? Math.max(0, Math.min(1, (s.abl ?? 0) / 100)) : 0;
+    if (wind > 0.02) {
+      const tint = colOf(s);
+      const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+      g.save(); g.translate(s.rx, s.ry);
+      // A ring closing onto the hull as the charge completes, and a bar of it filled
+      // in clockwise from the top — the same two readings the ground itself gets, so
+      // the hostile and its patch are visibly one object.
+      g.strokeStyle = tint;
+      g.globalAlpha = al(0.25 + 0.45 * wind);
+      g.lineWidth = 1.4;
+      g.beginPath(); g.arc(0, 0, Math.max(1, R * (2.4 - 0.9 * wind)), 0, 7); g.stroke();
+      g.globalAlpha = al(0.55 + 0.4 * wind);
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(0, 0, Math.max(1, R * (2.4 - 0.9 * wind)), -Math.PI / 2, -Math.PI / 2 + wind * Math.PI * 2);
+      g.stroke();
+      g.globalAlpha = 1;
+      g.restore();
+    }
     const sight = foe && ALIENS[s.hull]?.fix ? Math.max(0, Math.min(1, (s.abl ?? 0) / 100)) : 0;
     if (sight > 0.02) {
       const tint = colOf(s);
@@ -4571,14 +4849,14 @@ function drawFrame(now) {
 
   // --- reactor, bottom left ---
   {
-    const cx = 62, cy = VIEW_H - 74, R0 = 34;
+    const cx = REACTOR.cx, cy = VIEW_H - 74, R0 = REACTOR.r0;
     const cap = (power.cap ?? 0) / 100;
     const sysI = power.to ? SYSTEMS.indexOf(power.to) : -1;
     const lvl = power.to ? (power.lv?.[power.to] ?? 0) / 100 : 0;
     const col = sysI < 0 ? '#5b6b85' : SYS_COLOUR[sysI];
 
     g.fillStyle = 'rgba(4,7,12,0.72)';
-    g.beginPath(); g.arc(cx, cy, R0 + 13, 0, 7); g.fill();
+    g.beginPath(); g.arc(cx, cy, R0 + REACTOR.halo, 0, 7); g.fill();
 
     g.strokeStyle = '#1d2634'; g.lineWidth = 6;    // capacitor ring
     g.beginPath(); g.arc(cx, cy, R0, 0, 7); g.stroke();
@@ -4598,7 +4876,9 @@ function drawFrame(now) {
     g.fillText(`+${Math.round(ceilingOf(myStats()) * lvl * 100)}%`, cx, cy + 2);
     g.fillStyle = '#66748c'; g.font = '9px ui-monospace, monospace';
     g.fillText(power.to ? sysName(SYSTEMS.indexOf(power.to)) : 'REACTOR', cx, cy + 14);
-    g.fillText(`${Math.round(cap * 100)}%`, cx, cy - 10);
+    // Two clear of the big number under it. At cy-10 the capacitor percentage sat
+    // 1.7px off the top of a 14px "+29%", which at 9px is closer than a descender.
+    g.fillText(`${Math.round(cap * 100)}%`, cx, cy - 12);
 
     SYSTEMS.forEach((sys, i) => {                  // 1 2 3, arranged around the dial
       const a0 = -Math.PI / 2 + (i - 1) * 0.85;
@@ -4631,15 +4911,15 @@ function drawFrame(now) {
     const tense = musicMood() !== CALM && musicMood() !== QUIET ? musicMood().toUpperCase() : null;
     const fight = !!tense;
     g.font = '11px ui-monospace, monospace'; g.textAlign = 'right';
-    const label = tune.length > 30 ? tune.slice(0, 29) + '\u2026' : tune;
-    const tw = g.measureText(label).width + (fight ? 52 : 0);
+    const label = tune.length > TAG_CHARS ? tune.slice(0, TAG_CHARS - 1) + '\u2026' : tune;
+    const tw = g.measureText(label).width + (fight ? TAG_MOOD : 0);
     g.fillStyle = 'rgba(6,10,16,0.7)';
     g.beginPath(); g.roundRect(sb.x - 18 - tw, sb.y, tw + 14, sb.h, 5); g.fill();
     if (fight) {
       g.textAlign = 'left'; g.font = '9px ui-monospace, monospace';
       const hot = musicMood() === COMBAT;
       g.fillStyle = hot ? 'rgba(224,90,90,0.18)' : 'rgba(224,165,63,0.18)';
-      g.fillRect(sb.x - 12 - tw, sb.y + 9, 44, 13);
+      g.fillRect(sb.x - 12 - tw, sb.y + 9, TAG_MOOD - 8, 13);
       g.fillStyle = hot ? '#e05a5a' : '#e0a53f';
       g.fillText(tense, sb.x - 8 - tw, sb.y + 19);
       g.textAlign = 'right';
@@ -4651,15 +4931,21 @@ function drawFrame(now) {
   }
 
   // --- hud ---
+  // Three things on one line, a character apart. They were 4px and 6px apart at
+  // a 7.2px character, which is close enough that "MTC-1 · Bastion" and
+  // "MTC TERRITORY" read as one string — the gaps were literals (20, 26) that had
+  // been the right numbers for a smaller font.
+  const SP = g.measureText(' ').width;
   g.fillStyle = map.tint; g.fillText(map.name, 16, 24);
   const terr = map.dev ? 'TESTING GROUND' : map.owner ? `${COMPANIES[map.owner].tag} TERRITORY` : 'CONTESTED';
+  const terrX = 16 + g.measureText(map.name).width + SP;
   g.fillStyle = map.dev ? '#7de08a' : map.owner ? COMPANIES[map.owner].color : '#e05a5a';
-  g.fillText(terr, 20 + g.measureText(map.name).width, 24);
+  g.fillText(terr, terrX, 24);
   // The way out, on screen for as long as you are in here. It was said once in
   // chat, which fades after four seconds, so it may as well not have been said.
   if (map.dev) {
     g.fillStyle = 'rgba(125,224,138,0.55)';
-    g.fillText('· /dev to leave', 26 + g.measureText(map.name).width + g.measureText(terr).width, 24);
+    g.fillText('· /dev to leave', terrX + g.measureText(terr).width + SP, 24);
   }
   g.fillStyle = '#5b6b85';
   g.fillText(`${myName || '…'} · ${COMPANIES[myCo].tag} · ${HULLS[myHull].name} ${HULLS[myHull].cls}` +
@@ -4705,7 +4991,12 @@ function drawFrame(now) {
     g.fillStyle = '#1b222d'; g.fillRect(18, 94, gw - 4, 10);
     let gx = 18;                                   // one segment per material, in its own colour
     for (const [m, n] of Object.entries(hold)) {
-      const w2 = (gw - 4) * (n * (MATERIALS[m]?.vol ?? 1)) / Math.max(1, cargoCap);
+      // Clamped to what is left of the bar. A hold over its own capacity — which
+      // a refinery yield or a capacity downgrade can leave you with — made the
+      // segment 55,744px wide, a coloured stripe straight across the HUD and
+      // under the readout beside it.
+      const w2 = Math.max(0, Math.min(gw - 4 - (gx - 18),
+        (gw - 4) * (n * (MATERIALS[m]?.vol ?? 1)) / Math.max(1, cargoCap)));
       g.fillStyle = MATERIALS[m]?.colour ?? '#9aa3ad';
       g.fillRect(gx, 94, w2, 10); gx += w2;
     }
@@ -4759,21 +5050,37 @@ function drawFrame(now) {
                `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
-  // The hotkey strip, laid out around the ammunition bar rather than behind it.
-  // It is 1022px at 12px, the bar is 306px of opaque boxes across the middle of
-  // the window, and the strip is drawn first — so a box swallowed 64px out of the
-  // middle of the sentence at every window size, and on a 1024px window the tail
-  // ran off the screen as well. The hints fill the gap left of the bar and then
-  // the gap right of it, and a window with no room for the last of them leaves
-  // them out rather than printing them somewhere they cannot be read.
+  // The hotkey strip, laid out around the bottom of the window rather than over
+  // it. It is 1022px at 12px and it is drawn LAST, so everything down there was
+  // underneath it: the ammunition bar's 306px of opaque boxes across the middle,
+  // and then — "the H station, the R research, the M star system are all on top of
+  // the star system button, the minimap, and what is currently playing" — the
+  // whole bottom-right corner, at every window size.
+  //
+  // So it goes in the runs that are actually free, in reading order: a line above
+  // the bottom one that clears the reactor dial, then the bottom line left of the
+  // ammunition bar, then whatever is left of the bottom line between the bar and
+  // the corner. A window with no room for the last of the hints leaves them out
+  // rather than printing them somewhere they cannot be read — 1600x900 holds all
+  // ten, 1366x768 holds six, 820x560 holds three.
   {
-    const B = barLayout(VIEW_W, VIEW_H);
+    const B = barLayout(VIEW_W, VIEW_H), S = sysBtn();
+    // Where the bottom-right corner begins: the minimap, the STAR SYSTEM button
+    // and the now-playing tag are one block and the strip stops before all three.
+    const corner = Math.min(MM_X, S.x - TAG_MAX);
+    // Reading order: the line above first, then the bottom line left of the bar,
+    // then what is left of the bottom line right of it. On a 1600px window that
+    // is 77 columns then 93 then none, which holds all ten hints; on an 820px
+    // one it is 18 and 34 and the rest are left out.
+    const runs = [[DIAL_R + 12, B.r.x - 12, VIEW_H - 32],
+                  [16,          B.r.x - 12, VIEW_H - 16],
+                  [B.r.x + B.r.w + 12, corner - 12, VIEW_H - 16]];
     let rest = HOTKEYS;
-    for (const [gx, gw] of [[16, B.r.x - 28], [B.r.x + B.r.w + 12, VIEW_W - 28 - B.r.x - B.r.w]]) {
+    for (const [gx, gr, gy] of runs) {
       let n = rest.length;
-      while (n && g.measureText(rest.slice(0, n).join(' · ')).width > gw) n--;
+      while (n && g.measureText(rest.slice(0, n).join(' · ')).width > gr - gx) n--;
       if (!n) continue;
-      g.fillText(rest.slice(0, n).join(' · '), gx, VIEW_H - 16);
+      g.fillText(rest.slice(0, n).join(' · '), gx, gy);
       rest = rest.slice(n);
     }
   }
@@ -4907,9 +5214,11 @@ function drawChat(now) {
     const iy = y + boxH - 24;
     g.fillStyle = 'rgba(255,255,255,0.04)'; g.fillRect(x + 6, iy, w - 12, 20);
     g.fillStyle = amAdmin ? '#ffd479' : '#66748c';
+    // A character clear of the line it introduces. 14px between their starts is
+    // 6.8px between their ink, and a prompt that close to the text is part of it.
     g.fillText(amAdmin ? '»' : '>', x + 12, iy + 14);
     g.fillStyle = '#fff';
-    g.fillText(chatLine, x + 26, iy + 14);
+    g.fillText(chatLine, x + 27, iy + 14);
     if ((now / 500 | 0) % 2) {
       g.fillStyle = '#7de08a';
       g.fillRect(x + 27 + g.measureText(chatLine).width, iy + 4, 7, 13);
