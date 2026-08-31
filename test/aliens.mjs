@@ -480,10 +480,10 @@ const onRung = k => {
   // want, and bounty, experience, the ore rung and the posting all follow, because
   // every one of them is derived from effectiveHp rather than typed.
   check('and the deeps are half a rung above the mothership, which is where the ladder puts them',
-    Math.abs(effectiveHp('vitriol') - effectiveHp('hive') * Math.sqrt(10)) <= 25 &&
-    effectiveHp('doldrum') === effectiveHp('vitriol'),
-    `${effectiveHp('vitriol').toLocaleString()} against a Hive's ${effectiveHp('hive').toLocaleString()} — ` +
-    `x${(effectiveHp('vitriol') / effectiveHp('hive')).toFixed(2)}. The ask was x5, which is 3,250,000 ` +
+    Math.abs(effectiveHp('crucible') - effectiveHp('hive') * Math.sqrt(10)) <= 25 &&
+    effectiveHp('doldrum') === effectiveHp('crucible'),
+    `${effectiveHp('crucible').toLocaleString()} against a Hive's ${effectiveHp('hive').toLocaleString()} — ` +
+    `x${(effectiveHp('crucible') / effectiveHp('hive')).toFixed(2)}. The ask was x5, which is 3,250,000 ` +
     'and is not a rung; this is the nearer of the two that are');
   check('it notices you no further out than you can see it',
     H.aggro <= SIGHT_R, `${H.aggro} against ${SIGHT_R}px of sight`);

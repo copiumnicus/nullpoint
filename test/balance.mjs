@@ -334,11 +334,27 @@ console.log('\nwhat the model currently says about the game (it reports, it does
   // underneath.
   const armed = WILD.filter(k => ALIENS[k].attrs.damage > 0);
   const dl = armed.map(k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate);
-  check('content dps has not kept up with the player\'s hull — for everything that carries a gun',
-    Math.max(...dl) / Math.min(...dl) < stageEhp('finished') / stageEhp('arrival'),
+  // REWRITTEN, and it is the good kind: this claim was "content dps has NOT kept up
+  // with the player's hull", and it is no longer true. It had been true for the whole
+  // life of the game — armed hostiles spanned 5.2x against 6.4x of player effective
+  // hit points, so every fight got quietly safer the further out you went, and the
+  // two hostiles with no gun at all existed to say so.
+  //
+  // The deeps closed it. A Crucible and a Doldrum both throw 438 dps, which is not a
+  // chosen number: it is ANCHORS.pressure x stageEhp('finished'), the model's own
+  // answer to "what must a hostile at that stage throw". Putting the model's number
+  // on the two hostiles at the top of the ladder is exactly what the gap was asking
+  // for, and the span closed to the hull span to two decimal places.
+  //
+  // So the claim inverts rather than being deleted, and it is now a claim that can
+  // fail in the other direction — if content guns ever run AHEAD of the hulls they
+  // are shot at, a fight starts getting harder for the whole game instead, which is
+  // the same bug with the sign flipped.
+  check('content dps has caught up with the player\'s hull, and does not lead it',
+    Math.max(...dl) / Math.min(...dl) <= stageEhp('finished') / stageEhp('arrival') * 1.02,
     `${f(Math.max(...dl) / Math.min(...dl))}x across the ${armed.length} armed hostiles against ` +
-    `${f(stageEhp('finished') / stageEhp('arrival'))}x of player effective hp — a fight has been getting ` +
-    'safer for the whole game, which is what the one unarmed hostile exists to stop');
+    `${f(stageEhp('finished') / stageEhp('arrival'))}x of player effective hp — it was 5.2 against 6.4, ` +
+    'and the two hostiles in the deeps are what closed it: their guns ARE the model\'s own number');
   // Two hostiles have no gun now, and they are the answer to the line above rather
   // than exceptions to it: a Lamprey drinks a share of your hull and a Censer burns
   // a share of everything you have, so the seconds each needs are FLAT across the

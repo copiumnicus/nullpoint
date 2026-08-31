@@ -319,7 +319,7 @@ console.log('\nwhat is deliberately not deltaed');
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost
   // 1,570 bytes once on the keyframe and exactly nothing per tick.
   // REWRITTEN, not deleted: sown ground joined them, and it is the case the argument
-  // was always making rather than an exception to it. A patch of Aqua Regia lives
+  // was always making rather than an exception to it. A patch of White Heat lives
   // thirty-six seconds, has an id, and SIX of its seven fields never change once it is
   // laid — the exact inverse of the ephemeral claim above, which is "no identity,
   // under a second, every field stale". Measured at the steady state of a deep

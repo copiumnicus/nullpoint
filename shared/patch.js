@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.68';
+export const VERSION = '0.69';
 
 export const PATCHES = [
+  { v: '0.69', notes: [
+    'The Vitriol is a Crucible now, and it pours plasma — acid never marked a deep hull',
+    'White Heat is 560px wide and takes 4.5% of your ship a second. You cannot step around it',
+    'A Doldrum stops you DEAD for five seconds. You keep your guns; you keep nothing else',
+    'They fly as a pair, so pulling one pulls both, and both pour onto the same spot',
+    'Both carry real guns as well — 438 a second at 900, past every hull in the shop',
+  ] },
   { v: '0.68', notes: [
     'A fully researched ship no longer prints its shield through the number beside it',
     'The station’s stat line sizes its columns to the biggest number you can reach',
@@ -28,9 +35,8 @@ export const PATCHES = [
   ] },
   { v: '0.66', notes: [
     'The Corsair Hive has moved to the gates. Something worse holds the deeps now',
-    'A Vitriol lays pools of Aqua Regia where you were standing, and they stay there',
-    'A Doldrum lays stills: cross one and your engines cut for a second and a half',
-    'You keep your speed and your guns — you just cannot change course. Watch your line',
+    'Two hostiles out there fight by taking ground, and the ground stays where it is put',
+    'Neither of them shoots at you — see 0.69, where both of them started to',
   ] },
   { v: '0.65', notes: [
     'The hotkey strip no longer runs across the minimap and the star chart button',

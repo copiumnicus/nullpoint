@@ -3820,7 +3820,7 @@ function drawFrame(now) {
   // and the fixes below — and every moving part is driven by `now`, the timestamp
   // the frame was handed, so a paused tab does not accumulate a spin.
   //
-  //   Aqua Regia   boils. It is bright, it is filled, and it moves OUTWARD: nine
+  //   White Heat   boils. It is bright, it is filled, and it moves OUTWARD: nine
   //                blisters crawl from the middle to the rim and start again. Read
   //                it as something under pressure.
   //   Slack Water  is glassy. It is nearly unfilled, its rim is doubled like a
@@ -3841,7 +3841,7 @@ function drawFrame(now) {
   // ticks the array is empty, which is every tick outside the deeps.
   {
     const PALETTE = [
-      { rim: '255,255,60',  fill: '210,255,30',  live: 0.20 },   // regia
+      { rim: '255,255,60',  fill: '255,240,120', live: 0.22 },   // white
       { rim: '150,110,255', fill: '107,60,255',  live: 0.05 },   // slack
     ];
     const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
@@ -3893,18 +3893,27 @@ function drawFrame(now) {
       g.lineWidth = 4;
       g.beginPath(); g.arc(gr.x, gr.y, R, -Math.PI / 2, -Math.PI / 2 + (1 - p) * Math.PI * 2); g.stroke();
 
+      // CALMED, and the count is why. This was nine blisters a pool on a 1.4s phase
+      // plus a ripple every two seconds and four spokes a still, which reads as
+      // intent at two patches and as a screensaver at thirty — and thirty is what
+      // four of these hostiles used to put on one screen. The counts came down
+      // (two pools and one still each, against six and two) and the motion came down
+      // with them: the RIM and the COUNTDOWN ARC above are the load-bearing parts,
+      // because they are the two things a pilot has to read — where the ground is,
+      // and how long it has left. Everything below this line is texture, and texture
+      // is what gets cut first when a screen is busy.
       if (gr.k === 1) {
-        // Slack Water: one ring falling inward every two seconds, arriving at
-        // nothing. The phase is offset by the patch's own place so two stills side
-        // by side do not pulse in lockstep — `gr.x` is an integer off the wire, so
-        // the modulus is finite by construction.
-        const ph = ((now / 2000) + (gr.x % 719) / 719) % 1;
-        g.strokeStyle = `rgba(${pal.rim},${al(0.42 * (1 - ph))})`;
+        // Slack Water: one ring falling inward, once every three seconds now rather
+        // than two, arriving at nothing. The phase is offset by the patch's own place
+        // so two stills never pulse in lockstep — `gr.x` is an integer off the wire,
+        // so the modulus is finite by construction.
+        const ph = ((now / 3000) + (gr.x % 719) / 719) % 1;
+        g.strokeStyle = `rgba(${pal.rim},${al(0.34 * (1 - ph))})`;
         g.lineWidth = 1.5;
         g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, R * (1 - ph)), 0, 7); g.stroke();
-        // and four dead-straight spokes that never turn. Everything else in this
-        // game that is drawn as a disc rotates; this is the one that does not, and
-        // that stillness is the whole tell.
+        // and four dead-straight spokes that never turn. They cost nothing — they do
+        // not animate at all — and they are the whole tell: everything else in this
+        // game drawn as a disc rotates, and this is the one that does not.
         g.strokeStyle = `rgba(${pal.rim},0.180)`;
         g.lineWidth = 1;
         for (let i = 0; i < 4; i++) {
@@ -3915,21 +3924,62 @@ function drawFrame(now) {
           g.stroke();
         }
       } else {
-        // Aqua Regia: nine blisters crawling out to the rim and starting again. The
-        // angle is fixed per blister so the pool has a texture rather than a swarm,
-        // and the phase is offset by index so they do not all arrive together.
+        // White Heat: five blisters rising through it, not nine, and on a 2.4s phase
+        // rather than 1.4. Slower and fewer is also better fiction — this is a pool
+        // of star-tapped plasma sitting on the floor, not a beaker coming to the
+        // boil. The angle is fixed per blister so it has a texture rather than a
+        // swarm, and the phase is offset by index so they never arrive together.
         g.fillStyle = `rgba(${pal.rim},0.320)`;
-        for (let i = 0; i < 9; i++) {
-          const a0 = (i / 9) * Math.PI * 2 + (gr.y % 61) / 61 * Math.PI * 2;
-          const ph = ((now / 1400) + i / 9) % 1;
+        for (let i = 0; i < 5; i++) {
+          const a0 = (i / 5) * Math.PI * 2 + (gr.y % 61) / 61 * Math.PI * 2;
+          const ph = ((now / 2400) + i / 5) % 1;
           const rr = Math.max(1, R * (0.12 + 0.84 * ph));
-          g.globalAlpha = Number(al(0.55 * (1 - ph) + 0.10));
+          g.globalAlpha = Number(al(0.45 * (1 - ph) + 0.08));
           g.beginPath();
           g.arc(gr.x + Math.cos(a0) * rr, gr.y + Math.sin(a0) * rr,
-                Math.max(1, R * 0.05 * (0.5 + ph)), 0, 7);
+                Math.max(1, R * 0.045 * (0.5 + ph)), 0, 7);
           g.fill();
         }
         g.globalAlpha = 1;
+      }
+    }
+
+    // THE PAIR, drawn as one thing. A Crucible and a Doldrum are posted together and
+    // pulling either is pulling both, so a pilot has to be able to SEE that before the
+    // second one is on top of them — otherwise it plays as one hostile that
+    // inexplicably doubles.
+    //
+    // Paired by proximity rather than off the wire, and that is a real choice: the
+    // link would be two more numbers on a ship row and SHIP_FIELDS is at 30 of a hard
+    // 31. It cannot be wrong in a way that matters, because the pairing is a fact
+    // about the KINDS — every Crucible in the game has a Doldrum and the deeps hold
+    // nothing else — so the worst a proximity match can do when two pairs overlap is
+    // draw the true statement between the wrong two hulls.
+    //
+    // Only inside PAIR_SEE, which is the leash: past that they are not fighting the
+    // same thing and the line would be a claim about nothing.
+    {
+      const PAIR_SEE = 2600;
+      const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+      const mates = [];
+      for (const [, a] of ships) {
+        if (a.co !== 'x' || !ALIENS[a.hull]?.mate || !Number.isFinite(a.rx)) continue;
+        for (const [, b] of ships) {
+          if (b.co !== 'x' || ALIENS[b.hull]?.mate !== a.hull || !Number.isFinite(b.rx)) continue;
+          if (a.hull >= b.hull) continue;                     // one line per pair, not two
+          if (Math.hypot(a.rx - b.rx, a.ry - b.ry) > PAIR_SEE) continue;
+          mates.push([a, b]);
+        }
+      }
+      for (const [a, b] of mates) {
+        const d = Math.hypot(a.rx - b.rx, a.ry - b.ry);
+        // fades out as they separate, so a broken pair stops claiming to be one
+        g.strokeStyle = `rgba(190,170,255,${al(0.26 * (1 - d / PAIR_SEE))})`;
+        g.lineWidth = 1;
+        g.setLineDash([4, 16]);
+        g.lineDashOffset = -now / 90;
+        g.beginPath(); g.moveTo(a.rx, a.ry); g.lineTo(b.rx, b.ry); g.stroke();
+        g.setLineDash([]);
       }
     }
 
