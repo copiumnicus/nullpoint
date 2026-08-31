@@ -1,4 +1,5 @@
-import { berthPrice, BERTH_TRIPS, BERTH_RANK, BERTH_QUIET,
+import { berthPrice, berthRank, berthTerms, BERTH_TRIPS, BERTH_RANK, BERTH_QUIET,
+         DEEP_BERTH, DEEP_BERTH_RANK,
          whyNotBerth, whyNotBuyBerth, berthPanel } from '../shared/berth.js';
 import { devicePrice } from '../shared/devices.js';
 import { levelFor } from '../shared/level.js';
@@ -13,36 +14,128 @@ const check = (name, ok, detail = '') => {
 };
 const xpFor = lvl => { let xp = 0; while (levelFor(xp).level < lvl) xp += 250; return xp; };
 
-console.log('\nwhat a berth costs');
+console.log('\nwhat a berth costs on the frontier');
 check('its price is the trip it saves you, times the trips',
-  berthPrice() === devicePrice('recall') * BERTH_TRIPS,
-  `${berthPrice()} = ${devicePrice('recall')} x ${BERTH_TRIPS} — below that a handful of beacons was cheaper`);
+  berthPrice('m4') === devicePrice('recall') * BERTH_TRIPS,
+  `${berthPrice('m4')} = ${devicePrice('recall')} x ${BERTH_TRIPS} — below that a handful of beacons was cheaper`);
 // This used to read "more than ten beacons", which was right while a berth was a
 // convenience and wrong the moment it became the door to the upper ladder: a toll
 // you cannot pay when you first want to climb is a wall, not a toll.
-check('it is a real decision, not pocket change', berthPrice() > devicePrice('recall') * 4,
-  `${berthPrice()} — several trips' worth, so a couple of beacons is genuinely the cheaper answer`);
+check('it is a real decision, not pocket change', berthPrice('m4') > devicePrice('recall') * 4,
+  `${berthPrice('m4')} — several trips' worth, so a couple of beacons is genuinely the cheaper answer`);
 check('and it is payable by a pilot who has just outgrown the home ring',
-  berthPrice() < devicePrice('recall') * 12,
+  berthPrice('m4') < devicePrice('recall') * 12,
   'a gate you reach before you can afford it stops being a gate and becomes a wall');
+// The deeps arrived and the frontier's number had to not move with them. A price
+// that drifts because somewhere else got one is how a balance pass becomes a bug.
+check('and the frontier price did not move when the deeps got one',
+  berthPrice('m4') === 27200 && ['m4', 'h4', 'k4'].every(id => berthPrice(id) === berthPrice('m4')),
+  `${berthPrice('m4')} cr at every frontier, unchanged`);
+
+console.log('\nand what one costs in the deeps');
+{
+  const { ALIENS } = await import('../shared/aliens.js');
+  const { DROPS, MATERIALS, PIRATE_RATE } = await import('../shared/cargo.js');
+  // What the sector pays, re-derived here rather than copied out of the comment, so
+  // the price and the thing it is priced in cannot drift apart silently.
+  const ore = DROPS.vitriol.reduce((t, d) => t + d.p * ((d.min + d.max) / 2) * MATERIALS[d.mat].value, 0);
+  const kill = ALIENS.vitriol.bounty + ore * PIRATE_RATE;
+  const kills = DEEP_BERTH / kill;
+
+  check('a deep bay is ten million, and the deep sectors are the only place that is true',
+    ['d1', 'd2', 'd3'].every(id => berthPrice(id) === 10_000_000) && DEEP_BERTH === 10_000_000,
+    `${DEEP_BERTH.toLocaleString('en-US')} cr, against ${berthPrice('m4').toLocaleString('en-US')} on the frontier`);
+
+  // The arithmetic that does NOT support it, named rather than quietly dropped. A
+  // beacon costs the same 3,400 four hops out as it does at home, so the frontier's
+  // own derivation prices a deep bay at pocket change.
+  check('the trips argument cannot reach ten million and this is by how much it misses',
+    devicePrice('recall') * BERTH_TRIPS < kill * 0.03,
+    `eight beacons is ${(devicePrice('recall') * BERTH_TRIPS / kill * 100).toFixed(2)}% of ONE kill out here — ` +
+    'a price nobody notices is not a decision');
+
+  // And the one that does. Keep the measurement, per rule two: if the deeps' payout
+  // moves far enough that ten million stops being six-to-eight kills, this says so.
+  check('it is priced in what the sector pays: six to eight kills of what lives there',
+    kills >= 6 && kills <= 8,
+    `${kills.toFixed(2)} kills at ${Math.round(kill).toLocaleString('en-US')} cr each ` +
+    `(${ALIENS.vitriol.bounty.toLocaleString('en-US')} bounty + ${Math.round(ore * PIRATE_RATE).toLocaleString('en-US')} of ore at the counter)`);
+  check('which is a little under two clears of the sector it stands in',
+    kills / 4 > 1.4 && kills / 4 < 2.1,
+    `${(kills / 4).toFixed(2)} clears — a deep sector is posted with four sowers`);
+  // It is not priced against the shop, and that is the point: by four hops out the
+  // shop has stopped being anybody's constraint.
+  {
+    const { EQUIPMENT } = await import('../shared/gear.js');
+    const { HULLS } = await import('../shared/ships.js');
+    const shop = Object.values(EQUIPMENT).reduce((t, e) => t + (e.price ?? 0), 0)
+               + Object.values(HULLS).reduce((t, h) => t + (h.price ?? 0), 0);
+    check('one of everything in the game is still not a fifth of it',
+      DEEP_BERTH > shop * 5,
+      `${DEEP_BERTH.toLocaleString('en-US')} against ${shop.toLocaleString('en-US')} for one of every hull and fitting`);
+  }
+}
 
 console.log('\nwho they will rent to');
+const askAt = (mapId, o) => whyNotBuyBerth({ mapId, inside: true, ...o });
 check('not to someone who has never left home',
-  /rank/.test(whyNotBuyBerth({ inside: true, credits: 1e9, xp: 0 })),
-  whyNotBuyBerth({ inside: true, credits: 1e9, xp: 0 }));
+  /rank/.test(askAt('m4', { credits: 1e9, xp: 0 })), askAt('m4', { credits: 1e9, xp: 0 }));
 check('and not to someone who cannot pay',
-  /costs/.test(whyNotBuyBerth({ inside: true, credits: 0, xp: xpFor(BERTH_RANK) })));
-check('but yes to a pilot with both', whyNotBuyBerth({
-  inside: true, credits: berthPrice(), xp: xpFor(BERTH_RANK) }) === null);
+  /costs/.test(askAt('m4', { credits: 0, xp: xpFor(BERTH_RANK) })));
+check('but yes to a pilot with both',
+  askAt('m4', { credits: berthPrice('m4'), xp: xpFor(BERTH_RANK) }) === null);
 check('you cannot buy one you already have',
-  /already/.test(whyNotBuyBerth({ inside: true, owned: true, credits: 1e9, xp: xpFor(60) })));
+  /already/.test(askAt('m4', { owned: true, credits: 1e9, xp: xpFor(60) })));
 check('and not from across the sector', /range/.test(whyNotBuyBerth({ inside: false })));
 // Rank gates, it does not scale. Standing decides where you are allowed, never
 // how hard you hit — this is the whole of what levels are now allowed to do.
 check('rank is a door, not a discount',
-  whyNotBuyBerth({ inside: true, credits: berthPrice(), xp: xpFor(BERTH_RANK) }) ===
-  whyNotBuyBerth({ inside: true, credits: berthPrice(), xp: xpFor(60) }),
+  askAt('m4', { credits: berthPrice('m4'), xp: xpFor(BERTH_RANK) }) ===
+  askAt('m4', { credits: berthPrice('m4'), xp: xpFor(60) }),
   'a rank 60 pilot pays exactly what a rank 20 pilot pays');
+
+console.log('\nand who they will rent to in the deeps');
+{
+  const { ALIENS } = await import('../shared/aliens.js');
+  check('the deeps ask a higher rank than the frontier does',
+    DEEP_BERTH_RANK > BERTH_RANK && berthRank('d1') === DEEP_BERTH_RANK && berthRank('m4') === BERTH_RANK,
+    `rank ${DEEP_BERTH_RANK} out here against rank ${BERTH_RANK} on the frontier`);
+  // What the number stands for, and it is a sentence somebody could disagree with:
+  // one of the things that lives in a deep sector is the whole entry fee.
+  check('and the rank IS one kill of what lives there',
+    levelFor(ALIENS.vitriol.xp).level >= DEEP_BERTH_RANK,
+    `a Vitriol pays ${ALIENS.vitriol.xp.toLocaleString('en-US')} xp, which is rank ${levelFor(ALIENS.vitriol.xp).level}`);
+  // The bug this one exists to stop: a gate you can only pass by already being
+  // through it is a wall. The door has to open from the gate side.
+  check('the door opens from outside, so you arrive already able to rent',
+    levelFor(4 * ALIENS.hive.xp).level >= DEEP_BERTH_RANK,
+    `four Corsair Hives on the gates is rank ${levelFor(4 * ALIENS.hive.xp).level} — you never have to enter a deep to qualify`);
+  check('a rank 39 pilot is refused at ten million minus one credit',
+    /costs/.test(askAt('d1', { credits: DEEP_BERTH - 1, xp: xpFor(DEEP_BERTH_RANK) })),
+    askAt('d1', { credits: DEEP_BERTH - 1, xp: xpFor(DEEP_BERTH_RANK) }));
+  check('and a rank 38 pilot with ten million is refused too',
+    /rank/.test(askAt('d1', { credits: 1e9, xp: xpFor(DEEP_BERTH_RANK - 1) })),
+    askAt('d1', { credits: 1e9, xp: xpFor(DEEP_BERTH_RANK - 1) }));
+  check('both together and they rent',
+    askAt('d1', { credits: DEEP_BERTH, xp: xpFor(DEEP_BERTH_RANK) }) === null);
+  // The invariant, out here too: standing decides where you are allowed, never what
+  // anything costs you.
+  check('rank is still a door and still not a discount',
+    askAt('d1', { credits: DEEP_BERTH, xp: xpFor(DEEP_BERTH_RANK) }) ===
+    askAt('d1', { credits: DEEP_BERTH, xp: xpFor(300) }),
+    'a rank 300 pilot pays the same ten million');
+  // The bug the whole per-outpost lookup exists to stop. A frontier pilot's money
+  // must not buy a deep bay, and the refusal has to name the deep price — the panel
+  // draws this string, and a panel quoting 27,200 for a ten million credit bay is
+  // the workshop dock again.
+  check('and a frontier bankroll does not quietly buy a deep bay',
+    askAt('d1', { credits: berthPrice('m4'), xp: xpFor(300) }) !== null &&
+    /10,000,000/.test(askAt('d1', { credits: berthPrice('m4'), xp: xpFor(300) })),
+    askAt('d1', { credits: berthPrice('m4'), xp: xpFor(300) }));
+  check('the terms come from one lookup, so the price and the rank cannot disagree',
+    berthTerms('d1').price === berthPrice('d1') && berthTerms('d1').rank === berthRank('d1') &&
+    berthTerms('d1').deep === true && berthTerms('m4').deep === false);
+}
 
 console.log('\nwhat it is not');
 check('it is not shelter — being shot at closes it',
@@ -57,6 +150,79 @@ check('it is not a dock: no outpost is one, berth or no berth',
 check('and having one somewhere is not having one everywhere',
   whyNotBerth({ owned: false, inside: true }) !== null,
   'bought per outpost, so a pilot on one frontier does not pay for three');
+
+// --- and what the peace in a deep sector is, exactly ---------------------------
+//
+// The worry that shaped this whole placement: the deeps hold the two hardest things
+// in the game, and a ring you cannot be touched in is a free way out of the hardest
+// fight there is. Two facts settle it and both are asserted rather than asserted at.
+//
+// One: the ring HAS to keep the peace, because a bay is somewhere a wreck comes
+// back to and ground outlives its sower by 36 seconds. Respawning with no peace at
+// the door, into a pool that is still burning where you died, is a death loop with
+// a fuse on it — which is the exact bug the frontier's peace was added to end.
+//
+// Two: the peace has never covered a pilot who shot first. mayHarm() is the rule and
+// it is one line — anything you provoked follows you in and keeps firing — and a
+// patch of ground carries its sower's grudge BY REFERENCE so that survives the
+// sower's death. So the free escape is available to everyone except the people in
+// the fight.
+console.log('\nwhat the peace in the deeps covers');
+{
+  const { inHaven, inOutpost, canDock } = await import('../shared/sim.js');
+  const { mayHarm } = await import('../shared/aliens.js');
+  const o = MAPS.d1.outpost, mid = { x: o.x, y: o.y };
+  const outside = { x: o.x + o.r + 1, y: o.y };
+
+  check('a deep outpost keeps the peace at its own door, because you respawn there',
+    inHaven(MAPS.d1, mid) && inOutpost(MAPS.d1, mid),
+    'ground outlives the thing that sowed it by 36s — a respawn into a live pool is a loop with no way out');
+  check('and the peace stops dead at the trading zone',
+    !inHaven(MAPS.d1, outside), `${o.r}px and not a pixel past it`);
+  check('it never mends you: a deep outpost is not a dock',
+    !canDock(MAPS.d1, MAPS.d1.owner, mid) && !canDock(MAPS.d1, 'm', mid),
+    'no repairs out here, whoever you fly for');
+
+  // The claim the whole worry reduces to, and it is the one somebody could
+  // disagree with: an outpost is not a way out of a fight you started.
+  const me = 7;
+  check('but it is NO refuge from a fight you started',
+    mayHarm({ provoked: new Set([me]) }, { id: me, ship: {}, haven: true }) === true,
+    'you shot it, so it follows you into the ring and keeps shooting — sanctuary stops a fight starting, not one already on you');
+  check('while a pilot who never touched it is left alone inside',
+    mayHarm({ provoked: new Set() }, { id: me, ship: {}, haven: true }) === false,
+    'which is what makes a respawn survivable');
+  check('and outside the ring nothing is protected from anything',
+    mayHarm({ provoked: new Set() }, { id: me, ship: {}, haven: false }) === true);
+
+  // Ground reads the same rule, through the same function, off the sower's own
+  // provoked set carried by reference — see groundFor() in shared/ground.js. This is
+  // the assertion that the pool you were already fighting in does not stop burning
+  // because you crossed a line.
+  const { groundFor } = await import('../shared/ground.js');
+  const sower = { def: { sow: { kind: 'regia', r: 165, rate: 0.1423, hold: 0, life: 36 } },
+                  provoked: new Set([me]) };
+  const patch = groundFor(sower, { x: o.x, y: o.y });
+  check('and ground you provoked still burns you inside the ring',
+    mayHarm({ provoked: patch.by }, { id: me, haven: true }) === true,
+    'the patch holds its sower\'s grudge by reference, so it outlives the sower without forgetting');
+
+  // And the other half: it cannot be made a fortress either. Ground is laid where
+  // its victim was STANDING and nobody may be sown on inside a haven, so the closest
+  // any patch can ever be centred is the rim — which bounds how much of the trading
+  // zone a hostile can take away, at every radius the bestiary has.
+  const { ALIENS } = await import('../shared/aliens.js');
+  const lens = (r1, r2, d) => d >= r1 + r2 ? 0 : d <= Math.abs(r1 - r2) ? Math.PI * Math.min(r1, r2) ** 2
+    : r1*r1*Math.acos((d*d + r1*r1 - r2*r2)/(2*d*r1)) + r2*r2*Math.acos((d*d + r2*r2 - r1*r1)/(2*d*r2))
+      - 0.5*Math.sqrt((-d + r1 + r2)*(d + r1 - r2)*(d - r1 + r2)*(d + r1 + r2));
+  const sowers = Object.entries(ALIENS).filter(([, a]) => a.sow);
+  const worst = Math.max(...sowers.map(([, a]) => lens(o.r, a.sow.r, o.r) / (Math.PI * o.r * o.r)));
+  check('and no patch of ground can ever cover the trading zone',
+    worst < 0.5,
+    `the worst any sower can take is ${(worst * 100).toFixed(0)}% of the ring — ` +
+    sowers.map(([k, a]) => `${k} r${a.sow.r} -> ${(lens(o.r, a.sow.r, o.r) / (Math.PI * o.r * o.r) * 100).toFixed(0)}%`).join(', ') +
+    ' — because it is laid where you were standing, and nobody is sown on inside a haven');
+}
 
 console.log('\nkeeping it');
 check('a berth survives a save and a load', (() => {
@@ -91,8 +257,8 @@ console.log('\nwhat the frontier stocks');
   // The berth stopped being a convenience the moment it gated the ladder, so its
   // price had to stop being a convenience price.
   check('the toll is payable when you first want to climb',
-    berthPrice() < EQUIPMENT.emitter3.price * 4,
-    `${berthPrice()} against an MK-III at ${EQUIPMENT.emitter3.price} — the first thing it unlocks`);
+    berthPrice('m4') < EQUIPMENT.emitter3.price * 4,
+    `${berthPrice('m4')} against an MK-III at ${EQUIPMENT.emitter3.price} — the first thing it unlocks`);
   check('every technology is on a rung now',
     Object.values(EQUIPMENT).filter(e => e.slot === 'tech').every(e => e.tier > 0),
     'four things at one rung was a shelf with nothing to climb');
@@ -108,6 +274,10 @@ console.log('\nwhere a wreck comes back');
   check('and one who last used a bay they rent comes back to the bay',
     where({ co: 'm', lastDock: 'm4', berths: ['m4'] }).map === 'm4',
     'four sectors of flying home, every death, was the least interesting minute in the game');
+  check('including a bay four hops out in the deeps',
+    where({ co: 'm', lastDock: 'd1', berths: ['d1'] }).map === 'd1' &&
+    where({ co: 'm', lastDock: 'd1', berths: ['d1'] }).kind === 'bay',
+    'the deeps had nowhere at all to come back to, so every death was a flight from your home ring');
   // Everything about the last hangar is re-checked rather than trusted: a berth
   // can be sold, a save can be hand-edited, a sector can stop having an outpost.
   check('a bay you have since sold does not hold your respawn',
@@ -186,6 +356,11 @@ console.log('\nthe panel that sells it');
   // the whole suite was green while respawning was broken for everybody — the home
   // dock too, not just a berth.
   for (const acct of [{ co: 'h', berths: ['h4'], lastDock: 'h4' },
+                      // The deeps are the newest port record and therefore the most
+                      // likely to be missing an `r` — this is the exact shape of the
+                      // bug that stranded people, so it is checked the same way.
+                      { co: 'm', berths: ['d1'], lastDock: 'd1' },
+                      { co: 'k', berths: ['d3'], lastDock: 'd3' },
                       { co: 'h' }, { co: 'm', lastDock: 'm1' }, { co: 'k', lastDock: 'nonsense' }]) {
     const at = respawnAt(acct, MAPS);
     const ang = 1.1, dist = 0.9 * at.r * 0.6;          // what server.js does
@@ -227,5 +402,7 @@ console.log('\nthe panel that sells it');
     /no Recall Beacon aboard/.test(whyNotDevice({ devices: {}, using: 'recall' }) ?? ''));
 }
 
-console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — a berth is ${berthPrice()} cr`}\n`);
+console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`
+  : `PASS — a berth is ${berthPrice('m4').toLocaleString('en-US')} cr on the frontier, `
+  + `${berthPrice('d1').toLocaleString('en-US')} cr in the deeps`}\n`);
 process.exit(fails.length ? 1 : 0);

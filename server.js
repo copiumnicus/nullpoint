@@ -1444,13 +1444,19 @@ wss.on('connection', (ws, req) => {
         : `${MODULES[m.key].name} — ${countOf(m.key)} hostiles hold the rock. Clear them.`);
     }
     if (m.t === 'buyberth') {
-      const why = whyNotBuyBerth({ xp: P.xp, credits: P.credits,
+      // `mapId` is the whole of what makes this safe now that a bay is not one
+      // price. The refusal and the charge read the same lookup off the same key —
+      // quote the terms with one and debit with the other and a ten million credit
+      // bay in the deeps goes for the frontier's 27,200, with the server happily
+      // taking the money.
+      const why = whyNotBuyBerth({ mapId: P.mapId, xp: P.xp, credits: P.credits,
                                    owned: P.berths.includes(P.mapId),
                                    inside: inOutpost(mapOf(P.mapId), ship) });
       if (why) return tell(why);
-      P.credits -= berthPrice();
+      const paid = berthPrice(P.mapId);
+      P.credits -= paid;
       P.berths = [...P.berths, P.mapId];
-      receipt('Berth · ' + mapOf(P.mapId).name, berthPrice(), 'you may refit and buy here now');
+      receipt('Berth · ' + mapOf(P.mapId).name, paid, 'you may refit and buy here now');
       touch(P);
       return outfit();
     }

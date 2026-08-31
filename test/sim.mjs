@@ -1,5 +1,5 @@
 import { newShip, step, stepJump, beginJump, nearPortal, arrivalFor, JUMP_TIME, canDock,
-         inOutpost, inHaven } from '../shared/sim.js';
+         inOutpost, inHaven, HAVEN_R } from '../shared/sim.js';
 import { pirateValue, PIRATE_RATE, holdValue } from '../shared/cargo.js';
 import { MAPS, GALAXY, HOMES, COMPANIES, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { chartLayout } from '../shared/chart.js';
@@ -279,11 +279,34 @@ check('no two connectors run along the same line', sideBySide === 0);
 console.log('\nthe pirate outpost');
 {
   const withPost = Object.entries(MAPS).filter(([, m2]) => m2.outpost);
-  // This used to read "every third sector has one". The third sector is still
-  // close enough to your own dock that flying home was never the problem; the
-  // frontier is where a run gets long enough for a full hold to end it.
-  check('every frontier has one', withPost.length === 3 &&
-    withPost.every(([id]) => MAPS[id].frontier), withPost.map(([id]) => id).join(' '));
+  // This used to read "every third sector has one", then "every frontier has one".
+  // The third sector is still close enough to your own dock that flying home was
+  // never the problem; the frontier is where a run gets long enough for a full hold
+  // to end it. The deeps are where there was NOWHERE — no base, no outpost, so every
+  // trip out was round-trip from a gate and a full hold ended it four hops from a
+  // counter.
+  check('every frontier and every deep sector has one', withPost.length === 6 &&
+    withPost.every(([id]) => MAPS[id].frontier || MAPS[id].deep),
+    withPost.map(([id]) => id).join(' '));
+  check('and nothing else does — not the gates, not the core, not your own rings',
+    !['g1', 'g2', 'g3', 'x0', 'm1', 'm2', 'm3'].some(id => MAPS[id].outpost),
+    'a gate has four portal mouths and that is deliberately all the shelter it gets');
+  // Three copies of one sector deserve one shop in one place: a pilot who has
+  // learnt d1 should not have to learn d2 as well.
+  {
+    const deeps = ['d1', 'd2', 'd3'].map(id => MAPS[id].outpost);
+    check('the three deep outposts are the same point, so you can find one without looking',
+      deeps.every(o => o.x === deeps[0].x && o.y === deeps[0].y && o.r === deeps[0].r),
+      `${deeps[0].x},${deeps[0].y} r ${deeps[0].r} in all three`);
+    // The one number the placement is actually built on. Every door in a deep sector
+    // sits on y = 4000, so the sanctuary at a portal mouth and the sanctuary at the
+    // shop have to be far enough apart that no single patch of ground can cover the
+    // gap — a Doldrum's still is the widest thing in the game at r 420, 840px across.
+    const gap = Math.min(...MAPS.d1.portals.map(p2 =>
+      Math.hypot(p2.x - deeps[0].x, p2.y - deeps[0].y))) - deeps[0].r - HAVEN_R;
+    check('and there is open sky between the shop and the nearest door', gap > 840,
+      `${Math.round(gap)}px of it, against 840px for the widest patch of ground in the game`);
+  }
   for (const [id, m2] of withPost) {
     const o = m2.outpost;
     check(`${id}'s outpost is clear of both gates`,

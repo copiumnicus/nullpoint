@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.69';
+export const VERSION = '0.70';
 
 export const PATCHES = [
+  { v: '0.70', notes: [
+    'The deep sectors have a pirate outpost now — one shop, same place in all three',
+    'It sells ore, and a bay rented there costs ten million and rank 39',
+    'Rent one and you refit, buy and respawn four hops out instead of flying home',
+    'The ring keeps the peace, but not from anything you have already shot at',
+  ] },
   { v: '0.69', notes: [
     'A claim is a hunt now: everything in it sees you from the far side of the map',
     'They all come at once, at their own speeds, so the field arrives as a stream',

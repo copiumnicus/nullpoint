@@ -18,9 +18,12 @@
 //
 // It is bought per outpost, not once for all of them. Each frontier is its own
 // decision, and a pilot who lives on one frontier should not be paying for three.
+// The deep sectors have one too, and it is not the same offer: ten million and rank
+// 39 against the frontier's 27,200 and rank 8. berthTerms() is where that lives.
 
 import { devicePrice } from './devices.js';
 import { levelFor } from './level.js';
+import { MAPS } from './maps.js';
 
 // What a berth is worth, derived rather than picked: a Recall Beacon buys exactly
 // one trip home and costs 3400. A berth saves that trip every time you would have
@@ -34,7 +37,43 @@ import { levelFor } from './level.js';
 // Past eight refits out here it has paid for itself, and below that a handful of
 // beacons really was the cheaper answer.
 export const BERTH_TRIPS = 8;
-export const berthPrice = () => devicePrice('recall') * BERTH_TRIPS;
+export const frontierBerthPrice = () => devicePrice('recall') * BERTH_TRIPS;
+
+// --- and what one costs in the deeps ------------------------------------------
+//
+// Ten million, which the trips argument above does not support and cannot be made
+// to. A Recall Beacon is 3,400 wherever you buy it, so `devicePrice('recall') x
+// BERTH_TRIPS` prices a bay four hops out at the same 27,200 it prices one on the
+// frontier — and 27,200 out here is 1.84% of a SINGLE kill. Priced in beacons a
+// deep bay is free, and a price you do not notice is not a decision. That
+// arithmetic is named rather than quietly dropped because it is the frontier's and
+// it is still right there.
+//
+// What does scale with the sector is what the sector pays, so that is the currency:
+//
+//   one Vitriol or Doldrum   2,055,480 effective hit points
+//     bounty                 1,438,836   ehp x BOUNTY_RATE
+//     one full hold of ore      47,680   at the dock
+//                            + 35,760   at the counter it is standing next to, x PIRATE_RATE
+//     ------------------------------------------------------------------------
+//     a kill, banked here     1,474,596
+//
+//   a deep sector is posted with four of them, so ONE CLEAR is 5,898,384.
+//
+// Ten million is 6.78 kills, or 1.70 clears: a bay costs a little under two clears
+// of the sector it stands in. Seven kills is 10,322,172 and six is 8,847,576, so
+// the round number the designer asked for sits inside the band and is the one a
+// player can hold in their head — which is worth more on a price tag than three
+// significant figures of a number that moves whenever a hostile is rebalanced.
+//
+// It is deliberately not priced against the shop. One of every hull, gun, generator
+// and rig in the game comes to about 350,000; ten million is thirty of those. By
+// the deeps the shop has stopped being the constraint on anything, and this is the
+// first price in the game denominated in what a pilot EARNS rather than in what
+// things cost. test/berth.mjs keeps the measurement: if the deeps' payout moves far
+// enough that ten million stops being six-to-eight kills, it says so and this wants
+// re-deriving rather than nudging.
+export const DEEP_BERTH = 10_000_000;
 
 // Money is not the only thing pirates want. A berth is the first thing in the game
 // gated on rank, and rank is the right gate for exactly this: they are not selling
@@ -54,6 +93,48 @@ export const berthPrice = () => devicePrice('recall') * BERTH_TRIPS;
 // is brought onto the balance model this gate should be re-derived, not nudged.
 export const BERTH_RANK = 8;
 
+// And the deeps ask for rank 39, which is one kill.
+//
+// Not "one kill" as a figure of speech: a Vitriol or a Doldrum pays 442,719
+// experience and rank 39 costs 437,817, so a single one of the things that lives in
+// a deep sector carries a pilot from nothing to the door. That is the rank standing
+// for the only thing it can honestly stand for out here — the frontier's gate says
+// the pirates have heard of you, and this one says you have killed something that
+// lives past a gate.
+//
+// The important part is that the door OPENS FROM OUTSIDE. Rank 39 is also 3.1
+// Corsair Hives or 9.9 Threshers, both of which stand on the gates you cross to get
+// here, so a pilot arrives in the deeps already able to rent. A gate you can only
+// pass by already being through it is a wall, and this codebase has shipped one of
+// those.
+//
+// It is a gate and not a multiplier: a rank 39 pilot and a rank 300 pilot pay the
+// same ten million and fly the same ship afterwards. There is a test.
+//
+// Same caveat as the one above it, and for the same reason: the experience table is
+// un-rebalanced, so this is derived from a number that is itself owed a pass. When
+// the bestiary comes onto the balance model, re-derive both gates rather than
+// nudging either.
+export const DEEP_BERTH_RANK = 39;
+
+// --- one function, both counters ----------------------------------------------
+//
+// The terms at THIS outpost. It was a global, which was true while there was one
+// kind of outpost and silently wrong the moment there were two: a caller that
+// forgot to say where it was standing would quote the frontier's 27,200 for a bay
+// worth ten million, and the server would take the money and hand it over. So the
+// price and the rank come out of the same lookup, from the same key, and the panel,
+// the prompt and the server all read it.
+//
+// `deep` is the seam, per rule seven: a third kind of outpost is a row here, not a
+// second copy of whyNotBuyBerth.
+export const berthTerms = (mapId) => MAPS[mapId]?.deep
+  ? { price: DEEP_BERTH,            rank: DEEP_BERTH_RANK, deep: true }
+  : { price: frontierBerthPrice(),  rank: BERTH_RANK,      deep: false };
+
+export const berthPrice = (mapId) => berthTerms(mapId).price;
+export const berthRank  = (mapId) => berthTerms(mapId).rank;
+
 // Long enough that it cannot be used as cover mid-fight, short enough that it is
 // not a punishment for having been shot at once on the way in. The same window
 // the repair kits use, for the same reason.
@@ -69,15 +150,23 @@ export function whyNotBerth({ owned = false, inside = false, sinceHit = 1e9 } = 
 }
 
 // And why they will not sell you one yet.
-export function whyNotBuyBerth({ xp = 0, credits = 0, owned = false, inside = false } = {}) {
+//
+// `mapId` is which outpost, and it is not optional in spirit even though it has a
+// default: leave it out and this quotes the frontier's terms for whatever you are
+// standing in. Every caller passes it, and test/berth.mjs asserts a deep sector
+// quotes ten million through this function and not just through berthPrice().
+export function whyNotBuyBerth({ mapId = null, xp = 0, credits = 0,
+                                 owned = false, inside = false } = {}) {
   // These are drawn on the panel's one button, in capitals, so they have to fit
   // in about forty characters. The reasoning — why pirates care about rank at all
   // — is printed above the button; this line is only ever the missing piece.
   if (!inside) return 'no outpost in range — fly closer';
   if (owned) return 'you already rent a bay here';
+  const { price, rank } = berthTerms(mapId);
   const lvl = levelFor(xp).level;
-  if (lvl < BERTH_RANK) return `they want rank ${BERTH_RANK} — you are ${lvl}`;
-  if (credits < berthPrice()) return `costs ${berthPrice()} cr — you cannot pay yet`;
+  if (lvl < rank) return `they want rank ${rank} — you are ${lvl}`;
+  // Grouped, because ten million as a bare run of digits is a number nobody reads.
+  if (credits < price) return `costs ${price.toLocaleString('en-US')} cr — you cannot pay yet`;
   return null;
 }
 
