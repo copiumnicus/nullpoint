@@ -692,6 +692,7 @@ const dismiss = () => {
   if (F.maxScroll <= 0) errs.push('the threat file fits every hostile, so scrolling cannot be tested');
   else {
     const topRow = () => {
+      for (let i = 0; i < 14; i++) { frame(t += 16); frames++; }   // let the easing settle
       trace = []; frame(t += 16); frames++;
       const out2 = trace; trace = null;
       const first = filedIn(Object.fromEntries(WILD.map((k, i) => [k, i + 1])));

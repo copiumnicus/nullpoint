@@ -75,16 +75,28 @@ export function filePanel(VIEW_W, VIEW_H, scroll = 0, n = 0) {
   const w = Math.min(FILE_W, VIEW_W - 40);
   const h = Math.min(VIEW_H - 60, FILE_HEAD + Math.max(1, n) * FILE_ROW + FILE_PAD);
   const x = Math.round((VIEW_W - w) / 2), y = Math.round((VIEW_H - h) / 2);
-  const room = h - FILE_HEAD - FILE_PAD;
-  const fit = Math.max(1, Math.floor(room / FILE_ROW));
-  const maxScroll = Math.max(0, n - fit);
-  const at = Math.max(0, Math.min(maxScroll, Math.round(scroll)));
+
+  // The body is the window the rows move behind, and it is what the client clips
+  // to. Rows are placed at a PIXEL offset rather than snapped to a row index: a
+  // wheel tick used to advance a whole 96px entry, so the list jumped a full card
+  // at a time and read as two frames of two different lists rather than as
+  // scrolling. Pixels here, easing in the client, clipping at the edges.
+  const body = { x: x + FILE_PAD, y: y + FILE_HEAD, w: w - FILE_PAD * 2,
+                 h: h - FILE_HEAD - FILE_PAD };
+  const span = n * FILE_ROW;
+  const maxScroll = Math.max(0, span - body.h);
+  const at = Math.max(0, Math.min(maxScroll, scroll));
+
   const rows = [];
-  for (let i = 0; i < Math.min(fit, n); i++)
-    rows.push({ i: at + i,
-                r: { x: x + FILE_PAD, y: y + FILE_HEAD + i * FILE_ROW,
-                     w: w - FILE_PAD * 2, h: FILE_ROW - 6 } });
-  return { panel: { x, y, w, h }, rows, at, maxScroll, fit,
+  for (let i = 0; i < n; i++) {
+    const ry = body.y + i * FILE_ROW - at;
+    if (ry + FILE_ROW < body.y || ry > body.y + body.h) continue;   // off the window
+    rows.push({ i, r: { x: body.x, y: ry, w: body.w, h: FILE_ROW - 6 } });
+  }
+  // How many fit whole, for the "1-7 of 9" line. Not what `rows` holds — that
+  // includes the two half-rows at the edges, which is the point of clipping.
+  const fit = Math.max(1, Math.floor(body.h / FILE_ROW));
+  return { panel: { x, y, w, h }, body, rows, at, maxScroll, fit,
            close: { x: x + w - 30, y: y + 10, w: 20, h: 20 } };
 }
 

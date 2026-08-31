@@ -12,7 +12,8 @@ export const VERSION = '0.48';
 
 export const PATCHES = [
   { v: '0.48', notes: [
-    'The threat file scrolls properly — it used to get stuck once you passed the end',
+    'The threat file scrolls smoothly, by pixels, with a bar showing where you are',
+    'It used to jump a whole entry per notch, and stick once you passed the end',
   ] },
   { v: '0.47', notes: [
     'Shields come back as a share of the pool now, not a fixed number per second',

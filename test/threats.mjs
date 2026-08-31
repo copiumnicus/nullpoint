@@ -67,21 +67,33 @@ console.log('\nthe panel');
   for (const [w, h] of [[1600, 900], [1280, 720], [900, 600], [480, 420]]) {
     const n = WILD.length;
     const L = filePanel(w, h, 0, n);
-    const inside = r => r.x >= L.panel.x && r.y >= L.panel.y
-                     && r.x + r.w <= L.panel.x + L.panel.w && r.y + r.h <= L.panel.y + L.panel.h;
-    check(`at ${w}x${h} every row is inside the panel and on the screen`,
+    check(`at ${w}x${h} the window the rows move behind is inside the panel`,
       L.panel.x >= 0 && L.panel.y >= 0 && L.panel.x + L.panel.w <= w
-      && L.panel.y + L.panel.h <= h && L.rows.every(row => inside(row.r)),
-      `${L.rows.length} of ${n} rows shown, ${L.maxScroll} to scroll`);
+      && L.panel.y + L.panel.h <= h
+      && L.body.x >= L.panel.x && L.body.y >= L.panel.y
+      && L.body.x + L.body.w <= L.panel.x + L.panel.w
+      && L.body.y + L.body.h <= L.panel.y + L.panel.h,
+      `body ${L.body.w}x${L.body.h}, ${L.fit} of ${n} whole rows fit, ${L.maxScroll}px to scroll`);
+    check('and every row it hands out is horizontally inside that window',
+      L.rows.every(row => row.r.x >= L.body.x && row.r.x + row.r.w <= L.body.x + L.body.w),
+      'vertically they overhang on purpose — the client clips, which is what makes ' +
+      'a row leaving the top get cut instead of drawn over the header');
   }
+  // Pixels, not rows. A wheel tick used to move a whole 96px entry in one frame,
+  // which is not scrolling, it is two different lists shown in succession.
   const L = filePanel(1600, 900, 0, WILD.length);
+  const nudged = filePanel(1600, 900, 20, WILD.length);
+  check('it scrolls by pixels rather than jumping a whole entry at a time',
+    nudged.at === 20 && nudged.rows[0].r.y === L.rows[0].r.y - 20,
+    `20px of scroll moves the list 20px, not ${FILE_ROW}`);
   check('a file too long for the panel scrolls rather than spilling',
-    L.maxScroll > 0 ? L.rows.length === L.fit : L.rows.length === WILD.length,
-    `${L.fit} fit at once`);
-  const far = filePanel(1600, 900, 999, WILD.length);
+    L.maxScroll > 0 && L.maxScroll === WILD.length * FILE_ROW - L.body.h,
+    `${WILD.length} entries of ${FILE_ROW}px in a ${L.body.h}px window is ${L.maxScroll}px to scroll`);
+  const far = filePanel(1600, 900, 99999, WILD.length);
   check('and it cannot be scrolled past its own end',
-    far.at === far.maxScroll && far.rows.every(r => r.i < WILD.length),
-    `asked for 999, landed on ${far.at}`);
+    far.at === far.maxScroll && far.rows.every(r => r.i < WILD.length)
+    && far.rows.at(-1).r.y + FILE_ROW <= far.body.y + far.body.h + 1,
+    `asked for 99999, landed on ${far.at} with the last entry flush to the bottom`);
   check('an empty file still lays out a panel to say so in',
     filePanel(1600, 900, 0, 0).panel.h > FILE_HEAD,
     'a pilot who has killed nothing still opens something');

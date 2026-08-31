@@ -15,7 +15,7 @@ import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpos
          DRIFT_MARGIN, WORLD, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
 import { havenBadge, havenLine, TONE } from '/shared/haven.js';
 import { filePanel, filedIn, dossierOf, fileProgress, totalKills,
-         FILE_PAD, FILE_HEAD } from '/shared/threats.js';
+         FILE_PAD, FILE_HEAD, FILE_ROW } from '/shared/threats.js';
 import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, rungGain, partsOf,
          applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
@@ -133,7 +133,13 @@ let labConfirm = false;
 // first time you kill one and not before — the game's five odd mechanics were
 // never written down anywhere a player could read them, and this is where they
 // are, paid for one kill at a time.
-let myKills = {}, fileOpen = false, fileScroll = 0;
+let myKills = {}, fileOpen = false;
+// Two positions, and the difference between them is why it feels like anything.
+// `fileWant` is where the wheel has asked to be; `fileAt` is where the list is
+// actually drawn, easing toward it. A wheel tick used to move a whole 96px entry
+// in one frame, which is not scrolling, it is two different lists shown in
+// succession.
+let fileWant = 0, fileAt = 0, fileTick = 0;
 // The balance the server last told us, and when. The counter runs UP from that
 // at the rate the server also told us — it never invents money, it only shows
 // the money that is already accruing between one bank and the next. Server truth
@@ -206,9 +212,23 @@ const toast = (what, cost, note) => {
 // all. The header says how many of nine you have, so the file admits it is
 // incomplete without telling you what is missing — a list of locked entries would
 // be the manual this exists instead of.
-function drawFile() {
+function drawFile(now) {
   const filed = filedIn(myKills);
-  const L = filePanel(VIEW_W, VIEW_H, fileScroll, filed.length);
+  // Ease toward where the wheel asked to be, off the timestamp the FRAME was handed
+  // rather than off performance.now(). Two clocks matter here and CLAUDE.md says so:
+  // the render harness drives frames inside a few milliseconds of wall clock, so an
+  // easing measured against the real clock never advances and the panel looks
+  // frozen to the only thing that could have tested it.
+  //
+  // Frame-rate independent: the same fraction of the remaining distance per second
+  // however fast the client runs, so it settles in about a fifth of a second at
+  // 30fps and at 144.
+  const dtS = Math.min(0.05, Math.max(0, (now - fileTick) / 1000)) || 0.016;
+  fileTick = now;
+  const ease = 1 - Math.pow(0.0001, dtS);
+  fileAt += (fileWant - fileAt) * ease;
+  if (Math.abs(fileWant - fileAt) < 0.5) fileAt = fileWant;
+  const L = filePanel(VIEW_W, VIEW_H, fileAt, filed.length);
   const P = L.panel;
   g.fillStyle = 'rgba(4,7,12,0.94)'; g.fillRect(P.x, P.y, P.w, P.h);
   g.strokeStyle = '#5a86b8'; g.lineWidth = 1.4;
@@ -232,6 +252,11 @@ function drawFile() {
     return;
   }
 
+  // Clipped to the window the rows move behind, so a row leaving the top is CUT
+  // rather than drawn over the header — which is the other half of not looking
+  // like a jump.
+  g.save();
+  g.beginPath(); g.rect(L.body.x, L.body.y, L.body.w, L.body.h); g.clip();
   for (const row of L.rows) {
     const d = dossierOf(filed[row.i], myKills);
     if (!d) continue;
@@ -285,7 +310,18 @@ function drawFile() {
     g.fillText(`${fmtCredits(d.bounty)} ${CURRENCY.short}`, row.r.x + row.r.w - 14, row.r.y + 56);
     g.textAlign = 'left';
   }
+  g.restore();
 
+  if (L.maxScroll > 0) {
+    // A real bar, because "1-7 of 9" cannot tell you how far a smooth scroll is
+    // through the list and a thumb can.
+    const tr = { x: P.x + P.w - 7, y: L.body.y, w: 3, h: L.body.h };
+    g.fillStyle = 'rgba(255,255,255,0.05)'; g.fillRect(tr.x, tr.y, tr.w, tr.h);
+    const frac = L.body.h / (filed.length * FILE_ROW);
+    const th = Math.max(24, tr.h * frac);
+    const ty = tr.y + (tr.h - th) * (L.at / L.maxScroll);
+    g.fillStyle = '#3d5876'; g.fillRect(tr.x, ty, tr.w, th);
+  }
   if (L.maxScroll > 0) {
     g.font = '9px ui-monospace, monospace'; g.fillStyle = '#3d4757'; g.textAlign = 'center';
     g.fillText(`${L.at + 1}-${Math.min(filed.length, L.at + L.fit)} of ${filed.length} · wheel to scroll`,
@@ -1073,7 +1109,7 @@ addEventListener('keydown', e => {
   if (k === 'r') { labOpen = !labOpen; labConfirm = false; sysOpen = false; bayOpen = false; invOpen = false; }
   // L for the logbook. Readable anywhere, because it is a reference document and
   // the moment you want it is the moment something unfamiliar is shooting at you.
-  if (k === 'l') { fileOpen = !fileOpen; fileScroll = 0; sysOpen = false; bayOpen = false; invOpen = false; labOpen = false; }
+  if (k === 'l') { fileOpen = !fileOpen; fileWant = fileAt = 0; sysOpen = false; bayOpen = false; invOpen = false; labOpen = false; }
   if (k === 'o') { setOpen = !setOpen; sysOpen = bayOpen = invOpen = false; }
   if (k === 'n') { nextTrack(); }
   if (e.key === '[' || e.key === ']') {
@@ -1238,8 +1274,12 @@ addEventListener('wheel', e => {
     // Clamped at BOTH ends. Unbounded above, scrolling past the last entry kept
     // counting, so coming back up did nothing until every phantom step had been
     // undone — which reads exactly like a panel that does not scroll at all.
+    // In pixels, and clamped at BOTH ends. Unbounded above, scrolling past the
+    // last entry kept counting, so coming back did nothing until every phantom
+    // step had been undone — which reads exactly like a panel that does not scroll.
     const max = filePanel(VIEW_W, VIEW_H, 0, filedIn(myKills).length).maxScroll;
-    fileScroll = Math.max(0, Math.min(max, fileScroll + (e.deltaY > 0 ? 1 : -1)));
+    const step = Math.max(40, Math.min(140, Math.abs(e.deltaY) || 60));
+    fileWant = Math.max(0, Math.min(max, fileWant + Math.sign(e.deltaY) * step));
     return;
   }
   if (bayOpen && (bayTab === 'store' || bayTab === 'inventory')) {
@@ -4121,7 +4161,7 @@ function drawFrame(now) {
   if (berthOpen) drawBerth();
   if (invOpen) drawInventory();
   if (labOpen) drawLab();
-  if (fileOpen) drawFile();
+  if (fileOpen) drawFile(now);
   if (dead) drawWreck(now);
   if (!signup) drawHaven();
   if (!signup) drawPatch();      // after, so an open changelog covers the badge
