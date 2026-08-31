@@ -63,16 +63,35 @@ console.log('\nscrolling');
       .every(([w, h]) => { const q = patchPanel(w, h); return (q.maxScroll > 0) === !!q.bar; }),
     'and never when there is nothing to scroll to');
 
+  // It scrolls in PIXELS now, through shared/scroll.js, like every other list in the
+  // game — it used to be the fifth arrangement, a line index moved three at a time.
+  // So "five" is five pixels, not five lines, and the window shows a row more or
+  // less as the edges come into it. Both claims are the same claims; the unit under
+  // them changed.
   const small = [1200, 420];
-  const top = patchPanel(...small, 0), mid = patchPanel(...small, 5);
-  check('scrolling moves the window, it does not resize it',
-    top.lines.length === mid.lines.length &&
-    top.lines[0].y === mid.lines[0].y,
-    `${top.lines.length} rows either way, first row at the same height`);
+  const top = patchPanel(...small, 0), mid = patchPanel(...small, ROW_H * 5);
+  check('scrolling moves the window, it does not resize it', (() => {
+    // The SAME line, before and after: it must be exactly five rows higher up. The
+    // window keeps its size (a row more or less, as the edges come into it) — it is
+    // the content that moved, which is the difference between scrolling and
+    // re-laying-out.
+    const same = (a, b) => a.kind === b.kind && a.text === b.text && a.v === b.v;
+    // A line with WORDS on it: the blank spacers between versions are all identical
+    // to each other, so matching one of those finds the wrong gap and the line
+    // appears to have moved a hundred pixels it never moved.
+    const mark = top.lines.filter(l => l.text).slice(-1)[0];
+    const moved = mid.lines.find(l => same(l, mark));
+    return moved && Math.abs((mark.y - moved.y) - ROW_H * 5) < 1
+        && Math.abs(mid.lines.length - top.lines.length) <= 1;
+  })(), `${top.lines.length} rows either way, and a given line sits ${ROW_H * 5}px higher`);
   check('and it shows the lines it had skipped past', (() => {
     const same = (a, b) => a.kind === b.kind && a.text === b.text && a.v === b.v;
-    return same(mid.lines[0], top.lines[5]) && !same(mid.lines[0], top.lines[0]);
-  })(), 'line 6 becomes line 1 after scrolling five');
+    // The row that was sixth is now the first one fully inside the window: at a
+    // whole number of rows of scroll the top line is either row 5 clipped or row 5
+    // flush, depending on the fold, so both are accepted and neither is row 0.
+    return !same(mid.lines[0], top.lines[0])
+        && (same(mid.lines[0], top.lines[5]) || same(mid.lines[1], top.lines[5]));
+  })(), 'five rows of scroll later, line six is what you are reading');
   const S2 = patchPanel(1200, 420);
   check('scrolling past the end stops at the end',
     patchPanel(1200, 420, 9999).at === S2.maxScroll, `clamped to ${S2.maxScroll}`);

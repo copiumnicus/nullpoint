@@ -92,7 +92,9 @@ addEventListener('resize', resize); resize();
 const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
 let sysOpen = false;
-let patchOpen = false, patchScroll = 0;   // the changelog, top right
+let patchOpen = false;                    // the changelog, top right
+const patchScr = scroller();              // on the same scroll as everything else
+let patchScroll = 0;                      // its eased pixel offset
 let berthOpen = false;                    // the pirates' offer of a bay
 
 let myId = null, myCo = 'm', myName = '', mapId = 'm1', status = 'connecting…';
@@ -635,7 +637,7 @@ function drawHaven() {
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
 
-function drawPatch() {
+function drawPatch(now) {
   const b = patchIcon(VIEW_W);
   const hot = hover && hover.x > b.x && hover.x < b.x + b.w && hover.y > b.y && hover.y < b.y + b.h;
   g.fillStyle = patchOpen ? 'rgba(122,180,240,0.18)' : hot ? 'rgba(255,255,255,0.08)' : 'rgba(6,10,16,0.72)';
@@ -659,8 +661,9 @@ function drawPatch() {
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   if (!patchOpen) return;
 
+  // Eased off the frame's own timestamp, like every other list.
+  patchScroll = scrollEase(patchScr, now, patchPanel(VIEW_W, VIEW_H, 0).maxScroll);
   const L = patchPanel(VIEW_W, VIEW_H, patchScroll);
-  patchScroll = L.at;                               // clamped by the layout, not here
   const P = L.panel;
   g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(P.x, P.y, P.w, P.h);
   g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
@@ -671,6 +674,9 @@ function drawPatch() {
              P.x + P.w - 12, P.y + 20);
   g.textAlign = 'left';
 
+  // Clipped, like every other list — a line leaving the top is cut rather than
+  // drawn across the header.
+  g.save(); g.beginPath(); g.rect(L.body.x, L.body.y, L.body.w, L.body.h); g.clip();
   for (const ln of L.lines) {
     if (ln.kind === 'gap') continue;
     if (ln.kind === 'ver') {
@@ -687,6 +693,7 @@ function drawPatch() {
       g.fillText(ln.text, ln.x, ln.y);
     }
   }
+  g.restore();
   if (L.bar) {
     g.fillStyle = 'rgba(90,134,184,0.18)';
     g.fillRect(L.bar.x, P.y + PATCH_HEAD, L.bar.w, P.h - PATCH_HEAD - 10);
@@ -1226,7 +1233,7 @@ c.addEventListener('pointerdown', e => {
   {
     const pb = patchIcon(VIEW_W);
     if (v.x > pb.x && v.x < pb.x + pb.w && v.y > pb.y && v.y < pb.y + pb.h) {
-      patchOpen = !patchOpen; patchScroll = 0; return;
+      patchOpen = !patchOpen; patchScr.want = patchScr.at = patchScroll = 0; return;
     }
     if (patchOpen) {
       // A click inside is somebody reading it, not somebody dismissing it.
@@ -1310,7 +1317,7 @@ addEventListener('wheel', e => {
   // Two things scroll, and the changelog is drawn over everything, so it wins.
   if (patchOpen) {
     e.preventDefault?.();
-    patchScroll = Math.max(0, patchScroll + (e.deltaY > 0 ? 3 : -3));
+    scrollWheel(patchScr, e.deltaY, patchPanel(VIEW_W, VIEW_H, 0).maxScroll);
     return;
   }
   // Everything that scrolls scrolls the same way now — one notch, in pixels, eased,
@@ -4481,7 +4488,7 @@ function drawFrame(now) {
   if (fileOpen) drawFile(now);
   if (dead) drawWreck(now);
   if (!signup) drawHaven();
-  if (!signup) drawPatch();      // after, so an open changelog covers the badge
+  if (!signup) drawPatch(now);   // after, so an open changelog covers the badge
   // Receipts go on top of the panels. Drawn under them, the station's own
   // backdrop dimmed the confirmation for the purchase you just made in it.
   if (!dead) drawToasts(now);

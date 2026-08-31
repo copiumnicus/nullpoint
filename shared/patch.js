@@ -13,7 +13,7 @@ export const VERSION = '0.56';
 export const PATCHES = [
   { v: '0.56', notes: [
     'Everything that scrolls now scrolls the way the threat file does',
-    'The shop, the locker and the stats page move by pixels, eased, with a proper bar',
+    'The shop, the locker, the stats page and this changelog move by pixels, eased',
     'They used to jump a whole row a notch, and the stats page barely moved at all',
   ] },
   { v: '0.55', notes: [
@@ -324,6 +324,8 @@ export const ICON = 26;
 // that spends half its life underneath a purchase notification is not a button.
 export const patchIcon = VIEW_W => ({ x: VIEW_W - ICON - 16, y: 14, w: ICON, h: ICON });
 
+import { rowsIn, barIn, spanOf } from './scroll.js';
+
 export const ROW_H = 15, HEAD_H = 32, PAD = 14, FOOT = 10;
 
 // The notes are set in 10px ui-monospace, so a character is a known width and the
@@ -370,19 +372,23 @@ export function patchPanel(VIEW_W, VIEW_H, scroll = 0) {
   const x = VIEW_W - w - 16, y = 14 + ICON + 8;
   const cols = Math.max(24, Math.floor((w - PAD * 2 - 14) / CHAR_W));
 
+  // In PIXELS, through shared/scroll.js, like everything else that scrolls. It was
+  // the fifth arrangement in the client — a line index, three lines a notch — and
+  // "scroll" meaning five different things was the whole reason that module exists.
   const all = patchLines(cols);
-  const per = Math.max(1, Math.floor((h - HEAD_H - FOOT) / ROW_H));
-  const maxScroll = Math.max(0, all.length - per);
-  const at = Math.max(0, Math.min(maxScroll, Math.round(scroll)));
-  const lines = all.slice(at, at + per).map((l, i) => ({
-    ...l, x: x + PAD + (l.kind === 'note' ? 12 : 0), y: y + HEAD_H + i * ROW_H + 11,
-  }));
+  const room = h - HEAD_H - FOOT, span = all.length * ROW_H;
+  const per = Math.max(1, Math.floor(room / ROW_H));
+  const maxScroll = spanOf(span, room);
+  const at = Math.max(0, Math.min(maxScroll, scroll));
+  const top = y + HEAD_H;
+  // Rows overhang the window on purpose and the client clips, so a line leaving the
+  // top is cut rather than drawn across the header.
+  const lines = rowsIn({ x: x + PAD, top, room, w: w - PAD * 2, n: all.length, rowH: ROW_H, at })
+    .map(hit => ({ ...all[hit.i],
+                   x: x + PAD + (all[hit.i].kind === 'note' ? 12 : 0),
+                   y: hit.r.y + 11 }));
 
-  // The bar is only drawn when there is something below the fold, so a changelog
-  // short enough to fit does not grow a control that does nothing.
-  const bar = maxScroll > 0 ? {
-    x: x + w - 7, y: y + HEAD_H + (at / all.length) * (h - HEAD_H - FOOT),
-    w: 3, h: Math.max(18, (per / all.length) * (h - HEAD_H - FOOT)),
-  } : null;
-  return { panel: { x, y, w, h }, lines, bar, at, per, cols, total: all.length, maxScroll };
+  return { panel: { x, y, w, h }, body: { x, y: top, w, h: room }, lines,
+           bar: barIn({ x: x + w - 7, top, room, content: span, at, min: 18 }),
+           at, per, cols, total: all.length, maxScroll };
 }

@@ -25,3 +25,6 @@ data/
 # your own music, not the repo's
 public/music/*
 !public/music/README.md
+
+# agent worktrees, not part of the game
+.claude/worktrees/
