@@ -335,7 +335,11 @@ function drawFile(now) {
 
 function fileClick(v) {
   const filed = filedIn(myKills);
-  const L = filePanel(VIEW_W, VIEW_H, fileScroll, filed.length);
+  // fileAt, not fileScroll. The smooth-scroll rework split the position into a
+  // target and a drawn value and renamed both, and this was left reading a name
+  // that no longer exists — so every click in the panel threw a ReferenceError and
+  // the close button, and clicking away, silently did nothing.
+  const L = filePanel(VIEW_W, VIEW_H, fileAt, filed.length);
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
   if (inside(L.close) || !inside(L.panel)) { fileOpen = false; return true; }
   return true;                                     // a reference document: reading, not clicking

@@ -115,10 +115,34 @@ export const fixPoint = to => ({
 // somewhere else and still doing exactly what you told it to. Maximum time without
 // control from a fix: zero seconds, and that is the whole reason this is allowed to
 // exist in a game where the alternative was a stun.
+// What being hauled costs, and it is the distance that costs it.
+//
+// A fix that only moved you was a toll with no bite: a pilot who accepted the tax
+// simply took it, twice as long, and never felt it. In Dota the same ability bills
+// you for the ground it drags you over, and that is the right shape here too —
+// standing still through a sighting costs you nothing at all, because there is
+// nothing to undo.
+//
+// Derived, not picked. The fastest thing in the game boosted is 559 px/s, so the
+// longest possible haul is that times the fuse — 1,677px. A haul that long costs
+// ONE SECOND of what the balance model calls a hostile on model, `ANCHORS.pressure`
+// = 4.5% of your ship. Everything shorter costs proportionally less, so a 700px
+// yank is under two percent and a pilot who barely moved pays almost nothing.
+//
+// A share of the pool rather than an amount, for the reason every other rate in
+// this game is: an amount stops mattering the moment the research ladder multiplies
+// the pool it is taken from.
+export const HAUL_FULL = 0.045;                    // of your ship, at the longest haul
+export const HAUL_SPAN = 1677;                     // px — 559 px/s x a 3s fuse
+export const haulCost = (px, pool) =>
+  Math.max(0, Math.min(HAUL_FULL, (px / HAUL_SPAN) * HAUL_FULL)) * Math.max(0, pool);
+
 export function collapseTo(s, to) {
   const at = fixPoint(to);
+  // Measured before the move, obviously — this is the ground it is undoing.
+  const px = Math.hypot(at.x - s.x, at.y - s.y);
   s.x = at.x; s.y = at.y;
-  return at;
+  return { ...at, px };
 }
 
 // Everything a fix leaves on a hostile, cleared in one place so respawnAlien and

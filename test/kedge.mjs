@@ -313,5 +313,30 @@ check('and it packs and unpacks to the same five numbers', (() => {
       && unpackFix(packFix({ ...o, p: -2 }, true)).p === 0;
 })(), 'and a progress outside 0..1 is clamped before it is ever a number the client divides by');
 
+// It bills for the ground it undoes, which is the half that makes the toll bite.
+{
+  const { haulCost, HAUL_FULL, HAUL_SPAN } = await import('../shared/kedge.js');
+  const { ANCHORS } = await import('../shared/balance.js');
+  check('the longest haul costs exactly one second of a hostile on model',
+    Math.abs(HAUL_FULL - ANCHORS.pressure) < 1e-9,
+    `${(HAUL_FULL * 100).toFixed(1)}% of your ship over ${HAUL_SPAN}px — the fastest hull ` +
+    'boosted, times the fuse, so it is the longest haul the mechanic can produce');
+  check('standing still through a sighting costs nothing at all',
+    haulCost(0, 7050) === 0,
+    'the cost is the ground it drags you back over, not the fix — so a pilot who did ' +
+    'not run pays nothing, which is the opposite of a stun');
+  check('and it scales with the distance rather than jumping',
+    haulCost(800, 7050) > haulCost(400, 7050) && haulCost(400, 7050) > haulCost(100, 7050),
+    [100, 400, 800, 1677].map(px => `${px}px ${haulCost(px, 7050).toFixed(0)}`).join(', ') +
+    ' of a 7,050 ship');
+  check('a haul longer than the mechanic can produce is capped, not extrapolated',
+    haulCost(9999, 7050) === haulCost(HAUL_SPAN, 7050),
+    'a clock skew or a boosted hull nobody has built yet cannot make it lethal');
+  check('it is a share, so research cannot outgrow it',
+    Math.abs(haulCost(HAUL_SPAN, 225600) / 225600 - haulCost(HAUL_SPAN, 7050) / 7050) < 1e-9,
+    `4.5% of a new ship and 4.5% of a x32 one — ${haulCost(HAUL_SPAN, 7050).toFixed(0)} ` +
+    `against ${haulCost(HAUL_SPAN, 225600).toFixed(0)} points`);
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — the fix'}\n`);
 process.exit(fails.length ? 1 : 0);

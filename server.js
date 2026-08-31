@@ -30,7 +30,7 @@ import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix } from './shared/net.js';
-import { stepFix, fixHolds, fixWinding, collapseTo, fixOf } from './shared/kedge.js';
+import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror, spendMirror } from './shared/aliens.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
@@ -1500,7 +1500,18 @@ setInterval(() => {
         // "something died here", and firing one at a pilot who is merely somewhere
         // else would play an explosion in their ears. The tell is the marker: it
         // tightens for three seconds over the exact spot, and then the hull is in it.
-        if (snap && victim && victim.ship.hp > 0 && mayHarm(a, victim)) collapseTo(victim.ship, snap.to);
+        if (snap && victim && victim.ship.hp > 0 && mayHarm(a, victim)) {
+          const hauled = collapseTo(victim.ship, snap.to);
+          // And it bills for the ground it undid. A pilot who stood still through
+          // the sighting pays nothing, because there was nothing to drag them back
+          // over — the cost is the distance, not the fix.
+          const took = haulCost(hauled.px, poolOf(victim.ship));
+          if (took > 1) {
+            const split = applyDamage(victim.ship, took);
+            hits.get(mapId).push({ x: victim.ship.x, y: victim.ship.y - victim.ship.r - 6,
+                                   n: took, sh: split.hull === 0, by: null, t: HIT_TIME, ttl: HIT_TIME });
+          }
+        }
       }
       step(a, dt); stepDrift(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
       // Breaking means turning, and turning is what takes its nose off you. The

@@ -8,14 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.53';
+export const VERSION = '0.54';
 
 export const PATCHES = [
+  { v: '0.54', notes: [
+    'A Kedge now hurts you for the distance it drags you — stand still and it costs nothing',
+    'Fixed: the X on the threat file did nothing. Nor did clicking away from it',
+  ] },
   { v: '0.53', notes: [
     'Kedges hold the gates beside the Threshers — something out there you can actually kill',
-    'It takes a fix on where you are standing and three seconds later puts you back on it',
-    'It has to stand dead still to do it. That is when you kill it',
-    'A portal mouth breaks the fix. Leaving takes twice as long and it always works',
+    'It marks where you are standing, and three seconds later drags you back to that spot',
+    'It has to stop dead to do it, and that is the moment to kill it',
+    'Sit in a gate mouth and it cannot touch you. Running away works, it just takes twice as long',
   ] },
   { v: '0.52', notes: [
     'Research rungs say what they do for you even when you cannot afford them yet',

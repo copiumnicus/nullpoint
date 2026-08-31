@@ -755,7 +755,24 @@ const dismiss = () => {
       errs.push(`scrolling to the end and back left the threat file on ${back} instead of ${before}`);
     else console.log(`threats: the file scrolls (${F.fit} of ${WILD.length} at a time) and comes back`);
   }
-  evt('keydown', { key: 'l' }); frame(t += 16); frames++;   // shut it
+  // The X, and clicking away. Neither was ever driven, and both were broken for a
+  // whole version: the smooth-scroll rework renamed the scroll state and fileClick
+  // was left reading the old name, so every click in the panel threw and the panel
+  // could only be closed with the key that opened it.
+  const F2 = filePanel(innerWidth, innerHeight, 0, WILD.length);
+  click(F2.close); frame(t += 16); frames++;
+  trace = []; frame(t += 16); frames++;
+  if (trace.some(c => /^fillText THREAT FILE/.test(c)))
+    errs.push('the close button on the threat file did nothing');
+  trace = null;
+  evt('keydown', { key: 'l' }); frame(t += 16); frames++;   // open it again
+  click({ x: 4, y: 4, w: 1, h: 1 });                        // and away closes it too
+  frame(t += 16); frames++;
+  trace = []; frame(t += 16); frames++;
+  if (trace.some(c => /^fillText THREAT FILE/.test(c)))
+    errs.push('clicking away from the threat file did not close it');
+  trace = null;
+  console.log('threats: the X closes it, and so does clicking away');
 }
 
 // The safe-zone badge. Sanctuary has been in the game since the beginning and had
