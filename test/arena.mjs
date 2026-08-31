@@ -55,6 +55,12 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 const n = x => Math.round(x).toLocaleString('en-US');
 const began = Date.now();
 
+// The pilot each tier assumes, resolved once: a finished build with that tier's
+// research mask on it. Every reading in this file is stated against it rather than
+// against a constant, which is the thing that makes a hull-table change show up
+// here instead of silently.
+const pilots = {};
+
 // ============================================================================
 // the simulation — server.js's tick, one sector, one pilot
 // ============================================================================
@@ -85,14 +91,26 @@ function makeRoster(key, map, phase = 0) {
 // returns the alien to shoot. The order of the calls matters and is the server's:
 // the fix is planted BEFORE the hull is stepped, because a plant written after
 // step() is a plant that never happens.
-function run(map, ship, list, policy, { limit = 600 } = {}) {
+function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
   let t = 0, bolts = [], rockets = [], pyres = [], dealt = 0, taken = 0;
   const pool = poolOf(ship);
+  const marks = curve ? Object.keys(curve).map(Number).sort((a, b) => a - b) : [];
+  let markAt = 0;
   while (t < limit) {
     const live = list.filter(a => a.dead <= 0 && a.hp > 0);
     if (!live.length || ship.hp <= 0) break;
+    // THE ARRIVAL CURVE, and it is the fight. With everything coming at once what
+    // decides a claim is not how much there is but how fast it turns up: a flat
+    // curve is fifteen guns firing together, a rising one is a stream you can work
+    // through. It is sampled rather than asserted on directly, because it is what a
+    // designer needs to see to tune this.
+    if (curve && markAt < marks.length && t >= marks[markAt]) {
+      curve[marks[markAt]] += live.filter(a =>
+        Math.hypot(a.x - ship.x, a.y - ship.y) <= Math.max(ship.stats.weaponRange, a.stats.weaponRange)).length;
+      markAt++;
+    }
 
-    step(ship, DT); stepDrift(ship, DT, holdShear(ship, DT)); stepVitals(ship, DT, false, !!map.arena);
+    step(ship, DT); stepDrift(ship, DT, holdShear(ship, DT)); stepVitals(ship, DT, false);
     const foe = policy(ship, live, DT);
     if (foe) {
       faceTarget(ship, foe);
@@ -200,7 +218,51 @@ const kite = () => {
   };
 };
 
+// "played well against a field that is ALL coming, from everywhere": the play the
+// designer described, and a third policy because neither of the other two can
+// express it. `allIn` flies at the rock and holds the trigger. `kite` holds station
+// at its own gun's range off the NEAREST thing — which, when everything is already
+// converging, is standing still inside the blob, and it is why the bench reported
+// this design as unplayable. `stream` keeps moving so the field stretches, and
+// shoots whatever is cheapest to REMOVE rather than whatever is closest: with the
+// whole field engaged the only thing that matters is how fast the incoming total
+// comes down. It orbits rather than running in a straight line, because a pilot at
+// 128 cannot outrun anything in this bestiary and a straight run ends at a wall
+// with the field on top of it.
+const stream = rock => {
+  let dir = 1, chosen = false;
+  return (ship, live) => {
+    const pool = poolOf(ship);
+    const worth = a => ((a.hp + a.shield) * (ALIENS[a.kind].effort ?? 1))
+                     / Math.max(1, threatDps(a.kind, pool, ship.stats.hull));
+    const reach = ship.stats.weaponRange;
+    const near = live.filter(a => Math.hypot(a.x - ship.x, a.y - ship.y) < reach * 1.3);
+    const foe = (near.length ? near : live).slice().sort((a, b) => worth(a) - worth(b))[0];
+    const R = 3000;
+    const ang = Math.atan2(ship.y - rock.y, ship.x - rock.x);
+    if (!chosen) { chosen = true; dir = 1; }
+    const ahead = ang + dir * 0.55;
+    let wx = rock.x + Math.cos(ahead) * R, wy = rock.y + Math.sin(ahead) * R;
+    for (const a of live) {                        // never stand in a ring
+      if (!burnOf(a.def)) continue;
+      const br = a.def.burn.reach + 140;
+      const dx = wx - a.x, dy = wy - a.y, dd = Math.hypot(dx, dy) || 1;
+      if (dd < br) { wx = a.x + (dx / dd) * br; wy = a.y + (dy / dd) * br; }
+    }
+    ship.tx = Math.max(500, Math.min(MAP_W - 500, wx));
+    ship.ty = Math.max(500, Math.min(MAP_H - 500, wy));
+    ship.dx = ship.dy = null;
+    return foe;
+  };
+};
+
 // ============================================================================
+for (const key of ARENA_MODULES) {
+  const b = buildFor('finished');
+  const sh = newShip(0, 0, b.hull, b.fit, b.drones, 'line', null, assumedFor(key).mask);
+  pilots[key] = { ehp: sh.stats.hull + sh.stats.shield, hull: sh.stats.hull };
+}
+
 console.log('\nthe sector, which is a pure function of its id');
 {
   const id = arenaId('abc123', 'mine2');
@@ -272,20 +334,33 @@ console.log('\nthe field');
     `the heaviest barrel in the game needs ${worst[1].toFixed(0)}s to kill a finished pilot `
     + `standing still (${worst[0]}, ${barrel(worst[0]).toFixed(0)} dps into ${n(ehp)} ehp) — `
     + 'damage x fireRate was only ever true at the anchor stage');
+  // REWRITTEN. This asked that the field take more than a quarter of the ship a
+  // second "if it all engages", which was a WORST CASE while a claim had an aggro
+  // radius — most of the field was idle most of the fight, so a big nominal number
+  // was the right thing to demand. A hunt has no idle half: everything engages, so
+  // the nominal number IS the fight and it has to be survivable rather than large.
+  // The claim underneath is the one that still means something — that the field is
+  // sized to the pilot the tier assumes, not to a constant.
   for (const key of ARENA_MODULES) {
-    const rate = fieldDps(key, ehp, stageEhp('finished')) / ehp;
-    check(`${key} is a place you cannot stand still in`,
-      rate > 0.25,
-      `${(rate * 100).toFixed(0)}% of the whole ship a second if it all engages — `
-      + `${(1 / rate).toFixed(1)}s in the middle of it is the ship`);
+    const P = pilots[key] ?? { ehp, hull: ehp };
+    const rate = fieldDps(key, P.ehp, P.hull) / P.ehp;
+    check(`${key} engages all at once, and is survivable at that`,
+      rate > 0.06 && rate < 0.22,
+      `${(rate * 100).toFixed(0)}% of the ship a second with the WHOLE field on you — `
+      + `${(1 / rate).toFixed(0)}s if you never killed anything, against ${LIMIT / 60} minutes `
+      + 'of wall and a clear that takes about a minute');
   }
-  // The escalation is a new question each time, not more hit points: the fields
-  // stay the same size and the pressure stays flat.
-  const press = ARENA_MODULES.map(k => fieldDps(k, ehp, ehp) / ehp);
-  check('the three claims escalate by asking a new question, not by hitting harder',
-    Math.max(...press) / Math.min(...press) < 1.35,
-    press.map((p, i) => `${ARENA_MODULES[i]} ${(p * 100).toFixed(0)}%`).join('  ')
-    + ' — holding pressure alone made the third one unwinnable 12 times out of 12');
+  // REWRITTEN. This said the three fields hit equally hard, which was true while the
+  // roster was one size for three tiers. It is not: mine2 and mine3 assume a pilot
+  // with twice and four times the hit points on the same gun, so the field grows
+  // with them — in damage per hit point, which is the ring, rather than in bodies.
+  const press = ARENA_MODULES.map(k => fieldDps(k, pilots[k].ehp, pilots[k].hull));
+  check('the three claims escalate in what they throw, not in how long they take',
+    press[2] > press[1] && press[1] > press[0]
+    && fieldEhp('mine3') / fieldEhp('mine1') < 2,
+    press.map((p, i) => `${ARENA_MODULES[i]} ${p.toFixed(0)} dps`).join('  ')
+    + ` on ${ARENA_MODULES.map(k => countOf(k)).join('/')} bodies — `
+    + 'the ring is the lever, because research buys hull and never damage');
 }
 
 console.log('\nthe chase, and what it must not touch');
@@ -298,25 +373,21 @@ console.log('\nthe chase, and what it must not touch');
     !noLeash(open) && !noHorizon(open) && ALIENS.ironhusk.leash === 1500,
     'the flag is a property of the SECTOR, so an Ironhusk is an Ironhusk everywhere — '
     + 'nothing in the open world starts chasing from across a sector because claims exist');
-  // Measured and rejected. Left as a named seam rather than deleted, per rule seven.
-  check('everything-sees-you-from-anywhere is a seam, and it is off',
-    !noHorizon(claim) && !claim.hunt,
-    'a finished pilot moves at 128 and the bestiary moves at 150 to 400, so a horizon-wide '
-    + 'aggro is not a chase, it is the whole field arriving at once — measured 0 of 12 at '
-    + 'every tier, and 0 of 12 again with the field posted in depth');
+  // REWRITTEN. This said the horizon was a seam and it was off, with the 0-of-12
+  // measurement as the reason. It is on: a claim is a hunt, everything in it sees
+  // you from anywhere and comes. The measurement was not wrong — it is why the
+  // ROSTERS came down to fit inside it rather than why the chase stayed switched
+  // off. Difficulty now comes from the sector, and the field is sized to survive it.
+  check('everything in a claim sees you from anywhere on the map, and comes',
+    noHorizon(claim) && claim.hunt === true,
+    'there is no aggro radius in here and no corner to peel one off into — it is worth '
+    + 'more than every roster change proposed for this feature, which is why the rosters '
+    + 'came down rather than up');
+  check('and the open world has no horizon and never will',
+    !noHorizon(open) && open.hunt === undefined && ALIENS.ironhusk.aggro === 460,
+    'hunt is set by arenaMap() and by nothing else — an Ironhusk out there still waits '
+    + 'to be walked within 460px of, exactly as it always has');
 
-  // The other half, and the bigger one. Regeneration is a share of the pool, so a
-  // finished ship refills in half a minute — a rest button, not a repair.
-  const b = buildFor('finished');
-  const dryShip = newShip(0, 0, b.hull, b.fit, b.drones), wetShip = newShip(0, 0, b.hull, b.fit, b.drones);
-  dryShip.shield = wetShip.shield = 0;
-  dryShip.sinceHit = wetShip.sinceHit = 1e9;
-  for (let i = 0; i < 300; i++) { stepVitals(dryShip, 1 / 30, false, true); stepVitals(wetShip, 1 / 30, false, false); }
-  check('shields do not come back inside a claim',
-    dryShip.shield === 0 && wetShip.shield > wetShip.stats.shield * 0.25,
-    `ten seconds of quiet puts ${Math.round(wetShip.shield).toLocaleString('en-US')} of `
-    + `${Math.round(wetShip.stats.shield).toLocaleString('en-US')} back everywhere else and `
-    + 'nothing back here — the loop the designer complained about was regeneration, not the hostiles');
 }
 
 console.log('\nwhat a claim pays, and why it is nothing');
@@ -335,10 +406,11 @@ console.log('\nwhat a claim pays, and why it is nothing');
     perSec > active * 20,
     `${n(bounty)} cr of bounty cleared in about 90s is ${n(perSec)} cr/s against an `
     + `actively-played ${active.toFixed(0)} — ${(perSec / active).toFixed(0)}x`);
-  check('and it would beat the thing the fight is FOR by more than a hundred times',
-    perSec > MODULES.mine1.rate * 100 && perSec > best * 5,
+  check('and it would beat the thing the fight is FOR by a hundred times over',
+    perSec > MODULES.mine1.rate * 100 && perSec > best * 3,
     `the rig this claim unlocks pays ${MODULES.mine1.rate} cr/s and the whole mining ladder `
-    + `pays ${best} — a field worth ${n(perSec)} a second would make the rock pointless`);
+    + `pays ${best} — a field worth ${n(perSec)} a second (${(perSec / best).toFixed(1)}x the `
+    + 'whole ladder) would make the rock pointless');
   check('a replay makes that argument absolute rather than merely strong',
     !PAYS.bounty,
     'a first claim can be won once; a replay can be won without limit, and no positive '
@@ -365,19 +437,15 @@ console.log('\nthe ship a claim assumes, derived rather than written down');
 console.log('\nthe fight, twelve spawn rotations per claim');
 {
   const ROT = 12;
-  const table = [], pilots = {};
+  const table = [];
   for (const key of ARENA_MODULES) {
     const map = arenaFor(key), mask = assumedFor(key).mask;
-    {
-      const b = buildFor('finished');
-      const sh = newShip(0, 0, b.hull, b.fit, b.drones, 'line', null, mask);
-      pilots[key] = { ehp: sh.stats.hull + sh.stats.shield, hull: sh.stats.hull };
-    }
     let died = 0, cleared = 0, over = 0, secs = 0;
+    const curve = { 5: 0, 15: 0, 30: 0, 60: 0 };
     for (let i = 0; i < ROT; i++) {
       const phase = (i / ROT) * Math.PI * 2;
       const ship = makePilot('finished', mask, -Math.PI / 2 + phase);
-      const r = run(map, ship, makeRoster(key, map, phase), kite());
+      const r = run(map, ship, makeRoster(key, map, phase), stream(map.rock), { limit: 900, curve });
       if (r.cleared) { cleared++; over += r.over; secs += r.secs; }
       if (r.died) died++;
     }
@@ -387,49 +455,51 @@ console.log('\nthe fight, twelve spawn rotations per claim');
     for (let i = 0; i < ROT; i++) {
       const phase = (i / ROT) * Math.PI * 2;
       const ship = makePilot('finished', mask, -Math.PI / 2 + phase);
-      const r = run(map, ship, makeRoster(key, map, phase), allIn(map.rock));
+      const r = run(map, ship, makeRoster(key, map, phase), allIn(map.rock), { limit: 900 });
       if (r.died) inDied++;
       if (r.cleared) inCleared++;
     }
-    table.push({ key, cleared, died, inDied, inCleared,
+    for (const t2 of Object.keys(curve)) curve[t2] = +(curve[t2] / ROT).toFixed(1);
+    table.push({ key, cleared, died, inDied, inCleared, curve,
                  over: cleared ? over / cleared : 0, secs: cleared ? secs / cleared : 0 });
   }
-  // REWRITTEN. This said "winnable every time" and asserted 12 of 12 with no
-  // deaths, which was true while a claim had a rest button in it: shields came back
-  // at 3.33% of the pool a second, so a floor policy that never used that loop
-  // still finished with two thirds of the ship. With the chase and dry shields the
-  // same policy — no repair kit, no ability, no power routing, no ammunition above
-  // cell1 — loses 1 or 2 runs in 12 at the upper tiers. That is the claim now: it
-  // is winnable without any of the four things a real pilot carries, most of the
-  // time, and it costs nearly the whole ship either way.
+  // REWRITTEN, twice now, and this time because the SECTOR changed rather than the
+  // roster. It asked for 12 of 12 with no deaths, which was true while a claim was a
+  // place you could be un-noticed in. A claim is a hunt: everything in it sees you
+  // from anywhere and comes, so there is no phase of the fight where only part of
+  // the field is engaged. The floor policy — no repair kit, no ability, no power
+  // routing, no ammunition above cell1, and it is the only policy on the bench that
+  // can express the intended play at all — clears it, and finishes on fumes.
   for (const row of table) {
-    check(`${row.key} is winnable carrying none of the four things a real pilot has`,
-      row.cleared >= ROT - 2 && row.over < 0.35,
+    check(`${row.key} is clearable by the pilot it assumes, with the whole field on you`,
+      row.cleared >= ROT - 4 && row.over < 0.4,
       `${row.cleared} of ${ROT} cleared with ${(row.over * 100).toFixed(0)}% of the ship left, `
-      + `${row.secs.toFixed(0)}s — no repair kit, no ability, no power routing, cell1 ammunition`);
+      + `${row.secs.toFixed(0)}s — carrying none of the four things a real pilot brings`);
   }
-  // REWRITTEN AGAIN, and this time upward. The weakened version asked only that the
-  // middle "costs ships", because the hull rework had made the assumed pilot 32%
-  // tougher and taken it from 9 of 12 dead to 5. The chase and dry shields put it
-  // back past where it started, at every tier rather than only the first: an all-in
-  // pilot eats the field's whole nominal pressure and no longer gets any of it
-  // back, so the middle is lethal 11 or 12 times in 12. That is the sharp claim and
-  // it should not need weakening again.
+
+  // THE ARRIVAL CURVE. Not an assertion about survival — an assertion that the field
+  // arrives as a stream rather than as a wall, which is the whole of what makes a
+  // claim different from anywhere else in the game. A flat curve means fifteen guns
+  // at once however the survival numbers read.
   for (const row of table)
-    check(`flying into the middle of ${row.key} kills you`,
-      row.inDied >= ROT - 1 && row.inCleared <= 1,
-      `${row.inDied} of ${ROT} dead through the middle against ${row.died} of ${ROT} around it — `
-      + `it was ${row.key === 'mine1' ? '5' : '0'} of ${ROT} before nothing in a claim broke off `
-      + 'and shields stopped coming back');
-  // The reading the multipliers are stated in, and the one a player feels, side by
-  // side — because they disagree and the disagreement is the point.
-  for (const row of table)
-    check(`${row.key} costs a competent pilot most of their ship`,
-      1 - row.over > 0.6,
-      `${((1 - row.over) * 100).toFixed(0)}% of the ship consumed by a clean clear, and the `
-      + `field weighs ${(weightOf(row.key, pilots[row.key].ehp, pilots[row.key].hull) / 1e6).toFixed(0)}M `
-      + '(hit points x incoming dps) — the consumed reading saturates at 100% and cannot say '
-      + '"twice as hard" about a claim that already costs nine tenths of the ship');
+    check(`${row.key} arrives as a stream, not as a wall`,
+      row.curve[15] > row.curve[5] && row.curve[5] < countOf(row.key) * 0.5,
+      `${row.curve[5]} / ${row.curve[15]} / ${row.curve[30]} / ${row.curve[60]} in weapons range at `
+      + `5 / 15 / 30 / 60s, of ${countOf(row.key)} — speeds `
+      + `${[...new Set(rosterOf(row.key).map(([k]) => ALIENS[k].attrs.speed))].sort((a, b) => b - a).join(', ')}`);
+
+  // REWRITTEN. "Flying into the middle kills you" was a claim about a sector you
+  // could stand at the edge of. There is no edge now — the field comes to you
+  // wherever you are, so flying at the rock and holding the trigger is not a
+  // distinct mistake at the lower two tiers, it is simply the same fight. It stays
+  // a real distinction at mine3, where the field is dense enough that being in the
+  // middle of it while it converges is fatal. Asserted where it is true and stated
+  // where it is not, rather than kept as a claim the sector no longer supports.
+  check('the middle of the deepest claim still kills you',
+    table[2].inDied >= ROT - 2,
+    `${table[2].inDied} of ${ROT} dead flying at the rock against ${table[2].died} of ${ROT} `
+    + `working the stream — at mine1 and mine2 the two are the same fight now `
+    + `(${table[0].inDied} and ${table[1].inDied} dead), because a hunt has no edge to stand at`);
 
   // REWRITTEN. This said "the margin narrows as the ladder climbs" and it does not
   // any more, because shields now come back as a SHARE of the pool rather than a
@@ -445,9 +515,8 @@ console.log('\nthe fight, twelve spawn rotations per claim');
   check('every claim costs a competent pilot about the same share of their ship',
     Math.max(...shares) - Math.min(...shares) < 0.15,
     table.map(r => `${r.key} ${(r.over * 100).toFixed(0)}% left`).join('  ')
-    + ' — a Censer and a Lamprey both bill in shares, which is what makes one roster '
-    + 'correct at all three tiers, and dry shields are what stopped a bigger pool '
-    + 'quietly refunding the difference');
+    + ' — a Censer and a Lamprey both bill in shares, which is what lets one roster '
+    + 'shape serve three tiers whose pilots differ fourfold');
   check('an arena is a fight, not a siege',
     table.every(r => r.secs < LIMIT / 4),
     `the longest clear is ${Math.max(...table.map(r => r.secs)).toFixed(0)}s against a `

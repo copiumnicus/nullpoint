@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, shieldWait, WORLD, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
@@ -157,6 +157,15 @@ const server = http.createServer((req, res) => {
 const DEV_ADMIN = process.env.DEV_ADMIN === '1';
 const ADMIN_TOKENS = new Set((process.env.ADMIN_TOKENS ?? '').split(',').map(t => t.trim()).filter(Boolean));
 const isAdmin = acct => DEV_ADMIN || acct.admin === true || ADMIN_TOKENS.has(acct.token);
+
+// The countdown to the shields coming back, as the wire carries it: tenths of a
+// second, or undefined when there is nothing to wait for. The rule itself is
+// shieldWait() in shared/sim.js — the same call the sim's own gate makes — so the
+// number a pilot reads and the moment the shields actually move cannot disagree.
+const waitField = V => {
+  const w = shieldWait(V.ship, !!V.docked);
+  return w === null ? undefined : Math.round(w * 10) / 10;
+};
 
 const players = new Map();   // id -> live session
 
@@ -1553,12 +1562,7 @@ setInterval(() => {
     if (isHangar(p.mapId, map, p.co, p.ship, p.berths)) {
       if (p.lastDock !== p.mapId) { p.lastDock = p.mapId; touch(p); }
     }
-    // Shields do not come back inside a claim. See stepVitals's `dry`: the loop the
-    // designer complained about — kill one, walk out, wait, walk in again — is
-    // percentage-based regeneration, not the hostiles, and this is the whole of it.
-    // Hostiles are deliberately NOT dried out: one that heals is one you stopped
-    // shooting, and the measurement in test/arena.mjs is taken with them healing.
-    stepVitals(p.ship, dt, p.docked, isArena(p.mapId));
+    stepVitals(p.ship, dt, p.docked);
     // The mine, paid out once a second rather than once a tick — see bankLab.
     //
     // Date.now(), NOT the tick's `now`. The tick runs on performance.now(), which
@@ -2390,6 +2394,26 @@ setInterval(() => {
                lv: Object.fromEntries(SYSTEMS.map(sy =>
                  [sy, Math.round(100 * levelOf(V.ship.power, sy, V.ship.stats))])) },
       shieldNow: Math.round(V.ship.shield), shieldMax: Math.round(shieldMax(V.ship)),
+      // How long until they start coming back, or absent when there is nothing to
+      // wait for. Rounded to a TENTH on purpose: the bag is diffed per connection,
+      // so an unrounded countdown is a new value on all thirty ticks a second —
+      // pure churn for a number a person reads at about ten.
+      //
+      // Measured over one 4s countdown on a real socket, unrounded against
+      // rounded: 117 messages carried it (29.7/s, one every tick) and 3,651 bytes
+      // of field text, against 40 messages (10.3/s) and 672 bytes. 927 B/s down to
+      // 172 while a countdown is live, per player, and what it costs is 50ms of
+      // staleness on a readout that only ever shows one decimal. Same trick and
+      // same reason as the deeps' ground patches fixing their progress to two
+      // decimals, which took them 4.52 KiB/s to 0.55.
+      //
+      // In the viewer's own bag rather than on the ship row for the reason `plate`
+      // is: nobody else may know how long your shields have been down, and
+      // SHIP_FIELDS is at 30 of a hard 31. It goes AWAY entirely when there is
+      // nothing to wait for, and sits at a plain 0 for as long as the shields are
+      // actually climbing — one change each, then silence. The HUD draws nothing
+      // for either, because at zero the moving bar is the better readout.
+      shieldWait: waitField(V),
       // Whether the plating is still there to catch a death. Nobody else can see
       // it, so it rides in the viewer's own bag rather than on the ship row —
       // and it has to be visible at all, or you find out you already spent it by

@@ -8,20 +8,32 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.69';
+export const VERSION = '0.70';
 
 export const PATCHES = [
-  { v: '0.69', notes: [
+  { v: '0.70', notes: [
     'Drumfire got serious: a full drum is two and a half times your cycle, not half again',
     'That is twice what an interceptor throws with its whole reactor on its guns',
     'Your reach still drops to 65% — 455px, the shortest in the game, so you go in close',
     'The Drum Governor turned around: it buys your reach back at four fifths of the drum',
   ] },
+  { v: '0.69', notes: [
+    'A claim is a hunt now: everything in it sees you from the far side of the map',
+    'They all come at once, at their own speeds, so the field arrives as a stream',
+    'Correction to 0.64 — your shields DO come back in a claim. That was a mistake',
+    'The fields are smaller and every one of them is already on its way to you',
+    'A Kedge holds the deepest rock, hauling you back into the rings you just left',
+    'The shield bar counts down to the second your shields start coming back up',
+    'It counts the delay your ship actually flies, so power in shields shortens the wait',
+  ] },
   { v: '0.68', notes: [
     'A fully researched ship no longer prints its shield through the number beside it',
     'The station’s stat line sizes its columns to the biggest number you can reach',
     'Money, rank and the rank bar sit a clear character apart at eight figures',
-    'The docked prompt drops to the HUD’s own spacing instead of crowding the line above',    'The game now knows what window you play in, and checks its own layout at that size',
+    'The docked prompt drops to the HUD’s own spacing instead of crowding the line above',
+    'The game now knows what window you play in, and checks its own layout at that size',    'The shield bar counts down to the second your shields start coming back up',
+    'It counts the delay your ship actually flies, so power in shields shortens the wait',
+    'At your own dock it counts to the dock’s clock instead, which comes round sooner',
   ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
