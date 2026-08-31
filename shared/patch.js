@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.62';
+export const VERSION = '0.63';
 
 export const PATCHES = [
+  { v: '0.63', notes: [
+    'A Thresher fills its chamber faster: the bolt it throws back now reads 9,706',
+    'Route power to your weapons and it loads harder — that is where the size is',
+    'It costs no more over a whole fight, it just arrives in fewer, bigger pieces',
+    'Weaving still beats one from x8 hull and shields; standing still needs x16',
+  ] },
   { v: '0.62', notes: [
     'Eight places printed two labels on top of each other. None of them do now',
     'The station’s hint line no longer runs through the INVENTORY and STATS tabs',

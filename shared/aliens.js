@@ -264,7 +264,7 @@ export const ALIENS = {
   // most gun:
   //
   //                         full chamber      lived, standing still, finished ship
-  //   Thresher             12,083 dps         3.7s
+  //   Thresher             11,387 dps         3.7s
   //   Corsair Hive          2,450 dps         2.9s
   //   on model, balance.js    317 dps        22.2s
   //
@@ -275,26 +275,28 @@ export const ALIENS = {
   // arithmetic rather than by intent: your damage spans 256x across the shop and
   // your hit points span 6.4x, so at the top of the ladder one returned bolt was
   // 9,011 into a 7,050 ship, and buying a bigger gun bought a proportionally harder
-  // fight. Then the chamber capped it at 855, which is 12% of that ship — the thing
-  // at the gates stopped being a fight at all, and a pilot who weaved beat it with
-  // 39% left and no research. Both of those are wrong in the same way: the ceiling
+  // fight. Then the chamber capped it at 855, which is 9% of the 9,305 a finished
+  // ship carries today — the thing at the gates stopped being a fight at all, and a
+  // pilot who weaved beat it with 39% left and no research. Both of those are wrong in the same way: the ceiling
   // was picked off the bestiary instead of off the shop.
   //
   // The answer is still a behaviour rather than a purchase. Measured, finished
-  // Bulwark, NO research: it dies to all four lines of play — 3.7s standing, 3.8s
-  // kiting, 5.8s weaving, 3.7s holding fire a second in three. Weaving is the one
-  // that scales: it wins from x8 hull and shields, keeps 52% at x16 and 76% at x32,
-  // while standing still needs x32. Holding fire buys nothing on its own, and that
-  // falls out of the identity rather than being a surprise — the total returned
-  // over a whole fight does not depend on your dps, so a longer fight is the same
-  // damage spread thinner. Weaving is different because a missed bolt is damage
-  // that never arrives at all.
+  // Bulwark, reactor on weapons, NO research: it dies to all four lines of play —
+  // 3.7s standing, 3.4s kiting, 5.8s weaving, 3.7s holding fire a second in three.
+  // Weaving is the one that scales: it wins from x8 hull and shields with 8% of the
+  // ship left, keeps 54% at x16 and 77% at x32; standing still wins from x16 and
+  // breaking off from x32. Holding fire buys the least of the four, and that falls
+  // out of the identity rather than being a surprise — the total returned over a
+  // whole fight does not depend on your dps, so a longer fight is the same damage
+  // spread thinner. Weaving is different because a bolt that misses is damage that
+  // never arrives at all.
   //
   // And the fight is easiest for the pilot with the least gun, which is the mechanic
-  // working: a Kestrel with no research, weaving, kills one in 678.7s without ever
-  // dropping below 84% of its ship. The chamber it is being shot with is drawn over
-  // its head the whole time, so which of those you are doing is something you can
-  // see rather than something you read in a threat file.
+  // working: a Kestrel with no research, weaving, kills one in 569.8s without ever
+  // dropping below 70% of its ship, taking 476 a bolt where the finished Bulwark
+  // beside it takes 9,706. The chamber it is being shot with is drawn over its head
+  // the whole time, so which of those you are doing is something you can see rather
+  // than something you read in a threat file.
   //
   // Speed 200 is under every bare hull, like a Leviathan: it can kill you but it
   // can never trap you. Reach 900 is over every hull, also like a Leviathan, so you
@@ -930,12 +932,12 @@ export function stepAlienRepair(a, dt) {
 // pilot who stands still and never stops shooting takes
 //
 //      MIRROR.dps x its hp / (MIRROR.soak x its hp x ln2 / MIRROR.half)
-//        =  MIRROR.dps / (0.10 x ln2)  =  173,163 points
+//        =  MIRROR.dps / (0.09 x ln2)  =  181,244 points
 //
 // whatever they fly and however long it takes them. Measured with the same
-// harness, an indestructible reader that never stops shooting: 165,554 points
-// returned with the anchor's 75 dps against 159,568 with a finished Bulwark's
-// 12,003 — 1.04x across a 160x span of player gun. A bigger gun does not cost you
+// harness, an indestructible reader that never stops shooting: 173,260 points
+// returned with the anchor's 75 dps against 156,279 with a finished Bulwark's
+// 11,307 — 1.11x across a 151x span of player gun. A bigger gun does not cost you
 // more; it makes the fight shorter and louder, and the bolts arrive bigger.
 
 // What the top of the BESTIARY throws: the Hive's own gun plus a full brood of
@@ -962,8 +964,8 @@ export const hiveDps = () => {
 // imports both and pins them equal to the penny, which is the same arrangement
 // every hand-written bounty in this file already lives under.
 //
-// Measured, not chosen — a Bulwark with four MK-V Emitters, two E-Cells, Plating
-// and twelve MK-V drones:
+// Measured, not chosen — a Bulwark with four MK-V Emitters, three E-Cells,
+// Plating, Foundry and its ten MK-V drones:
 //
 //      stageDps('finished')  =  11,306.59
 //
@@ -985,17 +987,36 @@ export const hiveDps = () => {
 const SHOP_DPS = 11306.59;
 
 export const MIRROR = Object.freeze({
-  // How much of itself, dealt inside the decay window, fills the chamber. A tenth
-  // — one rung of the bestiary's own ladder of tens. It is also the only number
-  // here with any slack in it, and the slack is deliberate: at a tenth, SHOP_DPS
-  // holds the chamber at
+  // How much of itself, dealt inside the decay window, fills the chamber.
   //
-  //      12,002.76 / (0.10 x 205,550 x ln2 / 1.0)  =  0.842
+  // It was a tenth, justified as "one rung of the bestiary's own ladder of tens".
+  // That was a tidy number rather than a reason, and it is retired: this one is
+  // MEASURED, and what it is measured against is a position on the research ladder
+  // rather than a fraction.
   //
-  // so the top of the shop very nearly fills the meter and nothing available can
-  // push it past. A party of four saturates it, and saturating it is the ceiling
-  // doing its job rather than a bug.
-  soak: 0.10,
+  // The constraint is not the size of the bolt. It is that WEAVING STILL WINS AT
+  // x8 — the tier the answer to this fight has always been available at, and the
+  // one thing in the whole table that is stable across seeds. Everything else
+  // follows from it. Measured over three alien seeds, a finished Bulwark weaving at
+  // x8 hull and shields finishes with:
+  //
+  //      soak 0.10   17% of the ship left, and the bolt reads  8,743
+  //      soak 0.09    8%                                       9,706
+  //      soak 0.085   3%                                      10,272
+  //      soak 0.08   dead, at every seed                      10,827
+  //
+  // So 0.09 is the last step down that leaves a margin rather than a coin flip,
+  // and the bolt a pilot actually sees lands within 3% of the 10,000 that was
+  // asked for. Below it the number on the screen gets bigger and the fight stops
+  // having an answer short of the last rung of the ladder.
+  //
+  // Nothing here is free, and it is the same knob twice: the chamber's resting
+  // level and the total a whole fight costs are both MIRROR.dps / (soak x ln2), so
+  // a bigger bolt IS a dearer fight, by exactly the same factor. 0.10 -> 0.09 buys
+  // 11% more bolt for 11% more damage over the fight, 163,120 -> 181,244. There is
+  // no setting that makes the bolt bigger and the fight cheaper, and `half` is not
+  // a way round it either — it enters both expressions identically.
+  soak: 0.09,
 
   // And it halves in one of its own firing cycles, 1 / fireRate. Not picked: the
   // clock of this fight is its trigger, so the natural unit of "break off for a
@@ -1024,34 +1045,43 @@ export const MIRROR = Object.freeze({
   // At 775 the ceiling was set so low that nobody ever met it. The chamber is a
   // share of your own gun, so taking the cap from the bestiary — a rung under a
   // Hive's gun, matching the rung under a Hive's hull — made the hardest bolt at the
-  // top of the shop 855, which is 12% of a finished Bulwark. This is the thing at
-  // the gates. It should not be 12% of anybody.
+  // top of the shop 855, which is 9% of a finished Bulwark. This is the thing at
+  // the gates. It should not be 9% of anybody.
   //
-  //      full chamber   80 + 12,002.76           =  12,083 a bolt
-  //      what a finished pilot actually holds it at, 0.842:
-  //                     80 + 0.842 x 12,002.76   =  10,191 a bolt
+  //      full chamber   80 + 11,306.59           =  11,387 a bolt
+  //      what a finished pilot actually holds it at, 0.882:
+  //                     80 + 0.882 x 11,306.59   =  10,053 a bolt
   //
-  // Measured against the real AI, real bolts and real movement, finished Bulwark,
-  // no research: the biggest bolt that ACTUALLY lands is 5,304 into 7,050 — well
-  // under the 10,191 the algebra allows, because a Thresher moves and roughly a
-  // third of your fire never reaches it, so the chamber peaks at 48% rather than
-  // 84%. Standing still it dies in 3.7s, kiting 3.8s, weaving 5.8s, holding fire
-  // two seconds in three 3.7s. Weaving is the one that scales: it wins from x8 hull
-  // and shields (3% of the ship left), x16 leaves 52% and x32 leaves 76%; standing
-  // still wins only at x32. It was 17.2s and a comfortable weave at x1, which is
-  // the complaint this answers.
+  // What lands is a little under that, and the reason is worth writing down because
+  // it was got wrong once already. It is NOT that a Thresher dodges: measured over
+  // a whole fight, 97% of a finished pilot's fire reaches it. It is the REACTOR.
+  // stageDps quotes the boosted gun, and a pilot has to hold the routing on
+  // weapons to deliver it — 10,175 of the 11,307 on paper, the rest lost to the
+  // capacitor browning out. That is the whole gap, and a bench pilot who never
+  // routed power read the chamber at 49% where a real one reads 91%.
   //
-  // Verified over a real socket against a real server, same build, same room: dead
-  // in 3.6s standing, biggest single hit the wire carried 4,916, chamber peaked
-  // 48%. The dial fell 45% -> 33% -> 17% -> 8% over the three seconds after the
-  // trigger came off, which is MIRROR.half doing exactly what it says. Weaving at
-  // x8 killed it in 25.2s and never went below 54% of the ship.
+  // Measured against the real AI, real bolts and real movement, with the reactor on
+  // weapons, finished Bulwark: the biggest bolt that ACTUALLY lands is 9,706, and
+  // 9,850 for anyone who survives long enough to see the chamber top out. Standing
+  // still, no research, it dies in 3.7s; kiting 3.4s; weaving 5.8s; holding fire two
+  // seconds in three 3.7s. Weaving is the one that scales: it wins from x8 (8% of
+  // the ship left), x16 leaves 54% and x32 leaves 77%. Standing still scrapes x16
+  // — 19 hit points of 148,880, and it dies outright at another seed — so call it
+  // x32, and breaking off is x32 too.
+  //
+  // Verified over a real socket against a real server, same build, same room. The
+  // same pilot standing in the same place, reactor idle then routed to weapons:
+  // 5,126 a bolt at a 56% chamber, then 7,494 at 85%. Weaving at x8 killed it in
+  // 18.0s, never went below 45% of the ship, and the biggest number the wire
+  // carried was 10,472 off a chamber that peaked at 96%. The dial fell 46% -> 38%
+  // -> 19% -> 10% over the three seconds after the trigger came off.
   //
   // And the fight it makes is the one the mechanic promised, which is the test that
   // matters more than any of those: a KESTREL with no research at all, weaving,
-  // kills one in 678.7s and never drops below 84% of its ship, because 429 dps
-  // holds the chamber at 3%. The same pilot in the best ship money can buy is
-  // deleted in under four seconds. The danger is your own gun.
+  // kills one in 569.8s and never drops below 70% of its ship, because 429 dps
+  // holds the chamber at 4% and the bolt it gets back is 476. The same pilot in the
+  // best ship money can buy is deleted in 3.7 seconds by a 9,706. The danger is
+  // your own gun, and that spread IS the mechanic.
   dps: SHOP_DPS,
 });
 
