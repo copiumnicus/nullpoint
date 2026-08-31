@@ -18,6 +18,11 @@ export const COMMANDS = {
   ship:  { admin: true,  args: '<hull>',          help: 'grant a hull' },
   form:  { admin: true,  args: '<formation>',     help: 'grant and fly a drone formation' },
   ore:   { admin: true,  args: '<metal> [count]', help: 'put ore in the company hangar' },
+  // The threat file, forwards. A quest is a hundred Corsair Hives and a Hive is
+  // 650,000 effective hit points on a five minute respawn, so the reward path was
+  // literally untestable without this — /kills hive 99 and then go and shoot one is
+  // the whole verification, and it takes a minute instead of six hours.
+  kills: { admin: true,  args: '<hostile> [count]', help: 'write kills into your threat file' },
   tp:    { admin: true,  args: '<map>',           help: 'jump straight to a sector' },
   heal:  { admin: true,  args: '',                help: 'full hull, shields and capacitor' },
   // The other half of /heal, and it exists for the same reason: the wreck path is

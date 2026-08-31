@@ -114,10 +114,25 @@ const totals = BOUGHT.map(([h]) => mounts(h));
 // optimised for it, three completely different racks — W5G1T1, W3G2T2, W1G4T2 —
 // score 5.09, 4.42 and 5.14: the split is worth about 2% and the COUNT is worth
 // everything. So the invariant is the same invariant, over the right total.
-check('every purchasable hull carries the same total MOUNTS, ship and escort together',
+// Rewritten again, and this time it is the CLAIM that moved rather than the count.
+//
+// It said "every purchasable hull carries the same total MOUNTS", full stop, and read
+// as though nineteen were a hard ceiling on any ship in the game. It is not, and the
+// day a quest reward added two drone berths that reading would have been an argument
+// for refusing the reward. What the invariant is actually about is MONEY (CLAUDE.md
+// rule five): the thing being prevented is buying your way past somebody, so the
+// claim is about what the SHOP SELLS. An unlock is not on sale — no amount of credits
+// kills a hundred Corsair Hives — so it is not part of this comparison, and the
+// comparison is unchanged by it because every hull earns the same two berths.
+//
+// baysOf() takes the earned berths as an optional second argument and this passes
+// none, deliberately: the question here is what a hull IS, not what a particular
+// pilot is flying.
+check('every hull the shop sells carries the same total MOUNTS, ship and escort together',
   new Set(totals).size === 1 && new Set(BOUGHT.map(([h]) => JSON.stringify(slotsOf(h)))).size === BOUGHT.length,
   `${totals[0]} mounts each: ` + BOUGHT.map(([h]) => {
-    const s2 = slotsOf(h); return `${h} W${s2.weapon}G${s2.generator}T${s2.tech}+${baysOf(h)} bays`; }).join(', '));
+    const s2 = slotsOf(h); return `${h} W${s2.weapon}G${s2.generator}T${s2.tech}+${baysOf(h)} bays`; }).join(', ') +
+  ' — a claim about the price list, not a ceiling on any ship: what a pilot earns sits on top of it');
 check('and the bigger the hull, the more of them are welded in place',
   BOUGHT.every(([h], i) => i === 0 || fixed(h) > fixed(BOUGHT[i - 1][0])),
   BOUGHT.map(([h]) => `${h} ${fixed(h)} fixed / ${baysOf(h)} free`).join(', ') +

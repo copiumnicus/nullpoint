@@ -206,7 +206,16 @@ export const slotsOf  = hullKey => {
 // Berths, not bays owned. A pilot keeps every bay they paid for; the hull says how
 // many of them fly. Switching to a smaller hull parks the surplus in the hangar
 // instead of deleting a purchase, and switching back brings them out again.
-export const baysOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).bays ?? MAX_DRONES;
+//
+// `extra` is what a pilot has EARNED on top — the Brood Frame is two more berths for
+// a hundred Corsair Hives, see shared/quests.js. It defaults to zero, and the default
+// is load-bearing rather than lazy: every caller that is asking about a HULL rather
+// than about a pilot (the shop tooltip, the hull comparison, the mounts invariant in
+// test/ships.mjs) keeps asking the same question and getting the same answer. Only
+// the callers that hold a specific pilot's `unlocked` list pass the second argument,
+// which is exactly the set of places a bonus berth is real.
+export const baysOf = (hullKey, extra = 0) =>
+  ((HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).bays ?? MAX_DRONES) + Math.max(0, Math.floor(extra) || 0);
 
 // The escort this hull actually flies, out of the bays a pilot owns.
 //
@@ -222,8 +231,8 @@ export const baysOf = hullKey => (HULLS[hullKey] ?? HULLS[DEFAULT_HULL]).bays ??
 // losing 40 of hold, with the panel and the server agreeing about it. A rig has
 // its own bay (sanitiseDrones refuses one in the rack), so it does not spend a
 // berth. Empty bays still count: an empty berth is a berth.
-export const berthed = (hullKey, drones = []) => {
-  const n = baysOf(hullKey);
+export const berthed = (hullKey, drones = [], extra = 0) => {
+  const n = baysOf(hullKey, extra);
   let seated = 0;
   return (drones ?? []).filter(k => isCollector(k) || ++seated <= n);
 };
@@ -259,9 +268,9 @@ export const sanitiseFit = (hullKey, fit) => cleanFit(slotsOf(hullKey), fit);
 // never touch this path. So the only things composing here are distinct
 // technologies and the one formation being flown, and compounding is simply what
 // "+60%" and "-37.5%" mean.
-export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION) {
+export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION, extra = 0) {
   const hull = HULLS[hullKey] ?? HULLS[DEFAULT_HULL];
-  drones = berthed(hullKey, drones);
+  drones = berthed(hullKey, drones, extra);
   const out = {}, pct = {};
   for (const [k, a] of Object.entries(ATTRS)) out[k] = hull.attrs[k] ?? a.dflt;
 
@@ -328,6 +337,14 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
   // spent. Clamped to what was actually surrendered, the same build reads 114%.
   const givable = Math.max(0, bare - (ATTRS.speed.min ?? 0));
   out.boost = BOOST + (bare > 0 ? Math.min(lost, givable) / bare : 0);
+  // How many berths this ship actually has, earned ones included. Set here beside
+  // `boost` and for the same reason: both are OUTCOMES rather than dials, so neither
+  // is in ATTRS — and both have to be set AFTER the clamp loop above, which looks
+  // every key of `out` up in ATTRS and throws on one that is not there.
+  //
+  // It is on the stat block because it is the only place a pilot can be shown where
+  // two extra bays came from. shared/breakdown.js draws it as the fifth layer.
+  out.berths = baysOf(hullKey, extra);
   return out;
 }
 

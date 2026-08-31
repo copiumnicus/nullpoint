@@ -130,16 +130,22 @@ export const escortOf = (drones = [], rig = null) => (rig ? [...drones, rig] : d
 // multiplies that afterwards, so no hull dominates another because of it and the
 // shops do not have to know the ladder exists. Both sides apply the same function
 // — a second copy would mean a pilot watching a hull bar that is not their hull.
-export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION, rig = null, research = 0) {
-  const s = newBody(x, y, applyResearch(resolve(hull, fit, escortOf(drones, rig), formation), research), radiusOf(hull));
-  s.research = research;
+// `earnedBays` rides on the ship for exactly the same reason `research` does: it is
+// a fact about the OWNER rather than about the hull, and threading it through every
+// call site that only wants to know what a Bulwark is would be the workshop-dock bug
+// waiting to happen. shared/quests.js turns the account's `unlocked` list into the
+// number; a ship that was never handed one flies its hull's own bays, which is every
+// ship in the game until somebody kills a hundred Corsair Hives.
+export function newShip(x = MAP_W / 2, y = MAP_H / 2, hull = DEFAULT_HULL, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION, rig = null, research = 0, earnedBays = 0) {
+  const s = newBody(x, y, applyResearch(resolve(hull, fit, escortOf(drones, rig), formation, earnedBays), research), radiusOf(hull));
+  s.research = research; s.earnedBays = earnedBays;
   s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
-  s.bays = Math.min(baysOf(hull), (drones ?? []).length);   // berths flown, not bays owned — see refit
-  s.guns = gunsOf(fit, berthed(hull, drones));      // ship rack plus whatever the escort carries
+  s.bays = Math.min(baysOf(hull, earnedBays), (drones ?? []).length);   // berths flown, not bays owned — see refit
+  s.guns = gunsOf(fit, berthed(hull, drones, earnedBays));  // ship rack plus whatever the escort carries
   // What this ship can DO, as opposed to what its numbers are. Resolved once here
   // and once in refit, because a capability is asked about every tick by things
   // that must not be walking a fit list to find out — see shared/tech.js.
-  s.tech = techSet(fit, berthed(hull, drones));
+  s.tech = techSet(fit, berthed(hull, drones, earnedBays));
   return s;
 }
 
@@ -150,7 +156,8 @@ export const shieldMax = s => s.stats.shield * (s.shieldMult ?? 1);
 // safe — swapping to a tanky hull mid-fight would otherwise be free.
 export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.formation ?? DEFAULT_FORMATION, rig = s.rig ?? null) {
   s.hull = hull; s.fit = fit; s.drones = drones; s.formation = formation; s.rig = rig;
-  s.stats = applyResearch(resolve(hull, fit, escortOf(drones, rig), formation), s.research ?? 0);
+  const bonus = s.earnedBays ?? 0;
+  s.stats = applyResearch(resolve(hull, fit, escortOf(drones, rig), formation, bonus), s.research ?? 0);
   s.r = radiusOf(hull);
   // How many of the bays this pilot owns the hull actually berths. Stamped on the
   // ship, beside `guns` and `r`, so that the escort resolve() counted, the escort
@@ -159,9 +166,9 @@ export function refit(s, hull, fit, drones = s.drones ?? [], formation = s.forma
   // behind twelve drawn hulls, and put its bolts out of two of them that were not
   // there. The bays themselves are untouched: ship.drones stays the full owned
   // list, so capture() still writes every bay a pilot paid for back to the account.
-  s.bays = Math.min(baysOf(hull), (drones ?? []).length);
-  s.guns = gunsOf(fit, berthed(hull, drones));
-  s.tech = techSet(fit, berthed(hull, drones));     // a parked bay does not lend you its technology
+  s.bays = Math.min(baysOf(hull, bonus), (drones ?? []).length);
+  s.guns = gunsOf(fit, berthed(hull, drones, bonus));
+  s.tech = techSet(fit, berthed(hull, drones, bonus));   // a parked bay does not lend you its technology
   s.volley = 0; s.volleyCool = 0;
   s.hp = s.stats.hull;
   s.shieldMult = 1;

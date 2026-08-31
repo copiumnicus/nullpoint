@@ -10,6 +10,7 @@
 // technology, drones and formations at once.
 
 import { HULLS, slotsOf, baysOf, DEFAULT_HULL } from './ships.js';
+import { bonusBays } from './quests.js';
 import { EQUIPMENT, SLOTS, emptyFit } from './gear.js';
 import { launcherRoom } from './rockets.js';
 import { FORMATION_KEYS } from './formation.js';
@@ -68,7 +69,8 @@ export const STORE_PAGES = [
 ];
 
 // What a store page holds. Kinds tell the client how to draw and what to send.
-export function pageItems(page, { hull = DEFAULT_HULL, hulls = [], formations = [], drones = 0 } = {}) {
+export function pageItems(page, { hull = DEFAULT_HULL, hulls = [], formations = [], drones = 0,
+                                  unlocked = [] } = {}) {
   switch (page) {
     case 'ships':  return Object.keys(HULLS).map(k => ({ kind: 'hull', k, owned: hulls.includes(k) }));
     case 'drones': return [
@@ -76,7 +78,7 @@ export function pageItems(page, { hull = DEFAULT_HULL, hulls = [], formations = 
       // Bulwark that berths ten is selling something that cannot fly, and the
       // server refuses it — a counter that offers what the server declines is the
       // workshop-dock bug pointing the other way.
-      ...(drones < baysOf(hull) ? [{ kind: 'drone', k: 'drone', owned: false }] : []),
+      ...(drones < baysOf(hull, bonusBays(unlocked)) ? [{ kind: 'drone', k: 'drone', owned: false }] : []),
       ...Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].kind === 'collector')
         .map(k => ({ kind: 'item', k, owned: false })),
     ];
@@ -185,7 +187,11 @@ export function statStrip(G, valueW = 0, deltaW = 0, gap = 0) {
 
 export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   const { tab = 'hangar', page = 'ships', hull: hullKey, drones: droneCount = 0,
-          hulls = [], formations = [], gear = {}, scroll = 0 } = s;
+          hulls = [], formations = [], gear = {}, scroll = 0, unlocked = [] } = s;
+  // Berths a quest earned, counted once for the whole panel. The escort column has
+  // to draw them and the drone shelf has to offer them, and a counter that offers
+  // what the server declines is the workshop-dock bug pointing the other way.
+  const spare = bonusBays(unlocked);
   const w = Math.min(980, VIEW_W - 50), h = Math.min(600, VIEW_H - 50);
   const x = (VIEW_W - w) / 2, y = (VIEW_H - h) / 2;
   const colW = (w - 60) / 3, top = y + 96;
@@ -221,7 +227,7 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     // Berths, not bays owned: a row you can drop a module into that then does not
     // fly is worse than no row. The surplus is parked, not lost — fly something
     // with room and it is back.
-    const bays = Math.min(baysOf(hullKey), droneCount);
+    const bays = Math.min(baysOf(hullKey, spare), droneCount);
     const escortRows = 1 + bays + 2 + 1 + formations.length;   // + the rig header and its one bay
     // Each column is stepped to fit itself, so a six-drone Bulwark no longer
     // squeezes the weapon rack down with it.
@@ -315,7 +321,7 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   // every row on it shorter — the technology page went from four rows at 58px to
   // fifteen at 22.5px, and the client draws each blurb at y+35, so it clipped.
   // A shelf should not get harder to read every time something is added to it.
-  const items = pageItems(page, { hull: hullKey, hulls, formations, drones: droneCount });
+  const items = pageItems(page, { hull: hullKey, hulls, formations, drones: droneCount, unlocked });
   const iX = x + 30 + catW, iW = w - 50 - catW;
   const span = items.length * STORE_ROW;
   const at = Math.max(0, Math.min(spanOf(span, room), scroll));

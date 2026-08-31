@@ -12,6 +12,7 @@
 // you no, and only then told you what it was.
 
 import { ATTRS, HULLS, resolve, slotsOf, baysOf } from './ships.js';
+import { bonusBays } from './quests.js';
 import { EQUIPMENT, dronePrice, topTier, frontierOnly, isCollector } from './gear.js';
 import { FORMATIONS, BONUS_AT, escortScale } from './formation.js';
 import { launcherRoom, launcherCap } from './rockets.js';
@@ -118,7 +119,14 @@ const SOLD_ANYWHERE = 'Sold anywhere, docked or not.';
 // { hull, fit, drones, formation, gear, hulls, formations, credits, ammo, kits, devices }
 export function tipFor(kind, key, ctx) {
   const { hull, fit, drones = [], formation } = ctx;
-  const now = resolve(hull, fit, drones, formation);
+  // Every resolve() below carries the pilot's earned berths, and the two on the hull
+  // row deliberately do not: those two compare two BARE CHASSIS, which is a question
+  // about what the shop sells rather than about this pilot. Without it a Bulwark
+  // flying twelve drones read its own "now" as ten and every tip on the page quoted
+  // a delta against a ship the pilot was not in — the workshop-dock bug again, in the
+  // one panel whose whole job is telling you what a purchase would do.
+  const spare = bonusBays(ctx.unlocked);
+  const now = resolve(hull, fit, drones, formation, spare);
 
   if (kind === 'item') {
     const e = EQUIPMENT[key];
@@ -135,8 +143,8 @@ export function tipFor(kind, key, ctx) {
       does: e.does ?? null,
       sub: onADrone(key) ? 'goes in the rig bay, on a drone' : `goes in a ${e.slot} slot`,
       lines: capped ? []
-           : onADrone(key) ? diffLines(now, resolve(hull, fit, [...drones, key], formation))
-           : diffLines(now, resolve(hull, withItem(fit, key), drones, formation)),
+           : onADrone(key) ? diffLines(now, resolve(hull, fit, [...drones, key], formation, spare))
+           : diffLines(now, resolve(hull, withItem(fit, key), drones, formation, spare)),
       notes: [
         ...(() => {
           const need = tunes(e);
@@ -199,7 +207,7 @@ export function tipFor(kind, key, ctx) {
       title: F.name, price: F.price, blurb: F.blurb,
       sub: n === 0 ? `no effect until you own a drone (full at ${at})`
          : `${Math.round(100 * scale)}% of its effect with ${n} drone${n === 1 ? '' : 's'}`,
-      lines: diffLines(now, resolve(hull, fit, drones, key)),
+      lines: diffLines(now, resolve(hull, fit, drones, key, spare)),
       notes: [
         `Your escort flies it. Full strength at ${at} drones.`,
         ctx.formations?.includes(key) ? 'Owned. Click to fly it.' : SOLD_STATION,
@@ -213,15 +221,15 @@ export function tipFor(kind, key, ctx) {
     // whole made an eleven-bay pilot with a collector read as twelve and the
     // tooltip vanish off a row the store was still drawing.
     const n = drones.filter(k => !isCollector(k)).length;
-    if (n >= baysOf(hull)) return null;
+    if (n >= baysOf(hull, spare)) return null;
     // A drone's worth depends entirely on what you hang on it, so show the best
     // case you could actually build today rather than an empty bay's zero.
     const best = topTier('weapon');
     return {
       title: `Drone ${n + 1}`, price: dronePrice(n),
       blurb: 'An escort ship. It carries one module of yours.',
-      sub: `bay ${n + 1} of ${baysOf(hull)} on a ${HULLS[hull]?.name ?? 'hull'} · each bay costs more than the last`,
-      lines: diffLines(now, resolve(hull, fit, [...drones, best], formation)),
+      sub: `bay ${n + 1} of ${baysOf(hull, spare)} on a ${HULLS[hull]?.name ?? 'hull'} · each bay costs more than the last`,
+      lines: diffLines(now, resolve(hull, fit, [...drones, best], formation, spare)),
       notes: [
         `Shown carrying one ${EQUIPMENT[best].name}.`,
         'It takes anything but a launcher or a collector rig.',

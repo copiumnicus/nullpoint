@@ -5,7 +5,8 @@
 // without a server or a file.
 
 import { DEFAULT_HULL, sanitiseFit, slotsOf, HULLS } from './ships.js';
-import { EQUIPMENT, emptyFit, reseat, sanitiseDrones, sanitiseRig, isCollector } from './gear.js';
+import { EQUIPMENT, emptyFit, reseat, sanitiseDrones, sanitiseRig, isCollector,
+         MAX_DRONES } from './gear.js';
 import { FORMATIONS, DEFAULT_FORMATION } from './formation.js';
 import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
          DEFAULT_AMMO, STARTING_AMMO } from './ammo.js';
@@ -14,6 +15,7 @@ import { sanitiseDevices, sanitiseDevice, DEFAULT_DEVICE } from './devices.js';
 import { sanitiseMods, HOME_PLOTS } from './research.js';
 import { ARENA_MODULES } from './arena.js';
 import { sanitiseKills } from './threats.js';
+import { sanitiseUnlocked, bonusBays } from './quests.js';
 import { MAPS, COMPANIES, isArena } from './maps.js';
 import { MATERIALS } from './cargo.js';
 import { bankPlaytime } from './playtime.js';
@@ -41,6 +43,7 @@ export function newAccount(token, seq, now) {
     ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     kits: {}, kit: DEFAULT_KIT,
     devices: {}, device: DEFAULT_DEVICE, foldTo: null, lab: null, kills: {},
+    unlocked: [],                                 // the quests you have finished — see shared/quests.js
     claims: [],                                   // the mining rocks you have freed
     berths: [],                                   // outposts you rent a bay at
     lastDock: null,                               // the hangar a wreck comes back to
@@ -109,10 +112,16 @@ export function sanitiseAccount(a, seq, now) {
   // whatever the fit named, and a hand-edited file can name anything.
   const seated = reseat(slotsOf(flying), a?.fit, locker(a?.gear));
   const gear = locker(seated.gear);
+  // The FLEET cap, which is what a pilot may own rather than what their hull berths.
+  // It has to rise with an earned berth or every login would silently delete the
+  // drones the extra bays bought: sanitiseDrones slices at MAX_DRONES, a Kestrel
+  // berths exactly MAX_DRONES, and the Brood Frame takes it to fourteen. Exactly the
+  // bug the reseat() note above this line is about, one field over.
+  const earned = sanitiseUnlocked(a?.unlocked);
   return {
     token: a.token, seq, co, name: typeof a?.name === 'string' ? a.name : callsign(seq),
     hull: flying, fit: seated.fit, gear, hulls,
-    drones: sanitiseDrones(a?.drones, seated.fit, undefined, slotsOf(flying).tech),
+    drones: sanitiseDrones(a?.drones, seated.fit, MAX_DRONES + bonusBays(earned), slotsOf(flying).tech),
     // Collectors used to live in a combat bay. Anyone who fitted one before this
     // keeps it — it moves into the rig bay rather than being dropped on the floor,
     // and sanitiseDrones has already refused to leave it in the rack.
@@ -130,6 +139,11 @@ export function sanitiseAccount(a, seq, now) {
     lab: sanitiseLab(a?.lab, now),
     // What this pilot has killed, and therefore what their threat file holds.
     kills: sanitiseKills(a?.kills),
+    // And what those kills have already bought. Deliberately NOT re-derived from
+    // `kills` on the way in: a threshold that moved would then confiscate a reward
+    // somebody had already earned, and sanitiseKills drops retired hostiles, which
+    // would take the trophy with the animal. shared/quests.js argues both.
+    unlocked: earned,
     berths: [...new Set((Array.isArray(a?.berths) ? a.berths : []).filter(id => MAPS[id]?.outpost))],
     // Which claim fights this pilot has won. Membership of a fixed list, so a
     // hand-edited save cannot name a rock that does not exist, and a retired
@@ -180,6 +194,7 @@ export function carried(a) {
     devices: { ...a.devices }, device: a.device,
     foldTo: a.foldTo ?? null, lab: a.lab ?? null,
     kills: { ...(a.kills ?? {}) },
+    unlocked: [...(a.unlocked ?? [])],
     berths: [...(a.berths ?? [])], lastDock: a.lastDock ?? null,
     claims: [...(a.claims ?? [])],
     vault: { ...a.vault }, hold: { ...a.hold },
@@ -213,6 +228,7 @@ export function capture(account, p, now) {
   account.foldTo = p.foldTo ?? null;
   account.lab = p.lab ?? null;
   account.kills = { ...p.kills };
+  account.unlocked = [...(p.unlocked ?? [])];   // a player built before quests existed has none
   account.berths = [...(p.berths ?? [])];   // a player built before berths existed has none
   account.claims = [...(p.claims ?? [])];
   account.lastDock = p.lastDock ?? null;
