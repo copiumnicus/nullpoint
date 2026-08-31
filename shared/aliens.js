@@ -1181,10 +1181,32 @@ export const standOff = a =>
 // { id, ship, haven }.
 export const mayHarm = (a, c) => !(c.haven && !a.provoked.has(c.id));
 
+// A sector where distance does not decide anything.
+//
+// It is a property of the MAP, not of the hostile, and that is the whole point: an
+// Ironhusk is an Ironhusk everywhere, and nothing in the open world starts chasing
+// from across a sector because claims exist. `arena` is set by arenaMap() in
+// shared/maps.js and by nothing else.
+//
+// Why a claim wants it: aggro and leash together make the only correct way to
+// fight a closed field "kill one, walk out to 2,400px, let percentage-based shield
+// regeneration put the ship back, walk in again". At 3.33% of the pool a second
+// that loop refills a finished ship in half a minute, so a claim was not a fight
+// with a budget, it was a fight with a rest button. Removing the two distance
+// gates removes the rest button, and it removes nothing else: the hostiles still
+// have to reach you, still respect sanctuary, and still pick their target by the
+// same crowding and threat rules.
+// Two gates, and they are worth separating because they are two different
+// promises. `noLeash` is "nothing in here ever loses interest in you"; `noHorizon`
+// is "everything in here knows where you are from the moment you arrive".
+export const noLeash   = map => !!map?.arena;
+export const noHorizon = map => !!map?.arena && !!map?.hunt;
+
 export function stepAlienAI(a, map, contenders, dt) {
   const at = id => contenders.find(c => c.id === id);
   const alive = c => c && c.ship.hp > 0;
   const dist = c => Math.hypot(c.ship.x - a.x, c.ship.y - a.y);
+  const noEdge = noLeash(map), noFog = noHorizon(map);
 
   let t = alive(at(a.target)) ? at(a.target) : null;
   if (t) {
@@ -1192,7 +1214,7 @@ export function stepAlienAI(a, map, contenders, dt) {
     // Sanctuary only holds for someone who has not shot at it. Once provoked it
     // will follow you into a base ring or a portal mouth and keep firing.
     if (!mayHarm(a, t)) t = null;
-    else if (dist(t) > a.def.leash) {
+    else if (!noEdge && dist(t) > a.def.leash) {
       a.lost += dt;
       // Outrunning it is a real escape: it forgets the grudge along with the target.
       if (a.lost > a.def[LOSE_INTEREST]) { a.provoked.delete(t.id); t = null; }
@@ -1209,7 +1231,10 @@ export function stepAlienAI(a, map, contenders, dt) {
       // except a ship running an Aspect Filter, which is an active illuminator
       // and is therefore heard from further off than it can be seen from. The
       // caller supplies it, so this file needs no opinion about the shop.
-      if (angry ? d > a.def.leash : (c.haven || d > a.def.aggro * (c.loud ?? 1))) continue;
+      // Sanctuary still holds — that is a rule about where a pilot is standing, not
+      // about how far away they are, and a claim has no sanctuary in it anyway.
+      if (c.haven && !angry) continue;
+      if (angry ? (!noEdge && d > a.def.leash) : (!noFog && d > a.def.aggro * (c.loud ?? 1))) continue;
       if (d < bestD) { bestD = d; best = c; }
     }
     if (best) { a.target = best.id; t = best; a.lost = 0; }
@@ -1219,7 +1244,7 @@ export function stepAlienAI(a, map, contenders, dt) {
   // brushing past it does nothing and committing to crowding it does.
   if (t) {
     const eligible = c => alive(c) && c.id !== t.id
-      && mayHarm(a, c) && dist(c) <= a.def.leash;
+      && mayHarm(a, c) && (noEdge || dist(c) <= a.def.leash);
     let near = null, nearD = Infinity;
     for (const c of contenders) {
       if (!eligible(c)) continue;

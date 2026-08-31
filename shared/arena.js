@@ -49,33 +49,89 @@
 //   mine3   + no way out      a Leviathan reaches 900 past your 820, so the last
 //                             third of the field cannot be declined
 //
+// THE CHASE, AND THE REST BUTTON — the change that actually made these hard.
+//
+// The complaint was "you can just kill one, run away, heal", and it was correct.
+// Two things made it work and both are now off inside a claim:
+//
+//   nothing breaks off.  `noLeash` in shared/aliens.js, keyed on `map.arena`. Once
+//     something in a claim has seen you it never loses interest, however far you
+//     go. It is a property of the SECTOR, so an Ironhusk is an Ironhusk everywhere
+//     and nothing in the open world changed.
+//   shields do not come back.  `dry` in stepVitals. Regeneration is 3.33% of the
+//     POOL per second (0.50 made it a share), which refills a finished ship in half
+//     a minute — so a closed field was a fight with a rest button. This is the
+//     whole of the exploit and removing it is the whole of the fix.
+//
+// Measured on the shipped rosters, twelve rotations, share of the ship a clean
+// clear costs — which is the reading a player feels:
+//
+//            before      after      and the middle
+//   mine1     31%   ->    88%       5 of 12 dead  ->  12 of 12
+//   mine2     36%   ->    90%       0 of 12       ->  12 of 12
+//   mine3     26%   ->    90%       0 of 12       ->  11 of 12
+//
+// x2.9, x2.5 and x3.5 against asks of x2, x3 and x5.
+//
+// WHY x5 IS NOT REACHABLE, and it is arithmetic rather than an excuse. Without
+// regeneration a pilot has exactly one shipful of hit points, so the consumed
+// reading is capped at 100% by construction: five times mine3's original 26% is
+// 130%, which is not a hard claim, it is one the assumed pilot cannot clear. The
+// ceiling on that reading is x3.8, and 90% consumed is a hair under it.
+//
+// AND WHY THE ROSTER COULD NOT MAKE UP THE DIFFERENCE. Measured, with the chase
+// and dry shields in place, against `weight` = field hit points x what the field
+// throws at the assumed pilot per second, normalised to the shipped roster:
+//
+//   x1.15 weight   7 of 8 clears      x1.9   3 of 8      x2.2   0 of 8
+//
+// The headroom above the shipped field is about 15%, and one promoted Leviathan
+// spends 4% of it. There is no version of "twice the field" that the pilot this
+// tier assumes can clear, because `weight` is proportional to pressure x length
+// and surviving permanent contact with the whole field requires that same product
+// to FALL. Raising it and cutting it are the same knob.
+//
+// WHAT WAS MEASURED AND REJECTED: full map-wide aggro — everything engaging from
+// anywhere at t=0, rather than merely never letting go. The seam is still here,
+// named `hunt` on the sector and read by `noHorizon`, and it is off. A finished
+// pilot moves at 128 and everything in the bestiary except a Hive moves at 150 to
+// 400, so nothing about it is a chase: the entire field arrives, sits on the pilot
+// and never leaves, which turns the field's NOMINAL pressure into its actual one.
+// At mine1 that is 31% of the ship per second — three seconds — and it measured
+// 0 of 12 at every tier on the shipped rosters, with a policy that gives ground
+// from the field's centre of mass rather than orbiting the nearest thing, and 0 of
+// 12 again with the field posted in depth out to 4,200px instead of on one ring.
+// It is not a difficulty setting, it is a wall. Posting the field deeper does not
+// help for the same reason: you cannot string out a field that is faster than you.
+//
 // MEASURED, twelve spawn rotations per arena, each with the pilot arriving on a
 // different bearing. Two policies: `allIn` flies to the rock and holds the trigger
 // on whatever is nearest, and `kite` holds its own gun's range, keeps out of every
 // ring and weaves across the line of fire. Neither carries a repair kit, an
 // ability, power routing or a grade of ammunition above cell1, so both are a
-// FLOOR — a real pilot has all four. On this tree:
+// FLOOR — a real pilot has all four, and 1 of 12 is what the floor policy loses at
+// mine3 without any of them. On this tree, with the chase and dry shields:
 //
-//                 hostiles     all-in            played well            fight
-//   mine1   15    9 of 12 dead, 3 clear    12 of 12,  38% left     92s
-//   mine2   16                             12 of 12,  36% left    100s
-//   mine3   17                             12 of 12,  45% left    112s
+//                 hostiles     played well              all-in        fight
+//   mine1   15    12 of 12,  12% of the ship left     12 of 12 dead   100s
+//   mine2   16    10 of 12,  10%                      12 of 12        110s
+//   mine3   17    11 of 12,  10%                      11 of 12        122s
 //
 // The SHARE is what is asserted, not the figure: a hull slot count is somebody
-// else's to move this week, and the test states the claim as "about the same share
-// of their ship at every tier" with the spread quoted.
+// else's to move this week, and the test states the claim as "costs a competent
+// pilot most of their ship" with the spread quoted.
 //
 // So: expect to lose most of the ship at a claim, and expect flying into the
 // middle of the first one to hurt. Research quietly buys a bad pilot somewhere to
 // stand — which is what research is for. It buys forgiveness, never victory.
 //
-// AND THE MODEL IS NOT THE GAME. Flown over a real socket on this tree, mine1
-// took 159 seconds to clear against the model's 92, and the pilot finished at full
-// hull where the model said 38% of the ship. The bot repositions ten times a
-// second, which dodges more bolts and lands fewer of its own — so the simulation
-// is the CONSERVATIVE reading of pressure and the OPTIMISTIC reading of length,
-// and 159s is still a ninth of the fifteen-minute wall. Nothing here should be
-// quoted as what a claim feels like; it is what a claim cannot be worse than.
+// AND THE MODEL IS NOT THE GAME. Flown over a real socket before the chase went
+// in, mine1 took 159 seconds to clear against the model's 92, and the pilot
+// finished at full hull where the model said 38% of the ship. The bot repositions
+// ten times a second, which dodges more bolts and lands fewer of its own — so the
+// simulation is the CONSERVATIVE reading of pressure and the OPTIMISTIC reading of
+// length. Nothing here should be quoted as what a claim feels like; it is what a
+// claim cannot be worse than.
 //
 // THE CLIFF, and it is the reason not to "just add more". Everything that scales
 // bills by the second, so an arena's LENGTH is its difficulty and it is a cliff
@@ -100,13 +156,21 @@ import { MODULES, nextOn, addMod, tiersOf, hasMod } from './research.js';
 import { farmHp, effectiveHp, threatDps, bountyFor } from './aliens.js';
 
 // --- the fields ---------------------------------------------------------------
+// Each tier is the one below it plus one thing, and the body count is 15 / 16 / 17
+// — the escalation is HARDER hostiles, not more of them. A Leviathan is 65,000 hit
+// points for 120 dps, the worst damage-per-hit-point in the bestiary; a Kedge is
+// the same 65,000 and the same 900 reach for 331, and its fix drags you back onto
+// the rock you were backing away from. Promoting one Leviathan per tier is what
+// took the upper claims' middles from survivable to lethal (see THE CHASE below):
+// all-in went 0 of 12 to 12 of 12 at mine2 and 0 to 11 at mine3 for a 4% change in
+// the field's weight.
 export const ARENAS = {
   mine1: { roster: [['censer', 5], ['leviathan', 2], ['ironhusk', 8]],
            asks: 'five fields, and nowhere in the middle to stand still' },
-  mine2: { roster: [['censer', 5], ['lamprey', 1], ['leviathan', 2], ['ironhusk', 8]],
-           asks: 'a tether drinking hull the shields cannot cover' },
-  mine3: { roster: [['censer', 5], ['lamprey', 1], ['leviathan', 3], ['ironhusk', 8]],
-           asks: 'three things in here out-range you, and none can be declined' },
+  mine2: { roster: [['censer', 5], ['lamprey', 1], ['leviathan', 1], ['kedge', 1], ['ironhusk', 8]],
+           asks: 'a tether drinking hull the shields cannot cover, and one thing that hauls you back' },
+  mine3: { roster: [['censer', 5], ['lamprey', 1], ['leviathan', 1], ['kedge', 2], ['ironhusk', 8]],
+           asks: 'three things out-range you and two of them undo the ground you just made' },
 };
 
 // NOTHING IN A CLAIM MAY BE ABLE TO RUN AWAY FROM YOU, and this is the one rule
@@ -142,6 +206,16 @@ export const fieldBounty = key => rosterOf(key).reduce((n, [k, c]) => n + bounty
 // is in here has no gun at all and would report as harmless.
 export const fieldDps = (key, ehp, hull) =>
   rosterOf(key).reduce((n, [k, c]) => n + threatDps(k, ehp, hull) * c, 0);
+
+// ONE reading of how hard a field is, so a multiplier means something.
+//
+// How much there is to kill, times how hard it hits back at the pilot that tier
+// assumes. Both halves are things a designer can point at, it needs no simulation,
+// and it is monotone in every lever — which the share-of-ship reading a player
+// feels is not, because that one saturates at "dead" and cannot express a claim
+// being twice as hard as one that already costs you nine tenths of the ship.
+// The two are quoted side by side in test/arena.mjs for exactly that reason.
+export const weightOf = (key, ehp, hull) => fieldEhp(key) * fieldDps(key, ehp, hull);
 
 // --- WHAT A CLAIM PAYS, AND WHY IT IS NOTHING ---------------------------------
 //

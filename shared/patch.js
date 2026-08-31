@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.63';
+export const VERSION = '0.64';
 
 export const PATCHES = [
+  { v: '0.64', notes: [
+    'Claims got hard. Nothing in one ever breaks off — you cannot walk away and wait',
+    'And your shields do not come back in there, so the ship you arrive in is all you get',
+    'Clearing one now costs about nine tenths of your ship instead of a third',
+    'Flying into the middle of a claim kills you, at every tier, not just the first',
+    'Kedges hold the upper two rocks: they haul you back onto ground you just gave up',
+  ] },
   { v: '0.63', notes: [
     'A Thresher fills its chamber faster: the bolt it throws back now reads 9,706',
     'Route power to your weapons and it loads harder — that is where the size is',
