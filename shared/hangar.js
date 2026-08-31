@@ -155,6 +155,34 @@ export function pickerLayout(G, row, items) {
            rows: shown.map((k, i) => ({ k, r: { x: x + 6, y: y + 4 + i * PICK_ROW, w: w - 12, h: PICK_ROW - 4 } })) };
 }
 
+// The live stat line under the tabs: five columns, and in each one a label over a
+// value with the change beside it. What it is showing is the effect of the click
+// you just made, so it has to be readable at the numbers the game can actually
+// reach.
+//
+// The change used to be drawn at a literal `sx + 44` in the client. 44px holds
+// five characters of 13px monospace with 5px to spare, and a fully researched
+// Bulwark shows a six-digit shield — 46.8px — so the two overlapped by 2.8px, at
+// every window size, from whenever the ladder grew past five digits. Nothing saw
+// it because the harness only ever drew a pilot with a thin fit.
+//
+// Derived here from the widest number the strip is going to print, which the
+// client measures and hands in — this file has no canvas and will not keep a
+// second copy of a font metric. `gap` is one character of the value's own font.
+export const STAT_KEYS = ['hull', 'shield', 'damage', 'speed', 'capacitor'];
+export function statStrip(G, valueW = 0, deltaW = 0, gap = 0) {
+  const { x, y } = G.panel;
+  // Wide enough for the value, the change and a character between them, and never
+  // narrower than the fifth of the panel the strip has always had.
+  const step = Math.max(G.colW * 0.62, valueW + gap + deltaW + gap);
+  return { label: y + 62, value: y + 78,
+           cols: STAT_KEYS.map((k, i) => ({ k, x: x + 20 + i * step,
+                                            delta: x + 20 + i * step + valueW + gap })),
+           // What the strip needs against what the panel has. The client cannot
+           // fix a strip that will not fit, but a test can say so.
+           room: G.panel.w - 40, needs: step * STAT_KEYS.length - (step - valueW - gap - deltaW) };
+}
+
 export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   const { tab = 'hangar', page = 'ships', hull: hullKey, drones: droneCount = 0,
           hulls = [], formations = [], gear = {}, scroll = 0 } = s;
