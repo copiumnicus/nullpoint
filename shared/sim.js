@@ -249,6 +249,38 @@ export const DOCK_HULL_RATE   = 0.12; // × max hull per second, so ~8s from scr
 // in the last frame.
 export const DOCK_INTERRUPT   = 4.0;  // s of quiet before the dock will work on you
 
+// The shield pool's own multiplier: whatever the reactor is adding, times whatever
+// the hull's ability does to the pool. It is a factor on BOTH the size of the pool
+// and the delay, which is why it is one function rather than two expressions.
+const poolMult = s => boostOf(s.power, 'shields', s.stats) * swellOf(hullOf(s), s.power, s.stats);
+
+// How long until these shields start coming back, in seconds — 0 when they are
+// coming back right now, and null when there is nothing to wait for at all
+// (already full, a hull with no regeneration, or a sector where shields do not
+// return). Null is not zero on purpose: zero is a countdown that has just run
+// out, null is a countdown that should never have been on screen.
+//
+// ONE rule, two callers: stepVitals gates on it below and the HUD counts down
+// with it. A second copy would disagree the moment anything touched the delay,
+// and the delay is NOT `stats.shieldDelay` — the sim divides it by the pool
+// multiplier, so a reactor routed to shields brings them back sooner as well as
+// bigger. A readout built on the raw stat would have run a third long on any
+// pilot with power in shields, which is most of them in a fight, and it would
+// have looked like the sim was cheating rather than like the readout was wrong.
+//
+// Docked is a different clock and says so. The dock works on you after
+// DOCK_INTERRUPT of quiet — 4s, shorter than any hull's delay — so a docked pilot
+// told to wait shieldDelay would be reading a number that was already wrong by
+// two seconds. Whichever arrives first is the honest answer, and it is the same
+// one stepVitals acts on.
+export function shieldWait(s, docked = false, m = poolMult(s)) {
+  if (!(s.stats.shieldRegen > 0)) return null;      // nothing to come back at all
+  if (s.shield >= s.stats.shield * m) return null;  // already full: nothing pending
+  const field = s.stats.shieldDelay / m;
+  const at = docked ? Math.min(DOCK_INTERRUPT, field) : field;
+  return Number.isFinite(at) ? Math.max(0, at - (s.sinceHit ?? 1e9)) : null;
+}
+
 export function stepVitals(s, dt, docked = false) {
   s.sinceHit += dt;
   s.sinceShot = (s.sinceShot ?? 1e9) + dt;   // a veil rebuilds from this
@@ -261,7 +293,7 @@ export function stepVitals(s, dt, docked = false) {
   // Powered shields, and then whatever the hull's own ability does to the pool on
   // top — an Anchored Bulwark is four times its own shield, not four times the
   // base, so routing to shields as well still means something.
-  const m = boostOf(s.power, 'shields', s.stats) * swellOf(hullOf(s), s.power, s.stats);
+  const m = poolMult(s);
   if (Math.abs(m - (s.shieldMult ?? 1)) > 1e-9) {
     s.shield *= m / (s.shieldMult ?? 1);
     s.shieldMult = m;
@@ -274,7 +306,9 @@ export function stepVitals(s, dt, docked = false) {
     s.hp     = Math.min(s.stats.hull, s.hp + s.stats.hull * DOCK_HULL_RATE * dt);
     return;
   }
-  if (s.sinceHit < s.stats.shieldDelay / m || s.shield >= max) return;
+  // The gate and the HUD's countdown are the same rule, asked the same way: a
+  // wait of anything but exactly zero means the shields are not coming back yet.
+  if (shieldWait(s, docked, m) !== 0) return;
   // A SHARE of the pool, so the seconds to full do not change when the pool does.
   // `max` already carries the power boost and the hull ability, so a bigger shield
   // refills proportionally faster and an Anchored Bulwark is not punished for the

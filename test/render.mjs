@@ -318,7 +318,7 @@ for (const id of Object.keys(MAPS)) {
     drones: ['emitter1', null, 'cellA'], formation: 'wedge', formations: ['line', 'wedge'],
   xp: 5200, rank: { level: 14, into: 300, need: 900 },
     power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
-    shieldNow: 640, shieldMax: 1170,
+    shieldNow: 640, shieldMax: 1170, shieldWait: 4.2,   // the countdown on the shield bar
     vault: { iron: 240, nickel: 88, rhodium: 4 },
     scoop: { id: 1, p: 0.4 } });
   feed({ t: 'award', amount: 140, xp: 140, what: 'Drifter', total: 4960, level: 14, promoted: false });

@@ -17,13 +17,17 @@ export const PATCHES = [
     'Correction to 0.64 — your shields DO come back in a claim. That was a mistake',
     'The fields are smaller and every one of them is already on its way to you',
     'A Kedge holds the deepest rock, hauling you back into the rings you just left',
+    'The shield bar counts down to the second your shields start coming back up',
+    'It counts the delay your ship actually flies, so power in shields shortens the wait',
   ] },
   { v: '0.68', notes: [
     'A fully researched ship no longer prints its shield through the number beside it',
     'The station’s stat line sizes its columns to the biggest number you can reach',
     'Money, rank and the rank bar sit a clear character apart at eight figures',
     'The docked prompt drops to the HUD’s own spacing instead of crowding the line above',
-    'The game now knows what window you play in, and checks its own layout at that size',
+    'The game now knows what window you play in, and checks its own layout at that size',    'The shield bar counts down to the second your shields start coming back up',
+    'It counts the delay your ship actually flies, so power in shields shortens the wait',
+    'At your own dock it counts to the dock’s clock instead, which comes round sooner',
   ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
