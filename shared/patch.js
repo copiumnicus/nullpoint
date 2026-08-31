@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.61';
+export const VERSION = '0.62';
 
 export const PATCHES = [
+  { v: '0.62', notes: [
+    'Eight places printed two labels on top of each other. None of them do now',
+    'The station’s hint line no longer runs through the INVENTORY and STATS tabs',
+    'LVL stays readable while docked, and the cargo count clears the SELL button',
+    'The star chart legend fits, and the hotkey strip goes around the ammunition bar',
+    'The threat file counts entries again — it had started quoting its scroll offset',
+  ] },
   { v: '0.61', notes: [
     'A loaded Thresher now throws back the sharpest gun in the shop — 12,083 a bolt',
     'It was capped at 855. Stand still in a finished ship and you are gone in 3.7s',

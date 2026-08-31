@@ -112,11 +112,22 @@ console.log('\nthe panel');
   check('a file too long for the panel scrolls rather than spilling',
     L.maxScroll > 0 && L.maxScroll === WILD.length * FILE_ROW - L.body.h,
     `${WILD.length} entries of ${FILE_ROW}px in a ${L.body.h}px window is ${L.maxScroll}px to scroll`);
+  // The footer says "1-7 of 9" and `at` is pixels, so it printed the pixel offset
+  // as a row number: "25.321947656276528-10 of 10 · wheel to scroll", on every
+  // frame of every eased scroll.
+  check('the footer counts whole rows, not the pixels the list has slid',
+    Number.isInteger(nudged.first) && nudged.first === 1
+    && Number.isInteger(filePanel(1600, 900, 25.3219, WILD.length).first),
+    `20px of a ${FILE_ROW}px row gone off the top makes the second entry the first whole one — ` +
+    'it used to read "25.321947656276528-10 of 10"');
   const far = filePanel(1600, 900, 99999, WILD.length);
   check('and it cannot be scrolled past its own end',
     far.at === far.maxScroll && far.rows.every(r => r.i < WILD.length)
     && far.rows.at(-1).r.y + FILE_ROW <= far.body.y + far.body.h + 1,
     `asked for 99999, landed on ${far.at} with the last entry flush to the bottom`);
+  check('and at the bottom the footer names the last entry, not the one before it',
+    far.first + far.fit === WILD.length,
+    `"${far.first + 1}-${far.first + far.fit} of ${WILD.length}" with the list scrolled to its end`);
   check('an empty file still lays out a panel to say so in',
     filePanel(1600, 900, 0, 0).panel.h > FILE_HEAD,
     'a pilot who has killed nothing still opens something');
