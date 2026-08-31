@@ -677,14 +677,22 @@ export const ALIENS = {
     // stopped shaping the space and started being the space.
     //
     // `every` is life / max as it always was, so a definition can never ask for more
-    // ground than it is allowed to hold — and 10 seconds is CALM, the thrust a pilot
-    // is owed back after a stop. A Crucible lays exactly one pool per calm, so
-    // somebody who has just been freed has one fresh pool to deal with and never two.
+    // ground than it is allowed to hold. It USED to be CALM as well — one pool per
+    // thrust-window owed — and that identity is retired rather than honoured: CALM
+    // halved with the hold, and following it would have put ground down twice as often
+    // off a change made to make the fight easier.
+    //
+    // So the ten seconds stands on the thing that does not move when a clock does: it
+    // is over twice the time the slowest hull that fights one needs to CROSS OUT of a
+    // 560px pool from a dead stop. Measured through step(), that is 4.60s, so a pilot
+    // who leaves the moment they can is in the plasma for under half the interval —
+    // x2.17, and test/ground.mjs re-measures it rather than trusting this line.
     sow: { kind: 'white',
            reach: 1100,            // the Hive's gun, and 200px past its OWN gun below:
                                    //   back off and the barrel stops, the ground does not
            r: 560,                 // SIGHT_R — the widest circle you can see all of
-           life: 10, max: 1, every: 10,       // every === CALM === life / max
+           life: 10, max: 1, every: 10,       // life / max, and x2.17 the 4.60s it takes
+                                              //   the slowest hull to cross out of one
            wind: WARN,             // 1.5s of marker before it goes live
            rate: 0.045,            // ANCHORS.pressure, exactly
            hold: 0 },              // it takes ground, not the ship
@@ -736,11 +744,11 @@ export const ALIENS = {
   // ability to change your mind. That is the better mechanic and it is not the one
   // that was wanted — flown, a pilot at speed sailed straight out of the trap and
   // barely noticed it had shut. So crossing into a still now STOPS you, dead, where
-  // you stand, for five seconds.
+  // you stand, for two and a half seconds.
   //
   // You keep the trigger, the target, the rockets, a repair drone, a Recall Beacon,
   // your heading and your shields. You cannot be anywhere else. It cannot be chained
-  // — HOLD is 5s, CALM is 10s of guaranteed thrust after every one, and one patch may
+  // — HOLD is 2.5s, CALM is 5s of guaranteed thrust after every one, and one patch may
   // hold one ship once per entry — and a still is refused sanctuary outright, so a
   // door you have already opened still cannot be taken from you. shared/ground.js
   // argues all of that and test/ground.mjs brute-forces it.
@@ -754,7 +762,8 @@ export const ALIENS = {
   //
   // r 720 is a Censer's ring at full spin, the widest field this game already had,
   // and it is WIDER than the plasma on purpose. Being caught at its rim costs you
-  // five seconds and nothing else; being caught in the middle costs you five seconds
+  // two and a half seconds and nothing else; being caught in the middle costs you the
+  // same two and a half
   // inside the plasma its mate just poured there. The trap has a near miss in it,
   // which is what makes it a fight rather than a coin.
   doldrum: {
@@ -762,13 +771,16 @@ export const ALIENS = {
     sow: { kind: 'slack',
            reach: 1100,
            r: 720,                 // a Censer's ring at full spin, and wider than a pool
-           life: 15, max: 1, every: 15,       // every === HOLD + CALM === life / max:
-                                   //   exactly one still per cycle of its own promise,
-                                   //   so it can never build a second to catch you
-                                   //   inside the calm it owes you
+           life: 15, max: 1, every: 15,       // life / max, and x2.57 the 5.83s it takes
+                                   //   the slowest hull to cross out of one. It used to
+                                   //   be HOLD + CALM — one still per cycle of the root's
+                                   //   own promise — and that identity went when the hold
+                                   //   halved: following it would have doubled how often
+                                   //   ground lands, off a change meant to make the fight
+                                   //   easier. The escape is what does not move
            wind: WARN,
            rate: 0.0225,           // DRAIN_RATE — half of on model, half of a pool
-           hold: HOLD },           // five seconds, stopped, once per entry
+           hold: HOLD },           // stopped dead, once per entry. Two and a half seconds
     // 70/30, the Hive's split: more of it is field than plating, and the field is what
     // the stills come out of. Derived from DEEP_HP, like its mate's.
     //
@@ -788,7 +800,7 @@ export const ALIENS = {
     flee: 0,
     respawn: 300,
     ...deepPay,       // the same rung, so the same pay, from the same line
-    tell: 'Its stills stop you dead for five seconds — you keep your guns, you just cannot be anywhere else. Its Crucible pours into the same spot.',
+    tell: 'Its stills stop you dead for two and a half seconds — you keep your guns, you just cannot be anywhere else. Its Crucible pours into the same spot.',
   },
 
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
