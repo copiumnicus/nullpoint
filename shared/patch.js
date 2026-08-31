@@ -8,9 +8,13 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.48';
+export const VERSION = '0.49';
 
 export const PATCHES = [
+  { v: '0.49', notes: [
+    'Rank no longer stops at 60 — it keeps climbing, and keeps counting what you do',
+    'The old ceiling was about nine Corsair Hives, so people were hitting it',
+  ] },
   { v: '0.48', notes: [
     'The threat file scrolls smoothly, by pixels, with a bar showing where you are',
     'It used to jump a whole entry per notch, and stick once you passed the end',

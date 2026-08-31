@@ -99,6 +99,37 @@ console.log('\nrank and escort');
   console.log('     ' + climb.map(([x, l]) => `${x}xp=L${l}`).join('  '));
   check('rank climbs with kills and never goes backwards',
     climb.every(([, l], i) => i === 0 || l >= climb[i - 1][1]) && levelFor(140).level === 2);
+  // There is no top. There was one at sixty, and sixty was only about nine Corsair
+  // Hives — so a pilot reached it and every kill after it stopped meaning anything,
+  // which is the opposite of what a record is for.
+  {
+    const { progress, LEVEL_GUARD } = await import('../shared/level.js');
+    const at60 = (() => { let x = 0; for (let i = 1; i < 60; i++) x += costOf(i); return x; })();
+    check('rank does not stop at the old ceiling',
+      levelFor(at60 * 4).level > 60 && levelFor(at60 * 100).level > levelFor(at60 * 4).level,
+      `${at60.toLocaleString('en-US')} xp was the cap and is level ${levelFor(at60).level}; ` +
+      `four times that is ${levelFor(at60 * 4).level} and a hundred times is ${levelFor(at60 * 100).level}`);
+    check('and every level still costs more than the one before it',
+      [1, 10, 60, 200, 900].every((l, i, a) => !i || costOf(l) > costOf(a[i - 1])),
+      [1, 10, 60, 200, 900].map(l => `L${l} ${costOf(l).toLocaleString('en-US')}`).join(' < '));
+    check('the bar is always a real fraction, never permanently full',
+      [0, 140, at60, at60 * 50].every(x => progress(x) >= 0 && progress(x) < 1),
+      'at the old cap it read 1.000 forever, which is a bar that has stopped being one');
+    // The lookup is a binary search over a cached table now, because it runs once
+    // per player per snapshot and used to walk the ladder from level one.
+    check('it agrees with walking the ladder one rung at a time',
+      [0, 1, 139, 140, 9999, 250_000, 5_000_000].every(x => {
+        let lvl = 1, spent = 0;
+        while (x >= spent + costOf(lvl)) { spent += costOf(lvl); lvl++; }
+        const got = levelFor(x);
+        return got.level === lvl && got.into === x - spent;
+      }), 'the fast answer and the slow one are the same answer');
+    check('and a hand-edited save cannot ask it to count to infinity',
+      levelFor(Infinity).level >= 1 && levelFor(NaN).level === 1 && levelFor(-5).level === 1,
+      `guarded at ${LEVEL_GUARD.toLocaleString('en-US')}, which is about 3.6e11 xp — ` +
+      'two and a half million Hives, so it is a guard and not a cap');
+  }
+
   check('a level is standing, not power', (() => {
     const veteran = sanitiseAccount({ token: 'x', xp: 999999 }, 0, 1);
     const rookie = sanitiseAccount({ token: 'y', xp: 0 }, 1, 1);
