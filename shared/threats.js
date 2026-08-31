@@ -102,7 +102,17 @@ export function filePanel(VIEW_W, VIEW_H, scroll = 0, n = 0) {
   // How many fit whole, for the "1-7 of 9" line. Not what `rows` holds — that
   // includes the two half-rows at the edges, which is the point of clipping.
   const fit = Math.max(1, Math.floor(body.h / FILE_ROW));
-  return { panel: { x, y, w, h }, body, rows, at, maxScroll, fit,
+  // Which row is at the top, for the "1-7 of 9" line under the panel. `at` is
+  // PIXELS and has been since this scrolled smoothly, and the footer printed it
+  // straight: mid-scroll it read "25.321947656276528-10 of 10". The same
+  // conversion hangar.js does for the shop, and here for the same reason — the
+  // client draws what it is handed and does no arithmetic of its own.
+  //
+  // Ceiling, not rounding, because `fit` counts rows that fit WHOLE: the pair has
+  // to name the same set or the line is off by one at the bottom of the list,
+  // where it would have said "3-9 of 10" with the tenth entry fully on screen.
+  const first = Math.ceil(at / FILE_ROW);
+  return { panel: { x, y, w, h }, body, rows, at, first, maxScroll, fit,
            close: { x: x + w - 30, y: y + 10, w: 20, h: 20 } };
 }
 

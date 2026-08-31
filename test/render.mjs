@@ -22,6 +22,8 @@ import { filePanel, filedIn, dossierOf } from '../shared/threats.js';
 import { labPanel, LAB_PRICE, MODULES } from '../shared/research.js';
 import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
+import { Tracker, textWidth, alphaOf } from './uibox.mjs';
+import { collisions, say, key } from './uilint.mjs';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -53,36 +55,65 @@ let trace = null;
 const r2 = v => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
 const rec = (...a) => { if (trace) trace.push(a.map(r2).join(' ')); };
 
+// The stub keeps the geometry of every draw as well as guarding its arguments,
+// so the frame can be asked whether a player could read all of it. See uibox.mjs
+// for why a monospace advance is enough and why world space is excluded.
+const T = new Tracker(1);   // dpr fixed up once the globals exist
+// A gradient that remembers its stops, so the recorder can ask how much of what
+// is under it survives. Same colour check as before.
+const grad = () => ({ __stops: [], addColorStop(o, c) {
+  if (!COLOUR.test(String(c))) bad.push(`addColorStop bad colour ${c}`);
+  this.__stops.push(alphaOf(c) ?? 1);
+} });
 const CTX = {
-  _fill: '#000', _stroke: '#000', _font: '', _alpha: 1, _dash: [], _align: 'left', _lw: 1, _join: 'miter',
-  set fillStyle(v)   { guard('fillStyle', v); rec('fillStyle', v); this._fill = v; },   get fillStyle()   { return this._fill; },
+  _stroke: '#000', _dash: [], _lw: 1, _join: 'miter',
+  set fillStyle(v)   { guard('fillStyle', v); rec('fillStyle', v); T.fill = v; },   get fillStyle()   { return T.fill; },
   set strokeStyle(v) { guard('strokeStyle', v); rec('strokeStyle', v); this._stroke = v; }, get strokeStyle() { return this._stroke; },
-  set font(v)        { guard('font', v); this._font = v; },        get font()        { return this._font; },
-  set globalAlpha(v) { num('globalAlpha', v); rec('alpha', v); this._alpha = v; },  get globalAlpha() { return this._alpha; },
+  // font, fill, alpha, align and the clip live in the tracker so that
+  // save()/restore() restores them the way a real context does. As no-ops they
+  // leaked: a font set inside a save() stayed set after the restore, so
+  // measureText answered for the wrong size and every box recorded after it was
+  // the wrong height.
+  set font(v)        { guard('font', v); T.font = v; },        get font()        { return T.font; },
+  set globalAlpha(v) { num('globalAlpha', v); rec('alpha', v); T.alpha = v; },  get globalAlpha() { return T.alpha; },
   set lineWidth(v)   { num('lineWidth', v); rec('lineWidth', v); this._lw = v; },       get lineWidth()   { return this._lw; },
   set lineJoin(v)    { this._join = v; },                          get lineJoin()    { return this._join; },
-  set textAlign(v)   { this._align = v; },                         get textAlign()   { return this._align; },
-  fillRect(...a)   { num('fillRect', ...a); rec('fillRect', ...a); },
-  strokeRect(...a) { num('strokeRect', ...a); rec('strokeRect', ...a); },
-  fillText(t, x, y){ guard('fillText', t); num('fillText', x, y); rec('fillText', t, x, y); },
+  set textAlign(v)   { T.align = v; },                             get textAlign()   { return T.align; },
+  set textBaseline(v){ T.base = v; },                              get textBaseline(){ return T.base; },
+  fillRect(...a)   { num('fillRect', ...a); rec('fillRect', ...a); T.rect(...a); },
+  strokeRect(...a) { num('strokeRect', ...a); rec('strokeRect', ...a); T.rect(a[0], a[1], a[2], a[3], 'strokerect'); },
+  fillText(t, x, y){ guard('fillText', t); num('fillText', x, y); rec('fillText', t, x, y); T.text(t, x, y); },
+  // Every strokeText in the client is the legibility halo drawn immediately
+  // before an identical fillText — never a separate label. Recording it would
+  // report every haloed name as printing through itself.
   strokeText(t, x, y){ guard('strokeText', t); num('strokeText', x, y); rec('strokeText', t, x, y); },
-  measureText(t)   { guard('measureText', t); return { width: String(t).length * 6 }; },
-  arc(...a)        { num('arc', ...a); rec('arc', ...a); if (a[2] < 0) bad.push('arc negative radius'); },
-  rect(...a) { num('rect', ...a); rec('rect', ...a); }, roundRect(...a) { num('roundRect', ...a); rec('roundRect', ...a); },
-  moveTo(...a) { num('moveTo', ...a); rec('moveTo', ...a); }, lineTo(...a) { num('lineTo', ...a); rec('lineTo', ...a); },
-  translate(...a) { num('translate', ...a); rec('translate', ...a); }, rotate(a) { num('rotate', a); rec('rotate', a); },
-  scale(...a) { num('scale', ...a); if (a.some(v => v === 0)) bad.push('scale by zero'); },
-  setTransform(...a) { num('setTransform', ...a); },
-  beginPath() {}, closePath() {}, stroke() { rec('stroke'); }, fill() { rec('fill'); }, save() {}, restore() {}, clip() {},
+  // length x 6 regardless of size is right at 10px and wrong everywhere else, and
+  // the client measures at 9, 10, 11, 12, 13 and 15px. A receipt reading "MTC
+  // awards you 140 cr and 140 XP for a Drifter" is 414px at 15px and this handed
+  // back 276 — a third short — so every string the client centres, right-aligns
+  // or fits to a room from a measureText was placed here somewhere the browser
+  // would not have put it, and the harness agreed with itself about a layout no
+  // player ever saw. Every font in the client is ui-monospace, so 0.6em per
+  // character is the honest answer and the same function checks the overlaps.
+  measureText(t)   { guard('measureText', t); return { width: textWidth(t, T.font) }; },
+  arc(...a)        { num('arc', ...a); rec('arc', ...a); if (a[2] < 0) bad.push('arc negative radius');
+                     T.curve(a[0] - a[2], a[1] - a[2], a[2] * 2, a[2] * 2); },
+  rect(...a) { num('rect', ...a); rec('rect', ...a); T.path(...a); },
+  roundRect(...a) { num('roundRect', ...a); rec('roundRect', ...a); T.path(a[0], a[1], a[2], a[3]); },
+  moveTo(...a) { num('moveTo', ...a); rec('moveTo', ...a); T.curve(a[0], a[1], 0, 0); },
+  lineTo(...a) { num('lineTo', ...a); rec('lineTo', ...a); T.curve(a[0], a[1], 0, 0); },
+  translate(...a) { num('translate', ...a); rec('translate', ...a); T.translate(...a); },
+  rotate(a) { num('rotate', a); rec('rotate', a); T.rotate(a); },
+  scale(...a) { num('scale', ...a); if (a.some(v => v === 0)) bad.push('scale by zero'); T.scale(...a); },
+  setTransform(...a) { num('setTransform', ...a); T.setTransform(...a); },
+  beginPath() { T.begin(); }, closePath() {}, stroke() { rec('stroke'); }, fill() { rec('fill'); T.fill_(); },
+  save() { T.save(); }, restore() { T.restore(); }, clip() { T.clipHere(); },
   setLineDash(d) { this._dash = d; },
-  createLinearGradient(...a) {
-    num('createLinearGradient', ...a);
-    return { addColorStop(o, c) { if (!COLOUR.test(String(c))) bad.push(`addColorStop bad colour ${c}`); } };
-  },
+  createLinearGradient(...a) { num('createLinearGradient', ...a); return grad(); },
   createRadialGradient(...a) {
     num('createRadialGradient', ...a);
     if (a[2] < 0 || a[5] < 0) bad.push('gradient negative radius');
-    return { addColorStop(o, c) { if (!COLOUR.test(String(c))) bad.push(`addColorStop bad colour ${c}`); } };
+    return grad();
   },
 };
 
@@ -93,6 +124,7 @@ const canvas = {
   setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight }),
 };
 globalThis.innerWidth = 1600; globalThis.innerHeight = 900; globalThis.devicePixelRatio = 2;
+T.dpr = Math.min(2, devicePixelRatio); T.reset();   // what the client's resize() leaves in the matrix
 globalThis.location = { host: 'localhost:3000', protocol: 'http:', reload() {} };
 // seeded under the OLD key, to prove the rename migration runs
 const store = new Map([['aphelion.token', 'legacy-token']]);
@@ -186,7 +218,24 @@ await import('./.client.mjs');
 
 const ws = socks[0];
 const feed = o => ws.onmessage({ data: JSON.stringify(o) });
-const frame = t => { audio.now = t / 1000; const cb = raf; raf = null; cb(t); };
+const FOUND = new Map();
+// Every window a player might actually have. Panels are laid out from the
+// viewport, so a line that clears its neighbour at 1600x900 can sit on top of
+// it at 1366x768, and the harness has only ever run at one size.
+const SIZES = [[2560, 1440], [1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 640], [820, 560]];
+let SEEN = 0, SIZE = '1600x900';
+// One report per pair of strings, not per frame: the threat file drawn at
+// twenty-six eased scroll offsets is one overlap, not twenty-six.
+const analyse = () => {
+  SEEN++;
+  for (const c of collisions(T.els, innerWidth, innerHeight)) {
+    const k = key(c);
+    if (!FOUND.has(k)) FOUND.set(k, { c, n: 0, sizes: new Set() });
+    const f = FOUND.get(k); f.n++; f.sizes.add(SIZE);
+  }
+};
+const frame = t => { audio.now = t / 1000; const cb = raf; raf = null;
+                     T.reset(); cb(t); analyse(); };
 // Input handlers are code too. Not driving them is how two helper functions went
 // missing entirely while every frame still rendered: hover starts null, so the
 // render path short-circuited before ever calling them.
@@ -1820,6 +1869,31 @@ const dismiss = () => {
     evt('keydown', { key: ' ' }); frame(t += 16); frames++;
     if (!sent.some(m => m.t === 'stash')) errs.push('SPACE stopped working with the hold open');
     evt('keydown', { key: 'i' }); frame(t += 16); frames++;
+
+    // A company-hangar row is two buttons: the left of it loads a stack back onto
+    // the ship, the right of it sells the lot. That edge used to be the bare
+    // number 0.62 written once in the hit test and again in the draw, with the
+    // label's centre a third copy at 0.81 — and the row's own count was
+    // right-aligned at the row's edge, on top of "SELL 720 cr". It is one
+    // rectangle now, so this drives both halves through the real handler.
+    feed({ t: 's', docked: true, hold: {}, vault: { iron: 240, nickel: 88 }, credits: 90000,
+           ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                              hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+    evt('keydown', { key: 'i' }); frame(t += 16); frames++;
+    const bankRow = { x: (innerWidth - 820) / 2 + 40 + (820 - 60) / 2, y: (innerHeight - 440) / 2 + 92,
+                      w: (820 - 60) / 2, h: 34 };
+    const half = f => { sent.length = 0;
+                        evt('pointerdown', { clientX: bankRow.x + bankRow.w * f, clientY: bankRow.y + 17 });
+                        frame(t += 16); frames++;
+                        return sent.find(m => m.t === 'sell' || m.t === 'load') ?? null; };
+    const left = half(0.30), right = half(0.85);
+    if (left?.t !== 'load' || left.mat !== 'iron')
+      errs.push(`the left of a company-hangar row sent ${JSON.stringify(left)}, not a load`);
+    else if (right?.t !== 'sell' || right.n !== 240)
+      errs.push(`the right of a company-hangar row sent ${JSON.stringify(right)}, not a sell of all 240`);
+    else console.log('cargo: a hangar row loads on the left and sells all 240 on the right');
+    evt('keydown', { key: 'i' }); frame(t += 16); frames++;
+    dismiss();
   }
 
   // power routing is a key, and must reach the server
@@ -2060,6 +2134,51 @@ const dismiss = () => {
     performance.now = perf;
   }
 
+  // Every panel, at every window size. This re-enters the client's own resize
+  // handler rather than re-running the file, which is why it is a dozen lines
+  // and not a rewrite — and it must stay AHEAD of the idle sign-out below,
+  // because that block signs the client out and every frame after it is a blank
+  // screen with nothing on it to collide.
+  {
+    dismiss(); frame(t += 16); frames++;
+    // A pilot with something in every panel: ore in the hold, a locker, a threat
+    // file with entries in it, research, money. An empty panel cannot overlap
+    // itself, so a sweep of empty panels proves nothing.
+    feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard',
+           fit: { weapon: ['emitter1'], generator: ['cellA'], tech: ['plating'] },
+           gear: { emitter1: 2, emitter5: 1, damper: 1 }, hulls: ['hauler', 'vanguard', 'kestrel'],
+           drones: ['emitter1', null], formation: 'wedge', formations: ['line', 'wedge'],
+           credits: 90000, ammo: { cell1: 4000, head1: 400 },
+           using: { laser: 'cell1', rocket: 'head1' }, armed: { laser: true, rocket: true } });
+    feed({ t: 'map', map: 'm1' });
+    feed({ t: 's', ships: [packShip({ id: 1, x: MAPS.m1.base.x, y: MAPS.m1.base.y, heading: 0,
+             charge: 0, co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
+             rk: 0, fix: 0, guns: 3, psys: 2, plvl: 70, lvl: 14, drones: 0, form: 0, dmask: 0,
+             vis: 2, rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, name: 'Vy' })],
+           hold: { iron: 15, platinum: 4 }, cap: 240, credits: 90000, docked: true,
+           vault: { iron: 240, nickel: 88 }, xp: 5200, rank: { level: 14, into: 300, need: 900 },
+           kills: Object.fromEntries(WILD.map((k, i) => [k, i + 1])),
+           gear: { emitter1: 2, emitter5: 1, damper: 1 }, played: 600, online: 3,
+           power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
+           shieldNow: 640, shieldMax: 1170 });
+    const panels = [[], ['h'], ['i'], ['m'], ['l'], ['o'], ['r']];
+    for (const [w, h] of SIZES) {
+      globalThis.innerWidth = w; globalThis.innerHeight = h;
+      evt('resize');
+      SIZE = `${w}x${h}`;
+      for (const keys of panels) {
+        for (const k of keys) evt('keydown', { key: k });
+        for (let i = 0; i < 3; i++) { frame(t += 16); frames++; }
+        for (const k of keys) evt('keydown', { key: k });     // the same key closes it again
+        frame(t += 16); frames++;
+        dismiss();
+      }
+    }
+    globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
+    evt('resize'); SIZE = '1600x900';
+    frame(t += 16); frames++;
+  }
+
   // idle sign-out: the clock only advances with no input, and a click brings you back
   {
     const perf = performance.now;
@@ -2077,6 +2196,38 @@ const dismiss = () => {
     frame(t += 16); frames++;
   }
 
+// Nothing is printed through anything else.
+//
+// The guard says a frame drew nothing malformed. This says a player could read
+// all of it: no two pieces of text share pixels that are both still on screen
+// when the frame ends. Every overlap fixed before this existed — the SPACE
+// prompt under the weapon tooltips, the SPACE prompt under the ammunition menu,
+// the safe-zone badge on the changelog icon — was found by somebody tripping
+// over it and fixed with a bespoke rectangle comparison. This is the same claim
+// made once, for every panel, from the draw calls themselves.
+//
+// It is text against text and nothing else on purpose. A label on its button, a
+// value in its row, a tooltip over the world and a modal over everything are all
+// rects under text, and reporting those is thousands of findings and no signal.
+// Two labels crossing is nobody's design. What decides the rest is the painter's
+// algorithm: if anything opaque was drawn over the lower one before the frame
+// ended, it is not on screen there and there is nothing to report — which
+// dismisses every panel, tooltip and modal without one hand-written exception.
+//
+// LAYOUT=1 prints every finding rather than the first eight; SRC=1 puts an
+// index.html line number on each of them, which costs about eight seconds and is
+// why it is off here.
+{
+  const R = [...FOUND.values()].sort((a, b) => b.n - a.n);
+  if (process.env.LAYOUT)
+    for (const f of R) console.log(`  [${String(f.n).padStart(4)} frames] {${[...f.sizes].join(' | ')}}\n      ${say(f.c)}`);
+  if (R.length)
+    errs.push(`${R.length} places print two labels through each other:\n    ` +
+              R.slice(0, 8).map(f => say(f.c)).join('\n    '));
+  else
+    console.log(`  ok   nothing is printed through anything else  — ${SEEN.toLocaleString('en-US')} frames, ` +
+                `${SIZES.length} window sizes, no two labels share a pixel`);
+}
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));
 if (bad.length)  console.log('bad draw args:\n  ' + [...new Set(bad)].slice(0, 12).join('\n  '));

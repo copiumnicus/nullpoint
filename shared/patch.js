@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.57';
+export const VERSION = '0.58';
 
 export const PATCHES = [
+  { v: '0.58', notes: [
+    'Eight places printed two labels on top of each other. None of them do now',
+    'The station’s hint line no longer runs through the INVENTORY and STATS tabs',
+    'LVL stays readable while docked, and the cargo count clears the SELL button',
+    'The star chart legend fits, and the hotkey strip goes around the ammunition bar',
+    'The threat file counts entries again — it had started quoting its scroll offset',
+  ] },
   { v: '0.57', notes: [
     'The STATS page shows every number on your ship, not the eleven it used to',
     'Weapon range, capacitor, rockets, the reactor and your hull’s own system are all on it',

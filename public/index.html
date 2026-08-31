@@ -91,6 +91,11 @@ function resize() {
 addEventListener('resize', resize); resize();
 const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
+// The bottom line of the window, as the separate hints it is made of — the strip
+// is laid out around the ammunition bar and has to know where it may break.
+const HOTKEYS = ['TAB engage', 'TAB TAB break off', 'click cargo to haul it in',
+                 'I cargo', 'H station', 'R research', 'L threats', 'M star system',
+                 'Q E ammo', 'O sound'];
 let sysOpen = false;
 let patchOpen = false;                    // the changelog, top right
 const patchScr = scroller();              // on the same scroll as everything else
@@ -273,8 +278,13 @@ function drawFile(now) {
     const tx = row.r.x + 78;
     g.font = '13px ui-monospace, monospace'; g.fillStyle = '#cfe4ff';
     g.fillText(d.name, tx, row.r.y + 20);
+    // Measured while the 13px font is still set. It was measured AFTER the switch
+    // to 10px and then scaled by 1.05 to make up the difference — but the ratio is
+    // 1.3, not 1.05, so "Corsair Hive" needs 93.6px, was given 89.6, and the class
+    // tag printed over the last character of the name.
+    const nameW = g.measureText(d.name).width;
     g.font = '10px ui-monospace, monospace'; g.fillStyle = d.colour;
-    g.fillText(d.cls.toUpperCase(), tx + g.measureText(d.name).width * 1.05 + 14, row.r.y + 20);
+    g.fillText(d.cls.toUpperCase(), tx + nameW + 14, row.r.y + 20);
 
     g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
     g.fillText(`hull ${d.hull.toLocaleString('en-US')}   shield ${d.shield.toLocaleString('en-US')}   ` +
@@ -316,7 +326,7 @@ function drawFile(now) {
   }
   if (L.maxScroll > 0) {
     g.font = '9px ui-monospace, monospace'; g.fillStyle = '#3d4757'; g.textAlign = 'center';
-    g.fillText(`${L.at + 1}-${Math.min(filed.length, L.at + L.fit)} of ${filed.length} · wheel to scroll`,
+    g.fillText(`${L.first + 1}-${Math.min(filed.length, L.first + L.fit)} of ${filed.length} · wheel to scroll`,
                P.x + P.w / 2, P.y + P.h - 6);
     g.textAlign = 'left';
   }
@@ -1496,19 +1506,41 @@ function drawSystem(me) {
 
   g.textAlign = 'center'; g.fillStyle = '#8ab4e6'; g.font = '15px ui-monospace, monospace';
   g.fillText('KNOWN SPACE · STAR SYSTEM', VIEW_W / 2, 30);
-  let lx = VIEW_W / 2 - 306;
   g.font = '11px ui-monospace, monospace'; g.textAlign = 'left';
-  for (const [co, f] of Object.entries(COMPANIES)) {
+  // The legend stepped by a flat 208px while "MTC — Meridian Trade Consortium
+  // ◂ you" is 250.8px at 11px, so every entry printed into the one after it —
+  // and renaming a company would have made it worse with nothing to say so. The
+  // step is the widest entry there is; when three of those will not fit the
+  // window the legend falls back to the three-letter tags, which is a legend you
+  // can still read rather than one drawn over itself.
+  //
+  // The room is what is left of the haven badge, not the whole window: the badge
+  // is drawn last, over everything including this, so a legend that reaches under
+  // it is a legend nobody can read.
+  const SWATCH = 18, LGAP = 24, capR = havenBadge(VIEW_W).x - 16;
+  const legend = full => Object.entries(COMPANIES).map(([co, f]) =>
+    ({ co, f, text: (full ? `${f.tag} — ${f.name}` : f.tag) + (co === myCo ? '  ◂ you' : '') }));
+  const stepOf = rows => Math.max(...rows.map(r => g.measureText(r.text).width)) + SWATCH + LGAP;
+  const wide = legend(true);
+  const runs = rows => stepOf(rows) * rows.length - LGAP;
+  const shown = runs(wide) <= capR - 16 ? wide : legend(false);
+  const step = stepOf(shown);
+  const lx0 = Math.round(Math.max(16, Math.min((VIEW_W - runs(shown)) / 2, capR - runs(shown))));
+  let lx = lx0;
+  for (const { co, f, text } of shown) {
     g.strokeStyle = f.color; g.lineWidth = 2; g.strokeRect(lx + .5, 43.5, 11, 11);
     g.fillStyle = co === myCo ? '#fff' : '#7f8ea8';
-    g.fillText(`${f.tag} — ${f.name}${co === myCo ? '  ◂ you' : ''}`, lx + 18, 53);
-    lx += 208;
+    g.fillText(text, lx + SWATCH, 53);
+    lx += step;
   }
   g.strokeStyle = '#8a94a8'; g.lineWidth = 1.4; g.setLineDash([4, 3]);
-  g.strokeRect(VIEW_W / 2 - 306.5, 62.5, 11, 11); g.setLineDash([]);
+  g.strokeRect(lx0 + .5, 62.5, 11, 11); g.setLineDash([]);
   g.fillStyle = '#7f8ea8';
-  g.fillText('CONTESTED — nobody holds it.   The fill is the region; the outline is its owner.',
-             VIEW_W / 2 - 288, 72);
+  const says = ['CONTESTED — nobody holds it.   The fill is the region; the outline is its owner.',
+                'CONTESTED — nobody holds it. Fill is the region, outline its owner.',
+                'CONTESTED — nobody holds it.'];
+  g.fillText(says.find(s => g.measureText(s).width <= capR - lx0 - SWATCH) ?? says[says.length - 1],
+             lx0 + SWATCH, 72);
   g.textAlign = 'center'; g.fillStyle = '#5b6b85'; g.font = '12px ui-monospace, monospace';
   g.fillText('click anywhere or press M to close', VIEW_W / 2, VIEW_H - 18);
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
@@ -1758,14 +1790,24 @@ function drawTip(tip, at) {
   if (tip.does) { ty += 15; g.fillStyle = '#7de08a'; g.fillText(tip.does, x + 10, ty); }
 
   g.font = '11px ui-monospace, monospace';
+  // Right edges, measured back from the tip's own right edge. The value column
+  // used to be a flat 40px — from x+w-84 to x+w-44 — and "0.07%/s" is 46.2px at
+  // 11px, so a seven-character value printed straight over the arrow pointing at
+  // it. The stats page prints values in exactly that shape now, so seven
+  // characters is the common case rather than the odd one: the column is as wide
+  // as the widest value in this tip, and the arrow and the old value step back
+  // from it.
+  const VAL = 44;
+  const valW = Math.max(40, ...lines.map(l => g.measureText(`${l.to}${l.unit}`).width));
+  const ARROW = VAL + valW + 4, FROM = ARROW + 12;
   for (const l of lines) {
     ty += 15;
     g.fillStyle = '#7b8ba3'; g.fillText(l.label, x + 10, ty);
     g.textAlign = 'right';
-    g.fillStyle = '#66748c'; g.fillText(String(l.from), x + w - 96, ty);
-    g.fillStyle = '#3d4757'; g.fillText('→', x + w - 84, ty);
+    g.fillStyle = '#66748c'; g.fillText(String(l.from), x + w - FROM, ty);
+    g.fillStyle = '#3d4757'; g.fillText('→', x + w - ARROW, ty);
     g.fillStyle = l.good ? '#7de08a' : '#e07a7a';
-    g.fillText(`${l.to}${l.unit}`, x + w - 44, ty);
+    g.fillText(`${l.to}${l.unit}`, x + w - VAL, ty);
     if (l.pct !== null) { g.font = '10px ui-monospace, monospace';
                           g.fillText(`${l.pct > 0 ? '+' : ''}${l.pct}%`, x + w - 10, ty);
                           g.font = '11px ui-monospace, monospace'; }
@@ -1810,13 +1852,28 @@ function drawBay() {
     g.fillText(t.name, t.r.x + t.r.w / 2, t.r.y + t.r.h / 2 + 4);
   }
   g.textAlign = 'right'; g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffd479';
-  g.fillText(`${fmtCredits(credits)} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
+  const purse = `${fmtCredits(credits)} ${CURRENCY.short}`;
+  g.fillText(purse, P.x + P.w - 20, P.y + 32);
+  const purseW = g.measureText(purse).width;       // measured while 13px is still set
+  // Where you are standing, and what that lets you do. It starts where bayLayout
+  // says the tabs end — it used to start at a literal P.x + 236 and printed
+  // through INVENTORY and STATS.
+  //
+  // Between the tabs and the credit line there are 449px at a full-width panel
+  // and 239px at 820x560, and the longest of these sentences is 455px, so on no
+  // window does the longest one fit. It says the same thing in fewer words
+  // rather than saying it over the top of something else — the same trick the
+  // formation row already uses to fit its mods into what is left of its row.
   g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   g.fillStyle = home ? '#66748c' : '#e0a53f';
-  g.fillText(home ? 'docked — every change takes effect at once'
-           : MAPS[mapId].dev ? 'fly into the workshop ring to outfit'
-                             : 'out here only ammunition sells — the rest wants a dock or a rented bay',
-             P.x + 236, P.y + 32);
+  const room = P.x + P.w - 20 - purseW - 12 - G.hint.x;
+  const hints = home ? ['docked — every change takes effect at once', 'docked — changes are immediate', 'docked']
+              : MAPS[mapId].dev ? ['fly into the workshop ring to outfit', 'use the workshop ring', 'workshop ring']
+              : ['out here only ammunition sells — the rest wants a dock or a rented bay',
+                 'only ammunition sells out here — the rest wants a bay',
+                 'ammunition only out here', 'ammunition only'];
+  g.fillText(hints.find(s => g.measureText(s).width <= room) ?? hints[hints.length - 1],
+             G.hint.x, G.hint.y);
 
   // a live stat line, so the effect of a click is visible immediately
   let sx = P.x + 20;
@@ -1969,15 +2026,18 @@ function drawBay() {
 
   // --- store ---------------------------------------------------------------
   g.fillStyle = '#5b6b85';
-  g.fillText('DEPARTMENT', P.x + 20, G.top - 10);
-  // The inventory has no page list, so there is no page hint and nothing to
-  // measure it against — G.pages[0] is undefined there, and reading .r off it
-  // threw inside the render loop and took the whole panel with it.
-  if (G.pages.length)
+  // DEPARTMENT is the heading over the page list, and the inventory and stats
+  // tabs have no page list — G.pages[0] is undefined there, and reading .r off it
+  // threw inside the render loop and took the whole panel with it. It was drawn
+  // anyway, over a column that is not there, and the inventory's own line starts
+  // at the same x on the same baseline: two sentences in one place.
+  if (G.pages.length) {
+    g.fillText('DEPARTMENT', P.x + 20, G.top - 10);
     g.fillText(STORE_PAGES.find(p => p.key === G.page)?.hint ?? '', P.x + 30 + G.pages[0].r.w, G.top - 10);
-  else if (bayTab === 'inventory')
+  } else if (bayTab === 'inventory') {
     g.fillText(`Everything you own and are not flying. Click to break it up for ${Math.round(SCRAP_RATE * 100)}%.`,
                P.x + 20, G.top - 10);
+  }
 
   for (const p of G.pages) {
     const on = p.key === G.page, r = p.r;
@@ -2154,11 +2214,30 @@ function drawBay() {
     // blurb line, which reads exactly like a description — the row looked normal,
     // said something odd where its description should be, and refused the click.
     // A locked row now looks locked.
-    const locked = it.kind === 'item' && frontierOnly(it.k) && berthWhy()
-        ? 'Sold only at a pirate outpost, and only to pilots who rent a bay there'
+    //
+    // Several wordings, longest first, because this line shares its baseline with
+    // the note on the right of the row: the full sentence is 420px at 10px and
+    // "1 in your inventory" is 114px, which fits a 690px row on a full-width panel
+    // and not the 535px one at 820x560 — 22.6px of the two were printed through
+    // each other there.
+    const why = it.kind === 'item' && frontierOnly(it.k) && berthWhy()
+        ? ['Sold only at a pirate outpost, and only to pilots who rent a bay there',
+           'Only at a pirate outpost, and only with a bay rented there',
+           'Pirate outpost only, with a rented bay']
       : it.kind === 'ammo'
-        ? whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
-      : null;
+        ? [whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })]
+      : [];
+    const locked = why[0] ? why : null;
+
+    // What is already aboard, measured before the line beside it is drawn.
+    const stock = it.kind === 'item' ? (myGear[it.k] ?? 0)
+                : it.kind === 'ammo' ? (myAmmo[it.k] ?? 0)
+                : it.kind === 'kit' ? (myKits[it.k] ?? 0)
+                : it.kind === 'device' ? (myDevices[it.k] ?? 0) : 0;
+    const note = !stock ? ''
+               : it.kind === 'ammo' ? `${stock} rounds held`
+               : it.kind === 'kit' || it.kind === 'device' ? `${stock} aboard`
+               : `${stock} in your inventory`;
 
     g.globalAlpha = (it.owned || afford ? 1 : 0.5) * (sells ? 1 : 0.45) * (locked ? 0.55 : 1);
     g.fillStyle = it.owned ? 'rgba(125,224,138,0.10)' : over(r) ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
@@ -2170,7 +2249,9 @@ function drawBay() {
     // A locked row says the reason where its description would be, in the colour
     // the game uses for "no", not the colour it uses for prose.
     g.fillStyle = locked ? '#e0a53f' : '#66748c'; g.font = '10px ui-monospace, monospace';
-    g.fillText(locked ?? blurb, r.x + 12, r.y + 35);
+    const says = locked ?? [blurb];
+    const said = r.w - 24 - (note ? g.measureText(note).width + 10 : 0);
+    g.fillText(says.find(s => g.measureText(s).width <= said) ?? says[says.length - 1], r.x + 12, r.y + 35);
     g.textAlign = 'right';
     if (it.owned) { g.fillStyle = '#7de08a'; g.font = '11px ui-monospace, monospace';
                     g.fillText((it.kind === 'hull' ? it.k === myHull : it.k === myForm) ? 'FLYING' : 'owned — fly it',
@@ -2185,14 +2266,8 @@ function drawBay() {
     }
     else { g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
            g.fillText(`${fmtCredits(price)} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
-    const stock = it.kind === 'item' ? (myGear[it.k] ?? 0)
-                : it.kind === 'ammo' ? (myAmmo[it.k] ?? 0)
-                : it.kind === 'kit' ? (myKits[it.k] ?? 0)
-                : it.kind === 'device' ? (myDevices[it.k] ?? 0) : 0;
-    if (stock) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
-                 g.fillText(it.kind === 'ammo' ? `${stock} rounds held`
-                          : it.kind === 'kit' || it.kind === 'device' ? `${stock} aboard` : `${stock} in your inventory`,
-                            r.x + r.w - 12, r.y + 35); }
+    if (note) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
+                g.fillText(note, r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';
   }
   if (G.body) g.restore();
@@ -2207,14 +2282,24 @@ function drawBay() {
 // --- inventory / company hangar -----------------------------------------------
 // Left is what the ship is carrying, right is what the company holds for you.
 // Transfer only works at the dock, because the hangar is theirs, not yours.
+//
+// The right end of a company-hangar row is a SELL button. Its edge was the bare
+// number 0.62 in the hit test and again in the draw, and the label's centre was
+// 0.81 — a third number for the same thing. The row's own count is right-aligned
+// at the row's edge, which put "×240" straight through "SELL 720 cr": 6.4px of
+// shared ink at 1600x900, 12.1px at 820x560, and worse with either number bigger.
+// One rectangle, drawn from, clicked from, and stopped short of.
+const SELL_X = 0.62;
 function invGeom() {
   const w = Math.min(820, VIEW_W - 60), h = Math.min(440, VIEW_H - 60);
   const x = (VIEW_W - w) / 2, y = (VIEW_H - h) / 2;
   const colW = (w - 60) / 2, top = y + 92;
   const rows = (obj, cx) => Object.keys(obj).map((mat, i) =>
     ({ mat, r: { x: cx, y: top + i * 40, w: colW, h: 34 } }));
+  const sellOf = r => ({ x: r.x + r.w * SELL_X, y: r.y + 1, w: r.w * (1 - SELL_X) - 1, h: r.h - 2 });
   return { panel: { x, y, w, h }, colW, top,
-           ship: rows(hold, x + 20), bank: rows(vault, x + 40 + colW),
+           ship: rows(hold, x + 20),
+           bank: rows(vault, x + 40 + colW).map(b => ({ ...b, sell: sellOf(b.r) })),
            all: { x: x + 20, y: y + h - 56, w: 190, h: 40 } };
 }
 
@@ -2224,15 +2309,17 @@ function invClick(v) {
   if (!inside(G.panel)) { invOpen = false; return; }
   if (!atDock) return;                              // browsing is free, moving cargo is not
   for (const { mat, r } of G.ship) if (inside(r)) return send({ t: 'stash', mat });
-  for (const { mat, r } of G.bank) if (inside(r)) {
+  for (const { mat, r, sell } of G.bank) if (inside(r)) {
     // right half of the row sells, left half loads it back onto the ship
-    if (v.x > r.x + r.w * 0.62) return send({ t: 'sell', mat, n: vault[mat] });
+    if (v.x > sell.x) return send({ t: 'sell', mat, n: vault[mat] });
     return send({ t: 'load', mat });
   }
   if (inside(G.all)) for (const mat of Object.keys(hold)) send({ t: 'stash', mat });
 }
 
-function stack(r, mat, n, live) {
+// `right` is where the count ends. A row with a SELL button on it does not own
+// its own right edge, so the caller says where the stack stops.
+function stack(r, mat, n, live, right = r.x + r.w - 12) {
   const M = MATERIALS[mat];
   g.fillStyle = live ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)';
   g.fillRect(r.x, r.y, r.w, r.h);
@@ -2248,8 +2335,10 @@ function stack(r, mat, n, live) {
   g.fillStyle = '#66748c'; g.font = '10px ui-monospace, monospace';
   g.fillText(`T${M?.tier ?? '?'} · ${M?.value ?? 0} ${CURRENCY.short} · ${M?.vol ?? 1} vol · ${M?.density ?? '?'} g/cm³`,
              r.x + 42, r.y + 27);
+  // On the name's line, not between the two lines: squeezed in beside the SELL
+  // button it would land on the detail line under it instead.
   g.fillStyle = '#fff'; g.font = '14px ui-monospace, monospace'; g.textAlign = 'right';
-  g.fillText('×' + n, r.x + r.w - 12, r.y + 22);
+  g.fillText('×' + n, right, r.y + 17);
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
 
@@ -2277,14 +2366,15 @@ function drawInventory() {
   if (!G.ship.length) { g.fillStyle = '#3d4757'; g.fillText('the hold is empty', P.x + 20, G.top + 18); }
   for (const { mat, r } of G.ship) stack(r, mat, hold[mat], atDock);
   if (!G.bank.length) { g.fillStyle = '#3d4757'; g.fillText('nothing stored yet', P.x + 40 + G.colW, G.top + 18); }
-  for (const { mat, r } of G.bank) {
-    stack(r, mat, vault[mat], atDock);
+  for (const { mat, r, sell } of G.bank) {
+    stack(r, mat, vault[mat], atDock, atDock ? sell.x - 10 : r.x + r.w - 12);
     if (!atDock) continue;
     const M = MATERIALS[mat];
     g.fillStyle = 'rgba(255,212,121,0.10)';
-    g.fillRect(r.x + r.w * 0.62, r.y + 1, r.w * 0.38 - 1, r.h - 2);
+    g.fillRect(sell.x, sell.y, sell.w, sell.h);
     g.fillStyle = '#ffd479'; g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
-    g.fillText(`SELL ${fmtCredits(vault[mat] * M.value)} ${CURRENCY.short}`, r.x + r.w * 0.81, r.y + r.h / 2 + 4);
+    g.fillText(`SELL ${fmtCredits(vault[mat] * M.value)} ${CURRENCY.short}`,
+               sell.x + sell.w / 2, r.y + r.h / 2 + 4);
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
@@ -4456,9 +4546,12 @@ function drawFrame(now) {
     const bx = 16 + 152, bw2 = 60;
     g.fillStyle = '#1b222d'; g.fillRect(bx, 117, bw2, 6);
     g.fillStyle = '#8ab4e6'; g.fillRect(bx, 117, bw2 * progress(myXp), 6);
+    // Its own line. It used to be drawn at exactly the point the rank readout is
+    // drawn at — 16+96, 124, the same two numbers — so LVL 14 was buried under it
+    // every time you docked with ore aboard, which is most of the time you dock.
     if (atDock && vol > 0) {
       g.fillStyle = COMPANIES[myCo].color;
-      g.fillText('docked — press I to stow cargo', 16 + 96, 124);
+      g.fillText('docked — press I to stow cargo', 16, 142);
     }
     // What a Shear Compensator is holding off right now. `power.cap` is the
     // capacitor as a percentage, which is exactly what shearGrace scales by — so
@@ -4470,8 +4563,24 @@ function drawFrame(now) {
                `RDR ${st.radar | 0}   SIG ${Math.round(st.signature * 10) / 10}s   ` +
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
-  g.fillText('TAB engage · TAB TAB break off · click cargo to haul it in · ' +
-             'I cargo · H station · R research · L threats · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
+  // The hotkey strip, laid out around the ammunition bar rather than behind it.
+  // It is 1022px at 12px, the bar is 306px of opaque boxes across the middle of
+  // the window, and the strip is drawn first — so a box swallowed 64px out of the
+  // middle of the sentence at every window size, and on a 1024px window the tail
+  // ran off the screen as well. The hints fill the gap left of the bar and then
+  // the gap right of it, and a window with no room for the last of them leaves
+  // them out rather than printing them somewhere they cannot be read.
+  {
+    const B = barLayout(VIEW_W, VIEW_H);
+    let rest = HOTKEYS;
+    for (const [gx, gw] of [[16, B.r.x - 28], [B.r.x + B.r.w + 12, VIEW_W - 28 - B.r.x - B.r.w]]) {
+      let n = rest.length;
+      while (n && g.measureText(rest.slice(0, n).join(' · ')).width > gw) n--;
+      if (!n) continue;
+      g.fillText(rest.slice(0, n).join(' · '), gx, VIEW_H - 16);
+      rest = rest.slice(n);
+    }
+  }
 
   // Compensated, the margin is somewhere you are meant to be, so it must stop
   // screaming at you — a permanent red vignette over ground you bought the right

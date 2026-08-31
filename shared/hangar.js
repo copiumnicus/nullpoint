@@ -163,7 +163,19 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   // Tabs sit in the header, left of the credit line.
   const tabs = TABS.map((t, i) => ({ ...t, r: { x: x + 20 + i * 104, y: y + 14, w: 96, h: 26 } }));
 
+  // Where the line that says where you are standing begins: after the last tab,
+  // never at a number somebody typed.
+  //
+  // It used to be drawn at a literal `P.x + 236`, which cleared two tabs by 16px.
+  // The fourth tab reaches P.x + 428, so from the day INVENTORY and STATS were
+  // added the sentence was printed straight through both of them — six of the
+  // fifteen overlapping labels in the whole client, and nothing said so, because
+  // the tab table is here and the hint's x was over in the client. The header
+  // line is tabs, then this, then the credits, and only the middle one has to
+  // give: it is the one with several ways of saying itself.
+  const last = tabs[tabs.length - 1].r;
   const out = { panel: { x, y, w, h }, colW, top, room, tab, page, tabs,
+                hint: { x: last.x + last.w + 16, y: y + 32 },
                 hulls: [], racks: [], pages: [], store: [] };
 
   if (tab === 'hangar') {
