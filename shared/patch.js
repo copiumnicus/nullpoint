@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.67';
+export const VERSION = '0.68';
 
 export const PATCHES = [
+  { v: '0.68', notes: [
+    'The shield bar counts down to the second your shields start coming back up',
+    'It counts the delay your ship actually flies, so power in shields shortens the wait',
+    'At your own dock it counts to the dock’s clock instead, which comes round sooner',
+  ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
     'Half again the shots at full, and your reach drops to 65% to pay for it',

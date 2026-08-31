@@ -60,6 +60,7 @@ import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT, QUIET } from '/shared/music.js';
 import { settingsLayout, valueAt } from '/shared/settings.js';
+import { vitalsPanel, shieldCountdown, WAIT_PX } from '/shared/vitals.js';
 import { sampler, push as pushSample, frameLine, pingLine, GRADE } from '/shared/perf.js';
 import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
@@ -133,6 +134,11 @@ const readToken = () => {
 let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
 let shieldNow = 0, shieldTop = 0, myDrones = [], myXp = 0, myRank = { level: 1, into: 0, need: 1 };
+// Seconds until the shields start coming back, or null when there is nothing to
+// wait for. It is only ever what the server said — the rule is shieldWait() in
+// shared/sim.js, and the client counting down on its own clock would be a second
+// copy of the delay that disagreed the moment anything touched it.
+let shieldWaitSecs = null;
 // What the ship you are flying can DO, as opposed to what its numbers are. Kept
 // beside the fit rather than recomputed per frame, and refreshed by exactly the
 // two messages that can change a fit — see refreshTech below.
@@ -1161,6 +1167,10 @@ ws.onmessage = e => {
   if ('foldTo' in m) myFoldTo = m.foldTo;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
+  // Absent means nothing is pending, so this CLEARS rather than persisting: the
+  // key goes away in the delta the instant the shields are full or moving again,
+  // and a countdown left frozen on screen is worse than no countdown.
+  shieldWaitSecs = typeof m.shieldWait === 'number' ? m.shieldWait : null;
   if (m.drones) { myDrones = m.drones; refreshTech(); }
   if ('rig' in m) myRig = m.rig;
   // Whether the plating is still there to take a hit for you. It rides in the
@@ -4955,18 +4965,39 @@ function drawFrame(now) {
     const hp = Math.round(st.hull * (me.hp ?? 100) / 100);
     const sh = shieldNow, shMax = Math.max(1, shieldTop || st.shield);
     const boosted = shMax > st.shield * 1.001;
-    const w = 190;
-    g.fillStyle = 'rgba(4,7,12,0.7)'; g.fillRect(16, 52, w, 22);
-    g.fillStyle = '#1d3b52'; g.fillRect(18, 54, w - 4, 8);
+    // The bars and the countdown chip that sits in the shield bar come out of one
+    // function, in shared/vitals.js, so a chip placed by hand can never end up
+    // half off the bar it is supposed to be inside.
+    const vit = vitalsPanel(16, 52, 190), w = vit.box.w;
+    g.fillStyle = 'rgba(4,7,12,0.7)'; g.fillRect(vit.box.x, vit.box.y, vit.box.w, vit.box.h);
+    g.fillStyle = '#1d3b52'; g.fillRect(vit.shield.x, vit.shield.y, vit.shield.w, vit.shield.h);
     g.fillStyle = boosted ? '#8fe7ff' : '#5fd0ff';   // brighter blue, never a different colour
-    g.fillRect(18, 54, (w - 4) * sh / shMax, 8);
+    g.fillRect(vit.shield.x, vit.shield.y, vit.shield.w * sh / shMax, vit.shield.h);
     if (boosted) {                                 // where the unboosted pool used to end
-      const mark = 18 + (w - 4) * (st.shield / shMax);
-      g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(mark, 52, 1, 12);
+      const mark = vit.shield.x + vit.shield.w * (st.shield / shMax);
+      g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(mark, vit.box.y, 1, 12);
     }
-    g.fillStyle = '#26402c'; g.fillRect(18, 64, w - 4, 8);
+    g.fillStyle = '#26402c'; g.fillRect(vit.hull.x, vit.hull.y, vit.hull.w, vit.hull.h);
     g.fillStyle = hp > st.hull / 3 ? '#7de08a' : '#e05a5a';
-    g.fillRect(18, 64, (w - 4) * hp / st.hull, 8);
+    g.fillRect(vit.hull.x, vit.hull.y, vit.hull.w * hp / st.hull, vit.hull.h);
+    // How long until the shields start coming back, on the bar it is about — the
+    // one number in the game you watch a motionless bar wondering about. Nothing
+    // is drawn once there is nothing to wait for: at zero the bar itself is
+    // already climbing, which is a better answer than a readout stuck on "0.0".
+    // The font goes on before the measure, or the chip is sized for 12px type and
+    // the 9px string rattles around inside it.
+    g.font = `${WAIT_PX}px ui-monospace, monospace`;
+    const cd = shieldCountdown(shieldWaitSecs, vit, str => g.measureText(str).width);
+    if (cd) {
+      // An opaque chip, not just a colour. A blue number on a blue bar cannot be
+      // read at all, and the chip is also what makes the readout a thing with its
+      // own frame rather than a label written across the shield bar.
+      g.fillStyle = 'rgba(4,7,12,0.9)'; g.fillRect(cd.box.x, cd.box.y, cd.box.w, cd.box.h);
+      g.textAlign = 'right'; g.fillStyle = '#8fe7ff';
+      g.fillText(cd.text, cd.tx, cd.ty);
+      g.textAlign = 'left';
+    }
+    g.font = '12px ui-monospace, monospace';
     // Composite Plating, and whether it is still there. A once-per-outing save
     // you cannot see the state of is a save you cannot plan around — you would
     // find out you had already spent it by dying.

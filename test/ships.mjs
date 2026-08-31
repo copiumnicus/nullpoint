@@ -4,8 +4,9 @@ import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat, topTier, MAX_DRONES } fro
 import { SPENDS } from '../shared/tech.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, inBase, driftDepth, driftDps, SHIELD_FLASH,
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, shieldWait, inBase, driftDepth, driftDps, SHIELD_FLASH,
          DOCK_HULL_RATE, DOCK_INTERRUPT, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
+import { vitalsPanel, shieldCountdown, WAIT_PX } from '../shared/vitals.js';
 import { MAPS, GALAXY, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { BOOST } from '../shared/power.js';
 import { FORMATIONS, FORMATION_KEYS, DEFAULT_FORMATION, slots as formSlots, droneAt,
@@ -305,6 +306,112 @@ for (let i = 0; i < 30 * 10; i++) { applyDamage(underFire, 1); stepVitals(underF
 check('the dock will not repair you while you are being shot',
   underFire.hp < underFire.stats.hull * 0.25 && underFire.shield === 0,
   'so running home is not a free escape');
+
+// The HUD's countdown. It exists because a pilot watching a motionless shield bar
+// cannot tell whether it is broken, whether they are still being hit, or whether
+// it is about to start — and the only way that number can be trusted is for it to
+// be the same rule the sim gates on. So the claims are about the AGREEMENT, not
+// about the arithmetic: a countdown that is a second out is worse than none.
+console.log('\nshields, and the countdown to them');
+{
+  const shot = () => { const q = newShip(0, 0, 'vanguard', []); applyDamage(q, q.stats.shield + 1); return q; };
+  const step1 = q => stepVitals(q, dt);
+
+  const fresh = newShip(0, 0, 'vanguard', []);
+  check('a ship that has never been hit is not waiting for anything',
+    shieldWait(fresh) === null,
+    `sinceHit starts at ${fresh.sinceHit.toExponential(0)}, and full shields have nothing pending`);
+
+  const hurt = shot();
+  check('the countdown starts at the full delay the moment you are hit',
+    Math.abs(shieldWait(hurt) - hurt.stats.shieldDelay) < 1e-9,
+    `${shieldWait(hurt).toFixed(1)}s on a Vanguard's ${hurt.stats.shieldDelay}s delay`);
+
+  // The claim the whole feature turns on: one rule, two callers. Walk a hit ship
+  // forward a tick at a time and find the first tick the shields actually move;
+  // the countdown must have reached zero on exactly that tick and not before.
+  const walk = (q, docked = false) => {          // tick until the shields first move
+    let ticks = 0, moved = -1, zeroAt = -1;
+    while (ticks < 30 * 20 && moved < 0) {
+      const before = q.shield;
+      stepVitals(q, dt, docked); ticks++;
+      if (zeroAt < 0 && shieldWait(q, docked) === 0) zeroAt = ticks;
+      if (q.shield > before) moved = ticks;
+    }
+    return { moved, zeroAt };
+  };
+  const m1 = walk(shot());
+  check('the countdown reads zero on exactly the tick the shields start coming back',
+    m1.moved > 0 && m1.zeroAt === m1.moved,
+    `the bar moved on tick ${m1.moved} of ${(m1.moved / 30).toFixed(2)}s and the readout ` +
+    `reached zero on tick ${m1.zeroAt} — one rule, so they cannot be a tick apart`);
+  check('and it never reads zero over the seconds the bar is standing still',
+    (() => { const q = shot();
+             for (let i = 0; i < m1.moved - 1; i++) { step1(q); if (shieldWait(q) === 0) return false; }
+             return q.shield === 0; })(),
+    `${m1.moved - 1} ticks of a motionless shield bar, every one of them counting down`);
+
+  const again = shot();
+  for (let i = 0; i < 30 * 4; i++) step1(again);
+  const partway = shieldWait(again);
+  applyDamage(again, 1);
+  check('being hit again puts the whole delay back on the clock',
+    partway < again.stats.shieldDelay - 3 && Math.abs(shieldWait(again) - again.stats.shieldDelay) < 1e-9,
+    `${partway.toFixed(1)}s left, then a single point of damage and it is ${shieldWait(again).toFixed(1)}s again`);
+
+  // The delay is divided by the shield pool's multiplier, so a readout built on
+  // stats.shieldDelay would run long for anyone with power in shields — which is
+  // most pilots in a fight. This is that discrepancy, as a number.
+  const wired = shot();
+  wired.power = { ...wired.power, shields: 1, charge: wired.stats.capacitor };
+  step1(wired);
+  check('power routed to shields brings them back sooner, and the countdown knows',
+    shieldWait(wired) < wired.stats.shieldDelay - 1,
+    `${shieldWait(wired).toFixed(2)}s against the ${wired.stats.shieldDelay}s printed on the hull — ` +
+    'a countdown reading the raw stat would be a second and a half long');
+
+  // Docked is a different clock, and saying shieldDelay there would be wrong by
+  // two seconds on every hull in the game.
+  const home = shot();
+  check('at your own dock the countdown is the dock\'s clock, because that is the one that fires first',
+    Math.abs(shieldWait(home, true) - DOCK_INTERRUPT) < 1e-9 && DOCK_INTERRUPT < home.stats.shieldDelay,
+    `${DOCK_INTERRUPT}s of quiet before the dock works on you, against a ${home.stats.shieldDelay}s field delay`);
+  const m2 = walk(shot(), true);
+  check('and the docked countdown lands on the tick the dock actually starts working',
+    m2.moved > 0 && m2.zeroAt === m2.moved,
+    `${(m2.moved / 30).toFixed(2)}s at the dock against ${(m1.moved / 30).toFixed(2)}s in the field`);
+
+  // A sector where shields do not come back has nothing to count down to, and a
+  // countdown running to zero in one would be a promise the sim never keeps.
+  check('inside a claim there is no countdown at all, because the shields are not coming back',
+    shieldWait(shot(), false, true) === null, 'stepVitals `dry` — see shared/arena.js');
+
+  console.log('\nthe countdown on the shield bar');
+  const P = vitalsPanel();
+  const mono = str => str.length * 0.6 * WAIT_PX;   // ui-monospace, the advance test/uibox.mjs measures with
+  check('the shield bar and the hull bar are the same size and stacked inside their box',
+    P.shield.w === P.hull.w && P.shield.h === P.hull.h &&
+    P.box.x <= P.shield.x && P.shield.x + P.shield.w <= P.box.x + P.box.w &&
+    P.hull.y + P.hull.h <= P.box.y + P.box.h,
+    `${P.box.w}x${P.box.h} holding two ${P.shield.w}x${P.shield.h} bars`);
+  check('nothing is drawn when there is nothing to wait for',
+    shieldCountdown(null, P, mono) === null && shieldCountdown(0, P, mono) === null,
+    'no countdown with full shields, and none at zero — the bar is already climbing');
+  const chip = shieldCountdown(4.24, P, mono);
+  check('the countdown reads in tenths and sits inside the shield bar, not across it',
+    chip.text === '4.2s' &&
+    chip.box.x >= P.shield.x && chip.box.x + chip.box.w <= P.shield.x + P.shield.w + 1e-9 &&
+    chip.box.y === P.shield.y && chip.box.h === P.shield.h,
+    `"${chip.text}" in a ${chip.box.w.toFixed(1)}px chip at the right of a ${P.shield.w}px bar`);
+  check('the readout fits inside its own chip, top and bottom',
+    chip.ty - WAIT_PX * 0.72 >= chip.box.y && chip.ty <= chip.box.y + chip.box.h,
+    `a ${WAIT_PX}px cap box on a ${chip.box.h}px bar — the harness reads a label outside its frame as a crossing`);
+  check('the widest countdown any hull can produce still leaves most of the bar showing',
+    shieldCountdown(Math.max(...Object.values(HULLS).map(h => h.attrs.shieldDelay)), P, mono).box.w
+      < P.shield.w * 0.25,
+    `${shieldCountdown(Math.max(...Object.values(HULLS).map(h => h.attrs.shieldDelay)), P, mono).box.w.toFixed(0)}px ` +
+    `of ${P.shield.w}px covered while the shields are down`);
+}
 
 console.log('\nstation layout');
 {
