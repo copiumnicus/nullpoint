@@ -219,6 +219,35 @@ console.log('\non the wire');
     'it rides the keyframe and then goes quiet — 50 of them are 1,570 bytes once');
 }
 
+console.log('\nwhat a rung is worth, in your own numbers');
+{
+  const best = s2 => Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === s2)
+    .sort((a, b) => (EQUIPMENT[b].tier ?? 0) - (EQUIPMENT[a].tier ?? 0))[0];
+  const sl = slotsOf('vanguard');
+  const st = resolve('vanguard', { weapon: Array(sl.weapon).fill(best('weapon')),
+                                   generator: Array(sl.generator).fill(best('generator')), tech: [] },
+                     Array(6).fill(best('weapon')), 'arrow');
+  const g0 = R.rungGain(0, 'hull', st);
+  check('a rung says what it makes YOUR hull, not that it makes it bigger',
+    g0 && /\d/.test(g0.label) && g0.then === g0.now * 2,
+    `${g0.label} — a pilot cannot tell whether "stronger" means one percent or one hundred`);
+  // The base already has the tier you own folded into it, so the multiplier has to
+  // be divided back out or the second rung would quote the first one's numbers.
+  let m = R.addMod(0, 'hull1');
+  const st2 = R.applyResearch(st, m);
+  const g1 = R.rungGain(m, 'hull', st2);
+  check('and it reads off the hull you have now, not the one the shops sold you',
+    g1.now === Math.round(st.hull * 2) && g1.then === Math.round(st.hull * 4),
+    `${g1.label} after one tier — the bar already shows the tier you bought`);
+  const gm = R.rungGain(0, 'mine', st);
+  check('the mine says the rate and the day, because a day is what you feel',
+    /cr\/s/.test(gm.label) && /a day/.test(gm.sub),
+    `${gm.label} · ${gm.sub}`);
+  let top = 0; for (const k of R.tiersOf('hull')) top = R.addMod(top, k);
+  check('a finished ladder has nothing left to quote',
+    R.rungGain(top, 'hull', st) === null, 'the row says it is the top instead');
+}
+
 console.log('\nthe panel');
 {
   for (const [w, h] of [[1600, 900], [1024, 700], [420, 380]]) {

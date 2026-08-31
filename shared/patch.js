@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.40';
+export const VERSION = '0.41';
 
 export const PATCHES = [
+  { v: '0.41', notes: [
+    'Fly to your research station and it tells you to press R',
+    'Every rung now says what it does to the ship you are flying: hull 1,100 -> 2,200',
+    'The mine quotes the rate and what it comes to over a day',
+  ] },
   { v: '0.40', notes: [
     'Fixed: dying at a rented bay put you in the corner of the map, unable to move',
     'Dying again did not help. Respawning has been landing nowhere since 0.33',

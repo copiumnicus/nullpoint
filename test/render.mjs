@@ -692,6 +692,28 @@ const dismiss = () => {
   else console.log(`research: a rung is sold at the station and refused from the dock — ` +
                    `"${MODULES.mine1.name}"`);
 
+  // Standing at your own station, the world says what to press — R appears on no
+  // other prompt and nothing else in the game mentions it. And the panel says what
+  // a rung would do to the ship you are actually flying, in your own numbers: a
+  // pilot cannot tell whether "stronger" means one percent or one hundred.
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 9_000_000, docked: false,
+         labs: [labRow], lab: { mods: 0, income: 0 } });
+  trace = []; frame(t += 16); frames++;
+  const world = trace; trace = null;
+  if (!world.some(c => /^fillText PRESS R /.test(c)))
+    errs.push('standing at my own research station, nothing told me which key opens it');
+  else console.log('research: standing at your own station, the world says PRESS R');
+
+  // No keypress here: the panel is already open from the click above, and pressing
+  // R would TOGGLE it shut. That is the second time this block has caught me.
+  trace = []; frame(t += 16); frames++;
+  const rows = trace; trace = null;
+  // "your hull 1,100 -> 2,200", drawn off myStats(), not a multiplier in prose.
+  if (!rows.some(c => /^fillText your hull [\d,]+ -> [\d,]+/.test(c)))
+    errs.push('the research panel described a hull upgrade without saying what it would make my hull');
+  else console.log('research: a rung says what it does to YOUR ship — ' +
+    rows.find(c => /^fillText your hull/.test(c)).replace(/^fillText /, '').replace(/ [\d.]+ [\d.]+$/, ''));
+
   // A station that has been built on looks built on, to everyone, and a mine
   // running makes the credits counter move between server banks.
   const others = packLab({ id: 2_000_002, x: ring.x - 400, y: ring.y, mods: 7, name: 'Someone' }, false);

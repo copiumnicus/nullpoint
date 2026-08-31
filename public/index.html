@@ -14,7 +14,7 @@ import { unpackLab } from '/shared/net.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
 import { havenBadge, havenLine, TONE } from '/shared/haven.js';
-import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, partsOf,
+import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, rungGain, partsOf,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { whyNotSold, frontierOnly } from '/shared/gear.js';
@@ -278,8 +278,27 @@ function drawLab() {
     } else {
       g.fillStyle = why ? '#66748c' : '#cfe4ff';
       g.fillText(st.nextName, row.r.x + 12, row.r.y + 40);
-      g.fillStyle = '#7f8fa6'; g.font = '10px ui-monospace, monospace';
-      g.fillText(why ?? st.does, row.r.x + 12, row.r.y + 54);
+      // What it does to the ship you are actually flying, in the numbers on your own
+      // bar. "Twice the hull" is a fact about the module; "1,100 -> 2,200" is a fact
+      // about you, and it is the one that decides whether a million credits is worth
+      // it. A pilot cannot tell whether "stronger" means one percent or one hundred.
+      const gain = rungGain(mask, row.line, myStats());
+      g.font = '10px ui-monospace, monospace';
+      if (why) {
+        g.fillStyle = '#7f8fa6';
+        g.fillText(why, row.r.x + 12, row.r.y + 54);
+      } else if (gain) {
+        g.fillStyle = '#7de08a';
+        g.fillText(gain.label, row.r.x + 12, row.r.y + 54);
+        g.fillStyle = '#66748c';
+        const w = g.measureText(gain.label).width;
+        g.font = '9px ui-monospace, monospace';
+        g.fillText(gain.sub, row.r.x + 12 + w + 12, row.r.y + 54);
+      } else {
+        g.fillStyle = '#7f8fa6';
+        g.fillText(st.does, row.r.x + 12, row.r.y + 54);
+      }
+      g.font = '10px ui-monospace, monospace';
       g.textAlign = 'right';
       g.font = '12px ui-monospace, monospace';
       g.fillStyle = why ? '#66748c' : '#ffd479';
@@ -333,6 +352,7 @@ function labClick(v) {
 // The picture is derived from the module mask alone, so a station that has been
 // built on looks built on, to everyone, with nothing extra on the wire.
 function drawLabs() {
+  const me = ships.get(myId);
   for (const l of labs.values()) {
     const p = { x: l.x, y: l.y };                  // world space, like the ring it stands in
     const R = LAB_R, col = l.own ? '#7de08a' : '#4a6785';
@@ -366,6 +386,23 @@ function drawLabs() {
     g.fill();
     g.strokeStyle = col; g.lineWidth = 1 + plates * 0.6; g.stroke();
 
+    // Standing at your own station, the game says what to press. R is not on any
+    // other prompt and nothing else in the world mentions it, so a pilot who has
+    // bought one and flown to it would otherwise be looking at a hexagon.
+    if (l.own && me && nearLab(l, { x: me.rx ?? me.x, y: me.ry ?? me.y })) {
+      const lab = 'PRESS R';
+      g.font = 'bold 10px ui-monospace, monospace'; g.textAlign = 'center';
+      const w = g.measureText(lab).width + 16;
+      g.fillStyle = 'rgba(6,10,16,0.9)';
+      g.fillRect(p.x - w / 2, p.y + R + 6, w, 16);
+      g.strokeStyle = '#7de08a'; g.lineWidth = 1;
+      g.strokeRect(p.x - w / 2 + .5, p.y + R + 6.5, w - 1, 15);
+      g.fillStyle = '#7de08a';
+      g.fillText(lab, p.x, p.y + R + 18);
+      g.font = '9px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+      g.fillText('research', p.x, p.y + R + 32);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
     if (l.name) {
       g.font = 'bold 9px ui-monospace, monospace'; g.textAlign = 'center';
       g.lineWidth = 3; g.strokeStyle = 'rgba(4,7,12,0.9)';

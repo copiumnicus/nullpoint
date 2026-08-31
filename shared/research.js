@@ -354,6 +354,39 @@ export function labPanel(VIEW_W, VIEW_H) {
            close: { x: x + w - 30, y: y + 10, w: 20, h: 20 } };
 }
 
+// What the next rung would actually DO to the ship you are flying, in the numbers
+// on your own hull bar.
+//
+// "twice the hull" is a fact about the module. "1,900 -> 3,800" is a fact about
+// YOU, and it is the one that decides whether 1,000,000 credits is worth it — a
+// pilot cannot tell whether "stronger" means one percent or one hundred, and being
+// told the multiple is not the same as being shown the number you will have.
+//
+// `stats` is the ship as resolve() gives it, BEFORE research is applied, because
+// applyResearch multiplies that. The panel passes myStats() and the server never
+// needs this — it is the one thing in here that exists purely to be read.
+export function rungGain(mask, line, stats) {
+  const next = nextOn(mask, line);
+  if (!next) return null;
+  const m = MODULES[next];
+  if (line === 'mine') {
+    const now = incomeOf(mask), then = m.rate ?? 0;
+    return { kind: 'mine', now, then,
+             label: `${now} -> ${then} ${'cr'}/s`,
+             sub: `${Math.round(then * 86400 / 1000)}k a day, flying or not` };
+  }
+  const key = line === 'hull' ? 'hull' : 'shield';
+  const base = stats?.[key];
+  if (!Number.isFinite(base)) return null;
+  // The base is what the shops sold you, so divide the multiplier back out: what
+  // you are looking at on the bar already has the tier you own folded into it.
+  const bare = base / mulOn(mask, line);
+  const now = Math.round(bare * mulOn(mask, line)), then = Math.round(bare * (m.mul ?? 1));
+  return { kind: key, now, then,
+           label: `your ${key} ${now.toLocaleString('en-US')} -> ${then.toLocaleString('en-US')}`,
+           sub: `x${(then / Math.max(1, now)).toFixed(2)} what you have now, on every ship you fly` };
+}
+
 // What one row says, so the panel and its test cannot disagree about it.
 export function rowState(mask, line, credits) {
   const at = tierOn(mask, line), next = nextOn(mask, line);
