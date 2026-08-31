@@ -46,8 +46,9 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown } from '/shared/net.js';
 import { burnOf, burnR } from '/shared/burn.js';
+import { sowOf, HOLD } from '/shared/ground.js';
 import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
          SCOOP_R, CURRENCY } from '/shared/cargo.js';
@@ -191,7 +192,8 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [];   // rebuilt every snapshot
+let mySnare = 0;                                  // s of engines-out left, from the bag
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
 let invOpen = false, notice = null;
@@ -1121,6 +1123,12 @@ ws.onmessage = e => {
   // never mentions them again after the keyframe — but the decoder hands back a
   // whole snapshot either way, so this is just a read.
   labs = new Map((m.labs ?? []).map(unpackLab).map(l => [l.id, l]));
+  // Sown ground. A keyed stream like the labs, because a patch lives twelve to
+  // thirty seconds and five of its seven numbers never move once it is laid — see the
+  // note in net.js. The decoder hands back a whole snapshot either way, so this is
+  // just a read.
+  ground = (m.sown ?? []).map(unpackSown);
+  if ('snare' in m) mySnare = m.snare ?? 0;
   if ('lab' in m) myLab = m.lab;
   if (m.claims) myClaims = m.claims;
   // Read UNCONDITIONALLY, like `scoop` and `want` beside it, and this is the one
@@ -3777,6 +3785,180 @@ function drawFrame(now) {
     }
   }
 
+  // --- sown ground --------------------------------------------------------------
+  //
+  // Two kinds, drawn so they cannot be confused with each other at a glance, and so
+  // that neither can be confused with a Censer's ring. Everything is in WORLD
+  // coordinates — this pass runs inside the camera transform, the same as the pyres
+  // and the fixes below — and every moving part is driven by `now`, the timestamp
+  // the frame was handed, so a paused tab does not accumulate a spin.
+  //
+  //   Aqua Regia   boils. It is bright, it is filled, and it moves OUTWARD: nine
+  //                blisters crawl from the middle to the rim and start again. Read
+  //                it as something under pressure.
+  //   Slack Water  is glassy. It is nearly unfilled, its rim is doubled like a
+  //                meniscus, and its one moving part falls INWARD, slowly, and
+  //                arrives at nothing. Read it as something that has stopped.
+  //
+  // The RIM never moves and never dims, whatever else is happening, because the rim
+  // is the only thing a pilot has to read: inside it, the ground has you. How long
+  // it has left is a bright arc sweeping the rim instead — a circle that faded out
+  // as it aged would be a circle that lied about its own edge, which is the same
+  // bug as a row you can see and cannot click.
+  //
+  // NOTHING HERE CAN PRODUCE undefined, NaN OR A BAD COLOUR. `p` is clamped and
+  // fixed to three places before it reaches a string; every radius goes through
+  // Math.max(1, ...); `k` is an index into a two-element table with a default, so an
+  // unknown kind draws the first palette rather than `undefined`; every alpha goes
+  // through al(), which clamps and fixes; and the loop body never runs at all on the
+  // ticks the array is empty, which is every tick outside the deeps.
+  {
+    const PALETTE = [
+      { rim: '255,255,60',  fill: '210,255,30',  live: 0.20 },   // regia
+      { rim: '150,110,255', fill: '107,60,255',  live: 0.05 },   // slack
+    ];
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    for (const gr of ground) {
+      const R = Math.max(1, gr.r ?? 10);
+      const p = Math.max(0, Math.min(1, gr.p ?? 0));
+      const pal = PALETTE[gr.k === 1 ? 1 : 0];
+      const live = gr.on === 1;
+
+      // The wind-up: the circle it is ABOUT to be, falling onto the place from four
+      // radii out and arriving exactly as it goes live. Dashed, because a dashed
+      // ring in this game has always meant "not yet" — see the fix marker.
+      if (!live) {
+        const fall = R * (3.2 - 2.2 * p);
+        g.strokeStyle = `rgba(${pal.rim},${al(0.20 + 0.55 * p)})`;
+        g.lineWidth = 1 + 2.5 * p;
+        g.setLineDash([18, 14]);
+        g.lineDashOffset = -now / 40;
+        g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, fall), 0, 7); g.stroke();
+        g.setLineDash([]);
+        // and the ground it will cover, faint, so the decision is about the right
+        // circle rather than about the one still falling
+        g.strokeStyle = `rgba(${pal.rim},${al(0.12 + 0.30 * p)})`;
+        g.lineWidth = 1;
+        g.beginPath(); g.arc(gr.x, gr.y, R, 0, 7); g.stroke();
+        continue;
+      }
+
+      // the wash
+      const grd = g.createRadialGradient(gr.x, gr.y, 0, gr.x, gr.y, R);
+      grd.addColorStop(0, `rgba(${pal.fill},${al(pal.live)})`);
+      grd.addColorStop(0.78, `rgba(${pal.fill},${al(pal.live * 0.55)})`);
+      grd.addColorStop(1, `rgba(${pal.fill},0)`);
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(gr.x, gr.y, R, 0, 7); g.fill();
+
+      // THE RIM. Constant, always.
+      g.strokeStyle = `rgba(${pal.rim},0.850)`;
+      g.lineWidth = 2;
+      g.beginPath(); g.arc(gr.x, gr.y, R, 0, 7); g.stroke();
+      if (gr.k === 1) {                       // the meniscus: a second line just inside
+        g.strokeStyle = `rgba(${pal.rim},0.300)`;
+        g.lineWidth = 1;
+        g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, R - 7), 0, 7); g.stroke();
+      }
+
+      // how long is left, as an arc off the rim rather than as a fade
+      g.strokeStyle = `rgba(${pal.rim},0.550)`;
+      g.lineWidth = 4;
+      g.beginPath(); g.arc(gr.x, gr.y, R, -Math.PI / 2, -Math.PI / 2 + (1 - p) * Math.PI * 2); g.stroke();
+
+      if (gr.k === 1) {
+        // Slack Water: one ring falling inward every two seconds, arriving at
+        // nothing. The phase is offset by the patch's own place so two stills side
+        // by side do not pulse in lockstep — `gr.x` is an integer off the wire, so
+        // the modulus is finite by construction.
+        const ph = ((now / 2000) + (gr.x % 719) / 719) % 1;
+        g.strokeStyle = `rgba(${pal.rim},${al(0.42 * (1 - ph))})`;
+        g.lineWidth = 1.5;
+        g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, R * (1 - ph)), 0, 7); g.stroke();
+        // and four dead-straight spokes that never turn. Everything else in this
+        // game that is drawn as a disc rotates; this is the one that does not, and
+        // that stillness is the whole tell.
+        g.strokeStyle = `rgba(${pal.rim},0.180)`;
+        g.lineWidth = 1;
+        for (let i = 0; i < 4; i++) {
+          const a0 = i * Math.PI / 2 + Math.PI / 4;
+          g.beginPath();
+          g.moveTo(gr.x + Math.cos(a0) * R * 0.25, gr.y + Math.sin(a0) * R * 0.25);
+          g.lineTo(gr.x + Math.cos(a0) * R * 0.94, gr.y + Math.sin(a0) * R * 0.94);
+          g.stroke();
+        }
+      } else {
+        // Aqua Regia: nine blisters crawling out to the rim and starting again. The
+        // angle is fixed per blister so the pool has a texture rather than a swarm,
+        // and the phase is offset by index so they do not all arrive together.
+        g.fillStyle = `rgba(${pal.rim},0.320)`;
+        for (let i = 0; i < 9; i++) {
+          const a0 = (i / 9) * Math.PI * 2 + (gr.y % 61) / 61 * Math.PI * 2;
+          const ph = ((now / 1400) + i / 9) % 1;
+          const rr = Math.max(1, R * (0.12 + 0.84 * ph));
+          g.globalAlpha = Number(al(0.55 * (1 - ph) + 0.10));
+          g.beginPath();
+          g.arc(gr.x + Math.cos(a0) * rr, gr.y + Math.sin(a0) * rr,
+                Math.max(1, R * 0.05 * (0.5 + ph)), 0, 7);
+          g.fill();
+        }
+        g.globalAlpha = 1;
+      }
+    }
+
+    // ENGINES OUT. The one thing on this screen that has to be unmissable, because
+    // it is the only second and a half in this game where clicking somewhere does
+    // nothing — and a control that has silently stopped working is indistinguishable
+    // from a bug. It gets three tells at once, all of them off `mySnare`, which is
+    // seconds and arrives in the bag.
+    //
+    //   the hull       a bracket around your own ship in the Doldrum's violet
+    //   the vector     a line out along the velocity you are keeping, to the place
+    //                  you will actually be when it lets go — which is the whole
+    //                  answer to the ability, drawn
+    //   the clock      the bracket closes as the hold runs out
+    //
+    // The vector is drawn from the SMOOTHED render position and the smoothed
+    // previous one, which is the same pair the speed readout is taken from, so it can
+    // never disagree with what the ship is visibly doing. prevSelf is null on the
+    // first frame after a jump, and the guard is `Number.isFinite` rather than a
+    // truthiness test because 0 is a perfectly good coordinate.
+    const self = ships.get(myId);
+    if (mySnare > 0 && self && Number.isFinite(self.rx)) {
+      const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+      const left = Math.max(0, Math.min(1, mySnare / HOLD));
+      const R2 = Math.max(6, rOf(self));
+      const vx = prevSelf ? self.rx - prevSelf.x : 0;
+      const vy = prevSelf ? self.ry - prevSelf.y : 0;
+      const sp = Math.hypot(vx, vy);
+      if (sp > 0.4 && frameDt > 0) {
+        // where the hull will be when the engines come back: velocity x time left
+        const ahead = (sp / frameDt) * mySnare;
+        g.strokeStyle = `rgba(150,110,255,${al(0.25 + 0.4 * left)})`;
+        g.lineWidth = 1.5;
+        g.setLineDash([10, 8]);
+        g.lineDashOffset = -now / 45;
+        g.beginPath();
+        g.moveTo(self.rx, self.ry);
+        g.lineTo(self.rx + (vx / sp) * ahead, self.ry + (vy / sp) * ahead);
+        g.stroke();
+        g.setLineDash([]);
+        g.strokeStyle = `rgba(150,110,255,${al(0.30 + 0.45 * left)})`;
+        g.beginPath();
+        g.arc(self.rx + (vx / sp) * ahead, self.ry + (vy / sp) * ahead, Math.max(2, R2 * 0.9), 0, 7);
+        g.stroke();
+      }
+      g.strokeStyle = `rgba(150,110,255,${al(0.45 + 0.45 * left)})`;
+      g.lineWidth = 2;
+      for (let q = 0; q < 4; q++) {
+        const a0 = q * Math.PI / 2 + Math.PI / 4;
+        g.beginPath();
+        g.arc(self.rx, self.ry, Math.max(2, R2 * (1.4 + 0.9 * left)), a0 - 0.34, a0 + 0.34);
+        g.stroke();
+      }
+    }
+  }
+
   for (const [id, s] of ships) {
     const R = rOf(s), lost = s.vis === STALE, foe = s.co === 'x';
     const lvl = (s.plvl ?? 0) / 100, sys = s.psys ?? 0;
@@ -4013,6 +4195,35 @@ function drawFrame(now) {
     // The victim is radar-filtered per viewer, so a Kedge can legitimately be sighting
     // somebody this client was never sent — ships.get misses, `mark` is null, and only
     // the arms are drawn, which is the radar rule as much as the arithmetic one.
+    // A sower charging its next patch. The ghost circle already drawn on the ground
+    // says WHERE; this says WHICH HOSTILE, which matters the moment there are two of
+    // them on the field and only one of the two kinds of ground can be steered out
+    // of. It rides `abl` — the fifth thing on that one dial — and `tgt` is already on
+    // the wire, so this cost no new SHIP_FIELDS entry. The row is at 30 of a hard 31.
+    //
+    // It cannot put a bad number into a draw call: `wind` is 0 unless ALIENS[hull]
+    // has a `sow` block, which is undefined for every other hostile and for a ship,
+    // `(s.abl ?? 0) / 100` is clamped into 0..1, and `wind > 0.02` is false for NaN.
+    const wind = foe && sowOf(ALIENS[s.hull]) ? Math.max(0, Math.min(1, (s.abl ?? 0) / 100)) : 0;
+    if (wind > 0.02) {
+      const tint = colOf(s);
+      const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+      g.save(); g.translate(s.rx, s.ry);
+      // A ring closing onto the hull as the charge completes, and a bar of it filled
+      // in clockwise from the top — the same two readings the ground itself gets, so
+      // the hostile and its patch are visibly one object.
+      g.strokeStyle = tint;
+      g.globalAlpha = al(0.25 + 0.45 * wind);
+      g.lineWidth = 1.4;
+      g.beginPath(); g.arc(0, 0, Math.max(1, R * (2.4 - 0.9 * wind)), 0, 7); g.stroke();
+      g.globalAlpha = al(0.55 + 0.4 * wind);
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(0, 0, Math.max(1, R * (2.4 - 0.9 * wind)), -Math.PI / 2, -Math.PI / 2 + wind * Math.PI * 2);
+      g.stroke();
+      g.globalAlpha = 1;
+      g.restore();
+    }
     const sight = foe && ALIENS[s.hull]?.fix ? Math.max(0, Math.min(1, (s.abl ?? 0) / 100)) : 0;
     if (sight > 0.02) {
       const tint = colOf(s);
