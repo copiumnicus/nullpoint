@@ -102,6 +102,22 @@ const dial = (stats, key, dflt) => {
 
 export const abilityOf = hull => ABILITIES[hull?.ability]  ? hull.ability : null;
 
+// Which ability an ATTRIBUTE belongs to, or null for one every hull reads.
+//
+// Derived from the attribute's NAME against the ability keys — veilDepth is a
+// Veil dial because it starts with "veil" — and derived from `ABILITIES` rather
+// than a list of three, so a fourth ability with `wardDepth`/`wardRecover` dials
+// is picked up by the shop, the tooltip and the stats page the moment its row
+// exists. That is the same seam ships.js leans on when it names these rows.
+//
+// It lives here because it was already written down twice: `tunesAbility` in
+// gear.js refuses to sell a Null Skin to a Bulwark with it, and `abilityOfAttr`
+// in tooltip.js says "Nothing on this hull" with it. A third copy on the stats
+// page would be the drift rule one exists to prevent — the page would happily
+// list a Veil depth on a Bulwark that the shop two tabs away refuses to sell.
+export const attrAbility = attr =>
+  Object.keys(ABILITIES).find(k => String(attr ?? '').startsWith(k)) ?? null;
+
 // How hard the fourth system is being driven, 0..1. Same shape as any other
 // system, so an ability browns out with the capacitor exactly like guns do.
 export const driveOf = (power, stats) => levelOf(power, SPECIAL, stats);

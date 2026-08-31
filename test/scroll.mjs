@@ -115,6 +115,21 @@ console.log('\nand every list in the game uses it');
     Math.abs(moved - Math.min(60, a.scroll.max)) < 1,
     `asked 60, ${a.scroll.max}px of travel exists, moved ${Math.round(moved)} — ` +
     'not one row, and not the two pixels a shared "+2" used to give it');
+
+  // And the footer that counts them. The store says "3-9 of 14", which is a count
+  // of ROWS, while the thing it was reading became PIXELS the moment everything
+  // moved onto shared/scroll.js — so it printed a pixel offset as a row number and
+  // a five-item shelf claimed to be showing item 418.
+  const foot = sc => { const q = bayLayout(900, 380, { ...state, tab: 'store', page: 'ammo', scroll: sc }).scroll;
+                       return `${q.first + 1}-${Math.min(q.total, q.first + q.per)} of ${q.total}`; };
+  check('the shelf footer counts rows, not the pixels it scrolled',
+    foot(0) === '1-3 of 6' && foot(99999) === '4-6 of 6',
+    `top reads "${foot(0)}", bottom reads "${foot(99999)}" — it read "${
+      Math.round(bayLayout(900, 380, { ...state, tab: 'store', page: 'ammo', scroll: 99999 }).scroll.at)
+    }-… of 6" while at was pixels`);
+  check('and the bottom of the list is the bottom of the count',
+    foot(99999).startsWith('4-6'),
+    'the last row is numbered last — off-by-one at the end reads as a row you cannot reach');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — one scroll'}\n`);

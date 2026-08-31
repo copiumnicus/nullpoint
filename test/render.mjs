@@ -710,6 +710,36 @@ const dismiss = () => {
       errs.push('the STATS tab left the research ladder out of the breakdown');
     else console.log('stats: the breakdown names every layer — ship, gear, technologies, research');
 
+    // Twenty-five attributes under eight headings is now twelve hundred pixels of
+    // page in a four-hundred pixel window, so the whole of it only exists if the
+    // WHEEL reaches it. Turned rather than assumed: this is exactly the bug that
+    // shipped last week, where the notch moved two pixels and a column of
+    // attributes below the fold could not be reached at all.
+    //
+    // Forty notches rather than the dozen it takes, because shared/scroll.js eases
+    // toward its target and a list that chases needs frames as well as notches.
+    const whole = [...out];
+    for (let i = 0; i < 40; i++) {
+      evt('wheel', { deltaY: 240 });
+      trace = []; frame(t += 16); frames++; whole.push(...trace); trace = null;
+    }
+    const drew = n => whole.some(c => c.includes(n));
+    if (!drew('HULL AND SHIELDS') || !drew('REACTOR') || !drew('ESCORT'))
+      errs.push('the STATS tab drew its attributes in one unbroken column, or the wheel never reached the bottom of it');
+    // A Vanguard has a Lock and neither of the other two systems, which is the same
+    // rule the shop uses when it refuses to sell a Null Skin to anyone but a Kestrel.
+    else if (!drew('Lock bite') || drew('Veil depth') || drew('Anchor swell'))
+      errs.push('the STATS tab got the ability section wrong — a Vanguard has a Lock and neither of the others');
+    // Every number goes through one formatter now. Before it, Math.round() drew a
+    // 1.2/s rate of fire as "1", a 33% free output as "0" and a shield share as "0.0%".
+    else if (!whole.some(c => /^fillText [\d.]+%\/s /.test(c)) || !whole.some(c => /^fillText 1\.2\/s /.test(c))
+          || !whole.some(c => /^fillText x1\.00 /.test(c)))
+      errs.push('the STATS tab rounded its fractions away — a share drew as 0%, a rate of fire as 1, an escort bonus as 1x');
+    // And where the number alone says nothing, a line beside it that does.
+    else if (!drew('to refill the pool') || !drew('after leaving their radar'))
+      errs.push('the STATS tab printed the unobvious stats without saying what any of them mean');
+    else console.log('stats: 8 headings reached by the wheel, the Vanguard\'s own Lock, and a line saying what each number means');
+
     // The HUD's own hull number, which is a different code path from the STATS tab
     // and was a bare resolve() — it printed the hull the SHOPS sold you while the
     // server flew the researched one, and dropped the escort and the formation with

@@ -296,17 +296,111 @@ console.log('\nstation layout');
   // somewhere else. Without this, "stats may be empty" would hide a stats tab that
   // had quietly stopped laying anything out.
   {
-    const { SHOWN } = await import('../shared/breakdown.js');
-    const L = bayLayout(1600, 900, { tab: 'stats', hull: 'vanguard',
-      fit: { weapon: ['emitter3'], generator: ['cellA'], tech: [] },
+    const B = await import('../shared/breakdown.js');
+    const { GROUPS, DERIVED, rowsOf, fmt, hintOf, improves, HINT_COLS, hintRoom } = B;
+    const FIT = { weapon: ['emitter3'], generator: ['cellA'], tech: [] };
+    const page = hull => rowsOf({ hull, fit: FIT, drones: [], rig: null,
+                                  formation: 'line', mask: 0 });
+    const keysOn = hull => page(hull).filter(r => !r.header).map(r => r.key);
+
+    // THE GUARD. Every attribute a ship has must reach the page on some hull, and
+    // no attribute may be listed under two headings. Without this the page is a
+    // hand-written list beside a table of facts, which is exactly how it came to
+    // be missing fourteen of twenty-five with nothing failing.
+    const want = [...Object.keys(ATTRS), ...Object.keys(DERIVED)];
+    const reach = new Set(Object.keys(HULLS).flatMap(keysOn));
+    const orphan = want.filter(k => !reach.has(k));
+    const twice = want.filter(k => GROUPS.filter(g => g.of.includes(k)).length > 1);
+    check('every attribute a ship has reaches the stats page',
+      orphan.length === 0 && twice.length === 0,
+      orphan.length ? `never shown anywhere: ${orphan.join(' ')}`
+      : twice.length ? `listed under two headings: ${twice.join(' ')}`
+      : `${Object.keys(ATTRS).length} in ATTRS plus the derived reactor ceiling, ` +
+        `all ${want.length} on a page, none twice — add a row to ATTRS without a group and this fails by name`);
+
+    // An ability dial is a fact about ONE hull. The shop already refuses to sell a
+    // Null Skin to a Bulwark and the tooltip already says "Nothing on this hull";
+    // a stats page that lists veilRecover on a Bulwark contradicts both of them
+    // one tab away, and a page that hides anchorDrag from a Bulwark is the
+    // incompleteness being complained about, one row further on.
+    const bul = keysOn('bulwark'), kes = keysOn('kestrel'), hau = page('hauler');
+    check('an ability dial is only on the page of the hull that has that ability',
+      bul.includes('anchorSwell') && !bul.some(k => k.startsWith('veil'))
+      && kes.includes('veilDepth') && !kes.some(k => k.startsWith('anchor')),
+      'a Bulwark reads Anchor swell and Anchor drag and no Veil at all; a Kestrel the other way round');
+    check('and the hull with no ability says so rather than showing nothing',
+      hau.some(r => r.header && /FOURTH SYSTEM/.test(r.label) && /No system of its own/.test(r.note ?? '')),
+      'an absent heading reads as a page that broke; the Hauler is a ship without one, which is different');
+
+    // Formatting. Every one of these printed wrong before the fourteen arrived, and
+    // eleven whole numbers is why nobody noticed.
+    check('a share reads as a share and not as 0.0179',
+      fmt('shieldRegen', 0.0179) === '1.79%/s' && fmt('sustain', 0.33) === '33%'
+      && /^56s to refill/.test(hintOf('shieldRegen', 0.0179) ?? ''),
+      `shield regen ${fmt('shieldRegen', 0.0179)} — "${hintOf('shieldRegen', 0.0179)}" — ` +
+      'the page printed "0.0%" and the seconds are the number a pilot actually wants');
+    check('a multiple reads as a multiple',
+      fmt('escort', 1) === 'x1.00' && fmt('anchorSwell', 3) === 'x3.00',
+      `escort bonus ${fmt('escort', 1)}, anchor swell ${fmt('anchorSwell', 3)} — the unit ` +
+      'was appended after a rounded number, so they read "1x" and "3x"');
+    check('nothing on the page is rounded into a different number',
+      fmt('fireRate', 1.2) === '1.2/s' && fmt('signature', 5.5) === '5.5s'
+      && fmt('cohesion', 3) === '3 drones' && fmt('hull', 10792.4) === '10,792',
+      `${fmt('fireRate', 1.2)}  ${fmt('signature', 5.5)}  ${fmt('cohesion', 3)}  ${fmt('hull', 10792.4)} — ` +
+      'Math.round() made those 1, 6, 3 and 10,792');
+    // The sweep, so a new attribute cannot arrive with a shape nothing formats.
+    const vanished = want.filter(k => {
+      const v = ATTRS[k]?.dflt ?? DERIVED[k]?.dflt ?? 0;
+      return v !== 0 && /^[0x]*(\.0+)?%?$/.test(fmt(k, v).replace(/[,\/a-z ]/g, ''));
+    });
+    check('no attribute at its shipped setting prints as zero', vanished.length === 0,
+      vanished.length ? vanished.map(k => `${k} -> ${fmt(k, ATTRS[k]?.dflt)}`).join(', ')
+                      : `all ${want.length} of them print as themselves`);
+
+    check('a stat that is better low reads as an improvement when it falls',
+      improves('signature', 5.5, 2.2) === true && improves('anchorDrag', 0.8, 0.32) === true
+      && improves('hull', 1900, 950) === false && improves('hull', 1900, 1900) === null,
+      'the page coloured by direction, so a Null Skin halving your signature drew in the colour it uses for a penalty');
+
+    const longest = Math.max(...Object.keys(HULLS).flatMap(h => page(h)).map(r => (r.hint ?? '').length));
+    check('every sentence saying what a number means fits beside its label',
+      longest <= HINT_COLS,
+      `longest is ${longest} of ${HINT_COLS} columns — the same budget rule as TIP_COLS, ` +
+      'and for the same reason: a line that runs out of the frame is no line');
+
+    // Twice as many rows plus eight headings, so the scroll has to still reach the
+    // bottom of it. Measured at every window size the panel is laid out for.
+    let short = [], loose = [];
+    for (const [W, H] of sizes) {
+      const L = bayLayout(W, H, { tab: 'stats', hull: 'bulwark', fit: FIT, escort: [],
+                                  formation: 'line', mask: 0, scroll: 1e6 });
+      const last = L.stats.at(-1), floor = L.body.y + L.body.h;
+      if (!last || last.key !== 'anchorDrag' || last.r.y + last.r.h > floor + 0.5) short.push(`${W}x${H}`);
+      if (L.bar && Math.abs((L.bar.y + L.bar.h) - floor) > 0.5) loose.push(`${W}x${H}`);
+    }
+    check('the stats page still scrolls all the way to its last row', short.length === 0 && loose.length === 0,
+      short.length ? `never reaches the bottom at ${short.join(' ')}`
+      : loose.length ? `the bar does not bottom out at ${loose.join(' ')}`
+      : (() => { const L = bayLayout(1600, 900, { tab: 'stats', hull: 'bulwark', fit: FIT,
+                   escort: [], formation: 'line', mask: 0, scroll: 0 });
+                 return `${L.scroll.span}px of page in ${Math.round(L.room)}px of window, ` +
+                        `${Math.round(L.scroll.max)}px of scroll, and the bar bottoms out flush`; })());
+
+    const L = bayLayout(1600, 900, { tab: 'stats', hull: 'vanguard', fit: FIT,
       escort: [], formation: 'line', mask: 0, scroll: 0 });
-    check('the stats page lists every attribute worth reading, not only the ones something changed',
-      (L.stats ?? []).length > 0 && L.stats.length + (L.scroll?.max ? 1 : 0) >= Math.min(SHOWN.length, 6),
-      `${L.stats.length} of ${SHOWN.length} attributes on screen, ${L.scroll.max}px to scroll — ` +
-      'a stat nothing touched still gets a line, or its absence reads as "this ship has no cargo hold"');
+    const heads = page('vanguard').filter(r => r.header).length;
+    check('the stats page lists every attribute, not only the ones something changed',
+      (L.stats ?? []).length > 0 && page('vanguard').length === keysOn('vanguard').length + heads,
+      `${keysOn('vanguard').length} attributes under ${heads} headings, ${L.stats.length} on screen at once, ` +
+      `${Math.round(L.scroll.max)}px to scroll — a stat nothing touched still gets a line, ` +
+      'or its absence reads as "this ship has no cargo hold"');
     check('and every one of its rows is inside the window it scrolls behind',
       L.stats.every(r => r.r.x >= L.body.x && r.r.x + r.r.w <= L.body.x + L.body.w),
       'vertically they overhang and the client clips, the same as the threat file');
+    check('and the sentences drop out before they run under the numbers',
+      hintRoom(bayLayout(1600, 900, { tab: 'stats' }).body.w)
+      && !hintRoom(bayLayout(760, 540, { tab: 'stats' }).body.w),
+      'a 940px page carries them; a 670px one is every number it was, without the prose');
   }
 
   check('no shelf that sells anything is ever empty', empty === 0,

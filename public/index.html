@@ -8,7 +8,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
-import { LAYER_NAME, STAT_STEP } from '/shared/breakdown.js';
+import { LAYER_NAME, STAT_STEP, fmt as statFmt, improves, VALUE_AT, LABEL_PX } from '/shared/breakdown.js';
 import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
 import { unpackLab } from '/shared/net.js';
@@ -1998,21 +1998,55 @@ function drawBay() {
   // they are applied, because a technology multiplies what the equipment added and
   // showing them the other way round makes the technology look smaller than it is.
   if (bayTab === 'stats') {
+    // GOOD and BAD, not up and down. Six of the twenty-five attributes are
+    // better-low — signature, regen delay, anchor drag — and colouring by
+    // direction drew every one of their improvements as a penalty. `improves`
+    // reads ATTRS.better, which is where the game already says which way is up.
+    const tone = (key, from, to) => { const ok = improves(key, from, to);
+                                      return ok === null ? '#66748c' : ok ? '#7de08a' : '#e0a53f'; };
     g.save();
     g.beginPath(); g.rect(G.body.x, G.body.y, G.body.w, G.body.h); g.clip();
     for (const row of G.stats ?? []) {
       const r = row.r;
-      const val = v => row.pct ? `${(v * 100).toFixed(1)}%` : Math.round(v).toLocaleString('en-US');
+      // Every number on this page goes through statFmt. It was `Math.round(v)`
+      // here, which was survivable while the page listed eleven whole numbers and
+      // is not now: it printed a 1.2/s rate of fire as "1", a 33% free output as
+      // "0" and a 1.79%/s shield share as "0.0%".
+      const val = v => statFmt(row.key, v);
+
+      // A section heading. Eight of them, because twenty-five rows in one column
+      // is the wall that hid fourteen of them for a month.
+      if (row.header) {
+        g.font = 'bold 11px ui-monospace, monospace';
+        g.fillStyle = row.colour ?? '#8ea3bd';
+        g.fillText(row.label, r.x + 4, r.y + 20);
+        if (row.note) {
+          g.font = '10px ui-monospace, monospace'; g.fillStyle = '#5b6b85';
+          g.fillText(row.note, r.x + 4 + LABEL_PX, r.y + 20);
+        }
+        g.strokeStyle = '#2c3d55'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(r.x, r.y + 26.5); g.lineTo(r.x + r.w, r.y + 26.5); g.stroke();
+        continue;
+      }
+
       g.font = '12px ui-monospace, monospace';
-      g.fillStyle = row.touched ? '#cfe4ff' : '#66748c';
+      g.fillStyle = row.touched ? '#cfe4ff' : '#8ea3bd';
       g.fillText(row.label, r.x + 4, r.y + 16);
+      // What the number MEANS, where the number alone does not say. Dropped rather
+      // than crammed when the panel is too narrow to hold it beside the label —
+      // G.hints is the geometry's call, not this file's.
+      if (G.hints && row.hint) {
+        g.font = '10px ui-monospace, monospace'; g.fillStyle = '#5b6b85';
+        g.fillText(row.hint, r.x + 4 + LABEL_PX, r.y + 16);
+      }
       g.textAlign = 'right';
       // Where it started and where it ended, side by side, because a final number
       // on its own is exactly what this page exists to stop being the only thing.
       g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
-      g.fillText(val(row.base), r.x + r.w * 0.62, r.y + 16);
-      g.fillStyle = row.touched ? '#7de08a' : '#66748c'; g.font = 'bold 12px ui-monospace, monospace';
-      g.fillText(val(row.final) + (row.unit && !row.pct ? row.unit : ''), r.x + r.w - 8, r.y + 16);
+      g.fillText(val(row.base), r.x + r.w * VALUE_AT, r.y + 16);
+      g.fillStyle = row.touched ? tone(row.key, row.base, row.final) : '#8ea3bd';
+      g.font = 'bold 12px ui-monospace, monospace';
+      g.fillText(val(row.final), r.x + r.w - 8, r.y + 16);
       g.textAlign = 'left';
       g.strokeStyle = '#1d2b3d'; g.lineWidth = 1;
       g.beginPath(); g.moveTo(r.x, r.y + 24.5); g.lineTo(r.x + r.w, r.y + 24.5); g.stroke();
@@ -2020,15 +2054,14 @@ function drawBay() {
       let ly = r.y + 24;
       for (const st of row.steps) {
         ly += STAT_STEP;
-        const up = st.to > st.from;
         g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
         g.fillText('   ' + LAYER_NAME[st.layer], r.x + 4, ly);
         g.textAlign = 'right';
-        g.fillStyle = up ? '#7de08a' : '#e0a53f';
+        g.fillStyle = tone(row.key, st.from, st.to);
         g.fillText(`${val(st.from)} \u2192 ${val(st.to)}`, r.x + r.w - 8, ly);
         // The multiple, which is the part you cannot do in your head.
         g.fillStyle = '#4a5568';
-        g.fillText(st.from ? `x${(st.to / st.from).toFixed(2)}` : '', r.x + r.w * 0.62, ly);
+        g.fillText(st.from ? `x${(st.to / st.from).toFixed(2)}` : '', r.x + r.w * VALUE_AT, ly);
         g.textAlign = 'left';
       }
     }
@@ -2059,7 +2092,12 @@ function drawBay() {
     // page scrolls by pixels over rows of different heights, so it has no such
     // number and printed "1-NaN of undefined" until this asked.
     g.fillText(Number.isFinite(G.scroll?.total)
-      ? `${G.scroll.at + 1}-${Math.min(G.scroll.total, G.scroll.at + G.scroll.per)} of ${G.scroll.total}  ·  scroll`
+      ? `${G.scroll.first + 1}-${Math.min(G.scroll.total, G.scroll.first + G.scroll.per)} of ${G.scroll.total}  ·  scroll`
+      // The stats page has no row count to quote, and at twelve hundred pixels
+      // under eight headings the heading you are reading under has scrolled off
+      // the top. So it names the section instead — bayLayout works out which one
+      // the window is inside, the same as it works out every other rectangle here.
+      : G.scroll?.group ? `${G.scroll.group}  ·  ${G.scroll.pct}%  ·  scroll`
       : 'scroll',
                G.bar.track.x - 8, G.panel.y + G.panel.h - 16);
     g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';

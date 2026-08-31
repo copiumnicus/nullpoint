@@ -17,7 +17,7 @@ import { AMMO_KEYS } from './ammo.js';
 import { KIT_KEYS } from './repair.js';
 import { DEVICE_KEYS } from './devices.js';
 
-import { rowsOf as statRows, rowHeight } from './breakdown.js';
+import { rowsOf as statRows, rowHeight, hintRoom } from './breakdown.js';
 
 import { rowsIn, stackIn, barIn, spanOf, heightOf } from './scroll.js';
 
@@ -215,8 +215,25 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     out.stats = stackIn({ x: sX, top, room, w: sW, heights, at })
       .map(hit => ({ ...rows[hit.i], ...hit }));
     out.body = { x: sX, y: top, w: sW, h: room };
-    out.scroll = { at, max: spanOf(span, room), span };
+    // Which section the top of the window is inside, and how far down the page you
+    // are. The other tabs put "3-9 of 14" in the footer; this one cannot, because
+    // its rows are different heights and there is no row count to quote. It went
+    // out as the bare word "scroll" — which on eleven rows was fine and on twenty
+    // five under eight headings is a page you are lost on, since the heading you
+    // are reading under has already scrolled off the top.
+    let group = null, gy = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].header && gy <= at + 1) group = rows[i].label;
+      gy += heights[i];
+    }
+    const max = spanOf(span, room);
+    out.scroll = { at, max, span, group, pct: max > 0 ? Math.round((at / max) * 100) : 100 };
     out.bar = barIn({ x: sX + sW + 6, top, room, content: span, at });
+    // Whether there is room beside the label for the sentence that says what a
+    // stat MEANS. Decided here rather than in the client so the client cannot draw
+    // one the geometry has no room for — the same reason every rectangle on this
+    // panel is decided here.
+    out.hints = hintRoom(sW);
     return out;
   }
 
@@ -229,7 +246,14 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     out.store = rowsIn({ x: iX, top, room, w: iW, n: items.length, rowH: STORE_ROW, at, gap: 8 })
       .map(hit => ({ ...items[hit.i], ...hit }));
     out.body = { x: iX, y: top, w: iW, h: room };
-    out.scroll = { at, max: spanOf(span, room), span, total: items.length };
+    out.scroll = { at, max: spanOf(span, room), span, total: items.length,
+                   // The footer reads "3-9 of 14", a count of ROWS, and `at` has been
+                   // PIXELS since everything moved onto shared/scroll.js — so it printed
+                   // the pixel offset as a row number and the store claimed "417-423 of
+                   // 14". The conversion is a shared rule for the same reason every other
+                   // rectangle in this file is: the client only draws what it is handed.
+                   first: Math.round(at / STORE_ROW),
+                   per: Math.max(1, Math.floor(room / STORE_ROW)) };
     out.bar = barIn({ x: iX + iW + 6, top, room, content: span, at });
     return out;
   }
@@ -253,7 +277,14 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
   out.body = { x: iX, y: top, w: iW, h: room };
   // Only when there is something below the fold, so a short shelf grows no
   // control it does not need.
-  out.scroll = { at, max: spanOf(span, room), span, total: items.length };
+  out.scroll = { at, max: spanOf(span, room), span, total: items.length,
+                 // The footer reads "3-9 of 14", a count of ROWS, and `at` has been
+                 // PIXELS since everything moved onto shared/scroll.js — so it printed
+                 // the pixel offset as a row number and the store claimed "417-423 of
+                 // 14". The conversion is a shared rule for the same reason every other
+                 // rectangle in this file is: the client only draws what it is handed.
+                 first: Math.round(at / STORE_ROW),
+                 per: Math.max(1, Math.floor(room / STORE_ROW)) };
   out.bar = barIn({ x: iX + iW + 6, top, room, content: span, at });
   return out;
 }

@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.56';
+export const VERSION = '0.57';
 
 export const PATCHES = [
+  { v: '0.57', notes: [
+    'The STATS page shows every number on your ship, not the eleven it used to',
+    'Weapon range, capacitor, rockets, the reactor and your hull’s own system are all on it',
+    'Grouped under headings, each row saying in a line what the number means',
+    'Shield regen reads 1.79%/s and "56s to refill" instead of 0.0%',
+    'The shop footer counts rows again — it had started quoting how far it scrolled',
+  ] },
   { v: '0.56', notes: [
     'Everything that scrolls now scrolls the way the threat file does',
     'The shop, the locker, the stats page and this changelog move by pixels, eased',

@@ -18,7 +18,7 @@ import { launcherRoom, MAX_LAUNCHERS } from './rockets.js';
 import { AMMO, NEEDS, bestTierFor } from './ammo.js';
 import { KITS, KIT_QUIET } from './repair.js';
 import { DEVICES } from './devices.js';
-import { ABILITIES, VEIL_DEPTH, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_REACH } from './ability.js';
+import { ABILITIES, attrAbility, VEIL_DEPTH, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_REACH } from './ability.js';
 import { SPENDS, PLATE_BACK, FOUNDRY_QUIET, SHEAR_GRACE, LOUD } from './tech.js';
 
 const round = v => Math.abs(v) >= 100 ? Math.round(v)
@@ -76,10 +76,11 @@ export const modSummary = mods => (mods ?? [])
 // is only read by the hull that HAS that ability, so a Veil technology bolted to a
 // Bulwark is a purchase that does nothing at all — and the numbers alone do not
 // say so, because they move on every hull.
-const abilityOfAttr = attr => attr.startsWith('veil') ? 'veil'
-                            : attr.startsWith('anchor') ? 'anchor'
-                            : attr.startsWith('lock') ? 'lock' : null;
-const tunes = e => [...new Set((e.mods ?? []).map(([a]) => abilityOfAttr(a)).filter(Boolean))][0] ?? null;
+//
+// `attrAbility` was a private copy of this test here and another in gear.js; the
+// stats page needed a third, which is when it moved to ability.js beside the
+// dials it names.
+const tunes = e => [...new Set((e.mods ?? []).map(([a]) => attrAbility(a)).filter(Boolean))][0] ?? null;
 const flyerOf = ability => Object.values(HULLS).find(h => h.ability === ability);
 
 // Where this item would actually go. Most things join a rack; a collector rig
