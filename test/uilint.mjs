@@ -37,11 +37,15 @@
 //         height of the line below — that is crowding, not collision. Anything
 //         sharing more than a third of its height is two labels on one line.
 //
-// None of them is a tuned number: over a clean tree the whole suite is silent at
-// COVER anywhere in 0.50..0.82, WIDE 1..4, DEEP 0.25..0.5, ASCENT 0.70..0.75 and
-// a monospace advance of 0.58..0.62 — a +/-3% error in the font metric. Above
-// COVER 0.82 it stops believing the star chart's own 0.86 wash and reports what
-// is underneath it, which is where the number comes from and not a coincidence.
+// None of them is a tuned number. Over a clean tree, swept in every panel, every
+// state and every window size, the whole suite is silent at COVER 0.50..0.82,
+// WIDE 1..4, DEEP 0.35..0.5, EDGE 0.5..3, APART 0.5..1.0, STACK 0.1..0.25 and a
+// monospace advance of 0.58..0.62 — a +/-3% error in the font metric. Each one
+// starts firing for a reason that is the reason it exists: COVER 0.85 stops
+// believing the star chart's own 0.86 wash, DEEP 0.25 calls a 2.4px sliver under
+// a floating picker a collision instead of crowding, APART 1.1 catches the sector
+// line that is set to exactly one character, and STACK 0.3 catches every wrapped
+// paragraph in the game, whose leading is 0.28em.
 export const COVER = +(process.env.COVER || 0.80), WIDE = +(process.env.WIDE || 2.0),
              DEEP = +(process.env.DEEP || 0.35), VEIL = 0.5;
 
@@ -288,11 +292,21 @@ export function crowding(all, W = Infinity, H = Infinity) {
     const A = texts[i];
     for (let j = i + 1; j < texts.length; j++) {
       const B = texts[j];
-      // Same layout, or no layout at all. A tooltip note that floats a fifth of a
-      // pixel above the shop row underneath it is not crowding, it is two layers
-      // — and unfiltered that was thirteen of the sixteen tightest pairs in the
-      // game. Rule two is what catches a floating thing landing on a control.
-      if (mine.get(A) !== mine.get(B)) continue;
+      // One layout, not two layers. A tooltip note that floats a fifth of a pixel
+      // above the shop row underneath it is not crowding — unfiltered that was
+      // thirteen of the sixteen tightest pairs in the game.
+      //
+      // "Same frame" was the first cut of this and it was too tight: two labels in
+      // ADJACENT ROWS of one list are in different frames and were never compared,
+      // so vertical crowding down a list was invisible. Siblings is the honest
+      // test — same frame, or two frames that do not overlap each other. Two boxes
+      // that overlap are stacked, which is a tooltip over a row; two that do not
+      // are side by side in one layout, which is two rows of a list. A label with
+      // no frame at all is on the bare screen, and only pairs with another bare
+      // one: that is the whole HUD, which is where a crowded readout is most
+      // likely to be looked at.
+      const fa = mine.get(A), fb = mine.get(B);
+      if (fa !== fb && !(fa && fb && !inter(fa, fb))) continue;
       if (inter(A, B)) continue;                   // sharing ink is rule one's job
       const dy = span(A.y, A.y + A.h, B.y, B.y + B.h);
       const dx = span(A.x, A.x + A.w, B.x, B.x + B.w);

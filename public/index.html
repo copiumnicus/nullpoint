@@ -34,7 +34,8 @@ import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale, escortScale
 import { SYSTEMS, BOOST, ceilingOf } from '/shared/power.js';
 import { ABILITIES, SPECIAL, DRUMFIRE_GAIN } from '/shared/ability.js';
 import { chartLayout } from '/shared/chart.js';
-import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
+import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt,
+         statStrip, STAT_KEYS } from '/shared/hangar.js';
 import { tipFor, modSummary } from '/shared/tooltip.js';
 import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
 import { outlineFor, accentFor, canopyFor } from '/shared/silhouette.js';
@@ -2019,6 +2020,10 @@ function drawTip(tip, at) {
 
 function drawBay() {
   const G = bayGeom(), P = G.panel;
+  // Where the scroll counter along the bottom starts, once it has been drawn.
+  // The hint on the same line stops short of it. Infinity when there is no
+  // scrollbar, which is the honest answer: the whole line is the hint's.
+  let footLeft = Infinity;
   // Both sides researched. The strip is the row you watch WHILE you click from one
   // hull to another, and it never showed the ladder — which is exactly why research
   // looked like it stopped working on a hull swap. `bare` has to be researched too,
@@ -2068,20 +2073,32 @@ function drawBay() {
   g.fillText(hints.find(s => g.measureText(s).width <= room) ?? hints[hints.length - 1],
              G.hint.x, G.hint.y);
 
-  // a live stat line, so the effect of a click is visible immediately
-  let sx = P.x + 20;
-  for (const k of ['hull', 'shield', 'damage', 'speed', 'capacitor']) {
-    const d = stats[k] - bare[k];
-    g.fillStyle = '#66748c'; g.fillText(ATTRS[k].label.toUpperCase(), sx, P.y + 62);
-    g.fillStyle = '#cfe4ff'; g.font = '13px ui-monospace, monospace';
-    g.fillText(String(Math.round(stats[k])), sx, P.y + 78);
-    if (Math.abs(d) > 0.01) {
-      g.fillStyle = (ATTRS[k].better === 'high') === (d > 0) ? '#7de08a' : '#e07a7a';
-      g.font = '10px ui-monospace, monospace';
-      g.fillText(`${d > 0 ? '+' : ''}${Math.round(d)}`, sx + 44, P.y + 78);
+  // A live stat line, so the effect of a click is visible immediately. The
+  // columns come out of statStrip, measured against the widest number this ship
+  // is going to print — the change used to sit at a flat 44px from the value and
+  // a six-digit shield ran straight through it.
+  {
+    const val = k => String(Math.round(stats[k]));
+    const del = k => `${stats[k] - bare[k] > 0 ? '+' : ''}${Math.round(stats[k] - bare[k])}`;
+    g.font = '13px ui-monospace, monospace';
+    const valueW = Math.max(...STAT_KEYS.map(k => g.measureText(val(k)).width));
+    const gap = g.measureText(' ').width;
+    g.font = '10px ui-monospace, monospace';
+    const deltaW = Math.max(...STAT_KEYS.map(k => g.measureText(del(k)).width));
+    const S = statStrip(G, valueW, deltaW, gap);
+    for (const col of S.cols) {
+      const k = col.k, d = stats[k] - bare[k];
+      g.font = '11px ui-monospace, monospace';
+      g.fillStyle = '#66748c'; g.fillText(ATTRS[k].label.toUpperCase(), col.x, S.label);
+      g.fillStyle = '#cfe4ff'; g.font = '13px ui-monospace, monospace';
+      g.fillText(val(k), col.x, S.value);
+      if (Math.abs(d) > 0.01) {
+        g.fillStyle = (ATTRS[k].better === 'high') === (d > 0) ? '#7de08a' : '#e07a7a';
+        g.font = '10px ui-monospace, monospace';
+        g.fillText(del(k), col.delta, S.value);
+      }
     }
     g.font = '11px ui-monospace, monospace';
-    sx += G.colW * 0.62;
   }
 
   const pct = v => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%`;
@@ -2344,15 +2361,17 @@ function drawBay() {
     // "3-9 of 14" is a ROW count and only the row-snapped tabs have one. The stats
     // page scrolls by pixels over rows of different heights, so it has no such
     // number and printed "1-NaN of undefined" until this asked.
-    g.fillText(Number.isFinite(G.scroll?.total)
+    const counter = Number.isFinite(G.scroll?.total)
       ? `${G.scroll.first + 1}-${Math.min(G.scroll.total, G.scroll.first + G.scroll.per)} of ${G.scroll.total}  ·  scroll`
       // The stats page has no row count to quote, and at twelve hundred pixels
       // under eight headings the heading you are reading under has scrolled off
       // the top. So it names the section instead — bayLayout works out which one
       // the window is inside, the same as it works out every other rectangle here.
       : G.scroll?.group ? `${G.scroll.group}  ·  ${G.scroll.pct}%  ·  scroll`
-      : 'scroll',
-               G.bar.track.x - 8, G.panel.y + G.panel.h - 16);
+      : 'scroll';
+    g.fillText(counter, G.bar.track.x - 8, G.panel.y + G.panel.h - 16);
+    // The hint along the bottom shares this line, so it is told where this ends.
+    footLeft = G.bar.track.x - 8 - g.measureText(counter).width;
     g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   }
 
@@ -2465,8 +2484,16 @@ function drawBay() {
   }
   if (G.body) g.restore();
 
+  // Shares its line with the scroll counter on the right. The full sentence is
+  // 561px and an 820x560 panel leaves 544px before the counter starts, so on a
+  // small window it was printed through it.
   g.fillStyle = '#5b6b85';
-  g.fillText('hover for exact numbers · click to buy · fit it in the HANGAR tab · H or Esc to close',
+  const feet = ['hover for exact numbers · click to buy · fit it in the HANGAR tab · H or Esc to close',
+                'hover for numbers · click to buy · fit it in the HANGAR tab · Esc to close',
+                'click to buy · fit it in the HANGAR tab · Esc to close',
+                'click to buy · Esc to close'];
+  const footRoom = Math.min(footLeft, P.x + P.w - 20) - 10 - (P.x + 20);
+  g.fillText(feet.find(s => g.measureText(s).width <= footRoom) ?? feet[feet.length - 1],
              P.x + 20, P.y + P.h - 18);
   g.font = '12px ui-monospace, monospace';
   drawTip(tip, at ?? { x: 0, y: 0 });
@@ -5009,13 +5036,23 @@ function drawFrame(now) {
     // 12 cr/s that is forty-three seconds between visible ticks, at exactly the
     // wealth where a station exists. The whole point of the counter is that you
     // can watch it move.
+    //
+    // The line is money, rank, the rank bar and then the research nudge, and it
+    // is laid out left to right rather than at four literals (96, 152, 60, 12)
+    // that were chosen when money was five digits. A mine running into eight
+    // digits pushed "10,000,652 cr" to within 2.4px of "LVL 99", which at a 7.2px
+    // character is one word.
     const live = liveCredits();
-    g.fillText(myLab?.income
-      ? `${live.toLocaleString('en-US')} ${CURRENCY.short}`
-      : `${fmtCredits(credits)} ${CURRENCY.short}`, 16, 124);
+    const purse = myLab?.income ? `${live.toLocaleString('en-US')} ${CURRENCY.short}`
+                                : `${fmtCredits(credits)} ${CURRENCY.short}`;
+    let hx = 16;
+    g.fillText(purse, hx, 124);
+    hx += g.measureText(purse).width + SP;
     const rank = myRank ?? levelFor(myXp);
+    const lvl = `LVL ${rank.level}`;
     g.fillStyle = '#cfe4ff';
-    g.fillText(`LVL ${rank.level}`, 16 + 96, 124);
+    g.fillText(lvl, hx, 124);
+    hx += g.measureText(lvl).width + SP;
     // Nobody buys a 500,000 credit thing they have never heard of. The research
     // station is the whole back half of the game and it lives behind a key nothing
     // else mentions, so the HUD says it exists — but only once you are close enough
@@ -5027,18 +5064,26 @@ function drawFrame(now) {
       g.font = '11px ui-monospace, monospace';
       g.fillText(near ? `R — research station, ${fmtCredits(LAB_PRICE)} ${CURRENCY.short}`
                       : `R — research station at ${fmtCredits(LAB_PRICE)} ${CURRENCY.short}`,
-                 16 + 152 + 60 + 12, 124);
+                 hx + 60 + SP, 124);
       g.font = '12px ui-monospace, monospace';
     }
-    const bx = 16 + 152, bw2 = 60;
+    const bx = hx, bw2 = 60;
     g.fillStyle = '#1b222d'; g.fillRect(bx, 117, bw2, 6);
     g.fillStyle = '#8ab4e6'; g.fillRect(bx, 117, bw2 * progress(myXp), 6);
     // Its own line. It used to be drawn at exactly the point the rank readout is
     // drawn at — 16+96, 124, the same two numbers — so LVL 14 was buried under it
     // every time you docked with ore aboard, which is most of the time you dock.
+    //
+    // 22 below the money, not 18. The HUD's rows are 18px apart and its other
+    // gaps come out at 9 and 10px of clear air, but the money line carries commas
+    // — "10,066,791 cr" hangs 2.2px below its baseline — so 18 left this one 7px
+    // clear and looking tighter than everything above it. The crowding rule does
+    // not catch that and should not: its floor is a descender, and a rule that
+    // demanded every line match its neighbours' pitch would fire on every list in
+    // the game that is legitimately tighter.
     if (atDock && vol > 0) {
       g.fillStyle = COMPANIES[myCo].color;
-      g.fillText('docked — press I to stow cargo', 16, 142);
+      g.fillText('docked — press I to stow cargo', 16, 146);
     }
     // What a Shear Compensator is holding off right now. `power.cap` is the
     // capacitor as a percentage, which is exactly what shearGrace scales by — so

@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.67';
+export const VERSION = '0.68';
 
 export const PATCHES = [
+  { v: '0.68', notes: [
+    'A fully researched ship no longer prints its shield through the number beside it',
+    'The station’s stat line sizes its columns to the biggest number you can reach',
+    'Money, rank and the rank bar sit a clear character apart at eight figures',
+    'The docked prompt drops to the HUD’s own spacing instead of crowding the line above',
+  ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
     'Half again the shots at full, and your reach drops to 65% to pay for it',

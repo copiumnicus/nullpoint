@@ -2,8 +2,13 @@
 // with the chart open and closed. Any undefined field or bad colour throws.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MAPS } from '../shared/maps.js';
-import { EQUIPMENT, SLOTS } from '../shared/gear.js';
-import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
+import { EQUIPMENT, SLOTS, MAX_DRONES } from '../shared/gear.js';
+import { HULLS, slotsOf, resolve } from '../shared/ships.js';
+import { applyResearch } from '../shared/research.js';
+import { FORMATION_KEYS } from '../shared/formation.js';
+import { KIT_KEYS } from '../shared/repair.js';
+import { DEVICE_KEYS } from '../shared/devices.js';
+import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, STAT_KEYS } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
 import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu,
          promptRect, TIP_H, TIP_UP } from '../shared/ammo.js';
@@ -54,6 +59,12 @@ const COLOUR = /^(#[0-9a-f]{6}([0-9a-f]{2})?|transparent|rgba?\(\s*[\d.]+\s*,\s*
 // toward their true position and the last few digits are float noise, not a
 // difference anyone could see.
 let trace = null;
+// A panel says it was drawn by drawing its own title. The sweep below sets this
+// to the string it is expecting, and a coverage assertion fails if a panel it
+// asked for never printed one — a sweep that silently stopped opening a panel
+// would otherwise pass every rule in this file for the same reason an empty
+// panel cannot overlap itself.
+let WATCH = null;
 const r2 = v => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
 const rec = (...a) => { if (trace) trace.push(a.map(r2).join(' ')); };
 
@@ -84,7 +95,8 @@ const CTX = {
   set textBaseline(v){ T.base = v; },                              get textBaseline(){ return T.base; },
   fillRect(...a)   { num('fillRect', ...a); rec('fillRect', ...a); T.rect(...a); },
   strokeRect(...a) { num('strokeRect', ...a); rec('strokeRect', ...a); T.rect(a[0], a[1], a[2], a[3], 'strokerect'); },
-  fillText(t, x, y){ guard('fillText', t); num('fillText', x, y); rec('fillText', t, x, y); T.text(t, x, y); },
+  fillText(t, x, y){ guard('fillText', t); num('fillText', x, y); rec('fillText', t, x, y); T.text(t, x, y);
+                     if (WATCH && String(t).includes(WATCH.want)) WATCH.hit(); },
   // Every strokeText in the client is the legibility halo drawn immediately
   // before an identical fillText — never a separate label. Recording it would
   // report every haloed name as printing through itself.
@@ -2372,46 +2384,133 @@ const dismiss = () => {
     performance.now = perf;
   }
 
-  // Every panel, at every window size. This re-enters the client's own resize
-  // handler rather than re-running the file, which is why it is a dozen lines
-  // and not a rewrite — and it must stay AHEAD of the idle sign-out below,
-  // because that block signs the client out and every frame after it is a blank
-  // screen with nothing on it to collide.
+  // Every panel, in every state it can be in, at every window size. This
+  // re-enters the client's own resize handler rather than re-running the file,
+  // and it must stay AHEAD of the idle sign-out below, because that block signs
+  // the client out and every frame after it is a blank screen with nothing on it
+  // to collide.
+  //
+  // SIZES was the whole sweep for a while and it was half the job. A panel is
+  // laid out from the viewport AND from what is in it, and the pilot this drove
+  // had a thin fit and small numbers, so the station's stat strip was three
+  // characters wide on every frame the harness ever rendered. The literal it
+  // overflowed — a 44px column against a six-digit value — had been wrong the
+  // whole time and nothing here could see it.
   {
     dismiss(); frame(t += 16); frames++;
-    // A pilot with something in every panel: ore in the hold, a locker, a threat
-    // file with entries in it, research, money. An empty panel cannot overlap
-    // itself, so a sweep of empty panels proves nothing.
-    feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard',
-           fit: { weapon: ['emitter1'], generator: ['cellA'], tech: ['plating'] },
-           gear: { emitter1: 2, emitter5: 1, damper: 1 }, hulls: ['hauler', 'vanguard', 'kestrel'],
-           drones: ['emitter1', null], formation: 'wedge', formations: ['line', 'wedge'],
-           credits: 90000, ammo: { cell1: 4000, head1: 400 },
-           using: { laser: 'cell1', rocket: 'head1' }, armed: { laser: true, rocket: true } });
-    feed({ t: 'map', map: 'm1' });
-    feed({ t: 's', ships: [packShip({ id: 1, x: MAPS.m1.base.x, y: MAPS.m1.base.y, heading: 0,
-             charge: 0, co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
-             rk: 0, fix: 0, guns: 3, psys: 2, plvl: 70, lvl: 14, drones: 0, form: 0, dmask: 0,
-             vis: 2, rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, name: 'Vy' })],
-           hold: { iron: 15, platinum: 4 }, cap: 240, credits: 90000, docked: true,
-           vault: { iron: 240, nickel: 88 }, xp: 5200, rank: { level: 14, into: 300, need: 900 },
-           kills: Object.fromEntries(WILD.map((k, i) => [k, i + 1])),
-           gear: { emitter1: 2, emitter5: 1, damper: 1 }, played: 600, online: 3,
-           power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
-           shieldNow: 640, shieldMax: 1170 });
-    const panels = [[], ['h'], ['i'], ['m'], ['l'], ['o'], ['r']];
-    for (const [w, h] of SIZES) {
-      globalThis.innerWidth = w; globalThis.innerHeight = h;
-      evt('resize');
-      SIZE = `${w}x${h}`;
-      for (const keys of panels) {
-        for (const k of keys) evt('keydown', { key: k });
-        for (let i = 0; i < 3; i++) { frame(t += 16); frames++; }
-        for (const k of keys) evt('keydown', { key: k });     // the same key closes it again
-        frame(t += 16); frames++;
-        dismiss();
+
+    // The widest a number on this ship can be is not a guess and not a fixture:
+    // it is the best thing in every slot the hull has, every drone bay filled,
+    // and every rung of the ladder bought. Derived, so a new hull, a new tier or
+    // a new rung widens the test along with the game — which is the whole reason
+    // the old fixture went stale without anybody noticing.
+    const tiered = slot => Object.keys(EQUIPMENT)
+      .filter(k => EQUIPMENT[k].slot === slot)
+      .sort((a, b) => (EQUIPMENT[b].tier ?? 0) - (EQUIPMENT[a].tier ?? 0)
+                   || EQUIPMENT[b].price - EQUIPMENT[a].price);
+    const fitFor = h => { const n = slotsOf(h);
+      return { weapon: Array(n.weapon).fill(tiered('weapon')[0]),
+               generator: Array(n.generator).fill(tiered('generator')[0]),
+               tech: tiered('tech').slice(0, n.tech) }; };
+    const ALL_MODS = (1 << Object.keys(MODULES).length) - 1;
+    const ESCORT = Array(MAX_DRONES).fill(tiered('weapon')[0]);
+    const digits = h => Math.max(...STAT_KEYS.map(k => String(Math.round(
+      applyResearch(resolve(h, fitFor(h), ESCORT, 'wedge'), ALL_MODS)[k])).length));
+    // Whichever hull prints the longest number is the one worth sweeping in.
+    const RICH = Object.keys(HULLS).sort((a, b) => digits(b) - digits(a))[0];
+    const LONG_NAME = 'W'.repeat(NAME_MAX);        // the longest handle the form allows
+    const ALL_GEAR = Object.fromEntries(Object.keys(EQUIPMENT).map(k => [k, 99]));
+
+    const ship = (hull, name, extra = {}) => packShip({ id: 1, x: MAPS.m1.base.x, y: MAPS.m1.base.y,
+      heading: 0, charge: 0, co: 'm', hull, hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0,
+      fix: 0, guns: 3, psys: 2, plvl: 70, lvl: 14, drones: 0, form: 0, dmask: 0, vis: 2,
+      rig: 0, rgx: 0, rgy: 0, rgp: -1, rgf: -1, wrp: 0, name, ...extra });
+
+    // Two ends of the game and nothing in between, because the middle cannot
+    // overflow anything the ends do not. Thin proves an empty panel still draws;
+    // rich proves a full one still fits.
+    const STATES = [
+      { name: 'thin', open: () => {
+        feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'hauler',
+               fit: { weapon: [], generator: [], tech: [] }, gear: {}, hulls: ['hauler'],
+               drones: [], formation: 'line', formations: ['line'], credits: 0,
+               ammo: {}, using: {}, armed: {} });
+        feed({ t: 'map', map: 'm1' });
+        feed({ t: 's', ships: [ship('hauler', 'Ay')], hold: {}, cap: 10, credits: 0,
+               docked: true, vault: {}, xp: 0, rank: { level: 1, into: 0, need: 100 },
+               kills: {}, gear: {}, played: 0, online: 1, labs: [], claims: [],
+               power: { to: null, cap: 0, lv: {} }, shieldNow: 0, shieldMax: 1 });
+      } },
+      { name: 'rich', open: () => {
+        feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: RICH, fit: fitFor(RICH),
+               gear: ALL_GEAR, hulls: Object.keys(HULLS), drones: ESCORT,
+               formation: 'wedge', formations: FORMATION_KEYS, credits: 9_999_999,
+               ammo: Object.fromEntries(AMMO_KEYS.map(k => [k, 999_999])),
+               kits: Object.fromEntries(KIT_KEYS.map(k => [k, 99])),
+               devices: Object.fromEntries(DEVICE_KEYS.map(k => [k, 99])),
+               using: { laser: AMMO_KEYS[0], rocket: AMMO_KEYS.at(-1) },
+               armed: { laser: true, rocket: true } });
+        feed({ t: 'map', map: 'm1' });
+        feed({ t: 's', ships: [ship(RICH, LONG_NAME)],
+               hold: Object.fromEntries(Object.keys(MATERIALS).map(k => [k, 9999])),
+               cap: 99_999, credits: 9_999_999, docked: true,
+               vault: Object.fromEntries(Object.keys(MATERIALS).map(k => [k, 999_999])),
+               xp: 9_999_999, rank: { level: 99, into: 9999, need: 10_000 },
+               kills: Object.fromEntries(WILD.map(k => [k, 999_999])),
+               gear: ALL_GEAR, kits: Object.fromEntries(KIT_KEYS.map(k => [k, 99])),
+               devices: Object.fromEntries(DEVICE_KEYS.map(k => [k, 99])),
+               played: 999_999, online: 99,
+               labs: [packLab({ id: 2_000_001, x: MAPS.m1.base.x + 400, y: MAPS.m1.base.y,
+                                mods: ALL_MODS, name: LONG_NAME }, true)],
+               lab: { mods: ALL_MODS, income: 999_999 }, claims: ARENA_MODULES,
+               power: { to: 'shields', cap: 100, lv: { thrusters: 100, weapons: 100, shields: 100 } },
+               shieldNow: 999_999, shieldMax: 999_999 });
+      } },
+    ];
+
+    // Which panel was actually on screen, read off what it printed rather than
+    // off what was asked for. A sweep that silently stopped opening the research
+    // station would still have passed every rule in this file.
+    const PANELS = [
+      { keys: [],    saw: 'TAB engage' },
+      { keys: ['h'], saw: 'HANGAR' },
+      { keys: ['i'], saw: 'COMPANY HANGAR' },
+      { keys: ['m'], saw: 'KNOWN SPACE · STAR SYSTEM' },
+      { keys: ['l'], saw: 'THREAT FILE' },
+      { keys: ['o'], saw: 'MENU' },
+      { keys: ['r'], saw: 'RESEARCH STATION' },
+    ];
+    const SEEN_PANEL = new Set();
+    const shots = n => { for (let i = 0; i < n; i++) { frame(t += 16); frames++; } };
+
+    for (const st of STATES) {
+      st.open();
+      for (const [w, h] of SIZES) {
+        globalThis.innerWidth = w; globalThis.innerHeight = h;
+        evt('resize');
+        SIZE = `${w}x${h}`;
+        for (const P of PANELS) {
+          for (const k of P.keys) evt('keydown', { key: k });
+          WATCH = { want: P.saw, hit: () => SEEN_PANEL.add(`${st.name}/${P.saw}`) };
+          shots(3);
+          // The station is four tabs, not one, and only the first was ever drawn
+          // in this sweep — the stat strip that overflowed is on all four.
+          if (P.keys[0] === 'h')
+            for (const tab of bayLayout(w, h, {}).tabs) { click(tab.r); shots(2); }
+          WATCH = null;
+          for (const k of P.keys) evt('keydown', { key: k });   // the same key closes it
+          frame(t += 16); frames++;
+          dismiss();
+        }
       }
     }
+    const missing = [];
+    for (const st of STATES) for (const P of PANELS)
+      if (!SEEN_PANEL.has(`${st.name}/${P.saw}`)) missing.push(`${st.name}: ${P.saw}`);
+    if (missing.length) errs.push(`the sweep never drew ${missing.length} panel(s): ${missing.join(', ')}`);
+    else console.log(`  ok   every panel is swept in every state  — ${PANELS.length} panels x ` +
+                     `${STATES.length} states x ${SIZES.length} window sizes, each one seen drawing itself`);
+
     globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
     evt('resize'); SIZE = '1600x900';
     frame(t += 16); frames++;
