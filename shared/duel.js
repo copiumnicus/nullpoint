@@ -174,14 +174,17 @@ export const CHALLENGE_CD = 60;
 // WHAT EACH CLAUSE IS FOR, because "a pilot cannot be yanked out of X" is the whole
 // safety argument and each X is a different X:
 //
-//   docked    and this one is NOT about being interrupted, because nothing here can
-//             interrupt anybody: a challenge is a line you answer, and the fold that
-//             follows takes five seconds and dies to a single hit. It is about that
-//             fold MEANING something. A dock is a haven — nothing may shoot you
-//             inside your own ring — so a duel arranged from one is a duel whose
-//             fold can never be cancelled, which quietly removes the mechanic in the
-//             exact place it would be used most. Step outside the ring first: it is
-//             900px, and it is what makes the five seconds a real five seconds.
+//   docked    is NOT here, and it used to be. The argument was that a dock is a
+//             haven, so a fold arranged from one can never be cancelled, which
+//             removes the mechanic where it would be used most. That gets the
+//             fold's purpose backwards. Cancel-on-damage exists so a teleport
+//             cannot be an ESCAPE from a fight you are losing — you are being
+//             shot, you press a button, you are gone. A duel is the opposite
+//             journey: you are leaving somewhere safe, on purpose, to go and be
+//             shot at by somebody who agreed to it. There is nothing to escape
+//             from and nobody to escape, so an uncancellable fold out of a dock
+//             costs no one anything. It was a rule protecting a mechanic rather
+//             than protecting a pilot.
 //   inArena   a claim is a fight they are already losing money on, and a duel is a
 //             fight somebody else has already consented to. Neither is interruptible.
 //   dead      a wreck chooses when to go back out. It is not a state you answer from.
@@ -205,8 +208,6 @@ export function whyNotChallenge(who = {}, them = null, { cooling = 0, pending = 
     const say = (a, b) => (mine ? a : b);
     if (p.lobby || !p.online) return say('you are not out there yet', 'they are not flying right now');
     if (p.dead)      return say('you are a wreck — go back out first', 'they are a wreck right now');
-    if (p.docked)    return say('fly clear of your ring first — a fold inside a haven cannot be broken',
-                                'they are sitting in a haven, where a fold cannot be broken');
     if (p.duelling)  return say('you are already in a duel', 'they are already in a duel');
     if (p.inArena)   return say('you are standing on a claim', 'they are standing on a claim');
     if (p.folding)   return say('you are already folding somewhere', 'they are already folding somewhere');

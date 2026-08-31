@@ -8,9 +8,12 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.73';
+export const VERSION = '0.74';
 
 export const PATCHES = [
+  { v: '0.74', notes: [
+    'You can challenge someone to a duel from your own dock now. It was refused before',
+  ] },
   { v: '0.73', notes: [
     'The Vitriol is a Crucible now, and it pours plasma — acid never marked a deep hull',
     'White Heat is 560px wide and takes 4.5% of your ship a second. You cannot step around it',

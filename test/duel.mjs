@@ -152,8 +152,7 @@ console.log('\nconsent, and every reason it is refused');
   check('you cannot duel somebody who is not there',
     !!whyNotChallenge(ok, null), whyNotChallenge(ok, null));
   // Each of these is a different thing a pilot must not be pulled out of.
-  for (const [k, why] of [['docked', 'a haven is where a fold cannot be broken'],
-                          ['dead', 'a wreck chooses when to go back out'],
+  for (const [k, why] of [['dead', 'a wreck chooses when to go back out'],
                           ['inArena', 'a claim is a fight already being paid for'],
                           ['duelling', 'somebody else already consented to that one'],
                           ['folding', 'two destinations is a bug, not a duel'],
@@ -164,6 +163,17 @@ console.log('\nconsent, and every reason it is refused');
     check(`and you cannot start one from ${k} either`,
       !!whyNotChallenge({ ...ok, [k]: true }, them), 'the clause is symmetric');
   }
+  // REWRITTEN. This was "nobody can be pulled out of docked", on the argument that a
+  // dock is a haven so the fold could never be cancelled. That has the fold's
+  // purpose backwards: cancel-on-damage exists so a teleport cannot be an ESCAPE
+  // from a fight you are losing. A duel is the opposite journey — you are leaving
+  // somewhere safe on purpose to go and be shot at by somebody who agreed — so an
+  // uncancellable fold out of a dock costs nobody anything. It was a rule
+  // protecting a mechanic rather than protecting a pilot.
+  check('you may arrange a duel from your own dock, and fold straight out of it',
+    whyNotChallenge({ ...ok, docked: true }, { ...them, docked: true }) === null,
+    'both sitting in their own rings — there is nothing to escape and nobody to escape');
+
   check('a challenge is refusable, and refusing it buys you a minute of quiet',
     CHALLENGE_TTL === 30 && CHALLENGE_CD === 60 && CHALLENGE_CD > CHALLENGE_TTL,
     `it lapses in ${CHALLENGE_TTL}s and cannot be repeated for ${CHALLENGE_CD}s`);
@@ -410,13 +420,21 @@ await wait(1600);
     (await arenas(A)).open === 0,
     'openArena runs on arrival; a sector standing empty for five seconds is 150 ticks of nothing');
 
-  // --- 1. REFUSED FROM A HAVEN --------------------------------------------
-  A.said.length = 0;
-  A.chat('/1v1 Bly'); await wait(350);
-  check('you cannot arrange a duel from inside your own ring',
-    /fly clear|haven/.test(A.said.at(-1) ?? ''), A.said.at(-1));
-  check('and nothing was opened by the attempt',
-    (await arenas(A)).open === 0, 'a refusal that half-happened would be worse than one that did not');
+  // --- 1. FROM A HAVEN, WHICH IS ALLOWED ----------------------------------
+  // REWRITTEN. This asserted the refusal, on the argument that a fold out of a
+  // haven can never be cancelled. That reads the fold backwards: cancel-on-damage
+  // stops a teleport being an ESCAPE, and a duel is the opposite journey. Both
+  // pilots are leaving somewhere safe on purpose, to be shot at by somebody who
+  // agreed. So it is allowed, and the challenge goes out from inside the ring.
+  B.said.length = 0; A.challenged.length = 0;
+  B.chat('/1v1 Ash'); await wait(350);
+  check('a duel can be arranged from inside your own ring',
+    A.challenged.length === 1, B.said.at(-1) ?? '(nothing said)');
+  check('and still nothing is opened until somebody accepts',
+    (await arenas(A)).open === 0, 'a challenge is a line you answer, not a sector');
+  // Declined rather than flown, and BLY asks so the 60s cooldown lands on Bly>Ash.
+  // The key is directional, so Ash>Bly is still free for the duel below.
+  A.chat('/decline'); await wait(250);
 
   A.chat('/tp m2'); B.chat('/tp m2'); await wait(400);
 
