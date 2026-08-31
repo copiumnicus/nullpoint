@@ -38,8 +38,9 @@ export const LAYER_NAME = {
 //   share     a fraction of something. `pct` says so outright, and so does a
 //             ceiling of at most 1 — you cannot cap an amount at 0.9, so a `max`
 //             that low is a fraction by construction. Picks out shieldRegen,
-//             sustain, veilDepth, anchorDrag and lockReach, which is all of them.
-//   multiple  measured in 'x'. Picks out escort, anchorSwell and lockTighten,
+//             sustain, veilDepth, anchorDrag and drumfireReach, which is all of
+//             them.
+//   multiple  measured in 'x'. Picks out escort, anchorSwell and drumfireGain,
 //             which is all of them.
 //   amount    everything else: hull, seconds, pixels, rounds.
 //
@@ -120,8 +121,8 @@ const HINT = {
   veilRecover:  () => 'after a shot before the veil is whole again',
   anchorSwell:  v => `shields x${round(1 + v)} at a full anchor`,
   anchorDrag:   v => `and speed x${round(1 - v)} for it — a wall cannot leave`,
-  lockTighten:  () => 'x1.00 is a perfect return: no wobble, no dropout',
-  lockReach:    v => `locked on, your reach drops to ${Math.round((1 - v) * 100)}%`,
+  drumfireGain: v => `every gun and every rack cycles x${round(1 + v)} at a full drum`,
+  drumfireReach:v => `and your reach drops to ${Math.round((1 - v) * 100)}% for it — close in`,
 };
 export const hintOf = (key, v) => HINT[key]?.(v) ?? null;
 

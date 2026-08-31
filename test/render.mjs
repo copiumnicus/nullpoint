@@ -849,10 +849,13 @@ const dismiss = () => {
     const drew = n => whole.some(c => c.includes(n));
     if (!drew('HULL AND SHIELDS') || !drew('REACTOR') || !drew('ESCORT'))
       errs.push('the STATS tab drew its attributes in one unbroken column, or the wheel never reached the bottom of it');
-    // A Vanguard has a Lock and neither of the other two systems, which is the same
-    // rule the shop uses when it refuses to sell a Null Skin to anyone but a Kestrel.
-    else if (!drew('Lock bite') || drew('Veil depth') || drew('Anchor swell'))
-      errs.push('the STATS tab got the ability section wrong — a Vanguard has a Lock and neither of the others');
+    // A Vanguard has a Drumfire and neither of the other two systems, which is the
+    // same rule the shop uses when it refuses a Null Skin to anyone but a Kestrel.
+    // It read 'Lock bite' until the Vanguard's ability became rate of fire; the row
+    // is 'Drumfire gain' now, and the claim underneath is the one that matters —
+    // this page must show the dials of THIS hull's system and of no other.
+    else if (!drew('Drumfire gain') || drew('Veil depth') || drew('Anchor swell'))
+      errs.push('the STATS tab got the ability section wrong — a Vanguard has a Drumfire and neither of the others');
     // Every number goes through one formatter now. Before it, Math.round() drew a
     // 1.2/s rate of fire as "1", a 33% free output as "0" and a shield share as "0.0%".
     else if (!whole.some(c => /^fillText [\d.]+%\/s /.test(c)) || !whole.some(c => /^fillText 1\.2\/s /.test(c))
@@ -861,7 +864,7 @@ const dismiss = () => {
     // And where the number alone says nothing, a line beside it that does.
     else if (!drew('to refill the pool') || !drew('after leaving their radar'))
       errs.push('the STATS tab printed the unobvious stats without saying what any of them mean');
-    else console.log('stats: 8 headings reached by the wheel, the Vanguard\'s own Lock, and a line saying what each number means');
+    else console.log('stats: 8 headings reached by the wheel, the Vanguard\'s own Drumfire, and a line saying what each number means');
 
     // The HUD's own hull number, which is a different code path from the STATS tab
     // and was a bare resolve() — it printed the hull the SHOPS sold you while the
@@ -2473,4 +2476,11 @@ const dismiss = () => {
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));
 if (bad.length)  console.log('bad draw args:\n  ' + [...new Set(bad)].slice(0, 12).join('\n  '));
-console.log(errs.length === 0 && bad.length === 0 ? 'PASS' : 'FAIL');
+const green = errs.length === 0 && bad.length === 0;
+console.log(green ? 'PASS' : 'FAIL');
+// And EXIT on it. This printed FAIL and returned 0 for its whole life, and it is
+// the last link in the `&&` chain npm test is built out of — so every render
+// failure there has ever been reported a green suite. Found while renaming the
+// Vanguard's ability: the STATS tab was looking for a row called 'Lock bite' that
+// no longer exists, said so, and `npm test` exited 0 anyway.
+process.exit(green ? 0 : 1);

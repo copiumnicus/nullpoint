@@ -1,10 +1,12 @@
-import { ABILITIES, abilityOf, driveOf, cloakOf, swellOf, dragOf, lockOf, reachOf,
-         VEIL_DEPTH, VEIL_RECOVER, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_REACH, SPECIAL }
+import { ABILITIES, abilityOf, driveOf, cloakOf, swellOf, dragOf, drumOf, reachOf,
+         VEIL_DEPTH, VEIL_RECOVER, ANCHOR_SWELL, ANCHOR_DRAG,
+         DRUMFIRE_GAIN, DRUMFIRE_REACH, SPECIAL }
   from '../shared/ability.js';
-import { HULLS } from '../shared/ships.js';
-import { newShip, stepVitals, shieldMax, speedOf, rangeOf, veilOf } from '../shared/sim.js';
+import { HULLS, FIRE_RATE, resolve } from '../shared/ships.js';
+import { newShip, stepVitals, shieldMax, speedOf, rangeOf, rateOf, veilOf } from '../shared/sim.js';
 import { SYSTEMS, levelOf } from '../shared/power.js';
-import { seekerOn } from '../shared/rockets.js';
+import { seekerOn, ROCKET_RATE, launch } from '../shared/rockets.js';
+import { fire } from '../shared/combat.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -32,7 +34,7 @@ console.log('\nnone of them is a switch');
 // question — how much of my reactor is this worth right now — needs a dial.
 for (const [kind, read] of [['veil', (s, h) => 1 - cloakOf(h, s.power, s.stats, 1e9)],
                             ['anchor', (s, h) => swellOf(h, s.power, s.stats) - 1],
-                            ['lock', (s, h) => lockOf(h, s.power, s.stats)]]) {
+                            ['drumfire', (s, h) => drumOf(h, s.power, s.stats) - 1]]) {
   const hull = H(ABILITIES[kind].hull), s = ship(ABILITIES[kind].hull);
   const at = l => read(drive(s, l), hull);
   check(`${ABILITIES[kind].name} climbs with the power routed to it`,
@@ -83,29 +85,102 @@ console.log('\nAnchor: do not be hurt');
   })(), 'you never get the wall without the anchor');
 }
 
-console.log('\nLock: do not miss');
+console.log('\nDrumfire: do not let up');
+// This section used to be "Lock: do not miss" and every claim in it was about
+// closing the gap between what a seeker could see and a perfect return. The
+// ability is gone — a technology on the open shelf, the Aspect Filter, already
+// reveals a Bandit from any angle, so the one thing Lock beat was beaten on a hull
+// most people fly against the bestiary. The rules it was keeping did not go with
+// it, and they are below in their new form: it climbs with the dial, it costs
+// reach, and the two halves cannot come apart. What is deliberately NOT here any
+// more is any claim that a pilot can sharpen a seeker; the seeker claims that are
+// about STEALTH rather than about the ability moved down a line and stayed.
 {
   const v = ship('vanguard');
   const bandit = { x: 400, y: 0, heading: Math.PI, def: { stealth: true } };
   const rocket = { x: 0, y: 0, age: 0.2, seed: 3 };
-  const wob = l => seekerOn(rocket, bandit, l).wobble;
-  check('an unlocked seeker still guesses against camouflage', wob(0) > 0,
-    `${wob(0).toFixed(0)}px of aim error`);
-  check('and the guessing shrinks in proportion, not in one step',
-    Math.abs(wob(0.5) - wob(0) / 2) < 1e-9 && wob(1) === 0,
-    `${wob(0).toFixed(0)} -> ${wob(0.5).toFixed(0)} -> ${wob(1).toFixed(0)}px`);
-  check('a full lock never loses the target',
-    Array.from({ length: 50 }, () => seekerOn(rocket, bandit, 1).locked).every(Boolean));
-  check('it does nothing at all against something that was never hiding',
-    seekerOn(rocket, { x: 1, y: 1, def: {} }, 0).wobble === 0,
-    'Lock buys aim, and only aim');
-  check('but it costs reach, so you have to close',
-    Math.abs(rangeOf(drive(v, 1)) - v.stats.weaponRange * (1 - LOCK_REACH)) < 1e-9,
+  check('a seeker still guesses against camouflage, and nothing a pilot fits sharpens it',
+    seekerOn(rocket, bandit).wobble > 0 &&
+    seekerOn(rocket, { x: 1, y: 1, def: {} }).wobble === 0,
+    `${seekerOn(rocket, bandit).wobble.toFixed(0)}px of aim error against a Bandit and none against ` +
+    'anything that was never hiding — the counter is the Aspect Filter, which any hull may buy');
+
+  check('at rest a Vanguard fires exactly as fast as anything else',
+    drumOf(H('vanguard'), drive(v, 0).power, v.stats) === 1 &&
+    Math.abs(rateOf(drive(v, 0)) - FIRE_RATE) < 1e-9,
+    `${FIRE_RATE}/s, the one cycle rate every hull has`);
+  check('at a full drum everything it carries cycles half again as fast',
+    Math.abs(drumOf(H('vanguard'), drive(v, 1).power, v.stats) - (1 + DRUMFIRE_GAIN)) < 1e-9,
+    `x${(1 + DRUMFIRE_GAIN).toFixed(4)} — guns at ${rateOf(drive(v, 1)).toFixed(2)}/s against ${FIRE_RATE}/s`);
+  check('and it costs reach, so you have to close',
+    Math.abs(rangeOf(drive(v, 1)) - v.stats.weaponRange * (1 - DRUMFIRE_REACH)) < 1e-9,
     `${Math.round(rangeOf(v))} of ${v.stats.weaponRange}`);
-  check('and it cannot help with dodging, only with aiming',
-    lockOf(H('vanguard'), drive(v, 1).power, v.stats) === 1 &&
-    seekerOn(rocket, bandit, 1).wobble === 0,
-    'a Bandit that breaks the firing line still breaks it');
+
+  // The whole derivation, as one line of arithmetic. Nothing about the gain was
+  // picked: it is the reach cost read back through 1/(1 - cost), so a Vanguard at a
+  // full drum throws the same damage per metre of reach as one that never routed
+  // anything. That is what makes this a SHAPE rather than a power increase.
+  check('reach times rate is conserved: a full drum is the same damage per metre of reach',
+    Math.abs(drumOf(H('vanguard'), drive(v, 1).power, v.stats) *
+             reachOf(H('vanguard'), drive(v, 1).power, v.stats) - 1) < 1e-12,
+    `x${(1 + DRUMFIRE_GAIN).toFixed(4)} of rate against x${(1 - DRUMFIRE_REACH).toFixed(2)} of reach = ` +
+    `1.0000 exactly — 1 / (1 - ${DRUMFIRE_REACH}) is the whole derivation, and one constant does both halves`);
+  check('and the two halves cannot come apart, at any setting of the dial', (() => {
+    for (let i = 1; i <= 100; i++) {
+      const s = drive(ship('vanguard'), i / 100);
+      if (!(drumOf(H('vanguard'), s.power, s.stats) > 1 && rangeOf(s) < s.stats.weaponRange)) return false;
+    }
+    return true;
+  })(), 'you never get the cadence without the closing — both come off the same drive, the way an Anchor does');
+
+  // Measured with the real fire()/launch() loop, because the ability has to reach
+  // the CYCLE and not just the stat: combat.js read stats.fireRate in two places
+  // and rockets.js has a cooldown of its own that fireRate never touched.
+  const shots = (hull, weapon, lvl, secs) => {
+    const a = drive(newShip(0, 0, hull, { weapon, generator: [], tech: [] }, []), lvl);
+    a.heading = 0;
+    const tgt = newShip(rangeOf(a) * 0.5, 0, 'hauler', fit, []);
+    tgt.stats = { ...tgt.stats, hull: 1e12 }; tgt.hp = 1e12;
+    let bolts = 0, rockets = 0;
+    for (let t = 0; t < secs; t += 1 / 30) {
+      bolts += fire(a, tgt, 1 / 30).length;
+      rockets += launch(a, tgt, 1 / 30).length;
+    }
+    return { bolts, rockets };
+  };
+  const guns = [shots('vanguard', ['emitter3', 'emitter3', 'emitter3'], 0, 30),
+                shots('vanguard', ['emitter3', 'emitter3', 'emitter3'], 1, 30)];
+  const racks = [shots('vanguard', ['pod3', 'pod3', 'pod3', 'pod3', 'pod3'], 0, 30),
+                 shots('vanguard', ['pod3', 'pod3', 'pod3', 'pod3', 'pod3'], 1, 30)];
+  check('the guns really do fire faster, over a real thirty seconds',
+    guns[1].bolts / guns[0].bolts > 1.45 && guns[1].bolts / guns[0].bolts < 1.62,
+    `${guns[0].bolts} bolts becomes ${guns[1].bolts} — x${(guns[1].bolts / guns[0].bolts).toFixed(3)} ` +
+    `against the x${(1 + DRUMFIRE_GAIN).toFixed(3)} claimed`);
+  check('and so do the racks, which is the build this hull is actually for',
+    racks[1].rockets / racks[0].rockets > 1.45 && racks[1].rockets / racks[0].rockets < 1.62,
+    `${racks[0].rockets} rockets becomes ${racks[1].rockets} — x${(racks[1].rockets / racks[0].rockets).toFixed(3)}. ` +
+    'The Vanguard is the one hull that may fill all five hardpoints with racks, so an ability that only ' +
+    'moved fireRate would have handed its signature build nothing at all');
+  check('a volley is still a volley: more of them, never bigger ones', (() => {
+    const a = drive(newShip(0, 0, 'vanguard', { weapon: Array(5).fill('pod3'), generator: [], tech: [] }, []), 1);
+    a.heading = 0;
+    const tgt = newShip(200, 0, 'hauler', fit, []);
+    tgt.stats = { ...tgt.stats, hull: 1e12 }; tgt.hp = 1e12;
+    let biggest = 0;
+    for (let t = 0; t < 10; t += 1 / 30) {
+      const v2 = launch(a, tgt, 1 / 30);
+      biggest = Math.max(biggest, v2.length);
+    }
+    return biggest === Math.round(a.stats.rockets);
+  })(), 'the rate is applied to the rack\'s cooldown and nowhere else, so five rails stay five rails');
+
+  // No other hull may be given any of this by accident, which is the same claim the
+  // Veil block makes one section up and the reason these are classes at all.
+  check('and no other hull cycles any faster for routing to a system it does not have',
+    ['hauler', 'kestrel', 'bulwark'].every(h => {
+      const s = drive(ship(h), 1);
+      return drumOf(H(h), s.power, s.stats) === 1 && rateOf(s) === s.stats.fireRate;
+    }), 'nothing else in the game changes');
 }
 
 console.log('\nnobody gets a free lunch');

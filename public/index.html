@@ -32,7 +32,7 @@ import { levelFor, progress } from '/shared/level.js';
 import { MAX_LEN, LOG_KEEP } from '/shared/chat.js';
 import { FORMATIONS, FORMATION_KEYS, slots as formSlots, bonusScale, escortScale } from '/shared/formation.js';
 import { SYSTEMS, BOOST, ceilingOf } from '/shared/power.js';
-import { ABILITIES, SPECIAL } from '/shared/ability.js';
+import { ABILITIES, SPECIAL, DRUMFIRE_GAIN } from '/shared/ability.js';
 import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt } from '/shared/hangar.js';
 import { tipFor, modSummary } from '/shared/tooltip.js';
@@ -3738,10 +3738,10 @@ function drawFrame(now) {
     // And a better ROUND throws a differently coloured one. Knowing what is
     // loaded mattered least in the HUD and most out the window, where you can
     // see at a glance whether the expensive cells are actually going downrange.
-    // A locked bolt is orange whatever grade fired it: what is guiding it stopped
-    // being the ammunition, so the ammunition stops being what it tells you.
+    // A Lock used to override this and burn the bolt orange; Drumfire replaced it
+    // and needs nothing here, because a rate of fire tells you what it is by how
+    // many of these there are — so the grade gets the colour back to itself.
     const shot = b.foe ? '#ff7a5c'
-               : b.lk > 0 ? '#ff9a3c'
                : b.gr > 1 ? gradeColour(b.gr) : '#8fe7ff';
     g.strokeStyle = shot;
     g.globalAlpha = 0.22; g.lineWidth = thick + 3.5;
@@ -3749,7 +3749,7 @@ function drawFrame(now) {
     g.globalAlpha = 1; g.lineWidth = thick;
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     if (thick > 3.2) {                            // heavy rounds run white hot down the middle
-      g.strokeStyle = b.foe ? '#ffd6c8' : b.lk > 0 ? '#ffe0b0' : b.gr > 1 ? '#ffffff' : '#e8fbff';
+      g.strokeStyle = b.foe ? '#ffd6c8' : b.gr > 1 ? '#ffffff' : '#e8fbff';
       g.lineWidth = thick * 0.34;
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     }
@@ -4341,26 +4341,36 @@ function drawFrame(now) {
       g.restore();
     }
 
-    // A Lock that only shows on the bolt is a Lock you cannot see between volleys,
-    // and it is running — and draining — the whole time. The hull carries it.
-    const lockd = HULLS[s.hull]?.ability === 'lock' ? (s.abl ?? 0) / 100 : 0;
-    if (lockd > 0.02) {
-      const puls = 0.72 + 0.28 * Math.sin(now / 240);
+    // Drumfire between volleys. A rate of fire that only shows while the trigger is
+    // down is invisible on a ship holding fire — and it is running, and draining,
+    // the whole time. This is what the Lock's reticle used to be; the reticle went
+    // with the ability, because four ticks holding still is aim, and this is beat.
+    //
+    // The BEAT is the tell: the pulse period is the hull's own cycle sped up by the
+    // dial, so a Vanguard at a full drum visibly flickers half again as fast as one
+    // at rest. Divided rather than multiplied — a period is the reciprocal of a rate
+    // — and floored, because a period of 0 is a division that reaches the canvas.
+    const drum = HULLS[s.hull]?.ability === 'drumfire' ? (s.abl ?? 0) / 100 : 0;
+    if (drum > 0.02) {
+      const puls = 0.72 + 0.28 * Math.sin(now / Math.max(60, 240 / (1 + DRUMFIRE_GAIN * drum)));
       const grd = g.createRadialGradient(s.rx, s.ry, R * 0.5, s.rx, s.ry, R * 2.6);
-      grd.addColorStop(0, `rgba(255,154,60,${(0.30 * lockd * puls).toFixed(3)})`);
+      grd.addColorStop(0, `rgba(255,154,60,${(0.30 * drum * puls).toFixed(3)})`);
       grd.addColorStop(1, 'rgba(255,154,60,0)');
       g.fillStyle = grd;
       g.beginPath(); g.arc(s.rx, s.ry, R * 2.6, 0, 7); g.fill();
-      g.strokeStyle = `rgba(255,154,60,${(0.35 + 0.45 * lockd).toFixed(2)})`;
-      g.lineWidth = 1 + lockd;
-      g.beginPath(); g.arc(s.rx, s.ry, R * 1.5, 0, 7); g.stroke();
-      // and the reticle it is holding, so the glow reads as a lock rather than a fire
+      g.strokeStyle = `rgba(255,154,60,${(0.35 + 0.45 * drum).toFixed(2)})`;
+      g.lineWidth = 1 + drum;
+      g.beginPath(); g.arc(s.rx, s.ry, R * (1.5 + 0.12 * puls), 0, 7); g.stroke();
+      // and the muzzle heat it is running, one bar per barrel, beating outward on
+      // the same clock — so the glow reads as a cadence rather than as a fire.
       g.lineWidth = 1.4;
-      for (let i = 0; i < 4; i++) {
-        const a2 = (i / 4) * Math.PI * 2 + now / 1800;
+      for (let i = 0; i < 6; i++) {
+        const a2 = (i / 6) * Math.PI * 2 - now / 900;
+        const r0 = R * (1.9 + 0.25 * puls);
         g.beginPath();
-        g.moveTo(s.rx + Math.cos(a2) * R * 1.9, s.ry + Math.sin(a2) * R * 1.9);
-        g.lineTo(s.rx + Math.cos(a2) * R * (1.9 + 0.5 * lockd), s.ry + Math.sin(a2) * R * (1.9 + 0.5 * lockd));
+        g.moveTo(s.rx + Math.cos(a2) * r0, s.ry + Math.sin(a2) * r0);
+        g.lineTo(s.rx + Math.cos(a2) * (r0 + R * 0.6 * drum * puls),
+                 s.ry + Math.sin(a2) * (r0 + R * 0.6 * drum * puls));
         g.stroke();
       }
     }

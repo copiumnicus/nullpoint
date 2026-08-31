@@ -43,11 +43,14 @@ export const SHIP_FIELDS = ['id', 'x', 'y', 'heading', 'charge', 'co', 'hull', '
 // `gr` is the ammunition grade the shot was fired with, so a round is drawn in
 // the colour of what loaded it. Nothing on the wire says which pilot fired it,
 // and it does not need to: the grade is the thing you can see.
-// `lk` is the firing ship's Lock, 0..100. A locked bolt burns its own colour
-// whatever is loaded, because what is guiding it stopped being the ammunition.
-export const BOLT_FIELDS = ['sx', 'sy', 'ax', 'ay', 'p', 'foe', 'w', 'gr', 'lk'];
+// It carried a tenth field, `lk` — the firing ship's Lock, 0..100 — and the client
+// drew a locked bolt orange whatever grade fired it. Lock is gone, replaced by
+// Drumfire, and a rate of fire needs nothing on the bolt to be legible: the tell
+// is that there are more of them, arriving sooner. A field that is always 0 is a
+// field the next person has to work out is dead.
+export const BOLT_FIELDS = ['sx', 'sy', 'ax', 'ay', 'p', 'foe', 'w', 'gr'];
 export const packBolt   = o   => [Math.round(o.sx), Math.round(o.sy), Math.round(o.ax), Math.round(o.ay),
-                                  +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0, o.w ?? 1, o.gr ?? 0, o.lk ?? 0];
+                                  +(1 - o.t / o.ttl).toFixed(3), o.foe ? 1 : 0, o.w ?? 1, o.gr ?? 0];
 export const unpackBolt = arr => { const o = {}; for (let i = 0; i < BOLT_FIELDS.length; i++) o[BOLT_FIELDS[i]] = arr[i]; return o; };
 
 // A rocket in flight. Unlike a bolt this is a body, not a line: it has a place

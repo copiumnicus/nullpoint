@@ -18,7 +18,8 @@ import { launcherRoom, launcherCap } from './rockets.js';
 import { AMMO, NEEDS, bestTierFor } from './ammo.js';
 import { KITS, KIT_QUIET } from './repair.js';
 import { DEVICES } from './devices.js';
-import { ABILITIES, attrAbility, VEIL_DEPTH, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_REACH } from './ability.js';
+import { ABILITIES, attrAbility, VEIL_DEPTH, ANCHOR_SWELL, ANCHOR_DRAG,
+         DRUMFIRE_GAIN, DRUMFIRE_REACH } from './ability.js';
 import { SPENDS, PLATE_BACK, FOUNDRY_QUIET, SHEAR_GRACE, LOUD } from './tech.js';
 
 const round = v => Math.abs(v) >= 100 ? Math.round(v)
@@ -57,7 +58,7 @@ const abilityNote = key => {
   if (!ab) return null;
   if (key === 'veil')   return `${ab.name}: seen at ${Math.round((1 - VEIL_DEPTH) * 100)}% range, until you fire`;
   if (key === 'anchor') return `${ab.name}: shields x${1 + ANCHOR_SWELL}, speed x${round(1 - ANCHOR_DRAG)}`;
-  if (key === 'lock')   return `${ab.name}: seekers never miss, range -${Math.round(LOCK_REACH * 100)}%`;
+  if (key === 'drumfire') return `${ab.name}: rate x${round(1 + DRUMFIRE_GAIN)}, range -${Math.round(DRUMFIRE_REACH * 100)}%`;
   return `${ab.name}: routed from the reactor, like the guns`;
 };
 

@@ -277,11 +277,12 @@ export const UNPRICED = Object.freeze({
                'it means pricing a duty cycle — the same hole capacitor has.',
   anchorDrag:  'what an Anchor costs in speed. Speed is unpriced above, and this is ' +
                'a multiplier on it that only applies while the ability is running.',
-  lockTighten: 'how much of a perfect seeker return a Lock buys. Worth the fraction ' +
-               'of your rockets that would otherwise miss a stealth hull, which is a ' +
-               'property of what you are shooting at rather than of your ship.',
-  lockReach:   'what a Lock costs in reach. Kiting turns reach into effective hp at a ' +
-               'rate nothing states, which is weaponRange\'s gap seen from the ability.',
+  drumfireGain: 'what a Drumfire multiplies your cycle by. It IS damage output, but ' +
+               'only while the reactor is holding it and only on the Vanguard, so ' +
+               'pricing it means pricing a duty cycle — the same hole capacitor has.',
+  drumfireReach:'what a Drumfire costs in reach. Kiting turns reach into effective hp ' +
+               'at a rate nothing states, which is weaponRange\'s gap seen from the ' +
+               'ability.',
 });
 
 // What a launcher charges over what its damage is worth. gear.js states the

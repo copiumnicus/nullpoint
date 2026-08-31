@@ -42,11 +42,27 @@ check('flat adds apply before percentages', (() => {
   return r.shield === 1020 && Math.abs(r.hull - 1100 * 1.50) < 1e-6
       && Math.abs(r.speed - (340 - 8) * 0.80) < 1e-6;
 })());
-check('percentages sum instead of compounding', (() => {
-  // repeaters -14% speed and plating -20%: 0.66, not 0.86 x 0.80 = 0.688
-  const r = resolve('vanguard', fit({ tech: ['repeaters', 'plating'] }));
-  return Math.abs(r.speed - 340 * 0.66) < 1e-6;
-})(), 'two technologies are worth two, never less');
+// Rewritten, not deleted. It read "percentages sum instead of compounding — two
+// technologies are worth two, never less", and summing is what let Siege Cadence
+// and Rapid Cadence annihilate: each trades damage against rate, +0.60 and -0.375
+// summed to +0.225 on BOTH halves of the dps product, so the pair was a free x1.50
+// with nothing given up. The reason for summing was that three copies of a module
+// must not be worth more than three times one — and nothing that multiplies can be
+// stacked, because `mul` is technology-only and a technology is unique across the
+// whole ship. So the rule is now what the percentages actually say.
+check('percentages compound, so a trade and its opposite cancel exactly', (() => {
+  const b = HULLS.bulwark.attrs;
+  // Wing Repeaters -14% speed and Composite Plating -20%: 0.86 x 0.80 = 0.688,
+  // where summing gave 1 - 0.34 = 0.66.
+  const r = resolve('bulwark', fit({ tech: ['repeaters', 'plating'] }));
+  // And the pair this was rewritten for: x1.60 damage x x0.625 damage is exactly 1,
+  // and so is the rate, so the two cadences together are the gun you started with.
+  const c = resolve('bulwark', fit({ tech: ['siege', 'rapid'] }));
+  return Math.abs(r.speed - b.speed * 0.86 * 0.80) < 1e-6
+      && Math.abs(c.damage - b.damage) < 1e-9
+      && Math.abs(c.fireRate - FIRE_RATE) < 1e-9;
+})(), 'Siege and Rapid Cadence fitted together are x1.00 damage and x1.00 rate — summed they were ' +
+      'x1.225 on each, which is a free x1.50 of damage output for nothing');
 check('attributes are clamped to their floor', (() => {
   EQUIPMENT.__sink = { name: 'sink', slot: 'tech', price: 1, mods: [['speed', 'mul', -5]] };
   const r = resolve('vanguard', fit({ tech: ['__sink'] }));

@@ -14,7 +14,7 @@
 // racks would put thirty rockets in the air off one trigger.
 
 import { applyDamage, rangeOf, hullOf } from './sim.js';
-import { lockOf } from './ability.js';
+import { drumOf } from './ability.js';
 import { boostOf } from './power.js';
 import { EQUIPMENT, MAX_LAUNCHERS } from './gear.js';
 import { slotsOf } from './ships.js';
@@ -61,20 +61,25 @@ export const ROCKET_R     = 40;     // proximity fuse, on top of the hull's radi
 // something that was never really there.
 export const SEEK_WOBBLE = 190;    // px of aim error at the faintest return
 
-// `lock` is 0..1 from the firing ship's Lock ability and closes the gap between
-// what a seeker can actually see and a perfect return. At 1 there is no wobble and
-// no dropout; at 0.5, half of each. It cannot help with DODGING — a Bandit that
-// breaks the firing line still breaks it — only with aiming, which is the half
-// that camouflage was winning. Measured: 28% of what is fired at a Bandit lands.
-export function seekerOn(rocket, target, lock = 0) {
+// A seeker gets exactly what its own seat can see, and nothing sharpens it.
+//
+// It took a third argument — the firing ship's Lock, 0..1, which closed the gap
+// between what the seeker could see and a perfect return. Lock is gone, and the
+// parameter went with it rather than staying as a hook nothing can move: the one
+// thing it beat is already beaten by the Aspect Filter, which is a technology any
+// hull may buy, so the counter to camouflage is on the shelf where everyone can
+// reach it instead of welded to one chassis. Nothing about an UNLOCKED seeker
+// moved, and that is arithmetic rather than a measurement: every caller but a
+// driven Vanguard passed k = 0, and `k >= 1 || shownAt(...) || Math.random() < 0`
+// is exactly `shownAt(...)`. The 28% of what is fired at a Bandit that lands is
+// the same 28%.
+export function seekerOn(rocket, target) {
   if (!target?.def?.stealth) return { locked: true, wobble: 0, aspect: 1 };
   const aspect = aspectOf(target, rocket);        // from the seeker's own seat
-  const k = Math.max(0, Math.min(1, lock));
   return {
     aspect,
-    locked: k >= 1 || shownAt(aspect, (rocket.age ?? 0) * 1000, rocket.seed ?? 0) ||
-            Math.random() < k,                    // a partial lock holds partly
-    wobble: (1 - alphaAt(aspect)) * SEEK_WOBBLE * (1 - k),
+    locked: shownAt(aspect, (rocket.age ?? 0) * 1000, rocket.seed ?? 0),
+    wobble: (1 - alphaAt(aspect)) * SEEK_WOBBLE,
   };
 }
 
@@ -117,7 +122,16 @@ export function launch(a, b, dt, mag = null) {
   // share: you are firing fewer rockets, not weaker ones.
   const n = mag ? Math.min(rated, mag.n) : rated;
   if (!n) return [];
-  a.rocketCool = 1 / ROCKET_RATE;
+  // Drumfire is the rack's cadence too, not just the guns'.
+  //
+  // It has to be. The Vanguard is the one hull that may fill all five hardpoints
+  // with launchers, so a rocket Vanguard is the signature build of the hull the
+  // ability belongs to — and an ability that only touched `fireRate` would hand
+  // that build nothing at all, which is the same complaint Lock died of one hull
+  // along. The rate is applied to the RACK'S COOLDOWN and nowhere else: the volley
+  // is still `rockets` rails at `rocketVolley` shared between them, so this is
+  // volleys arriving sooner and never a bigger volley.
+  a.rocketCool = 1 / (ROCKET_RATE * drumOf(hullOf(a), a.power, a.stats));
   a.rocketFlash = LAUNCH_FLASH;          // one per volley, not one per rocket
   if (mag) mag.n -= n;
 
@@ -139,7 +153,6 @@ export function launch(a, b, dt, mag = null) {
       x: m.x, y: m.y, heading: h,
       vx: Math.cos(h) * ROCKET_SPEED, vy: Math.sin(h) * ROCKET_SPEED,
       dmg: each, target: b, foe: !!a.isAlien, t: ROCKET_TTL, age: 0, w: Math.round(each), gr: mag?.tier ?? 0,
-      lock: lockOf(hullOf(a), a.power, a.stats),
       seed: (a.rocketSeed = ((a.rocketSeed ?? 0) + 1) % 97) + i,   // each seeker blinks its own way
     });
   }
@@ -160,10 +173,7 @@ export function stepRockets(list, dt) {
     // only while the seeker can actually see it.
     r.age = (r.age ?? 0) + dt;
     const range = Math.hypot(tg.x - r.x, tg.y - r.y);
-    // The lock is stamped at launch, not read now: the seeker was calibrated when
-    // it left the rail, and a pilot cutting power mid-flight does not un-aim a
-    // rocket that has already gone.
-    const eye = seekerOn(r, tg, r.lock ?? 0);
+    const eye = seekerOn(r, tg);
     if (!eye.locked) {                              // lost it: fly the last bearing
       r.x += r.vx * dt;
       r.y += r.vy * dt;
