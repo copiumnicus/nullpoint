@@ -37,140 +37,127 @@
 //   a Lamprey drinks 2.25% of your HULL per second, past the shield, and mends
 //     itself with it. It is the clock: it makes a long fight lose itself.
 //
-// Both are shares, so both mean exactly the same thing at x1 and at x4 — and that
-// is what makes one roster correct at all three tiers. Measured over twelve spawn
-// rotations per arena, the same field leaves a competent pilot within a quarter of
-// the same percentage of their ship at every tier: 38, 36 and 45. The escalation
-// between the three is therefore NOT more hit points; it is a new question each
-// time:
+// Both are shares, so both mean exactly the same thing at x1 and at x4, and that
+// is what lets one roster be correct at three tiers whose pilots differ fourfold.
+// The escalation between the three is therefore not more hit points; it is a new
+// question each time:
 //
-//   mine1   the ring          five fields, and no lane through the middle
-//   mine2   + the clock       a tether eating hull your shields cannot cover
-//   mine3   + no way out      a Leviathan reaches 900 past your 820, so the last
-//                             third of the field cannot be declined
+//   mine1   the stream        fourteen of them, all coming, none of them declinable
+//   mine2   + the ring        somewhere you may not be, in a sector with no away
+//   mine3   + no way out      a second ring, and a Kedge that puts you back in it
 //
-// THE CHASE, AND THE REST BUTTON — the change that actually made these hard.
+// THE HUNT, which is what a claim is now.
 //
-// The complaint was "you can just kill one, run away, heal", and it was correct.
-// Two things made it work and both are now off inside a claim:
+// `hunt` is set on the sector by arenaMap() and read by noHorizon() in
+// shared/aliens.js. Everything in a claim sees you from anywhere on the map and
+// comes for you — there is no aggro radius, and `noLeash` means nothing ever
+// loses interest once it has. There is no corner to peel one off into, no
+// walking out to 2,400px and waiting, and no "I have not been noticed yet".
 //
-//   nothing breaks off.  `noLeash` in shared/aliens.js, keyed on `map.arena`. Once
-//     something in a claim has seen you it never loses interest, however far you
-//     go. It is a property of the SECTOR, so an Ironhusk is an Ironhusk everywhere
-//     and nothing in the open world changed.
-//   shields do not come back.  `dry` in stepVitals. Regeneration is 3.33% of the
-//     POOL per second (0.50 made it a share), which refills a finished ship in half
-//     a minute — so a closed field was a fight with a rest button. This is the
-//     whole of the exploit and removing it is the whole of the fix.
+// It is a property of the SECTOR and of nothing else. An Ironhusk in the open
+// world still has its 460 aggro and its 1,500 leash, and there is a test that
+// says so, because that is the thing that must never leak out of here.
 //
-// Measured on the shipped rosters, twelve rotations, share of the ship a clean
-// clear costs — which is the reading a player feels:
+// AND IT IS THE WHOLE OF THE DIFFICULTY. Measured, shipped rosters, twelve
+// rotations, the best policy the bench has: with the horizon off those claims
+// cleared 12 of 12 with two thirds of the ship left. With it on they clear 0 of
+// 12, at every tier, and the pilot dies with eight or nine of fifteen still
+// standing. Nothing about the roster changed. The chase is worth more than every
+// roster change anyone has proposed for this feature, several times over.
 //
-//            before      after      and the middle
-//   mine1     31%   ->    88%       5 of 12 dead  ->  12 of 12
-//   mine2     36%   ->    90%       0 of 12       ->  12 of 12
-//   mine3     26%   ->    90%       0 of 12       ->  11 of 12
+// SO THE ROSTER CAME DOWN, NOT UP. The clearable envelope for the pilot a tier
+// assumes, with the horizon on, is about fourteen cheap bodies — roughly 100,000
+// effective hit points throwing roughly 1,100 damage a second. Walked from below
+// so the number is a measurement and not a guess:
 //
-// x2.9, x2.5 and x3.5 against asks of x2, x3 and x5.
+//     8 Ironhusks     8 of 8 clear, 98% of the ship left
+//    12 Ironhusks     8 of 8, 52%
+//    15 Ironhusks     8 of 8, 25%          <- fifteen guns at once, and it works
+//    18 Ironhusks     0 of 8, six still standing
 //
-// WHY x5 IS NOT REACHABLE, and it is arithmetic rather than an excuse. Without
-// regeneration a pilot has exactly one shipful of hit points, so the consumed
-// reading is capped at 100% by construction: five times mine3's original 26% is
-// 130%, which is not a hard claim, it is one the assumed pilot cannot clear. The
-// ceiling on that reading is x3.8, and 90% consumed is a hair under it.
+// The claims as they shipped were 214,500 to 300,050 effective hit points. They
+// are two to three times over the envelope, which is why they read 0 of 12.
 //
-// AND WHY THE ROSTER COULD NOT MAKE UP THE DIFFERENCE. Measured, with the chase
-// and dry shields in place, against `weight` = field hit points x what the field
-// throws at the assumed pilot per second, normalised to the shipped roster:
+// WHAT DID NOT SURVIVE MEASUREMENT, and both were asked for by name:
 //
-//   x1.15 weight   7 of 8 clears      x1.9   3 of 8      x2.2   0 of 8
+//   a Thresher.  A mirror returns what you deal it, and the pilot a claim assumes
+//     carries the best gun in the shop, so the chamber is full almost at once:
+//     11,387 a bolt, which is 117% / 58% / 29% of the mine1 / mine2 / mine3 pilot
+//     PER SECOND. One Thresher alone, nothing else in the sector, kills that pilot
+//     8 of 8 at every tier. It takes 18 seconds of unbroken fire to kill and it
+//     kills you in 0.9. With the horizon on you cannot decline it and you cannot
+//     outrun it — a finished Bulwark moves at 128 and a Thresher at 200. It is not
+//     a hard hostile for a claim, it is a hostile that ends the feature.
+//   a Hive.  650,000 effective hit points — 57 seconds of unbroken fire — a 1,100
+//     reach against your 820, and twelve brooded Bandits at speed 400. One alone
+//     at mine3 is 0 of 8 with nine of its thirteen bodies still up. Its arrival
+//     curve is the most beautiful thing measured here (0.5 / 3.5 / 6.0 in range at
+//     5 / 15 / 30 seconds — a genuine stream), and it is still a wall.
 //
-// The headroom above the shipped field is about 15%, and one promoted Leviathan
-// spends 4% of it. There is no version of "twice the field" that the pilot this
-// tier assumes can clear, because `weight` is proportional to pressure x length
-// and surviving permanent contact with the whole field requires that same product
-// to FALL. Raising it and cutting it are the same knob.
+// Both are left out, and the reason is written here rather than in a commit
+// message so that the next person to reach for them reads the number first.
+
+// SPEED IS A ROSTER AXIS, and this is the rule this file did not have.
 //
-// WHAT WAS MEASURED AND REJECTED: full map-wide aggro — everything engaging from
-// anywhere at t=0, rather than merely never letting go. The seam is still here,
-// named `hunt` on the sector and read by `noHorizon`, and it is off. A finished
-// pilot moves at 128 and everything in the bestiary except a Hive moves at 150 to
-// 400, so nothing about it is a chase: the entire field arrives, sits on the pilot
-// and never leaves, which turns the field's NOMINAL pressure into its actual one.
-// At mine1 that is 31% of the ship per second — three seconds — and it measured
-// 0 of 12 at every tier on the shipped rosters, with a policy that gives ground
-// from the field's centre of mass rather than orbiting the nearest thing, and 0 of
-// 12 again with the field posted in depth out to 4,200px instead of on one ring.
-// It is not a difficulty setting, it is a wall. Posting the field deeper does not
-// help for the same reason: you cannot string out a field that is faster than you.
+// With everything coming at once, what decides the fight is not how much there is
+// but HOW FAST IT ARRIVES. A claim is a queue: the field's arrival rate has to sit
+// under the pilot's kill rate, or the queue backs up and fifteen guns are all
+// firing at once. Speed sets the arrival rate; hit points set the service time. So
+// a roster is chosen on two axes, not one, and the second is new:
 //
-// MEASURED, twelve spawn rotations per arena, each with the pilot arriving on a
-// different bearing. Two policies: `allIn` flies to the rock and holds the trigger
-// on whatever is nearest, and `kite` holds its own gun's range, keeps out of every
-// ring and weaves across the line of fire. Neither carries a repair kit, an
-// ability, power routing or a grade of ammunition above cell1, so both are a
-// FLOOR — a real pilot has all four, and 1 of 12 is what the floor policy loses at
-// mine3 without any of them. On this tree, with the chase and dry shields:
+//   fast things must be CHEAP to kill, or they clog the front of the queue
+//   slow things may be expensive, because they arrive after the front is clear
 //
-//                 hostiles     played well              all-in        fight
-//   mine1   15    12 of 12,  12% of the ship left     12 of 12 dead   100s
-//   mine2   16    10 of 12,  10%                      12 of 12        110s
-//   mine3   17    11 of 12,  10%                      11 of 12        122s
+// The bestiary makes this hard, and the shape of the difficulty is worth writing
+// down. Of the twelve hostiles, two flee (Drifter, Harrier) and are barred — see
+// MAY_NOT_FLEE — two are 2,000,000-hit-point ground-sowers from the deeps, and one
+// is a boss. What is left spans 150 to 230, which is a x1.53 spread, and exactly
+// ONE of them is cheap: the Ironhusk, at 6,500 points and 190. Everything else is
+// five to sixty seconds of fire each.
 //
-// The SHARE is what is asserted, not the figure: a hull slot count is somebody
-// else's to move this week, and the test states the claim as "costs a competent
-// pilot most of their ship" with the spread quoted.
+// So the claims cannot yet have both fifteen bodies and a wide spread of speeds.
+// The rosters below take the spread that exists — a Kedge at 150 for the tail,
+// Ironhusks at 190 for the body, a Lamprey at 200, a Leviathan at 230 for the
+// leading edge — and the arrival curve they produce is in test/arena.mjs, which
+// prints how many are in weapons range at 5, 15, 30 and 60 seconds. A flat curve
+// is fifteen guns at once and means the roster is wrong however the survival
+// numbers come out.
 //
-// So: expect to lose most of the ship at a claim, and expect flying into the
-// middle of the first one to hurt. Research quietly buys a bad pilot somewhere to
-// stand — which is what research is for. It buys forgiveness, never victory.
-//
-// AND THE MODEL IS NOT THE GAME. Flown over a real socket before the chase went
-// in, mine1 took 159 seconds to clear against the model's 92, and the pilot
-// finished at full hull where the model said 38% of the ship. The bot repositions
-// ten times a second, which dodges more bolts and lands fewer of its own — so the
-// simulation is the CONSERVATIVE reading of pressure and the OPTIMISTIC reading of
-// length. Nothing here should be quoted as what a claim feels like; it is what a
-// claim cannot be worse than.
-//
-// THE CLIFF, and it is the reason not to "just add more". Everything that scales
-// bills by the second, so an arena's LENGTH is its difficulty and it is a cliff
-// rather than a slope. Two numbers describe a field —
-//
-//   pressure  what the whole field takes per second if it all engages, as a share
-//             of the pilot: about a third of the ship a second, so three seconds
-//             of standing in the middle of it is the whole ship
-//   length    seconds of unbroken fire to clear it
-//
-// — and they are held CONSTANT across the three, not raised. Holding pressure
-// alone was tried and the third arena became unwinnable 12 times out of 12. Both
-// numbers are description rather than target, though: seven Censers and three
-// Ironhusks come to the same pressure and the same length as five and eight, and
-// play far harder, because a ring is a place you cannot stand and a gun is only a
-// number. The simulation is the authority; the arithmetic only says where to look.
-//
-// The roster is data so the next hostile is a line here rather than a rewrite.
+// THE THING THAT WOULD UNLOCK IT is a fast, cheap, non-fleeing hostile — something
+// in the 260-400 band at Drifter money. There is no such animal today. A Bandit is
+// the only fast thing a claim may use and it is TEN SECONDS of fire each, because
+// it evades and its effort multiplier is 3.8; three of them alone kill the assumed
+// pilot 8 of 8. That is the bestiary gap this design is waiting on, and it is one
+// row of data rather than a mechanic.
 
 import { ARENA_KEYS, MAP_W, MAP_H } from './maps.js';
 import { MODULES, nextOn, addMod, tiersOf, hasMod } from './research.js';
 import { farmHp, effectiveHp, threatDps, bountyFor } from './aliens.js';
 
 // --- the fields ---------------------------------------------------------------
-// Each tier is the one below it plus one thing, and the body count is 15 / 16 / 17
-// — the escalation is HARDER hostiles, not more of them. A Leviathan is 65,000 hit
-// points for 120 dps, the worst damage-per-hit-point in the bestiary; a Kedge is
-// the same 65,000 and the same 900 reach for 331, and its fix drags you back onto
-// the rock you were backing away from. Promoting one Leviathan per tier is what
-// took the upper claims' middles from survivable to lethal (see THE CHASE below):
-// all-in went 0 of 12 to 12 of 12 at mine2 and 0 to 11 at mine3 for a 4% change in
-// the field's weight.
+//
+// Each tier is the one below it plus one thing, and the body count is 14 / 15 / 17.
+// The escalation is NOT more bodies: mine2 and mine3 assume a pilot with twice and
+// four times the hit points on exactly the same gun — research buys hull and
+// shields and never damage — so a higher tier can absorb more incoming but takes
+// just as long to chew through the same hit points. The lever is therefore damage
+// per hit point, which is the ring: a Censer is 438 a second for 6,500 points, an
+// Ironhusk 72 for the same 6,500. mine2 adds one Censer, mine3 a second and the
+// Kedge that hauls you back into both of them.
+//
+// MEASURED, twelve rotations, horizon on, regeneration on:
+//
+//              bodies   played well            all-in        fight   in range @5/15/30s
+//   mine1        14     6 of 6,  7% left       cleared        41s      2.0 / 6.0 / 1.0
+//   mine2        15     6 of 6, 11% left       cleared        43s      3.0 / 7.5 / 2.0
+//   mine3        17     4 of 6,  0% left       0 of 6         61s      3.7 /11.3 / 1.7
 export const ARENAS = {
-  mine1: { roster: [['censer', 5], ['leviathan', 2], ['ironhusk', 8]],
-           asks: 'five fields, and nowhere in the middle to stand still' },
-  mine2: { roster: [['censer', 5], ['lamprey', 1], ['leviathan', 1], ['kedge', 1], ['ironhusk', 8]],
-           asks: 'a tether drinking hull the shields cannot cover, and one thing that hauls you back' },
-  mine3: { roster: [['censer', 5], ['lamprey', 1], ['leviathan', 1], ['kedge', 2], ['ironhusk', 8]],
-           asks: 'three things out-range you and two of them undo the ground you just made' },
+  mine1: { roster: [['leviathan', 1], ['lamprey', 1], ['ironhusk', 12]],
+           asks: 'fourteen of them, all of them coming, and nowhere that is not the fight' },
+  mine2: { roster: [['leviathan', 1], ['lamprey', 1], ['censer', 1], ['ironhusk', 12]],
+           asks: 'a ring you cannot be somewhere else for, because being somewhere else is over' },
+  mine3: { roster: [['leviathan', 1], ['lamprey', 1], ['censer', 2], ['kedge', 1], ['ironhusk', 12]],
+           asks: 'two rings, and something that hauls you back into them' },
 };
 
 // NOTHING IN A CLAIM MAY BE ABLE TO RUN AWAY FROM YOU, and this is the one rule

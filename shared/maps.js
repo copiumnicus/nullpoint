@@ -217,7 +217,11 @@ export function arenaMap(id) {
         // No portals, no base, no outpost — and therefore no sanctuary anywhere in
         // it, because havenKind() has nothing to find. That is the arena's whole
         // shape: you cannot hide in one, and you cannot walk out of one.
-        portals: [], arena: true, key: at.key,
+        // `hunt` is what makes a claim a hunt: everything in it sees you from anywhere
+        // on the map and comes for you, rather than waiting to be walked into. Read
+        // by noHorizon() in shared/aliens.js, and set on nothing else in the game —
+        // an Ironhusk in the open world still has an aggro radius and a leash.
+        portals: [], arena: true, hunt: true, key: at.key,
         rock: { x: MAP_W / 2, y: MAP_H / 2, r: ROCK_R } };
   TEMPLATE.set(at.key, m);
   return m;

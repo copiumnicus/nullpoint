@@ -1553,12 +1553,7 @@ setInterval(() => {
     if (isHangar(p.mapId, map, p.co, p.ship, p.berths)) {
       if (p.lastDock !== p.mapId) { p.lastDock = p.mapId; touch(p); }
     }
-    // Shields do not come back inside a claim. See stepVitals's `dry`: the loop the
-    // designer complained about — kill one, walk out, wait, walk in again — is
-    // percentage-based regeneration, not the hostiles, and this is the whole of it.
-    // Hostiles are deliberately NOT dried out: one that heals is one you stopped
-    // shooting, and the measurement in test/arena.mjs is taken with them healing.
-    stepVitals(p.ship, dt, p.docked, isArena(p.mapId));
+    stepVitals(p.ship, dt, p.docked);
     // The mine, paid out once a second rather than once a tick — see bankLab.
     //
     // Date.now(), NOT the tick's `now`. The tick runs on performance.now(), which
