@@ -15,6 +15,7 @@ import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpos
          DRIFT_MARGIN, WORLD, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
 import { havenBadge, havenLine, TONE } from '/shared/haven.js';
 import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, rungGain, partsOf,
+         applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
 import { whyNotSold, frontierOnly } from '/shared/gear.js';
@@ -1335,7 +1336,17 @@ function refreshTech() { myTech = techSet(myFit, myDrones); }
 // SHEAR_GRACE by — one constant, two ways in, and no second opinion about where
 // the wall is.
 const shearHeld = () => (hasTech(myTech, 'compensator') ? SHEAR_GRACE * (power.cap ?? 0) / 100 : 0);
-const myStats = () => resolve(myHull, myFit, escortOf(myDrones, myRig), myForm);
+// The ship the SERVER is simulating, which is not what resolve() alone returns.
+//
+// resolve() answers what the shops sold you; newShip and refit both wrap it in
+// applyResearch, so a pilot with one shield tier is flying 7,400 while this said
+// 3,700. Everything downstream inherited the error — the readout under-reported the
+// ship, and the research panel quoted "your shield 3,700 -> 7,400" for a rung that
+// actually takes 7,400 to 14,800, which is the whole reason a pilot reads that line.
+//
+// Two copies of "what is this ship", and they disagreed the moment research existed.
+const myStats = () =>
+  applyResearch(resolve(myHull, myFit, escortOf(myDrones, myRig), myForm), myLab?.mods ?? 0);
 const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, myRig), formation: myForm,
                          gear: myGear, hulls: myHulls, formations: myForms, credits,
                          ammo: myAmmo, kits: myKits, devices: myDevices });

@@ -819,6 +819,34 @@ const dismiss = () => {
   else console.log('research: a rung says what it does to YOUR ship — ' +
     rows.find(c => /^fillText your hull/.test(c)).replace(/^fillText /, '').replace(/ [\d.]+ [\d.]+$/, ''));
 
+  // The SECOND rung, which is where it went wrong. A pilot with one shield tier is
+  // flying twice what the shops sold them, and the panel quoted the shop number:
+  // "your shield 3,700 -> 7,400" for a rung that actually takes 7,400 to 14,800.
+  // The client's idea of the ship has to be the server's, or every line that reads
+  // off it is one tier behind.
+  const num = t2 => Number(String(t2).replace(/,/g, ''));
+  const quoted = (out2, what) => {
+    const hit = out2.find(c => new RegExp(`^fillText your ${what} `).test(c));
+    const m2 = hit && hit.match(/([\d,]+) -> ([\d,]+)/);
+    return m2 ? { now: num(m2[1]), then: num(m2[2]) } : null;
+  };
+  const first = quoted(rows, 'shield');
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 90_000_000, docked: false,
+         labs: [packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 1 << 8, name: 'Vy' }, true)],
+         lab: { mods: 1 << 8, income: 0 } });          // one shield tier built
+  trace = []; frame(t += 16); frames++;
+  const after = trace; trace = null;
+  const second = quoted(after, 'shield');
+  if (!first || !second)
+    errs.push('the research panel stopped quoting a shield number');
+  else if (second.now !== first.then)
+    errs.push(`after buying a shield tier the panel starts from ${second.now} ` +
+              `instead of the ${first.then} it just gave me`);
+  else if (second.then !== second.now * 2)
+    errs.push(`the second shield rung quoted ${second.now} -> ${second.then}, not double`);
+  else console.log(`research: the second rung starts where the first one left off — ` +
+    `${first.now} -> ${first.then} -> ${second.then}`);
+
   // A station that has been built on looks built on, to everyone, and a mine
   // running makes the credits counter move between server banks.
   const others = packLab({ id: 2_000_002, x: ring.x - 400, y: ring.y, mods: 7, name: 'Someone' }, false);

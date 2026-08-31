@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.44';
+export const VERSION = '0.45';
 
 export const PATCHES = [
+  { v: '0.45', notes: [
+    'Fixed: the second research rung quoted the numbers of the first one',
+    'It said "shield 3,700 -> 7,400" when you already had 7,400 and were buying 14,800',
+    'Your ship readout was a tier behind too — it showed what the shops sold you',
+  ] },
   { v: '0.44', notes: [
     'Fixed: the beacon refused to fold you to a bay it was listing right in front of you',
     'And a second hangar in that menu could not be clicked at all',
