@@ -13,21 +13,33 @@
 // along the real pipeline rather than a model of it.
 
 import { ATTRS, HULLS, resolve } from './ships.js';
-import { EQUIPMENT, emptyFit } from './gear.js';
+import { EQUIPMENT, emptyFit, MAX_DRONES } from './gear.js';
 import { escortOf } from './sim.js';
 import { applyResearch } from './research.js';
+import { bonusBays } from './quests.js';
 import { ABILITIES, attrAbility } from './ability.js';
 import { BOOST } from './power.js';
 
 // The order they are applied in, which is the order they are shown in. Equipment
 // before technologies because a technology multiplies what the equipment added —
 // showing them the other way round would make a technology look smaller than it is.
-export const LAYERS = ['hull', 'gear', 'tech', 'research'];
+// A fifth: what a pilot has EARNED, which is the one layer nothing was bought with.
+// It has to be here or the page goes back to lying about where numbers came from,
+// which is the bug it was built to fix — two extra drone berths change damage,
+// shield, cargo and the escort bonus all at once, and a pilot reading a Bulwark that
+// suddenly flies twelve drones has nowhere else to find out why.
+//
+// It is LAST because it is applied last: the berths are handed to resolve() and the
+// research ladder still multiplies what comes out, so the difference between this
+// stop and the one before it is exactly the two extra drones with the ladder already
+// on them.
+export const LAYERS = ['hull', 'gear', 'tech', 'research', 'earned'];
 export const LAYER_NAME = {
   hull:     'the ship itself',
   gear:     'guns, generators and the escort',
   tech:     'technologies',
   research: 'research station',
+  earned:   'what you have earned',
 };
 
 // --- what a number IS ---------------------------------------------------------
@@ -57,6 +69,11 @@ export const SHAPES = ['amount', 'share', 'multiple'];
 // ATTRS because nothing may fit it: it is an outcome, not a dial.
 export const DERIVED = {
   boost: { label: 'Reactor ceiling', unit: '', better: 'high', pct: true, dflt: BOOST },
+  // The other outcome resolve() hands back rather than reads off a dial: how many
+  // drones this hull will actually fly, the ones a quest earned you included. It is
+  // not in ATTRS for the same reason `boost` is not — nothing may FIT it — and it is
+  // on this page because it is the only place two extra bays can explain themselves.
+  berths: { label: 'Drone berths', unit: '', better: 'high', dflt: MAX_DRONES },
 };
 
 const meta = key => ATTRS[key] ?? DERIVED[key] ?? null;
@@ -115,6 +132,7 @@ const HINT = {
   recharge:     () => 'seconds of capacitor back per second, once you stand down',
   sustain:      () => 'the reactor gives away this much output free, forever',
   boost:        () => 'what a fully routed system is worth — generators raise it',
+  berths:       () => 'drones this hull flies at once, out of the bays you own',
   cohesion:     () => 'drones a formation needs before it pays in full',
   escort:       () => 'and how hard it pays once it does',
   veilDepth:    v => `at full veil they find you at ${Math.round((1 - v) * 100)}% of their radar`,
@@ -170,7 +188,7 @@ export const GROUPS = [
   { key: 'sight',   name: 'SENSORS',          of: ['radar', 'signature'] },
   { key: 'hold',    name: 'HOLD',             of: ['cargo'] },
   { key: 'reactor', name: 'REACTOR',          of: ['capacitor', 'recharge', 'sustain', 'boost'] },
-  { key: 'escort',  name: 'ESCORT',           of: ['cohesion', 'escort'] },
+  { key: 'escort',  name: 'ESCORT',           of: ['berths', 'cohesion', 'escort'] },
 ];
 
 export const groupOf = key =>
@@ -224,7 +242,7 @@ const only = (fit, keep) => {
 // you bought rather than in a category of their own. Technologies sit in their own
 // slot and are the only thing separated out, because they are the layer whose
 // contribution is impossible to guess.
-export function layersOf({ hull, fit, drones = [], rig = null, formation, mask = 0 } = {}) {
+export function layersOf({ hull, fit, drones = [], rig = null, formation, mask = 0, unlocked = [] } = {}) {
   // `drones` is an ARRAY of equipment keys here. bayLayout's own state carries a
   // drone COUNT under the same name, and feeding that in throws inside resolve —
   // which took the whole station panel down the first time this was wired. Guarded
@@ -235,7 +253,14 @@ export function layersOf({ hull, fit, drones = [], rig = null, formation, mask =
   const gear = resolve(hull, only(fit, ['weapon', 'generator']), escort, formation);
   const tech = resolve(hull, fit, escort, formation);
   const all  = applyResearch(tech, mask);
-  return { hull: base, gear, tech, research: all };
+  // The fifth stop is the same pipeline with the earned berths handed in, so what
+  // the layer shows is the two extra drones ACTUALLY seated rather than an estimate
+  // of what they would be worth. A pilot who has earned nothing gets the same object
+  // back and the layer contributes no rows at all — rowsOf only pushes a step when
+  // the number moved.
+  const extra = bonusBays(unlocked);
+  const earned = extra ? applyResearch(resolve(hull, fit, escort, formation, extra), mask) : all;
+  return { hull: base, gear, tech, research: all, earned };
 }
 
 // One row per attribute: where it started, what each layer did to it, and where it

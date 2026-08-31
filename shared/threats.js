@@ -16,6 +16,7 @@
 // about a pilot's week than anything else on the screen.
 
 import { ALIENS, WILD, effectiveHp, MIRROR } from './aliens.js';
+import { QUEST_H } from './quests.js';
 
 // --- what you have met --------------------------------------------------------
 //
@@ -82,7 +83,14 @@ export function dossierOf(kind, kills = {}) {
 // rather than a shop: one tall column of entries you scroll, no tabs, no buying.
 // UI geometry is a shared rule — the client draws and hit-tests from this, and a
 // row you can see and cannot reach is a bug this codebase has shipped twice.
-export const FILE_W = 620, FILE_ROW = 96, FILE_HEAD = 64, FILE_PAD = 16;
+// 96 + QUEST_H, and the row is taller because the file gained a second job. It was
+// a diary — what you have killed and how many — and four of its entries are now also
+// a GOAL, with a bar under them. A row already carries three wrapped lines of tell on
+// a narrow window; adding a bar without adding the height drew it outside its own
+// card, which is the bug this file's geometry exists to prevent. The quest block is
+// measured from the BOTTOM of the row (see questBar in shared/quests.js) so a tell
+// that wraps to two lines here and three there cannot walk into it.
+export const FILE_W = 620, FILE_ROW = 96 + QUEST_H, FILE_HEAD = 64, FILE_PAD = 16;
 
 export function filePanel(VIEW_W, VIEW_H, scroll = 0, n = 0) {
   const w = Math.min(FILE_W, VIEW_W - 40);

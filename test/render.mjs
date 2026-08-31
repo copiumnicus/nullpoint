@@ -24,6 +24,7 @@ import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
 import { NAME_MAX } from '../shared/signup.js';
 import { havenBadge, HAVEN_COPY, HAVEN_BROKEN } from '../shared/haven.js';
 import { filePanel, filedIn, dossierOf } from '../shared/threats.js';
+import { QUESTS, QUEST_KEYS, needFor, questLine } from '../shared/quests.js';
 import { labPanel, LAB_PRICE, MODULES } from '../shared/research.js';
 import { arenaId, mapOf } from '../shared/maps.js';
 import { countOf, mission, bar as missionBar, ARENA_MODULES } from '../shared/arena.js';
@@ -1006,6 +1007,53 @@ const dismiss = () => {
     errs.push('a recorded hostile did not explain what it does');
   else console.log('threats: killed hostiles are filed with their count, unkilled ones are absent — ' +
     `${filedIn({ drifter: 1, thresher: 1 }).join(', ')} of 9`);
+  // The quest line, which is the file's second job. A hostile with a quest gets a
+  // goal and a bar under its entry; one without gets nothing at all, because a row
+  // of empty furniture on the eight that have none is worse than no line.
+  {
+    const q = QUESTS[QUEST_KEYS[0]], need = needFor(q.kind);
+    feed({ t: 's', ships: [], kills: { [q.kind]: need - 1 }, unlocked: [] });
+    trace = []; frame(t += 16); frames++;
+    let out2 = trace; trace = null;
+    const shortOf = questLine({ [q.kind]: need - 1 }, q.kind, []).label;
+    if (!out2.some(c => c.includes(shortOf)))
+      errs.push(`the threat file did not say how far off "${q.name}" is`);
+    else if (out2.some(c => c.includes('EARNED')))
+      errs.push('the threat file said a quest was earned one kill short of it');
+    else {
+      // And the same entry once it is in hand. `unlocked` is what the server says,
+      // not what the tally implies — see shared/quests.js on why the two are allowed
+      // to disagree — so this drives the field rather than the count.
+      feed({ t: 's', ships: [], kills: { [q.kind]: need }, unlocked: [QUEST_KEYS[0]] });
+      trace = []; frame(t += 16); frames++;
+      out2 = trace; trace = null;
+      if (!out2.some(c => c.includes(`${q.name.toUpperCase()}  EARNED`)))
+        errs.push('a quest this pilot has finished did not read as earned');
+      else console.log(`threats: "${q.name}" reads ${need - 1}/${need} and then EARNED`);
+    }
+    // The banner. A five hour hunt landing has to say so on screen rather than
+    // arriving as a silently larger escort column.
+    //
+    // TWO CLOCKS, and this block owns one of them. say() stamps the notice with
+    // performance.now() and the draw measures its age against the timestamp the
+    // FRAME was handed — which in here is a counter that has been running since the
+    // first scene, thousands of milliseconds ahead of the real clock. The notice was
+    // four seconds stale before it was written, so it cleared itself on the frame
+    // that should have drawn it. Anchored to the frame clock for the two frames this
+    // needs, and put back afterwards, exactly as the idle-timeout block does.
+    const realNow = performance.now;
+    performance.now = () => t;
+    try {
+      feed({ t: 'unlocked', key: QUEST_KEYS[0], what: q.name, won: q.won ?? q.tell,
+             kind: q.kind, need });
+      trace = []; frame(t += 16); frames++;
+      out2 = trace; trace = null;
+    } finally { performance.now = realNow; }
+    if (!out2.some(c => c.includes(`${q.name.toUpperCase()} EARNED`)))
+      errs.push('finishing a quest drew no banner');
+    else console.log('threats: finishing one says so across the top of the screen');
+  }
+
   // It scrolls, and it comes back. The wheel was clamped at zero and not at the
   // end, so scrolling past the last entry kept counting and coming back up did
   // nothing until every phantom step had been undone — indistinguishable from a
@@ -2633,6 +2681,12 @@ const dismiss = () => {
                vault: Object.fromEntries(Object.keys(MATERIALS).map(k => [k, 999_999])),
                xp: 9_999_999, rank: { level: 99, into: 9999, need: 10_000 },
                kills: Object.fromEntries(WILD.map(k => [k, 999_999])),
+               // A pilot with every kill in the game has every quest reward that
+               // comes with them, and the sweep should draw the ship they actually
+               // fly — two more berths in the escort column and a fifth layer on the
+               // stats page. Without this the finished pilot was the only one in the
+               // suite whose file said EARNED nowhere.
+               unlocked: QUEST_KEYS,
                gear: ALL_GEAR, kits: Object.fromEntries(KIT_KEYS.map(k => [k, 99])),
                devices: Object.fromEntries(DEVICE_KEYS.map(k => [k, 99])),
                played: 999_999, online: 99,

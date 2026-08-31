@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.74';
+export const VERSION = '0.75';
 
 export const PATCHES = [
+  { v: '0.75', notes: [
+    'Kill a hundred Corsair Hives and the Brood Frame is yours: two more drone berths',
+    'Every hull flies them, they are permanent, and there is nothing to buy at the end',
+    'The threat file shows how close you are, with a bar under the hostile it counts',
+    'The stats page has a fifth layer — what you earned, beside what you bought',
+  ] },
   { v: '0.74', notes: [
     'You can challenge someone to a duel from your own dock now. It was refused before',
   ] },

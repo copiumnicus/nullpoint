@@ -25,6 +25,7 @@ import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowStat
          applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
 import { ATTRS, HULLS, resolve, slotsOf, baysOf } from '/shared/ships.js';
+import { bonusBays, questLine, questBar } from '/shared/quests.js';
 import { whyNotSold, frontierOnly } from '/shared/gear.js';
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from '/shared/scrap.js';
 import { EQUIPMENT, SLOTS, emptyFit, fitCount, dronePrice,
@@ -174,6 +175,16 @@ let labConfirm = false;
 // never written down anywhere a player could read them, and this is where they
 // are, paid for one kill at a time.
 let myKills = {}, fileOpen = false;
+// And which of the quests those kills add up to are already in hand. It is its own
+// field rather than something derived from myKills because the server is the
+// authority on it — a threshold that moved must never take a reward back off a pilot
+// mid-flight, so what you HAVE and what you have KILLED are allowed to disagree.
+// shared/quests.js argues it.
+let myUnlocked = [];
+// Every berth a quest has earned this pilot, counted once. The escort column, the
+// drone shelf, the bay readout and the stats page all need it, and four copies of
+// `bonusBays(myUnlocked)` is four places for one of them to be forgotten.
+const spareBays = () => bonusBays(myUnlocked);
 const fileScr = scroller();
 // The balance the server last told us, and when. The counter runs UP from that
 // at the rate the server also told us — it never invents money, it only shows
@@ -336,6 +347,21 @@ function drawFile(now) {
       else line = t2;
     }
     if (line) g.fillText(line, tx, at);
+
+    // What this hostile is worth working toward, if it is worth anything. Only four
+    // of the bestiary carry a quest, and an entry without one simply has no line —
+    // the file must not grow a row of empty furniture for the eight that do not.
+    const q = questLine(myKills, d.kind, myUnlocked);
+    if (q) {
+      const qb = questBar(row.r);
+      g.font = '10px ui-monospace, monospace';
+      g.fillStyle = q.has ? '#7de08a' : '#8ea3bd';
+      g.fillText(q.label, qb.text.x, qb.text.y);
+      g.fillStyle = 'rgba(255,255,255,0.05)';
+      g.fillRect(qb.track.x, qb.track.y, qb.track.w, qb.track.h);
+      g.fillStyle = q.has ? '#7de08a' : '#e0a53f';
+      g.fillRect(qb.track.x, qb.track.y, qb.track.w * q.at, qb.track.h);
+    }
 
     g.textAlign = 'right';
     g.font = 'bold 15px ui-monospace, monospace'; g.fillStyle = '#7de08a';
@@ -1123,6 +1149,14 @@ ws.onmessage = e => {
   // yanked out of a fight by a stranger's popup is the harassment this whole
   // consent path exists to prevent. The chat line beside it carries the stake, and
   // the answer is two words you type when you have a spare hand.
+  // A hundred Corsair Hives is a real afternoon, and the moment it lands should say
+  // so. It is a say() rather than a toast for the same reason a claim is: a toast is
+  // a receipt for something you just paid for, and nobody paid for this.
+  if (m.t === 'unlocked') {
+    say(`${String(m.what).toUpperCase()} EARNED — ${m.need} ` +
+        `${(ALIENS[m.kind]?.name ?? m.kind).toUpperCase()}S · ${String(m.won ?? '').toUpperCase()}`, '#7de08a');
+    return;
+  }
   if (m.t === 'challenge') {
     say(`${m.from} CHALLENGES YOU — /accept OR /decline (${m.secs}s)`, '#ff8f6b');
     return;
@@ -1228,6 +1262,7 @@ ws.onmessage = e => {
   if (m.device) myDevice = m.device;
   if (m.berths) myBerths = m.berths;
   if (m.kills) myKills = m.kills;
+  if (m.unlocked) myUnlocked = m.unlocked;
   if ('foldTo' in m) myFoldTo = m.foldTo;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
@@ -1827,7 +1862,8 @@ let bayScroll = 0;                        // the eased pixel offset, read by bay
 const bayEase = now => {
   const probe = bayLayout(VIEW_W, VIEW_H, { tab: bayTab, page: bayPage, hull: myHull,
     drones: myDrones.length, hulls: myHulls, formations: myForms, gear: myGear, scroll: 0,
-    fit: myFit, escort: myDrones, rig: myRig, formation: myForm, mask: myLab?.mods ?? 0 });
+    fit: myFit, escort: myDrones, rig: myRig, formation: myForm, mask: myLab?.mods ?? 0,
+    unlocked: myUnlocked });
   bayScroll = scrollEase(bayScr, now, probe.scroll?.max ?? 0);
 };
 const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
@@ -1835,7 +1871,8 @@ const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
   hulls: myHulls, formations: myForms, gear: myGear, scroll: bayScroll,
   // The STATS tab reads the whole ship, because it shows how the ship was arrived
   // at. Same fit the game resolves, so the breakdown cannot disagree with the bars.
-  fit: myFit, escort: myDrones, rig: myRig, formation: myForm, mask: myLab?.mods ?? 0 });
+  fit: myFit, escort: myDrones, rig: myRig, formation: myForm, mask: myLab?.mods ?? 0,
+  unlocked: myUnlocked });
 
 // The ship as the rules see it. The reactor ceiling lives in here now, so the
 // readout has to ask the ship rather than a constant.
@@ -1859,9 +1896,10 @@ const shearHeld = () => (hasTech(myTech, 'compensator') ? SHEAR_GRACE * (power.c
 //
 // Two copies of "what is this ship", and they disagreed the moment research existed.
 const myStats = () =>
-  applyResearch(resolve(myHull, myFit, escortOf(myDrones, myRig), myForm), myLab?.mods ?? 0);
+  applyResearch(resolve(myHull, myFit, escortOf(myDrones, myRig), myForm, spareBays()), myLab?.mods ?? 0);
 const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, myRig), formation: myForm,
                          gear: myGear, hulls: myHulls, formations: myForms, credits,
+                         unlocked: myUnlocked,
                          ammo: myAmmo, kits: myKits, devices: myDevices });
 
 function bayClick(v) {
@@ -2114,7 +2152,7 @@ function drawBay() {
   // looked like it stopped working on a hull swap. `bare` has to be researched too,
   // or the green delta credits the whole ladder to whatever you just bolted on and
   // a rack with no plating in it reads "+13,300 hull".
-  const stats = myStats(), bare = applyResearch(resolve(myHull, emptyFit()), myLab?.mods ?? 0);
+  const stats = myStats(), bare = applyResearch(resolve(myHull, emptyFit(), [], myForm, spareBays()), myLab?.mods ?? 0);
   const home = docked();
   const at = hover && hover.x > P.x && hover.x < P.x + P.w && hover.y > P.y && hover.y < P.y + P.h ? hover : null;
   const over = r => at && at.x > r.x && at.x < r.x + r.w && at.y > r.y && at.y < r.y + r.h;
@@ -2220,7 +2258,7 @@ function drawBay() {
       const r = row.r;
       if (row.header) {
         g.fillStyle = '#3d4757'; g.font = '10px ui-monospace, monospace';
-        g.fillText(row.slot === 'drone' ? `DRONE BAYS  ${Math.min(myDrones.length, baysOf(myHull))}/${baysOf(myHull)}`
+        g.fillText(row.slot === 'drone' ? `DRONE BAYS  ${Math.min(myDrones.length, baysOf(myHull, spareBays()))}/${baysOf(myHull, spareBays())}`
                  : row.slot === 'rig'   ? 'COLLECTOR RIG  (its own bay)'
                  : row.slot === 'form'  ? `FORMATION${myDrones.length ? '' : '  (needs drones)'}`
                                         : row.slot.toUpperCase(),
@@ -2492,7 +2530,7 @@ function drawBay() {
                 : it.kind === 'ownhull' ? `${HULLS[it.k].cls} — a hull you own and are not flying`
                 : it.kind === 'hull' ? `${HULLS[it.k].cls}   W${slotsOf(it.k).weapon} G${slotsOf(it.k).generator} T${slotsOf(it.k).tech} +${baysOf(it.k)} bays   ${HULLS[it.k].blurb}`
                 : it.kind === 'form' ? `${FORMATIONS[it.k].blurb}   ${modSummary(FORMATIONS[it.k].mods) || 'no bonus'}`
-                : it.kind === 'drone' ? `An escort ship carrying one module of yours.   bay ${myDrones.length + 1} of ${baysOf(myHull)}`
+                : it.kind === 'drone' ? `An escort ship carrying one module of yours.   bay ${myDrones.length + 1} of ${baysOf(myHull, spareBays())}`
                 : it.kind === 'ammo' ? `${AMMO[it.k].blurb}   x${AMMO[it.k].mult.toFixed(2)} damage`
                 : it.kind === 'kit' ? `${KITS[it.k].blurb}   +${Math.round(KITS[it.k].heal * 100)}% hull over ${KITS[it.k].secs}s`
                 : it.kind === 'device' ? `${DEVICES[it.k].blurb}   ${DEVICES[it.k].secs}s to fold`

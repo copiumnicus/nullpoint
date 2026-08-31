@@ -20,6 +20,7 @@ import { MUSIC_DIRS, pickDir } from './config.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { DEVICES, devicePrice, sanitiseDevice, whyNotDevice } from './shared/devices.js';
 import { HULLS, sanitiseFit, slotsOf, baysOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
+import { QUESTS, bonusBays, newlyEarned, needFor } from './shared/quests.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones, sanitiseRig, isCollector, topTier, collectorReach,
          whyNotSold, frontierOnly } from './shared/gear.js';
@@ -997,6 +998,21 @@ const killAlien = (mapId, a, byId = null) => {
     // crediting only the killer would make a party's file depend on who got the
     // final bolt in rather than on who was there.
     paid.kills[a.kind] = (paid.kills[a.kind] ?? 0) + 1;
+    // And whether that kill was the one that finished a quest. Checked HERE, against
+    // the list the pilot was already holding, so the banner fires exactly once — on
+    // the kill that did it — rather than every tick afterwards, and so a threshold
+    // that moves later can never take the reward back off them. See shared/quests.js.
+    for (const key of newlyEarned(paid.unlocked, paid.kills)) {
+      paid.unlocked = [...paid.unlocked, key];
+      // The reward is berths, and berths change the ship rather than a stat, so the
+      // ship has to be told before the next tick resolves anything off it. refit()
+      // reads `earnedBays` the same way it reads `research`.
+      paid.ship.earnedBays = bonusBays(paid.unlocked);
+      refit(paid.ship, paid.ship.hull, paid.ship.fit);
+      if (paid.ws.readyState === 1) paid.ws.send(JSON.stringify(
+        { t: 'unlocked', key, what: QUESTS[key].name, won: QUESTS[key].won ?? QUESTS[key].tell,
+          kind: a.kind, need: needFor(a.kind) }));
+    }
     touch(paid);                                  // credits, rank and the file banked immediately
     if (paid.ws.readyState === 1) paid.ws.send(JSON.stringify(
       { t: 'award', amount: cut.credits, xp: cut.xp, what: a.def.name,
@@ -1103,7 +1119,7 @@ wss.on('connection', (ws, req) => {
   }
 
   const ship = newShip(acct.x, acct.y, acct.hull, acct.fit, acct.drones, acct.formation, acct.rig,
-                       acct.lab?.mods ?? 0);
+                       acct.lab?.mods ?? 0, bonusBays(acct.unlocked));
   players.set(id, { ws, token, acct, mapId: acct.mapId, co: acct.co, ship,
                     contacts: new Map(), targetId: null,
                     // What this connection has been told. Per connection, never per
@@ -1315,6 +1331,18 @@ wss.on('connection', (ws, req) => {
           touch(P); outfit();
           return tell(`${n} ${AMMO[a1].name}`);
         }
+        case 'kills': {
+          if (!WILD.includes(a1)) return tell('hostiles: ' + WILD.join(' '));
+          P.kills[a1] = (P.kills[a1] ?? 0) + amount(a2 ?? 1, 9999);
+          // Deliberately does NOT grant the unlock. The whole point of writing kills
+          // in is to walk up to a threshold and then cross it by killing something,
+          // which is the path that has to work — granting here would test the grant
+          // and skip the trigger.
+          touch(P);
+          const q = QUESTS[Object.keys(QUESTS).find(k => QUESTS[k].kind === a1)];
+          return tell(`threat file: ${a1} x${P.kills[a1]}` +
+            (q ? ` — ${q.name} at ${needFor(a1)}` : ''));
+        }
         case 'gear': {
           if (!EQUIPMENT[a1]) return tell('items: ' + Object.keys(EQUIPMENT).join(' '));
           P.gear[a1] = (P.gear[a1] ?? 0) + amount(a2 ?? 1, 99);
@@ -1409,8 +1437,13 @@ wss.on('connection', (ws, req) => {
           P.contacts.clear();
           // The ship carries the research multiplier too — refit reads it off the
           // account's lab, which the new account does not have.
-          refit(ship, acct.hull, acct.fit, [], acct.formation, null);
           ship.research = 0;
+          // And the quest rewards go with everything else. Set BEFORE the refit, not
+          // after: refit reads it off the ship, so assigning it afterwards would
+          // leave a reset pilot flying berths their new account does not own until
+          // the next thing that happened to re-fit them.
+          ship.earnedBays = 0;
+          refit(ship, acct.hull, acct.fit, [], acct.formation, null);
           Object.assign(ship, { x: b2.x, y: b2.y, vx: 0, vy: 0, tx: null, ty: null,
                                 dx: null, dy: null, charge: 0, chargeTo: null, snare: 0, calm: 0 });
           store.save(db);
@@ -1696,12 +1729,13 @@ wss.on('connection', (ws, req) => {
       // The hull's berths, not the shelf's twelve — the same number hangar.js draws
       // the counter from, because a shop that sells what the server refuses is the
       // one bug this codebase keeps one copy of every rule to avoid.
-      if (!atStation() || ship.drones.length >= baysOf(ship.hull)) return;
+      const berths = baysOf(ship.hull, bonusBays(P.unlocked));
+      if (!atStation() || ship.drones.length >= berths) return;
       const cost = dronePrice(ship.drones.length);
       if (P.credits < cost) return;
       P.credits -= cost;
       refit(ship, ship.hull, ship.fit, [...ship.drones, null]);
-      receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length} of ${baysOf(ship.hull)} bays used`);
+      receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length} of ${berths} bays used`);
       return outfit();
     }
     if (m.t === 'dronefit') {
@@ -2983,6 +3017,11 @@ setInterval(() => {
       // The threat file: what this pilot has killed, and how many. It changes only
       // on a kill, so the bag diff sends it once and then stays quiet.
       kills: V.kills,
+      // And which quests those kills have already finished. The threat file draws a
+      // progress line from `kills` alone, but whether the reward is IN HAND is a fact
+      // about the account rather than about the tally — see shared/quests.js on why
+      // the two are allowed to disagree.
+      unlocked: V.unlocked,
       // Which rocks are already theirs, so the station panel knows whether the
       // mining row's button says CLAIM or BUY without asking a second question —
       // and so the CLAIMS page knows which ones can be flown again.
