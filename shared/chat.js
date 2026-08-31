@@ -34,6 +34,13 @@ export const COMMANDS = {
   // MAPS, not on the chart, and nobody but their one pilot can ever see one.
   arenas:{ admin: true,  args: '',                help: 'what claim sectors are open right now' },
   dev:   { admin: true,  args: '',                help: 'the testing ground, and back again' },
+  // A duel. Not admin: it is the one piece of player-versus-player in the game and
+  // it is entirely opt-in on both ends — you ask, they answer, and either of you
+  // can simply not. `1v1` rather than `duel` because that is what the request was
+  // written as and it is what people type.
+  '1v1':   { admin: false, args: '<callsign>', help: 'challenge another pilot to a duel' },
+  accept:  { admin: false, args: '',           help: 'take the duel somebody offered you' },
+  decline: { admin: false, args: '',           help: 'refuse it' },
   reset: { admin: true,  args: '[all]',           help: 'wipe your progress — `all` also forgets who you are' },
 };
 

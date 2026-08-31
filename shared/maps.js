@@ -8,6 +8,12 @@
 //         └─ mid ─┘            └ 2 gates per frontier, 2 deeps per gate:
 //                                every approach to the core has a flank.
 
+// A duel sector's size and its one portal come from shared/duel.js rather than
+// being written here, so the number a pilot's minimap is drawn at and the number
+// the fight was designed around cannot drift apart. duel.js imports only cargo.js,
+// which imports nothing, so there is no cycle.
+import { DUEL_W, DUEL_H, homePortal } from './duel.js';
+
 export const MAP_W = 12000, MAP_H = 8000;
 export const PORTAL_R = 120;
 export const JUMP_CD  = 1.6;
@@ -182,12 +188,26 @@ export const GALAXY = Object.keys(MAPS).filter(id => !MAPS[id].dev);
 // only the hostiles standing in it are theirs. So this caches three objects, ever,
 // rather than one per pilot per tier — which would have been a slow leak keyed by
 // something that never gets collected.
+// Two kinds of instanced sector now, and the difference between them is the
+// second seat. A claim is one pilot against a field; a duel is two pilots and
+// nothing else at all. They share every mechanism — the id shape, the template
+// cache, the per-sector lists, the sweep — because all of it is keyed on a map id
+// string and nothing else, which is the property that made a second occupant a
+// change to one predicate rather than a second registry.
 const ARENA = {
-  mine1: ['Ashen Float',  '#c2884f'],
-  mine2: ['Beltwreck',    '#8fc4c9'],
-  mine3: ['Cometfall',    '#74b6c9'],
+  mine1: { theme: 'Ashen Float',  tint: '#c2884f', claim: true },
+  mine2: { theme: 'Beltwreck',    tint: '#8fc4c9', claim: true },
+  mine3: { theme: 'Cometfall',    tint: '#74b6c9', claim: true },
+  // A quarter of the galaxy's sector by area, with a hard edge and a way home in
+  // the middle of it. Everything about why is in shared/duel.js; the numbers are
+  // imported from there rather than written twice.
+  duel:  { theme: 'The Cut',      tint: '#d9564f', duel: true },
 };
+// Every instanced sector key. `CLAIM_KEYS` is the subset that is a rock somebody
+// is sitting on — the mining ladder and the claim list are still the same list,
+// and test/arena.mjs still says so; a duel is simply not on it.
 export const ARENA_KEYS = Object.keys(ARENA);
+export const CLAIM_KEYS = ARENA_KEYS.filter(k => ARENA[k].claim);
 export const ARENA_PREFIX = 'arena:';
 export const ROCK_R = 300;
 
@@ -211,12 +231,31 @@ export function arenaMap(id) {
   if (!at) return null;
   let m = TEMPLATE.get(at.key);
   if (m) return m;
-  const [theme, tint] = ARENA[at.key];
-  m = { sx: 0, sy: 0, name: `CLAIM · ${theme}`, theme, tint,
-        neb: nebFor(tint, ARENA_KEYS.indexOf(at.key)),
-        // No portals, no base, no outpost — and therefore no sanctuary anywhere in
-        // it, because havenKind() has nothing to find. That is the arena's whole
-        // shape: you cannot hide in one, and you cannot walk out of one.
+  const { theme, tint, duel } = ARENA[at.key];
+  const neb = nebFor(tint, ARENA_KEYS.indexOf(at.key));
+  m = duel
+    // A DUEL. Its own size, and the size is ON THE SECTOR rather than read off the
+    // MAP_W/MAP_H globals — `boundsOf()` in shared/sim.js is what both sides ask,
+    // so the server clamps a course against the same rectangle the client draws
+    // its minimap from. `wall` says the edge is hard instead of the drift lattice:
+    // out here the shear is a wall made of damage you chose to fly into, and in a
+    // duel that would be a way to shove somebody to death instead of shooting them.
+    //
+    // ONE portal, dead centre, and it is the first any instanced sector has ever
+    // had. It carries its own tint and `to: null` because where it goes differs per
+    // pilot — each of them comes out at their own hangar — and `MAPS[null].tint` is
+    // the black-screen bug the client's `map.portals.length` guard was written for.
+    ? { sx: 0, sy: 0, name: `DUEL · ${theme}`, theme, tint, neb,
+        arena: true, duel: true, key: at.key,
+        w: DUEL_W, h: DUEL_H, wall: true,
+        portals: [homePortal()] }
+    // A CLAIM, unchanged. No portals, no base, no outpost — and therefore no
+    // sanctuary anywhere in it, because havenKind() has nothing to find. That is
+    // the claim's whole shape: you cannot hide in one, and you cannot walk out of
+    // one. It keeps the galaxy's size, because its roster and its 1,200px ring
+    // were measured in a 12,000 x 8,000 sector and shrinking it would silently
+    // re-tune every one of those numbers.
+    : { sx: 0, sy: 0, name: `CLAIM · ${theme}`, theme, tint, neb,
         portals: [], arena: true, key: at.key,
         rock: { x: MAP_W / 2, y: MAP_H / 2, r: ROCK_R } };
   TEMPLATE.set(at.key, m);

@@ -8,9 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.67';
+export const VERSION = '0.68';
 
 export const PATCHES = [
+  { v: '0.68', notes: [
+    'Duels: /1v1 <callsign> challenges another pilot, /accept or /decline answers it',
+    'Both of you fold out to a sector a quarter the usual size, with a wall for an edge',
+    'Five seconds where nothing moves or fires, then it is a fight — and it is real PvP',
+    'The loser drops what dying costs: a tenth of their credits, and their whole hold',
+    'Both are pods the winner scoops. Leaving early is conceding, and it pays the same',
+    'A portal in the middle takes you home. Nobody falls in five minutes and it is a draw',
+    'Claims fold out now too — five seconds, and one hit cancels it. No more free escapes',
+  ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
     'Half again the shots at full, and your reach drops to 65% to pay for it',
