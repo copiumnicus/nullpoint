@@ -12,6 +12,7 @@ import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
 import { sanitiseKits, sanitiseKit, DEFAULT_KIT } from './repair.js';
 import { sanitiseDevices, sanitiseDevice, DEFAULT_DEVICE } from './devices.js';
 import { sanitiseMods, HOME_PLOTS } from './research.js';
+import { sanitiseKills } from './threats.js';
 import { MAPS, COMPANIES } from './maps.js';
 import { MATERIALS } from './cargo.js';
 import { bankPlaytime } from './playtime.js';
@@ -37,7 +38,7 @@ export function newAccount(token, seq, now) {
     formation: DEFAULT_FORMATION, formations: [DEFAULT_FORMATION],
     ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     kits: {}, kit: DEFAULT_KIT,
-    devices: {}, device: DEFAULT_DEVICE, foldTo: null, lab: null,
+    devices: {}, device: DEFAULT_DEVICE, foldTo: null, lab: null, kills: {},
     berths: [],                                   // outposts you rent a bay at
     lastDock: null,                               // the hangar a wreck comes back to
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
@@ -103,6 +104,8 @@ export function sanitiseAccount(a, seq, now) {
     // moment of use rather than trusted from disk.
     foldTo: typeof a?.foldTo === 'string' ? a.foldTo : null,
     lab: sanitiseLab(a?.lab, now),
+    // What this pilot has killed, and therefore what their threat file holds.
+    kills: sanitiseKills(a?.kills),
     berths: [...new Set((Array.isArray(a?.berths) ? a.berths : []).filter(id => MAPS[id]?.outpost))],
     lastDock: MAPS[a?.lastDock] ? a.lastDock : null,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
@@ -136,6 +139,7 @@ export function capture(account, p, now) {
   account.device = p.device;
   account.foldTo = p.foldTo ?? null;
   account.lab = p.lab ?? null;
+  account.kills = { ...p.kills };
   account.berths = [...(p.berths ?? [])];   // a player built before berths existed has none
   account.lastDock = p.lastDock ?? null;
   account.xp = p.xp;

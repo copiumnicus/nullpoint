@@ -18,6 +18,7 @@ import { SIGHT_R } from '../shared/sim.js';
 import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
 import { NAME_MAX } from '../shared/signup.js';
 import { havenBadge, HAVEN_COPY, HAVEN_BROKEN } from '../shared/haven.js';
+import { filePanel, filedIn, dossierOf } from '../shared/threats.js';
 import { labPanel, LAB_PRICE, MODULES } from '../shared/research.js';
 import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
@@ -643,6 +644,44 @@ const dismiss = () => {
     errs.push(`the beacon menu sent ${JSON.stringify(pick.map)} instead of a sector`);
   else console.log(`beacon: two hangars listed, and the second one sends ${pick.map} — it sent "recall"`);
   dismiss();
+}
+
+// The threat file. A hostile is in it the first time you kill one and NOT BEFORE —
+// absent, not greyed out — and the count comes with it. That absence is the whole
+// design, so the assertion that matters is the negative one.
+{
+  dismiss();
+  feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard',
+         fit: { weapon: [], generator: [], tech: [] } });
+  feed({ t: 'map', map: 'm1' });
+  // Nothing killed yet: the file opens and says so rather than showing a void.
+  feed({ t: 's', ships: [], kills: {} });
+  evt('keydown', { key: 'l' });
+  trace = []; frame(t += 16); frames++;
+  let out = trace; trace = null;
+  if (!out.some(c => /^fillText THREAT FILE/.test(c)))
+    errs.push('L did not open the threat file');
+  if (!out.some(c => /Nothing recorded yet/.test(c)))
+    errs.push('an empty threat file showed a void instead of saying it was empty');
+
+  // Two kinds killed. Both are in it with their counts; the seven others are not.
+  feed({ t: 's', ships: [], kills: { drifter: 412, thresher: 2 } });
+  trace = []; frame(t += 16); frames++;
+  out = trace; trace = null;
+  const named = n => out.some(c => c.startsWith(`fillText ${n} `));
+  if (!named('Drifter') || !named('Thresher'))
+    errs.push('a hostile this pilot has killed was missing from the threat file');
+  else if (named('Corsair Hive') || named('Bandit') || named('Lamprey'))
+    errs.push('the threat file listed a hostile this pilot has never killed');
+  else if (!out.some(c => /^fillText 412 /.test(c)))
+    errs.push('the threat file recorded a hostile without saying how many');
+  else if (!out.some(c => /^fillText 2 of 9 recorded/.test(c)))
+    errs.push('the threat file did not say how much of it is still unwritten');
+  else if (!out.some(c => /mirror|comes back out/.test(c)))
+    errs.push('a recorded hostile did not explain what it does');
+  else console.log('threats: killed hostiles are filed with their count, unkilled ones are absent — ' +
+    `${filedIn({ drifter: 1, thresher: 1 }).join(', ')} of 9`);
+  evt('keydown', { key: 'l' }); frame(t += 16); frames++;   // shut it
 }
 
 // The safe-zone badge. Sanctuary has been in the game since the beginning and had

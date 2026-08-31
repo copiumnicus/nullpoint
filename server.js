@@ -9,6 +9,7 @@ import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHe
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, propFit } from './shared/devmap.js';
 import { respawnDelay } from './shared/spawn.js';
+import { sanitiseKills } from './shared/threats.js';
 import { LAB_PRICE, MODULES, claimPlot, plotAt, plotsFor, incomeOf, earnedOver,
          cappedSecs, addMod, whyNotStake, whyNotBuild, nearLab, applyResearch } from './shared/research.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy,
@@ -425,7 +426,12 @@ const killAlien = (mapId, a, byId = null) => {
     // balance.js's identity makes exact — so it is settled here, on the same
     // ledger that pays the credits, rather than by whoever fired last.
     wakeTap(paid.ship, cut.credits);
-    touch(paid);                                  // credits and rank banked immediately
+    // Into the threat file. Everyone the ledger pays learns the thing, not only
+    // whoever fired last — you were in that fight, so you know what it does, and
+    // crediting only the killer would make a party's file depend on who got the
+    // final bolt in rather than on who was there.
+    paid.kills[a.kind] = (paid.kills[a.kind] ?? 0) + 1;
+    touch(paid);                                  // credits, rank and the file banked immediately
     if (paid.ws.readyState === 1) paid.ws.send(JSON.stringify(
       { t: 'award', amount: cut.credits, xp: cut.xp, what: a.def.name,
         total: paid.credits, level: now2.level, promoted: now2.level > was,
@@ -537,6 +543,7 @@ wss.on('connection', (ws, req) => {
                     kits: { ...acct.kits }, kit: acct.kit, fixing: null,
                     devices: { ...acct.devices }, device: acct.device, folding: null,
                     foldTo: acct.foldTo ?? null, lab: acct.lab ?? null,
+                    kills: { ...(acct.kills ?? {}) },
                     berths: [...(acct.berths ?? [])], lastDock: acct.lastDock ?? null,
                     scoop: null, want: null, dead: false, lobby,
                     // Composite Plating starts seated. You sign in at a dock or a
@@ -1770,6 +1777,9 @@ setInterval(() => {
       lab: V.lab ? { mods: V.lab.mods, income: incomeOf(V.lab.mods) } : null,
       ammo: V.ammo, using: V.using, armed: V.armed, kits: V.kits, kit: V.kit,
       xp: V.xp, rank: levelFor(V.xp), drones: V.ship.drones,
+      // The threat file: what this pilot has killed, and how many. It changes only
+      // on a kill, so the bag diff sends it once and then stays quiet.
+      kills: V.kills,
       played: (V.acct.played ?? 0) + sessionSeconds(V.banked ?? V.acted, V.acted),
       // Who else is out there. A world with nobody in it should say so rather
       // than leave you wondering whether the game is empty or just quiet.

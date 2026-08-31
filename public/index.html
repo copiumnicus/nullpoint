@@ -14,6 +14,8 @@ import { unpackLab } from '/shared/net.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
          DRIFT_MARGIN, WORLD, SIGHT_R, havenKind, HAVEN_R } from '/shared/sim.js';
 import { havenBadge, havenLine, TONE } from '/shared/haven.js';
+import { filePanel, filedIn, dossierOf, fileProgress, totalKills,
+         FILE_PAD, FILE_HEAD } from '/shared/threats.js';
 import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, rungGain, partsOf,
          applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
@@ -127,6 +129,11 @@ let labOpen = false;              // the research panel
 // has no idea the plot is for good. One click was the whole transaction, which is
 // the wrong shape for the most expensive irreversible thing in the game.
 let labConfirm = false;
+// The threat file: what you have killed, and how many. A hostile is in it the
+// first time you kill one and not before — the game's five odd mechanics were
+// never written down anywhere a player could read them, and this is where they
+// are, paid for one kill at a time.
+let myKills = {}, fileOpen = false, fileScroll = 0;
 // The balance the server last told us, and when. The counter runs UP from that
 // at the rate the server also told us — it never invents money, it only shows
 // the money that is already accruing between one bank and the next. Server truth
@@ -192,6 +199,110 @@ const toast = (what, cost, note) => {
 
 // The changelog. A version number is a small promise that the thing is being
 // worked on, and it costs one icon to keep.
+// The threat file. Everything you have killed, weakest first, with its outline, its
+// numbers and one line on what it actually does.
+//
+// Absent rather than greyed out: a hostile you have not killed is not in here at
+// all. The header says how many of nine you have, so the file admits it is
+// incomplete without telling you what is missing — a list of locked entries would
+// be the manual this exists instead of.
+function drawFile() {
+  const filed = filedIn(myKills);
+  const L = filePanel(VIEW_W, VIEW_H, fileScroll, filed.length);
+  const P = L.panel;
+  g.fillStyle = 'rgba(4,7,12,0.94)'; g.fillRect(P.x, P.y, P.w, P.h);
+  g.strokeStyle = '#5a86b8'; g.lineWidth = 1.4;
+  g.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+
+  const prog = fileProgress(myKills);
+  g.font = '15px ui-monospace, monospace'; g.textAlign = 'left'; g.fillStyle = '#cfe4ff';
+  g.fillText('THREAT FILE', P.x + FILE_PAD, P.y + 30);
+  g.font = '11px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+  g.fillText(`${prog.known} of ${prog.all} recorded · ${totalKills(myKills).toLocaleString('en-US')} confirmed kills`,
+             P.x + FILE_PAD, P.y + 50);
+  g.textAlign = 'right'; g.fillStyle = '#66748c'; g.font = '12px ui-monospace, monospace';
+  g.fillText('\u00d7', L.close.x + L.close.w, L.close.y + 15);
+  g.textAlign = 'left';
+
+  if (!filed.length) {
+    g.font = '12px ui-monospace, monospace'; g.fillStyle = '#66748c';
+    g.fillText('Nothing recorded yet. Kill something and it goes in here.',
+               P.x + FILE_PAD, P.y + FILE_HEAD + 30);
+    g.font = '12px ui-monospace, monospace';
+    return;
+  }
+
+  for (const row of L.rows) {
+    const d = dossierOf(filed[row.i], myKills);
+    if (!d) continue;
+    const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
+                      && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
+    g.fillStyle = hot ? 'rgba(122,180,240,0.10)' : 'rgba(255,255,255,0.02)';
+    g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+    g.strokeStyle = '#243448'; g.lineWidth = 1;
+    g.strokeRect(row.r.x + .5, row.r.y + .5, row.r.w - 1, row.r.h - 1);
+
+    // Its own outline, at its own scale, in its own colour — the same points the
+    // world draws it with, so the file and the sky cannot show different ships.
+    g.save();
+    g.translate(row.r.x + 40, row.r.y + row.r.h / 2);
+    g.strokeStyle = d.colour; g.lineWidth = 1.6;
+    g.beginPath();
+    outlineOf(d.kind, 20).forEach(([px, py], i) => i ? g.lineTo(px, py) : g.moveTo(px, py));
+    g.closePath(); g.stroke();
+    g.fillStyle = d.colour + '22'; g.fill();
+    g.restore();
+
+    const tx = row.r.x + 78;
+    g.font = '13px ui-monospace, monospace'; g.fillStyle = '#cfe4ff';
+    g.fillText(d.name, tx, row.r.y + 20);
+    g.font = '10px ui-monospace, monospace'; g.fillStyle = d.colour;
+    g.fillText(d.cls.toUpperCase(), tx + g.measureText(d.name).width * 1.05 + 14, row.r.y + 20);
+
+    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+    g.fillText(`hull ${d.hull.toLocaleString('en-US')}   shield ${d.shield.toLocaleString('en-US')}   ` +
+               `speed ${d.speed}   ` +
+               (d.armed ? `${d.dps} dps at ${d.reach}` : 'no gun'),
+               tx, row.r.y + 38);
+
+    g.fillStyle = '#8ea3bd';
+    const words = d.tell.split(' ');
+    let line = '', at = row.r.y + 56;
+    const wide = row.r.w - (tx - row.r.x) - 96;
+    for (const wd of words) {
+      const t2 = line ? line + ' ' + wd : wd;
+      if (g.measureText(t2).width > wide && line) { g.fillText(line, tx, at); line = wd; at += 12; }
+      else line = t2;
+    }
+    if (line) g.fillText(line, tx, at);
+
+    g.textAlign = 'right';
+    g.font = 'bold 15px ui-monospace, monospace'; g.fillStyle = '#7de08a';
+    g.fillText(String(d.killed), row.r.x + row.r.w - 14, row.r.y + 24);
+    g.font = '9px ui-monospace, monospace'; g.fillStyle = '#4a5568';
+    g.fillText('killed', row.r.x + row.r.w - 14, row.r.y + 36);
+    g.fillStyle = '#ffd479'; g.font = '10px ui-monospace, monospace';
+    g.fillText(`${fmtCredits(d.bounty)} ${CURRENCY.short}`, row.r.x + row.r.w - 14, row.r.y + 56);
+    g.textAlign = 'left';
+  }
+
+  if (L.maxScroll > 0) {
+    g.font = '9px ui-monospace, monospace'; g.fillStyle = '#3d4757'; g.textAlign = 'center';
+    g.fillText(`${L.at + 1}-${Math.min(filed.length, L.at + L.fit)} of ${filed.length} · wheel to scroll`,
+               P.x + P.w / 2, P.y + P.h - 6);
+    g.textAlign = 'left';
+  }
+  g.font = '12px ui-monospace, monospace';
+}
+
+function fileClick(v) {
+  const filed = filedIn(myKills);
+  const L = filePanel(VIEW_W, VIEW_H, fileScroll, filed.length);
+  const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
+  if (inside(L.close) || !inside(L.panel)) { fileOpen = false; return true; }
+  return true;                                     // a reference document: reading, not clicking
+}
+
 // The research panel: three ladders, one rung at a time.
 //
 // Not the station panel's machinery — that is shelves you browse, this is a ladder
@@ -792,6 +903,7 @@ ws.onmessage = e => {
   if (m.devices) myDevices = m.devices;
   if (m.device) myDevice = m.device;
   if (m.berths) myBerths = m.berths;
+  if (m.kills) myKills = m.kills;
   if ('foldTo' in m) myFoldTo = m.foldTo;
   if (m.power) power = m.power;
   if (typeof m.shieldNow === 'number') { shieldNow = m.shieldNow; shieldTop = m.shieldMax; }
@@ -959,6 +1071,9 @@ addEventListener('keydown', e => {
   // R for research. Its own key rather than a SPACE action, because SPACE is
   // whatever you are standing on and this is a place you go to on purpose.
   if (k === 'r') { labOpen = !labOpen; labConfirm = false; sysOpen = false; bayOpen = false; invOpen = false; }
+  // L for the logbook. Readable anywhere, because it is a reference document and
+  // the moment you want it is the moment something unfamiliar is shooting at you.
+  if (k === 'l') { fileOpen = !fileOpen; fileScroll = 0; sysOpen = false; bayOpen = false; invOpen = false; labOpen = false; }
   if (k === 'o') { setOpen = !setOpen; sysOpen = bayOpen = invOpen = false; }
   if (k === 'n') { nextTrack(); }
   if (e.key === '[' || e.key === ']') {
@@ -1006,7 +1121,7 @@ addEventListener('keydown', e => {
     if (setOpen) { setOpen = false; return; }
     if (feedOpen) { feedOpen = null; return; }
     if (picking) { picking = null; return; }
-    if (sysOpen || bayOpen || invOpen || labOpen) { sysOpen = bayOpen = invOpen = labOpen = false; return; }
+    if (sysOpen || bayOpen || invOpen || labOpen || fileOpen) { sysOpen = bayOpen = invOpen = labOpen = fileOpen = false; return; }
     setOpen = true;
     return;
   }
@@ -1056,6 +1171,7 @@ c.addEventListener('pointerdown', e => {
   if (setOpen) { settingsClick(v); return; }
   if (sysOpen) { sysOpen = false; return; }
   if (bayOpen) { bayClick(v); return; }           // click anywhere dismisses the chart
+  if (fileOpen) { fileClick(v); return; }
   if (labOpen) { labClick(v); return; }
   if (invOpen) { invClick(v); return; }
   if (barClick(v)) return;                        // the ammunition bar sits over the world
@@ -1115,6 +1231,11 @@ addEventListener('wheel', e => {
   if (patchOpen) {
     e.preventDefault?.();
     patchScroll = Math.max(0, patchScroll + (e.deltaY > 0 ? 3 : -3));
+    return;
+  }
+  if (fileOpen) {
+    e.preventDefault?.();
+    fileScroll = Math.max(0, fileScroll + (e.deltaY > 0 ? 1 : -1));
     return;
   }
   if (bayOpen && (bayTab === 'store' || bayTab === 'inventory')) {
@@ -3944,7 +4065,7 @@ function drawFrame(now) {
                `GUN ${st.damage | 0}×${Math.round(st.fireRate * 10) / 10}/s @${st.weaponRange | 0}`, 16 + w + 10, 84);
   }
   g.fillText('TAB engage · TAB TAB break off · click cargo to haul it in · ' +
-             'I cargo · H station · R research · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
+             'I cargo · H station · R research · L threats · M star system · Q E ammo · O sound', 16, VIEW_H - 16);
 
   // Compensated, the margin is somewhere you are meant to be, so it must stop
   // screaming at you — a permanent red vignette over ground you bought the right
@@ -3996,6 +4117,7 @@ function drawFrame(now) {
   if (berthOpen) drawBerth();
   if (invOpen) drawInventory();
   if (labOpen) drawLab();
+  if (fileOpen) drawFile();
   if (dead) drawWreck(now);
   if (!signup) drawHaven();
   if (!signup) drawPatch();      // after, so an open changelog covers the badge

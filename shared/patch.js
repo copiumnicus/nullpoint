@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.45';
+export const VERSION = '0.46';
 
 export const PATCHES = [
+  { v: '0.46', notes: [
+    'Press L for your THREAT FILE: everything you have killed, and how many',
+    'Each entry carries its outline, its numbers, and one line on what it actually does',
+    'A hostile you have never killed is not in there at all. You have to earn the page',
+    'Four more ambient tracks and four more combat tracks are live',
+  ] },
   { v: '0.45', notes: [
     'Fixed: the second research rung quoted the numbers of the first one',
     'It said "shield 3,700 -> 7,400" when you already had 7,400 and were buying 14,800',

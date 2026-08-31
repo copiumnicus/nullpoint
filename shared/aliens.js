@@ -39,6 +39,9 @@ export const ALIENS = {
     // ship 2664, which is the grind this game exists not to have.
     bounty: 455,      // credits your company pays for the kill
     xp: 140,          // and what the kill is worth toward your rank
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'Drifts a patrol and shoots whatever comes close. Nothing else.',
   },
 
   // A reactor with nothing left holding it in, and no gun at all.
@@ -135,6 +138,9 @@ export const ALIENS = {
     respawn: 30,      // the Ironhusk's — same rung, same sector distance, same cadence
     bounty: 4550,     // 6500 ehp at BOUNTY_RATE, which is the Ironhusk's to the credit
     xp: 1400,         // and likewise
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'No gun. The ring burns whatever stands in it and widens as you kill it, then stands after it dies and lets go of the rest.',
   },
   // A mirror. It returns what you put into it, and that is the whole design.
   //
@@ -179,6 +185,9 @@ export const ALIENS = {
     respawn: 120,
     bounty: 143885,   // 205550 ehp at BOUNTY_RATE, exactly
     xp: 44272,
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'A mirror. Everything you put into it comes back out, so it is as dangerous as your own gun. Do not stand still.',
   },
 
   // The rung between a Drifter and an Ironhusk, and the reason the frontier is
@@ -221,6 +230,9 @@ export const ALIENS = {
     respawn: 20,      // between a Drifter's 14 and an Ironhusk's 30, like the rest of it
     bounty: 1442,     // 2060 ehp at BOUNTY_RATE, exactly
     xp: 444,          // and the same at XP_RATE, to the nearest point
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'Faster than every hull but a Kestrel. You do not disengage from one, you finish it.',
   },
 
   // Ten Drifters welded into one hull, and deliberately exactly that: 6500 ehp
@@ -262,6 +274,9 @@ export const ALIENS = {
     respawn: 30,
     bounty: 4550,     // 6500 ehp at BOUNTY_RATE, which is 10 x the Drifter's 455
     xp: 1400,         // likewise 10 x 140
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'Armour and a short gun. It only reaches 500, so holding your own range costs it everything.',
   },
 
   // Ten Ironhusks, by the same arithmetic that made an Ironhusk ten Drifters:
@@ -297,6 +312,9 @@ export const ALIENS = {
     respawn: 90,
     bounty: 45500,    // 65000 ehp at BOUNTY_RATE, and 10 x the Ironhusk's 4550
     xp: 14000,        // likewise 10 x 1400
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'Out-ranges you and out-lasts you. The first thing you cannot beat alone.',
   },
 
   // Ten Leviathans, and the reason there is anything at Nullpoint.
@@ -334,6 +352,9 @@ export const ALIENS = {
     respawn: 300,     // five minutes. It is the only one, and it should be an event
     bounty: 455000,   // 650000 ehp at BOUNTY_RATE, and 10 x the Leviathan's 45500
     xp: 140000,
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'A mothership. It broods Bandits once it has noticed somebody, and keeps brooding until it is dead.',
   },
 
   // A raider that you mostly cannot see. Its signature is shaped rather than
@@ -375,6 +396,9 @@ export const ALIENS = {
     effort: 3.8,
     bounty: 79800,    // 30000 ehp x 3.8 effort at BOUNTY_RATE
     xp: 24554,        // and the same effective hp at XP_RATE
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'Dodges, and nose-on it is barely there. Hard to hit and harder to see coming.',
   },
 
   // A parasite. It has no gun at all.
@@ -387,6 +411,9 @@ export const ALIENS = {
     aggro: 500, leash: 2000, patience: 4.0, flee: 0, respawn: 45,
     bounty: 14385,
     xp: 4426,
+    // One line for the pilot's threat file, which is the only place a hostile
+    // explains itself. Data, so the next one is a line here rather than a UI change.
+    tell: 'No gun. A tether onto your hull that drinks past your shields and mends it. Fly out of range and the cord snaps.',
   },
 
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
