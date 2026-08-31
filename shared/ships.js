@@ -13,7 +13,7 @@ import { BOOST } from './power.js';
 // the DEFAULTS of six ATTRS rows, so a technology can retune an ability the same
 // way one retunes a shield clock. ability.js argues every one of the numbers and
 // every one of the ceilings below; see its comments before moving one.
-import { VEIL_DEPTH, VEIL_RECOVER, ANCHOR_SWELL, ANCHOR_DRAG, LOCK_TIGHTEN, LOCK_REACH }
+import { VEIL_DEPTH, VEIL_RECOVER, ANCHOR_SWELL, ANCHOR_DRAG, DRUMFIRE_GAIN, DRUMFIRE_REACH }
   from './ability.js';
 
 // One cycle rate for every hull, on purpose. Emitters add FLAT damage to a bolt
@@ -98,8 +98,13 @@ export const ATTRS = {
   veilRecover: { label: 'Veil rebuild', unit: 's',   dflt: VEIL_RECOVER, better: 'low',  min: 0.4 },
   anchorSwell: { label: 'Anchor swell', unit: 'x',   dflt: ANCHOR_SWELL, better: 'high', min: 0,   max: 5 },
   anchorDrag:  { label: 'Anchor drag',  unit: '',    dflt: ANCHOR_DRAG,  better: 'low',  min: 0.1, max: 0.95 },
-  lockTighten: { label: 'Lock bite',    unit: 'x',   dflt: LOCK_TIGHTEN, better: 'high', min: 0,   max: 2 },
-  lockReach:   { label: 'Lock cost',    unit: '',    dflt: LOCK_REACH,   better: 'low',  min: 0,   max: 0.8 },
+  // The two Drumfire rows are one number twice: the gain IS the cost, read through
+  // 1/(1-cost) - 1, and so is the ceiling — a reach floor of 20% pays for x5.00 of
+  // rate and not a fraction more. See DRUMFIRE_GAIN.
+  drumfireGain: { label: 'Drumfire gain', unit: 'x', dflt: DRUMFIRE_GAIN,  better: 'high', min: 0,
+                  max: 4 },     // 0.8 / (1 - 0.8), written out because 0.8/0.2 is 4.000000000000001
+  drumfireReach:{ label: 'Drumfire cost', unit: '',  dflt: DRUMFIRE_REACH, better: 'low',  min: 0,
+                  max: 0.8 },
 };
 
 // Every hull carries the same total number of MOUNTS — its own slots plus its
@@ -143,7 +148,7 @@ export const HULLS = {
   // technology bays it gives up plus the one bay it welds in, and it is the whole
   // reason the slots matter — a launcher is the one module a drone may never
   // carry, so five hardpoints of rockets is capability nothing else can buy.
-  vanguard: { ability: 'lock', slots: { weapon: 5, generator: 2, tech: 1 }, bays: 11, launchers: 5, price: 26000,
+  vanguard: { ability: 'drumfire', slots: { weapon: 5, generator: 2, tech: 1 }, bays: 11, launchers: 5, price: 26000,
               name: 'Vanguard', cls: 'Fighter', r: 13,
               blurb: 'Five hardpoints, and it may fill all five with racks.',
               attrs: { hull: 1100, shield: 900, shieldRegen: 0.0444, shieldDelay: 6, speed: 340, accel: 1200,
@@ -225,9 +230,26 @@ export const gunsOf = (fit, drones = []) =>
               droneItems(drones).filter(isLaser).length);
 export const sanitiseFit = (hullKey, fit) => cleanFit(slotsOf(hullKey), fit);
 
-// base + every flat add, then multiplied once by the SUM of the percentages.
-// Summing rather than compounding keeps three copies of a module worth three
-// times one, instead of spiralling — the usual way stacking becomes pay-to-win.
+// base + every flat add, then multiplied by the PRODUCT of the percentages.
+//
+// It summed them, and two technologies whose trades were opposites annihilated
+// each other. Siege Cadence is +60% damage for -37.5% rate and Rapid Cadence is
+// the same trade backwards; summed, both land as 1 + (0.60 - 0.375) = x1.225 on
+// BOTH numbers, so the pair was a free x1.50 on damage output with nothing given
+// up at all. Measured by sweeping every legal fit in the game: 16,967 dps on a
+// Bulwark carrying the two, against 11,306.59 for the top of the ladder — 50%
+// more than the sharpest gun the shop is supposed to sell, which is also what the
+// Thresher's mirror quotes as its ceiling. x1.60 against x0.625 is 1.0000, and
+// that is what these two lines now say.
+//
+// Summing was there to stop three copies of a module being worth more than three
+// times one. That reason no longer applies to anything that MULTIPLIES: `mul` is
+// technology-only by rule, and a technology is unique across the whole ship —
+// sanitiseFit dedupes the rack and sanitiseDrones refuses a second copy on the
+// escort. Weapons and generators, the two kinds you can stack, are `add`-only and
+// never touch this path. So the only things composing here are distinct
+// technologies and the one formation being flown, and compounding is simply what
+// "+60%" and "-37.5%" mean.
 export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFAULT_FORMATION) {
   const hull = HULLS[hullKey] ?? HULLS[DEFAULT_HULL];
   drones = berthed(hullKey, drones);
@@ -238,7 +260,7 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
     for (const [attr, op, v] of EQUIPMENT[key]?.mods ?? []) {
       if (!(attr in out)) continue;                       // unknown attribute: ignore, never crash
       if (op === 'add') out[attr] += v;
-      else              pct[attr] = (pct[attr] ?? 0) + v;
+      else              pct[attr] = (pct[attr] ?? 1) * (1 + v);
     }
   }
   // A formation only pays out once there is an escort to fly it, and pays in full
@@ -252,17 +274,17 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
   // Resolved here, removed from `pct`, and clamped once: the same two steps the
   // final loop does, taken early because this pair is an input to it.
   for (const k of ['cohesion', 'escort']) {
-    if (k in pct) { out[k] *= 1 + pct[k]; delete pct[k]; }
+    if (k in pct) { out[k] *= pct[k]; delete pct[k]; }
     out[k] = Math.min(ATTRS[k].max ?? Infinity, Math.max(ATTRS[k].min ?? 0, out[k]));
   }
   const scale = escortScale((drones ?? []).length, out);
   if (scale > 0) for (const [attr, op, v] of FORMATIONS[formation]?.mods ?? []) {
     if (!(attr in out)) continue;
     if (op === 'add') out[attr] += v * scale;
-    else              pct[attr] = (pct[attr] ?? 0) + v * scale;
+    else              pct[attr] = (pct[attr] ?? 1) * (1 + v * scale);
   }
 
-  for (const [attr, p] of Object.entries(pct)) out[attr] *= 1 + p;
+  for (const [attr, p] of Object.entries(pct)) out[attr] *= p;
   for (const k of Object.keys(out))
     out[k] = Math.min(ATTRS[k].max ?? Infinity, Math.max(ATTRS[k].min ?? 0, out[k]));
 

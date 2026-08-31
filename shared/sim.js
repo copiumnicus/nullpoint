@@ -6,17 +6,21 @@ import { resolve, radiusOf, gunsOf, berthed, baysOf, DEFAULT_HULL, HULLS } from 
 import { DEFAULT_FORMATION } from './formation.js';
 import { emptyFit, techSet } from './gear.js';
 import { newPower, stepPower, boostOf, levelOf, BOOST } from './power.js';
-import { swellOf, dragOf, reachOf, cloakOf } from './ability.js';
+import { swellOf, dragOf, reachOf, cloakOf, drumOf } from './ability.js';
 import { applyResearch } from './research.js';
 
 // An ability belongs to the hull, so everything that asks about one starts here.
 export const hullOf = s => HULLS[s?.hull];
-// Effective speed, reach and cloak: the hull's ability applied to the resolved
-// stat. Anything that moves, shoots or is looked at goes through these rather
-// than reading stats directly, or an ability would work in one place and not
-// another — which is the drift shared/ exists to prevent.
+// Effective speed, reach, rate and cloak: the hull's ability applied to the
+// resolved stat. Anything that moves, shoots or is looked at goes through these
+// rather than reading stats directly, or an ability would work in one place and
+// not another — which is the drift shared/ exists to prevent. `rateOf` is the one
+// that was missing when Drumfire arrived: combat.js was reading `stats.fireRate`
+// straight off the ship in two places, and an ability that only reached one of
+// them would have sped the volley up and left the cycle where it was.
 export const speedOf = s => s.stats.speed * dragOf(hullOf(s), s.power, s.stats);
 export const rangeOf = s => s.stats.weaponRange * reachOf(hullOf(s), s.power, s.stats);
+export const rateOf  = s => s.stats.fireRate * drumOf(hullOf(s), s.power, s.stats);
 export const veilOf  = s => cloakOf(hullOf(s), s.power, s.stats, s.sinceShot ?? 1e9);
 
 // How often the world moves. Both sides need this and both had their own copy —

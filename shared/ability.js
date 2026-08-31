@@ -17,9 +17,9 @@
 //
 // The three are deliberately three different answers to the same question:
 //
-//   Veil   — don't be seen     (Kestrel, the interceptor)
-//   Anchor — don't be hurt     (Bulwark, the bomber)
-//   Lock   — don't miss        (Vanguard, the fighter)
+//   Veil     — don't be seen     (Kestrel, the interceptor)
+//   Anchor   — don't be hurt     (Bulwark, the bomber)
+//   Drumfire — don't let up      (Vanguard, the fighter)
 //
 // Each is useless in the others' situation. That is what makes them classes
 // rather than three flavours of "more damage" — and it matters, because content
@@ -43,9 +43,12 @@ export const ABILITIES = {
     name: 'Anchor', hull: 'bulwark', colour: '#e05a5a',
     blurb: 'Shields swell fourfold and the engines all but stop. A wall cannot leave.',
   },
-  lock: {
-    name: 'Lock', hull: 'vanguard', colour: '#ffd479',
-    blurb: 'The seekers stop guessing. Camouflage stops being an answer to you.',
+  // Named for the artillery term, and deliberately NOT Cadence: the shop already
+  // sells Siege Cadence and Rapid Cadence, and a third thing called Cadence on the
+  // one hull those two are about would be unreadable on every row that mentions it.
+  drumfire: {
+    name: 'Drumfire', hull: 'vanguard', colour: '#ffd479',
+    blurb: 'Every gun and every rack cycles faster. Your reach is what pays.',
   },
 };
 
@@ -54,7 +57,7 @@ export const ABILITIES = {
 // These six are the SHIPPED SETTING of each ability, and nothing more. They are
 // the defaults of six rows in ATTRS (ships.js imports them from here, so there is
 // one copy), which means every one of them is fittable: a technology can deepen a
-// veil, loosen an anchor or sharpen a lock exactly the way one already raises
+// veil, loosen an anchor or beat a drum harder exactly the way one already raises
 // hull or cuts signature.
 //
 // They were module constants until the technology shelf was asked to cover "the
@@ -84,13 +87,40 @@ export const ANCHOR_SWELL = 3;
 // whatever is shooting it.
 export const ANCHOR_DRAG = 0.8;
 
-// Lock closes the gap between what a seeker CAN see and a perfect return. At full
-// there is no wobble and no dropout; at half, half of each. It cannot help you
-// with dodging — a Bandit that breaks the firing line still breaks it — only with
-// aiming, which is the half stealth was winning.
-export const LOCK_TIGHTEN = 1;
-// What it costs: reach. Locked on, you have to close.
-export const LOCK_REACH = 0.35;          // weapon range down to 65% at full
+// What Drumfire costs: reach. To fire this fast you have to close.
+//
+// This was Lock's cost and it is unchanged, because it is the reason the ability
+// is a class identity rather than "more damage". It replaced Lock — the seekers
+// stop guessing, camouflage stops being an answer to you — which had collapsed
+// into a PvP-only ability the moment the Aspect Filter went on the shelf: a
+// technology already reveals a Bandit from any angle, so the one thing Lock beat
+// was already beaten, on a hull most people fly against the bestiary.
+export const DRUMFIRE_REACH = 0.35;      // weapon range down to 65% at full
+
+// And what it buys: rate of fire, on the guns AND the racks.
+//
+// REACH TIMES RATE IS CONSERVED. Nothing here is picked — the gain is the cost,
+// read back through the identity that makes the trade honest:
+//
+//      at full, reach  = 1 - DRUMFIRE_REACH        = 0.65
+//      so       rate   = 1 / 0.65                  = x1.5385
+//      and the dial is that minus the 1 it starts at:
+//               GAIN   = 0.35 / 0.65               = 0.5385   (+53.8%)
+//
+// So the Vanguard does not get stronger, it gets SHAPED: whatever fraction of your
+// reach you surrender, you get the same fraction of your rate of fire back, and
+// your damage per metre of reach at a full drum is exactly what it was cold.
+//
+// Both halves are LINEAR in the dial, the same shape as swellOf and dragOf, rather
+// than one being the exact reciprocal of the other. Measured over the whole dial in
+// steps of a thousandth, the product is 1.0000 cold, 1.0000 at full, and peaks at
+// 1.0471 halfway — 1.1250 with a Drum Governor fitted, which trades further along
+// the same curve. That 4.7% is the price of TWO dials rather than one: a reciprocal
+// would be a single number and no technology could retune the exchange rate. It is
+// also not a jackpot, because it is not a free multiplier — it says the best
+// exchange rate is in the middle of the dial, which is the only thing that stops a
+// scaling ability being "always full" and is what "none of them is a switch" wants.
+export const DRUMFIRE_GAIN = DRUMFIRE_REACH / (1 - DRUMFIRE_REACH);
 
 // Reading a dial off the ship rather than off the constant. `stats` is a resolved
 // attribute set — or `{}` from anything that has no fit at all, which is why the
@@ -142,15 +172,15 @@ export const swellOf = (hull, power, stats) =>
 export const dragOf = (hull, power, stats) =>
   isKind('anchor', hull) ? 1 - dial(stats, 'anchorDrag', ANCHOR_DRAG) * driveOf(power, stats) : 1;
 
-// 0 = seekers as they are, 1 = a perfect return. Everything between is between.
+// Rate-of-fire multiplier and reach multiplier, both off the same drive, so you
+// never get the cadence without the closing — the same arrangement swellOf and
+// dragOf have, and for the same reason.
 //
-// Clamped at 1, and the clamp is the whole point of letting `lockTighten` go above
-// it: a bite of 1.8 does not buy a better-than-perfect return, it reaches a
-// perfect one at 56% of the dial and leaves the rest of the reactor for the guns.
-// Unclamped it also put `lk` over 100 on the wire, and the client colours a bolt
-// from that.
-export const lockOf = (hull, power, stats) =>
-  isKind('lock', hull)
-    ? Math.min(1, dial(stats, 'lockTighten', LOCK_TIGHTEN) * driveOf(power, stats)) : 0;
+// `drumOf` is applied to the CYCLE, not to a volley: combat.js divides both the
+// cycle cooldown and the between-barrel step by it, and rockets.js divides the
+// rack's own cooldown by it, so a rack of five stays a rack of five arriving
+// sooner rather than five racks. Multiplying anywhere else would multiply twice.
+export const drumOf = (hull, power, stats) =>
+  isKind('drumfire', hull) ? 1 + dial(stats, 'drumfireGain', DRUMFIRE_GAIN) * driveOf(power, stats) : 1;
 export const reachOf = (hull, power, stats) =>
-  isKind('lock', hull) ? 1 - dial(stats, 'lockReach', LOCK_REACH) * driveOf(power, stats) : 1;
+  isKind('drumfire', hull) ? 1 - dial(stats, 'drumfireReach', DRUMFIRE_REACH) * driveOf(power, stats) : 1;

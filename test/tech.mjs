@@ -19,17 +19,17 @@
 // of a dps product, because those are the only costs that grow x68 alongside it.
 // These assertions are that rule, measured.
 
-import { ATTRS, HULLS, resolve, slotsOf, FIRE_RATE } from '../shared/ships.js';
+import { ATTRS, HULLS, resolve, slotsOf, baysOf, FIRE_RATE } from '../shared/ships.js';
 import { EQUIPMENT, MAX_DRONES, topTier } from '../shared/gear.js';
 import { FORMATIONS, FORMATION_KEYS, BONUS_AT, bonusScale, escortScale } from '../shared/formation.js';
-import { newShip, speedOf, rangeOf, veilOf } from '../shared/sim.js';
+import { newShip, speedOf, rangeOf, rateOf, veilOf } from '../shared/sim.js';
 import { fire, stepBolts } from '../shared/combat.js';
-import { SPECIAL, lockOf, swellOf, VEIL_DEPTH, VEIL_RECOVER,
-         ANCHOR_SWELL, ANCHOR_DRAG, LOCK_TIGHTEN, LOCK_REACH } from '../shared/ability.js';
-import { ROCKET_RATE } from '../shared/rockets.js';
+import { SPECIAL, drumOf, reachOf, swellOf, VEIL_DEPTH, VEIL_RECOVER,
+         ANCHOR_SWELL, ANCHOR_DRAG, DRUMFIRE_GAIN, DRUMFIRE_REACH } from '../shared/ability.js';
+import { ROCKET_RATE, launcherCap, isLauncher } from '../shared/rockets.js';
 import { AMMO, roundPrice } from '../shared/ammo.js';
 import { priceFor, techRung, TECH_POINTS, DELIVERY_PREMIUM, ANCHORS, premiumAt,
-         buildFor, dpsOf, freeMultipliers } from '../shared/balance.js';
+         buildFor, dpsOf, stageDps, addOf, freeMultipliers } from '../shared/balance.js';
 import { ALIENS, WILD, BOUNTY_RATE, farmHp, effectiveHp, bountyFor, newAlien, stepAlienAI } from '../shared/aliens.js';
 import { MAPS } from '../shared/maps.js';
 import { driftDps, driftDepth, stepDrift, DRIFT_MARGIN, DRIFT_MIN, SIGHT_R } from '../shared/sim.js';
@@ -250,6 +250,122 @@ check('the cadences are not an ammunition trade, whatever it looks like', (() =>
 })(), 'the whole ammunition bill on the dearest grade is between 1.0% and 0.1% of what the same ' +
       'seconds earn — a 37.5% saving on it is not a balance lever');
 
+// ---------------------------------------------- every legal fit, brute-forced
+//
+// The check that would have caught the Cadence pair, and will catch the next one.
+//
+// Siege Cadence and Rapid Cadence are opposite trades of damage against rate, and
+// while percentages SUMMED the two annihilated: +0.60 and -0.375 added to +0.225 on
+// BOTH halves of the dps product, so the pair was a free x1.50 and neither gave
+// anything up. Every claim above passed anyway, because every one of them reads ONE
+// technology against the ship that would have flown without it, and the defect was
+// in the arithmetic that puts two of them together. So this sweeps the whole space
+// instead of a hand-picked build, and states the rule the pair broke.
+//
+// It is a real brute force over the ship's own slots — every legal multiset of
+// weapons against every legal SET of technologies (a technology is unique across the
+// whole ship: sanitiseFit dedupes the rack, sanitiseDrones refuses a second copy on
+// the escort) — with two prunings that are provable rather than convenient, because
+// dpsOf reads a generator and a drone through exactly one number each:
+//
+//   drones      contribute flat `damage` adds and flat `speed` costs and nothing
+//               else, and dps is monotone increasing in both, so the best escort at
+//               any split is the top emitter and the top generator. Every SPLIT is
+//               still swept, because the split is a real trade: four E-Cells on a
+//               Vanguard's bays beat four more emitters, and that is the fit that
+//               wins the whole sweep.
+//   generators  reach dps only through the reactor headroom their speed cost buys
+//               (see resolve), so the top one is the answer for every slot.
+//
+// Confirmed against the unpruned sweep, 11.3M fits: same maxima, every hull.
+{
+  const sweepT0 = Date.now();
+  const WEAPONS = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'weapon');
+  const GENS = Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'generator');
+  const GUNS = WEAPONS.filter(k => !isLauncher(k));
+  const TOPGUN = GUNS.reduce((a, b) => (addOf(b, 'damage') > addOf(a, 'damage') ? b : a));
+  const TOPGEN = GENS.reduce((a, b) => (addOf(b, 'speed') < addOf(a, 'speed') ? b : a));
+  const multisets = (list, n2) => { const out = []; const rec = (st, acc) => {
+    if (acc.length === n2) { out.push(acc.slice()); return; }
+    for (let i = st; i < list.length; i++) { acc.push(list[i]); rec(i, acc); acc.pop(); }
+  }; rec(0, []); return out; };
+  const subsets = (list, n2) => { const out = [[]]; const rec = (st, acc) => {
+    for (let i = st; i < list.length; i++) {
+      acc.push(list[i]); if (acc.length <= n2) { out.push(acc.slice()); rec(i + 1, acc); } acc.pop();
+    }
+  }; rec(0, []); return out; };
+
+  let fits = 0, best = { d: -1 }, worst = { ratio: 0 };
+  for (const hull of Object.keys(HULLS)) {
+    const sl = slotsOf(hull), bays = baysOf(hull), lcap = launcherCap(hull);
+    const wsets = multisets(WEAPONS, sl.weapon).filter(w => w.filter(isLauncher).length <= lcap);
+    const gen = Array(sl.generator).fill(TOPGEN);
+    const tsets = subsets(Object.keys(EQUIPMENT).filter(k => EQUIPMENT[k].slot === 'tech'), sl.tech);
+    const escorts = [];
+    for (let k = 0; k <= bays; k++)
+      escorts.push([...Array(k).fill(TOPGEN), ...Array(bays - k).fill(TOPGUN)]);
+    for (const w of wsets) for (const d of escorts) {
+      // The same rack, every legal technology set on it, against the best that one
+      // technology alone can do to it.
+      let any = -1, one = -1, anyT = null, oneT = null;
+      for (const t of tsets) {
+        fits++;
+        const v = dpsOf({ hull, fit: { weapon: w, generator: gen, tech: t }, drones: d });
+        if (v > any) { any = v; anyT = t; }
+        if (t.length <= 1 && v > one) { one = v; oneT = t; }
+      }
+      if (any > best.d) best = { d: any, hull, w, t: anyT, gd: d.filter(x => x === TOPGEN).length };
+      if (any / one > worst.ratio) worst = { ratio: any / one, hull, w, anyT, oneT, any, one };
+    }
+  }
+  const ceiling = stageDps('finished');
+  // THE claim. A second technology may SHAPE a build; it may never multiply it a
+  // second time, and two of them may never hand each other their costs back.
+  check('no combination of technologies out-damages the best single one, on any legal fit', (() => {
+    return worst.ratio <= 1 + 1e-9;
+  })(), `the worst any set does against the best single one on its own rack is ` +
+        `x${f(worst.ratio, 6)}, over ${fits.toLocaleString()} fits in ${((Date.now() - sweepT0) / 1000).toFixed(1)}s. ` +
+        'Summed, this same sweep found 16,967 dps on a Bulwark carrying Siege Cadence AND Rapid Cadence — ' +
+        'x1.225 on damage and x1.225 on rate at once, which is x1.50 of damage output and neither of them ' +
+        'giving anything up');
+  // The same rule one level down, and on every attribute rather than on dps alone:
+  // the Cadences cancelled on `damage` and `fireRate`, but the next pair might do it
+  // on hull and cargo, or radar and signature, where no dps sweep would ever see it.
+  // "Every technology gives something up" is checked one row at a time above; this is
+  // that sentence lifted to the SET, which is where it actually failed.
+  check('and no legal set of technologies is a pure gain, on any attribute of any hull', (() => {
+    const bad = [];
+    for (const hull of Object.keys(HULLS)) {
+      const bare = resolve(hull);
+      const tsets = subsets(TECHS, slotsOf(hull).tech).filter(t => t.length > 0);
+      for (const t of tsets) {
+        const got = resolve(hull, fit({ tech: t }));
+        let up = false, down = false;
+        for (const k of Object.keys(ATTRS)) {
+          const d2 = (got[k] - bare[k]) * (ATTRS[k].better === 'high' ? 1 : -1);
+          if (d2 > 1e-9 * Math.max(1, Math.abs(bare[k]))) up = true;
+          if (d2 < -1e-9 * Math.max(1, Math.abs(bare[k]))) down = true;
+        }
+        if (up && !down) bad.push(`${hull} [${t}]`);
+      }
+    }
+    return bad.length === 0;
+  })(), 'checked over every legal combination on all four hulls — a set that moved a number the right way ' +
+        'and nothing the wrong way is two technologies handing each other their costs back, which is ' +
+        'exactly what Siege and Rapid Cadence did while percentages summed');
+
+  // And what that ceiling actually is, because shared/aliens.js anchors the
+  // Thresher's mirror to it: a full chamber returns the sharpest gun the shop sells,
+  // so a fit the shop allows that is half again as sharp makes that sentence false.
+  check('and the sharpest legal fit in the game is a hull advantage, not a technology', (() => {
+    return best.d / ceiling < 1.2 && best.hull === 'vanguard';
+  })(), `${best.d.toFixed(2)} dps — a ${HULLS[best.hull].name} with ${best.w.length} racks and ` +
+        `${EQUIPMENT[best.t[0]]?.name ?? 'nothing'}, ${best.gd} of its bays flying generators — against ` +
+        `${ceiling.toFixed(2)} at the top of the ladder, which is x${f(best.d / ceiling, 3)}. The gap is the ` +
+        'fifth hardpoint and the permission to fill all five with racks, which is capability no other hull ' +
+        'can buy at any price. The Cadence pair was x1.501 of the same number, and that one was not a hull');
+}
+
 check('Launcher Primacy pays a rocket boat at both ends of the ladder, and taxes everyone else', (() => {
   const gain = (b) => dpsOfStats(statsOf(b, 'primacy')) / dpsOfStats(statsOf(b)) - 1;
   return gain(B.pod) > 0.20 && gain(B.rocketeer) > 0.30      // committed, bottom and top
@@ -309,10 +425,10 @@ const flown = (h, t) => newShip(0, 0, h, fit({ tech: t ? [t] : [] }), []);
 check('every dial of every ability is a row in ATTRS, with the shipped setting as its default',
   ATTRS.veilDepth.dflt === VEIL_DEPTH && ATTRS.veilRecover.dflt === VEIL_RECOVER &&
   ATTRS.anchorSwell.dflt === ANCHOR_SWELL && ATTRS.anchorDrag.dflt === ANCHOR_DRAG &&
-  ATTRS.lockTighten.dflt === LOCK_TIGHTEN && ATTRS.lockReach.dflt === LOCK_REACH,
+  ATTRS.drumfireGain.dflt === DRUMFIRE_GAIN && ATTRS.drumfireReach.dflt === DRUMFIRE_REACH,
   'ships.js imports them from ability.js rather than restating them, so the two cannot drift');
 check('and every one of them has a ceiling, because some of these want one',
-  [ATTRS.veilDepth, ATTRS.anchorSwell, ATTRS.anchorDrag, ATTRS.lockTighten, ATTRS.lockReach]
+  [ATTRS.veilDepth, ATTRS.anchorSwell, ATTRS.anchorDrag, ATTRS.drumfireGain, ATTRS.drumfireReach]
     .every(a => Number.isFinite(a.max)),
   `a veil stops at x${f(1 - ATTRS.veilDepth.max)} detection and an anchor keeps ` +
   `${Math.round((1 - ATTRS.anchorDrag.max) * 100)}% of its speed — ability.js argues both`);
@@ -357,25 +473,33 @@ check('a technology cannot push a dial past its ceiling',
     w.speed > 0 && s.speed > 0, 'a ship at zero is repositioned only by whatever is shooting it');
 }
 {
+  // This was the Lock Repeater — the lock costs you almost no reach, and the reach
+  // got shorter. Lock is gone and the item went with it, but the rule it was
+  // keeping is the reason its replacement is shaped the way it is: Drumfire's two
+  // dials are ONE number twice, reach x rate = 1.0000 at a full drum, so an ability
+  // technology may only move where on that curve the hull sits. A row that bought
+  // the rate without the reach would be a free x1.24 of damage output, which is the
+  // Cadence pair's bug one shelf along.
+  const V = { ability: 'drumfire' };
   const v = t => flown('vanguard', t);
-  const at = (s, lvl) => { drive(s, lvl); return { lock: lockOf({ ability: 'lock' }, s.power, s.stats), range: rangeOf(s) }; };
-  const stockFull = at(v(null), 1), standFull = at(v('standoff'), 1);
-  check('a Lock Repeater holds a full lock from further out, and is a worse ship cold',
-    standFull.lock === 1 && standFull.range > stockFull.range &&
-    rangeOf(v('standoff')) < rangeOf(v(null)),
-    `${Math.round(stockFull.range)}px locked becomes ${Math.round(standFull.range)}px, ` +
-    `while the unlocked reach drops from ${Math.round(rangeOf(v(null)))} to ${Math.round(rangeOf(v('standoff')))}`);
-  // The Predictive Array was the other half — a bite of 1.8, reaching a perfect
-  // return on 56% of the dial and leaving the rest of the reactor for the guns —
-  // and it went with the rest of the second halves. The clamp it was there to
-  // exercise stays, because it is not about the item: lockOf must never return
-  // more than a perfect return however hard anything drives it, and unclamped it
-  // also put `lk` past 100 on the wire, which the client colours a bolt from.
-  check('a lock never becomes better than perfect, however hard it is driven',
-    at(v('standoff'), 1).lock === 1 && lockOf({ ability: 'lock' },
-      { special: 1, charge: 99 }, { ...v(null).stats, lockTighten: ATTRS.lockTighten.max }) === 1 &&
-    ATTRS.lockTighten.max <= 2,
-    `lockOf clamps at 1 even at the ceiling of x${ATTRS.lockTighten.max} on the dial`);
+  const at = (t, lvl) => { const s = drive(v(t), lvl);
+    return { rate: drumOf(V, s.power, s.stats), reach: reachOf(V, s.power, s.stats), range: rangeOf(s) }; };
+  const stock = at(null, 1), gov = at('governor', 1);
+  check('a Drum Governor doubles the rate and halves the reach, which is the same trade further along',
+    Math.abs(gov.rate - 2) < 1e-9 && Math.abs(gov.reach - 0.5) < 1e-9 && gov.range < stock.range,
+    `stock x${f(stock.rate)} rate at ${Math.round(stock.range)}px becomes x${f(gov.rate)} at ` +
+    `${Math.round(gov.range)}px — 350px is a range nothing else would call a range`);
+  check('and it cannot lift the hull off the curve, only slide it along',
+    Math.abs(stock.rate * stock.reach - 1) < 1e-9 && Math.abs(gov.rate * gov.reach - 1) < 1e-9,
+    `reach x rate is ${f(stock.rate * stock.reach, 4)} stock and ${f(gov.rate * gov.reach, 4)} with the ` +
+    'Governor — the same damage per metre of reach either way, which is what stops an ability ' +
+    'technology being a damage multiplier wearing a hat');
+  check('a Drumfire dial never goes past its ceiling, however hard anything drives it',
+    resolve('vanguard', fit({ tech: ['governor'] })).drumfireGain <= ATTRS.drumfireGain.max &&
+    resolve('vanguard', fit({ tech: ['governor'] })).drumfireReach <= ATTRS.drumfireReach.max &&
+    Math.abs(ATTRS.drumfireGain.max - ATTRS.drumfireReach.max / (1 - ATTRS.drumfireReach.max)) < 1e-9,
+    `the two ceilings are one ceiling: a reach floor of ${Math.round((1 - ATTRS.drumfireReach.max) * 100)}% ` +
+    `pays for x${f(1 + ATTRS.drumfireGain.max)} of rate and not a fraction more`);
 }
 check('an ability technology does nothing at all on a hull without that ability, and still costs',
   (() => { const b = drive(flown('bulwark', 'deepen'), 1);

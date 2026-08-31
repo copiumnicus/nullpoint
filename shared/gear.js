@@ -43,8 +43,8 @@ export const FRONTIER = { laser: 3, rocket: 2, tech: 3 };
 //
 // Derived from the attributes it touches rather than declared, so a new ability
 // technology cannot be added without this knowing about it. The dials are named
-// after their abilities — veilDepth, anchorSwell, lockReach — which is what makes
-// this readable rather than a table someone has to remember to update.
+// after their abilities — veilDepth, anchorSwell, drumfireReach — which is what
+// makes this readable rather than a table someone has to remember to update.
 //
 // It matters because these were sold to anyone. A Null Skin fitted to a Bulwark
 // moves a number nothing on that hull reads, the tooltip's figures move anyway
@@ -54,7 +54,7 @@ export function tunesAbility(key) {
   for (const [attr] of EQUIPMENT[key]?.mods ?? []) {
     if (attr.startsWith('veil')) return 'veil';
     if (attr.startsWith('anchor')) return 'anchor';
-    if (attr.startsWith('lock')) return 'lock';
+    if (attr.startsWith('drumfire')) return 'drumfire';
   }
   return null;
 }
@@ -74,7 +74,7 @@ export function whyNotSold(key, { docked = false, berth = false, hull = null } =
   // An ability technology is only a technology on the hull that has the ability.
   const tunes = tunesAbility(key);
   if (tunes && hull && hull.ability !== tunes) {
-    const owner = { veil: 'Kestrel', anchor: 'Bulwark', lock: 'Vanguard' }[tunes];
+    const owner = { veil: 'Kestrel', anchor: 'Bulwark', drumfire: 'Vanguard' }[tunes];
     return `tunes the ${tunes} — only the ${owner} has one, and you fly a ${hull.name}`;
   }
   if (frontierOnly(key)) {
@@ -398,14 +398,26 @@ export const EQUIPMENT = {
               does: 'Lets you hold an Anchor and still go somewhere.',
               blurb: 'A wall that can walk, at two thirds of the wall.',
               mods: [['anchorDrag', 'mul', -0.60], ['anchorSwell', 'mul', -0.40]] },
-  // reachOf is 1 - lockReach x drive, so this moves the cost of aiming rather
-  // than the aim. At a full lock it keeps 89.5% of your reach against the stock
-  // 65% — but 15% comes off the reach itself, so the ship is worse whenever the
-  // lock is cold. Better locked, worse idle.
-  standoff: { name: 'Lock Repeater', slot: 'tech', tier: 3, price: 9300,
-              does: 'Lets you hold a perfect Lock from out of reach.',
-              blurb: 'The lock costs you almost no reach. The reach got shorter.',
-              mods: [['lockReach', 'mul', -0.85], ['weaponRange', 'mul', -0.15]] },
+  // Drumfire's two dials are one number twice — reach x rate is 1.000 at a full
+  // drum, because the gain IS the cost read through 1/(1-cost) — so a technology
+  // may only move WHERE on that curve the hull sits, never lift it off. Off the
+  // curve is a free multiplier: the shipped setting is 65% reach for x1.54, and a
+  // row that bought the rate without the reach would be x1.24 of damage output for
+  // nothing, which is the Cadence pair's bug wearing a different hat.
+  //
+  // So: half your reach, and 1/0.5 = twice the rate. Both muls fall out of that
+  // one sentence and neither is picked —
+  //
+  //      cost  0.35 -> 0.50   is  x10/7,  so  +3/7
+  //      gain  7/13 -> 1.00   is  x13/7,  so  +6/7
+  //
+  // The Anchor Servos shape, one ability along: it cannot make the ability bigger,
+  // only change the exchange rate, and what it buys is a ship that fights at 350px
+  // where nothing else would call that a range.
+  governor: { name: 'Drum Governor', slot: 'tech', tier: 3, price: 9300,
+              does: 'Lets you trade half your reach for twice the rate.',
+              blurb: 'Half the reach at a full drum, and double the rate for it.',
+              mods: [['drumfireGain', 'mul', 6 / 7], ['drumfireReach', 'mul', 3 / 7]] },
 };
 
 // A collector lives in its own bay, not in a combat one. It used to sit in the

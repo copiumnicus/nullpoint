@@ -184,22 +184,27 @@ export const ALIENS = {
   // can still leave — see escapeTax in shared/kedge.js, it costs exactly twice as
   // long and never more — but you cannot leave for free, and that is the animal.
   //
-  // 330.975 dps is not a chosen number either: it is ANCHORS.pressure x the effective
-  // hit points of the stage it is posted for, which is the model's own definition of
-  // a hostile that is exactly on model. What is new is that for this one the number
-  // is a FLOOR rather than a ceiling: every other armed hostile's dps is what it
-  // would do if you let it, and this one collects because you cannot hold range on
-  // it.
+  // 350.2125 dps is not a chosen number either: it is ANCHORS.pressure x the
+  // effective hit points of the stage it is posted for, which is the model's own
+  // definition of a hostile that is exactly on model. What is new is that for this
+  // one the number is a FLOOR rather than a ceiling: every other armed hostile's dps
+  // is what it would do if you let it, and this one collects because you cannot hold
+  // range on it.
   //
-  // It was 258.75 — 345 x 0.75 — and it moved because the stage under it moved. The
-  // hull rework gave the Bulwark a third generator bay and a second technology bay,
-  // so the cruiser stage went from 5,750 effective hit points to 7,355, and a gun
-  // defined as a share of that pilot has to follow or it is no longer the thing the
-  // comment above says it is. That is the whole point of deriving it: test/kedge.mjs
-  // asserts the equality to 1e-9, so a hull change cannot leave this quietly reading
-  // 0.78 of the fight it claims to be. The rate is unchanged, so 441.3 x 0.75 is the
-  // pair — 330.975 has no factorisation with a whole-number bolt at any rate worth
-  // firing, and a tenth of a point on the bolt is the smaller lie.
+  // It has now moved twice, both times because the stage under it moved, and both
+  // times without anybody deciding anything about a Kedge. 258.75 — 345 x 0.75 — was
+  // the shipped number; the hull rework gave the Bulwark a third generator bay and a
+  // second technology bay and took it to 330.975; and percentages compounding
+  // instead of summing (see resolve() in ships.js, and the Cadence pair it was
+  // written for) took the cruiser stage from 7,355 to 7,782.5 effective hit points,
+  // because Composite Plating and an Ore Foundry now land as 1.50 x 1.45 rather than
+  // 1 + 0.95. A gun defined as a share of that pilot has to follow or it is no longer
+  // the thing the comment above says it is. That is the whole point of deriving it:
+  // test/kedge.mjs asserts the equality to 1e-9, so a change anywhere upstream cannot
+  // leave this quietly reading 0.95 of the fight it claims to be. The rate is
+  // unchanged, so 466.95 x 0.75 is the pair — 350.2125 has no factorisation with a
+  // whole-number bolt at any rate worth firing, and a hundredth of a point on the
+  // bolt is the smaller lie.
   //
   // Reach 900 is the Leviathan's and the Thresher's, and it is the same number for
   // the same reason: past every hull in the game (620-820), so you cannot out-range
@@ -236,7 +241,7 @@ export const ALIENS = {
     },
     attrs: { hull: 40000, shield: 25000, shieldRegen: 0.012, shieldDelay: 5,
              speed: 150, accel: 300, signature: 8,
-             damage: 441.3, fireRate: 0.75, weaponRange: 900 },
+             damage: 466.95, fireRate: 0.75, weaponRange: 900 },
     aggro: 540,       // the Thresher's, still inside SIGHT_R, so it is on screen first
     leash: 1800,      // a picket has no business chasing you across a sector
     patience: 4.0,

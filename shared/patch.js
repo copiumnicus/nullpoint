@@ -8,9 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.62';
+export const VERSION = '0.64';
 
 export const PATCHES = [
+  { v: '0.64', notes: [
+    'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
+    'Half again the shots at full, and your reach drops to 65% to pay for it',
+    'Lock is gone: an Aspect Filter already found a Bandit, and any hull can buy one',
+    'Drum Governor replaces the Lock Repeater — half your reach, and double the rate',
+    'Siege and Rapid Cadence no longer cancel into a free half-again of damage',
+    'Percentages compound now, so a trade and its opposite come out at exactly x1.00',
+    'A Kedge hits for 467 a bolt: its gun is a share of the ship it is posted against',
+  ] },
   { v: '0.62', notes: [
     'Eight places printed two labels on top of each other. None of them do now',
     'The station’s hint line no longer runs through the INVENTORY and STATS tabs',

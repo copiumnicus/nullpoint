@@ -4,8 +4,7 @@
 // what it is doing, then travels — so holding a straight line gets you hit, and
 // changing course mid-flight is a real dodge rather than a stat check.
 
-import { applyDamage, SHOT_FLASH, rangeOf, hullOf } from './sim.js';
-import { lockOf } from './ability.js';
+import { applyDamage, SHOT_FLASH, rangeOf, rateOf } from './sim.js';
 import { boostOf } from './power.js';
 import { droneAt } from './formation.js';
 import { EQUIPMENT } from './gear.js';
@@ -66,13 +65,19 @@ export function fire(a, b, dt, mag = null) {
   const live = !dry && b && b.hp > 0 && a.hp > 0 &&
                Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a);
 
+  // The hull's own rate, not the resolved stat: a Vanguard running Drumfire cycles
+  // faster than its fireRate says. Read ONCE and used for both clocks below — the
+  // cycle and the step between barrels are the same cadence, and speeding one up
+  // without the other would stretch a volley past the cycle that owns it.
+  const rate = rateOf(a);
+
   if (a.volley > 0) {                              // mid-stream
     if (!live) { a.volley = 0; return []; }        // target gone or out of reach: hold fire
     a.volleyCool -= dt;
     if (a.volleyCool > 0) return [];
   } else {
     if (!live || a.cool > 0) return [];
-    a.cool = 1 / a.stats.fireRate;                 // a fresh cycle
+    a.cool = 1 / rate;                             // a fresh cycle
     a.volley = guns;
   }
 
@@ -82,7 +87,7 @@ export function fire(a, b, dt, mag = null) {
   if (!salvo) { a.volley = 0; return []; }
   a.volley -= salvo;
   if (mag) mag.n -= salvo;
-  a.volleyCool = (1 / a.stats.fireRate) / stepsOf(guns);
+  a.volleyCool = (1 / rate) / stepsOf(guns);
   a.shotFlash = SHOT_FLASH;
   a.sinceShot = 0;                                 // and there goes the veil
 
@@ -99,7 +104,6 @@ export function fire(a, b, dt, mag = null) {
       sx: m.x, sy: m.y,
       ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
       dmg: each, target: b, foe: !!a.isAlien, w: Math.round(each), gr: mag?.tier ?? 0,
-      lk: Math.round(100 * lockOf(hullOf(a), a.power, a.stats)),
       t: travel, ttl: Math.max(0.001, travel),
     });
   }
