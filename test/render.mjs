@@ -25,7 +25,7 @@ import { countOf, mission, ARENA_MODULES } from '../shared/arena.js';
 import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
 import { Tracker, textWidth, alphaOf } from './uibox.mjs';
-import { collisions, say, key } from './uilint.mjs';
+import { collisions, crossings, crowding, say, sayCross, sayTight, key, same } from './uilint.mjs';
 
 // pull the module body straight out of index.html so the test can never drift from it
 const src = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
@@ -220,21 +220,28 @@ await import('./.client.mjs');
 
 const ws = socks[0];
 const feed = o => ws.onmessage({ data: JSON.stringify(o) });
-const FOUND = new Map();
+const FOUND = new Map(), CROSS = new Map(), TIGHT = new Map();
 // Every window a player might actually have. Panels are laid out from the
 // viewport, so a line that clears its neighbour at 1600x900 can sit on top of
 // it at 1366x768, and the harness has only ever run at one size.
 const SIZES = [[2560, 1440], [1920, 1080], [1600, 900], [1366, 768], [1280, 720], [1024, 640], [820, 560]];
 let SEEN = 0, SIZE = '1600x900';
 // One report per pair of strings, not per frame: the threat file drawn at
-// twenty-six eased scroll offsets is one overlap, not twenty-six.
+// twenty-six eased scroll offsets is one overlap, not twenty-six. Numbers are
+// collapsed in the key, so "x240" against a price and "x241" against the same
+// price is one finding.
+const keep = (m, k, v) => {
+  if (!m.has(k)) m.set(k, { v, n: 0, sizes: new Set() });
+  const f = m.get(k); f.n++; f.sizes.add(SIZE);
+};
 const analyse = () => {
   SEEN++;
-  for (const c of collisions(T.els, innerWidth, innerHeight)) {
-    const k = key(c);
-    if (!FOUND.has(k)) FOUND.set(k, { c, n: 0, sizes: new Set() });
-    const f = FOUND.get(k); f.n++; f.sizes.add(SIZE);
-  }
+  const els = T.els;
+  for (const c of collisions(els, innerWidth, innerHeight)) keep(FOUND, key(c), c);
+  for (const c of crossings(els, innerWidth, innerHeight))
+    keep(CROSS, `${same(c.a.text)}|${Math.round(c.r.w)}x${Math.round(c.r.h)}`, c);
+  for (const c of crowding(els, innerWidth, innerHeight))
+    keep(TIGHT, `${same(c.a.text)}|${same(c.b.text)}|${c.way}`, c);
 };
 const frame = t => { audio.now = t / 1000; const cb = raf; raf = null;
                      T.reset(); cb(t); analyse(); };
@@ -2372,15 +2379,22 @@ const dismiss = () => {
 // index.html line number on each of them, which costs about eight seconds and is
 // why it is off here.
 {
-  const R = [...FOUND.values()].sort((a, b) => b.n - a.n);
-  if (process.env.LAYOUT)
-    for (const f of R) console.log(`  [${String(f.n).padStart(4)} frames] {${[...f.sizes].join(' | ')}}\n      ${say(f.c)}`);
-  if (R.length)
-    errs.push(`${R.length} places print two labels through each other:\n    ` +
-              R.slice(0, 8).map(f => say(f.c)).join('\n    '));
-  else
-    console.log(`  ok   nothing is printed through anything else  — ${SEEN.toLocaleString('en-US')} frames, ` +
-                `${SIZES.length} window sizes, no two labels share a pixel`);
+  const report = (m, tell, claim, detail) => {
+    const R = [...m.values()].sort((a, b) => b.n - a.n);
+    if (process.env.LAYOUT)
+      for (const f of R) console.log(`  [${String(f.n).padStart(4)} frames] {${[...f.sizes].join(' | ')}}\n      ${tell(f.v)}`);
+    if (R.length) errs.push(`${R.length} ${claim}:\n    ` + R.slice(0, 8).map(f => tell(f.v)).join('\n    '));
+    else console.log(`  ok   ${detail}`);
+  };
+  const where = `${SEEN.toLocaleString('en-US')} frames, ${SIZES.length} window sizes`;
+  report(FOUND, say, 'places print two labels through each other',
+    `nothing is printed through anything else  — ${where}, no two labels share a pixel`);
+  report(CROSS, sayCross, 'labels are written across something that is not their own frame',
+    `nothing is written across a control it has nothing to do with  — ${where}, the minimap, ` +
+    'the STAR SYSTEM button and the now-playing tag included');
+  report(TIGHT, sayTight, 'pairs of labels are crammed together',
+    `every two labels have room to be read apart  — ${where}, a character between them side by side ` +
+    'and a descender stacked');
 }
 console.log(`rendered ${frames} frames across ${Object.keys(MAPS).length} maps`);
 if (errs.length) console.log('caught by render guard:\n  ' + errs.join('\n  '));
