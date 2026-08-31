@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.71';
+export const VERSION = '0.72';
 
 export const PATCHES = [
+  { v: '0.72', notes: [
+    'The deep sectors have a pirate outpost now — one shop, same place in all three',
+    'It sells ore, and a bay rented there costs ten million and rank 39',
+    'Rent one and you refit, buy and respawn four hops out instead of flying home',
+    'The ring keeps the peace, but not from anything you have already shot at',
+  ] },
   { v: '0.71', notes: [
     'Duels: /1v1 <callsign> challenges another pilot, /accept or /decline answers it',
     'Both of you fold out to a sector a quarter the usual size, with a wall for an edge',
@@ -24,8 +30,7 @@ export const PATCHES = [
     'Drumfire got serious: a full drum is two and a half times your cycle, not half again',
     'That is twice what an interceptor throws with its whole reactor on its guns',
     'Your reach still drops to 65% — 455px, the shortest in the game, so you go in close',
-    'The Drum Governor turned around: it buys your reach back at four fifths of the drum',
-  ] },
+    'The Drum Governor turned around: it buys your reach back at four fifths of the drum',  ] },
   { v: '0.69', notes: [
     'A claim is a hunt now: everything in it sees you from the far side of the map',
     'They all come at once, at their own speeds, so the field arrives as a stream',

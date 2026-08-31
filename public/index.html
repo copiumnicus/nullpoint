@@ -11,7 +11,7 @@ import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES, mapOf, isArena } from '/shared
 import { mission, bar as missionBar, BAR_TONE, whyNotClaim, whyNotReplay, claimState } from '/shared/arena.js';
 import { duelText, mayAim } from '/shared/duel.js';
 import { LAYER_NAME, STAT_STEP, fmt as statFmt, improves, VALUE_AT, LABEL_PX } from '/shared/breakdown.js';
-import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
+import { berthPanel, berthPrice, berthRank, whyNotBerth, whyNotBuyBerth, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
 import { unpackLab } from '/shared/net.js';
 import { escortOf, SLOW_RADIUS, JUMP_TIME, nearPortal, inBase, canDock, inOutpost, driftDepth, driftDps,
@@ -863,7 +863,13 @@ function drawPatch(now) {
 // the second part: the whole risk of the thing is a pilot assuming a bay is cover.
 function drawBerth() {
   const L = berthPanel(VIEW_W, VIEW_H), P = L.panel;
-  const why = whyNotBuyBerth({ xp: myXp, credits, owned: myBerths.includes(mapId), inside: inMyOutpost() });
+  const why = whyNotBuyBerth({ mapId, xp: myXp, credits,
+                               owned: myBerths.includes(mapId), inside: inMyOutpost() });
+  // Which counter you are standing at. A bay is not one price any more — the deeps
+  // ask ten million and rank 39 — and the panel quoting the frontier's terms in a
+  // deep sector would be the workshop dock all over again: the client drawing one
+  // number while the server charges another.
+  const price = berthPrice(mapId), rank = berthRank(mapId);
   const over = hover && hover.x > L.buy.x && hover.x < L.buy.x + L.buy.w
                      && hover.y > L.buy.y && hover.y < L.buy.y + L.buy.h;
 
@@ -881,12 +887,15 @@ function drawBerth() {
   g.fillText('Rent a bay: refit and buy here, without flying home.', P.x + 20, P.y + 56);
   g.fillText('The only shelf that sells the top of every ladder.', P.x + 20, P.y + 74);
   g.fillStyle = '#66748c';
-  g.fillText('No repairs, no shelter, and shut while you are shot at.', P.x + 20, P.y + 92);
-  g.fillText(`Rank ${BERTH_RANK} and up: they rent to pilots they know of.`, P.x + 20, P.y + 110);
+  // "No shelter" was on this line for two versions after it stopped being true —
+  // the ring keeps the peace, it just never mends you, and a pilot reading the
+  // panel learnt the opposite of what the badge top right tells them.
+  g.fillText('No repairs, and the bay shuts while you are shot at.', P.x + 20, P.y + 92);
+  g.fillText(`Rank ${rank} and up: they rent to pilots they know of.`, P.x + 20, P.y + 110);
 
   g.font = '12px ui-monospace, monospace'; g.textAlign = 'right';
-  g.fillStyle = credits >= berthPrice() ? '#ffd479' : '#e05a5a';
-  g.fillText(`${fmtCredits(berthPrice())} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
+  g.fillStyle = credits >= price ? '#ffd479' : '#e05a5a';
+  g.fillText(`${fmtCredits(price)} ${CURRENCY.short}`, P.x + P.w - 20, P.y + 32);
   g.textAlign = 'left';
 
   g.fillStyle = why ? 'rgba(255,255,255,0.03)' : over ? 'rgba(125,224,138,0.20)' : 'rgba(125,224,138,0.12)';
@@ -1485,7 +1494,8 @@ c.addEventListener('pointerdown', e => {
   if (berthOpen) {
     const L = berthPanel(VIEW_W, VIEW_H);
     if (v.x > L.buy.x && v.x < L.buy.x + L.buy.w && v.y > L.buy.y && v.y < L.buy.y + L.buy.h) {
-      const why = whyNotBuyBerth({ xp: myXp, credits, owned: myBerths.includes(mapId), inside: inMyOutpost() });
+      const why = whyNotBuyBerth({ mapId, xp: myXp, credits,
+                                   owned: myBerths.includes(mapId), inside: inMyOutpost() });
       if (why) return say(why, '#e0a53f');
       send({ t: 'buyberth' });
       berthOpen = false;

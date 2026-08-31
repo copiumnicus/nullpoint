@@ -100,8 +100,11 @@ Object.entries(COMPANIES).forEach(([co, f]) => {
   // The pirate outpost sits on the frontier, not one hop in. That is where a run
   // actually gets long enough for a full hold to end it — the third sector is
   // still close enough to your own dock that flying home was never the problem.
-  // It buys ore and nothing else: no repair, no refit, and emphatically no
-  // sanctuary, which matters more here than it did a sector back.
+  // It buys ore and nothing else without a bay rented in it: no repair and no
+  // refit. It DOES keep the peace inside its own 420px ring — see inOutpost() in
+  // sim.js — which it deliberately did not until a berth became somewhere a wreck
+  // comes back to. This comment claimed the opposite for two versions after that
+  // stopped being true.
   mk(co + '4', place(a, RAD.frontier),          `${f.tag}-4`, 3,
      [{ ...NW, to: co + '2' }, { ...NE, to: co + '3' },
       { ...W,  to: myGates[0] }, { ...E, to: myGates[1] }],
@@ -121,9 +124,64 @@ for (const [i, g] of GATES.entries())
      ring([g.cos[0] + '4', g.cos[1] + '4', g.deeps[0], g.deeps[1]], 20, 110, 200, 290),
      { contested: true, gate: true });
 
+// The pirate outpost in a deep sector, and it is the SAME point in all three.
+//
+// The deeps are three copies of one place — same size, same three doors, same two
+// sowers — so a shop you can find without looking is worth more out here than a
+// bespoke one. What follows is why that point and not another.
+//
+//   x = 6000, because it is the only x equidistant from both edge doors. Every
+//   deep sector has three portals and all three sit on y = 4000 at x = 1000, 6000
+//   and 11000 — but WHICH of them is a gate and which is the road to Nullpoint
+//   differs per sector: d1 has both gates on the edges, d2 and d3 have one gate on
+//   the edge and one dead centre. Anywhere but the middle privileges one approach,
+//   and which approach it privileges would change from sector to sector. At 6000
+//   both edge doors are 5,385px away in all three.
+//
+//   y = 6000, so the ring is 2,000px OFF the midline. Two reasons, and the second
+//   is the one with the number in it. Every door in a deep sector is on y = 4000,
+//   which makes that line the sector's only through-route; a ring straddling it
+//   would put the shop in the fire lane and make the run to safety the same line as
+//   the run to the exit. And 2,000px leaves 2000 - 420 - 288 = 1,292px of open sky
+//   between the portal mouth's peace and the outpost's, which is wider than the
+//   widest patch of ground in the game — a Doldrum's still is r 420, so 840px
+//   across — so no single patch can ever seal the shop off from the door. That is
+//   the deeps' version of the frontier's "clear of both gates" rule, which asks for
+//   940px and is cleared here twice over.
+//
+//   r = 420, the same ring the frontier gets. One number and not two — and it is
+//   also the number that bounds the worst thing that can happen at the door. Ground
+//   is laid where its victim was STANDING, and nothing may be sown on a pilot in
+//   sanctuary, so every patch in the game has its centre at 420px or more from the
+//   middle of this ring. Two 420px circles that far apart share 39% of their area,
+//   and a Vitriol's 165px pool on the rim covers 7%: the shop can be made awkward
+//   and it can never be sealed.
+//
+// It IS sanctuary, like every other outpost — see inOutpost() in sim.js. That is
+// not an oversight out here, it is the price of the respawn: a bay is somewhere a
+// wreck comes back to, and ground OUTLIVES the thing that sowed it by 36 seconds,
+// so a respawn with no peace at the door would be a death loop with a fuse on it.
+// Note the deeps were never sanctuary-free anyway — HAVEN_R is 288px around each of
+// the three portal mouths, and all three are already on this map.
+//
+// What the peace does NOT cover is a fight you started: mayHarm() lets anything you
+// provoked follow you in, and a pool carries its sower's grudge by reference for
+// exactly that reason, so ground you were already fighting in keeps burning you
+// inside the ring. Verified live — shields 97% to 76% standing 409px from the middle
+// of a 420px ring, and untouched on the same pool after a respawn cleared the grudge.
+//
+// SEAM, and it is worth naming because it is the one gap: sowHolds() refuses on a
+// haven with NO provocation exception (it is fixHolds()'s rule, and shared/ground.js
+// says why). A Vitriol and a Doldrum have no gun at all, so a pilot who reaches this
+// ring is safe from NEW ground however much they provoked — only what is already on
+// the floor can reach them. Whoever gives the deeps' sowers a weapon closes that on
+// their own, since a gun goes through mayHarm().
+const DEEP_POST = { x: 6000, y: 6000, r: 420 };
+
 for (const [i, d] of DEEPS.entries())                                   // stage 2: edges plus dead centre
   mk(d.id, place(d.ang, RAD.deep), `D-${i + 1}`, i + 1,
-     [{ ...W, to: d.gates[0] }, { ...E, to: d.gates[1] }, { ...C, to: 'x0' }], { contested: true, deep: true });
+     [{ ...W, to: d.gates[0] }, { ...E, to: d.gates[1] }, { ...C, to: 'x0' }],
+     { contested: true, deep: true, outpost: { ...DEEP_POST } });
 
 mk('x0', { sx: 0, sy: 0 }, 'X', 2,                                      // stage 3: a 120° ring
    DEEPS.map(d => {
