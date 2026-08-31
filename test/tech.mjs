@@ -473,33 +473,42 @@ check('a technology cannot push a dial past its ceiling',
     w.speed > 0 && s.speed > 0, 'a ship at zero is repositioned only by whatever is shooting it');
 }
 {
-  // This was the Lock Repeater — the lock costs you almost no reach, and the reach
-  // got shorter. Lock is gone and the item went with it, but the rule it was
-  // keeping is the reason its replacement is shaped the way it is: Drumfire's two
-  // dials are ONE number twice, reach x rate = 1.0000 at a full drum, so an ability
-  // technology may only move where on that curve the hull sits. A row that bought
-  // the rate without the reach would be a free x1.24 of damage output, which is the
-  // Cadence pair's bug one shelf along.
+  // Rewritten twice now, and the rule underneath has survived both. It was the Lock
+  // Repeater; then it was "half your reach for twice the rate", checked as
+  // reach x rate = 1.0000 either way, because Drumfire's two dials were ONE number
+  // twice. The gain is solved from a design target now — a full drum throws twice
+  // what an interceptor does — so the dials are independent and there is no curve
+  // to sit on. What is left is the claim that always mattered: AN ABILITY
+  // TECHNOLOGY MAY CHANGE THE EXCHANGE RATE AND NEVER THE SIZE. A row that raised
+  // the gain would just be a bigger ability, which is the ceiling's job, not the
+  // shelf's; this one lowers it and buys reach back, exactly as Anchor Servos
+  // lowers the swell and buys speed back, with the same -0.60 and -0.40.
   const V = { ability: 'drumfire' };
   const v = t => flown('vanguard', t);
   const at = (t, lvl) => { const s = drive(v(t), lvl);
     return { rate: drumOf(V, s.power, s.stats), reach: reachOf(V, s.power, s.stats), range: rangeOf(s) }; };
   const stock = at(null, 1), gov = at('governor', 1);
-  check('a Drum Governor doubles the rate and halves the reach, which is the same trade further along',
-    Math.abs(gov.rate - 2) < 1e-9 && Math.abs(gov.reach - 0.5) < 1e-9 && gov.range < stock.range,
-    `stock x${f(stock.rate)} rate at ${Math.round(stock.range)}px becomes x${f(gov.rate)} at ` +
-    `${Math.round(gov.range)}px — 350px is a range nothing else would call a range`);
-  check('and it cannot lift the hull off the curve, only slide it along',
-    Math.abs(stock.rate * stock.reach - 1) < 1e-9 && Math.abs(gov.rate * gov.reach - 1) < 1e-9,
-    `reach x rate is ${f(stock.rate * stock.reach, 4)} stock and ${f(gov.rate * gov.reach, 4)} with the ` +
-    'Governor — the same damage per metre of reach either way, which is what stops an ability ' +
-    'technology being a damage multiplier wearing a hat');
-  check('a Drumfire dial never goes past its ceiling, however hard anything drives it',
+  check('a Drum Governor buys most of your reach back, and pays for it in drum',
+    gov.range > stock.range && gov.rate < stock.rate && gov.rate > 1,
+    `stock x${f(stock.rate)} of your cycle at ${Math.round(stock.range)}px becomes x${f(gov.rate)} at ` +
+    `${Math.round(gov.range)}px — a drum you can hold at a range you can fight from, ` +
+    'which is the Anchor Servos trade one ability along');
+  check('and it changes the exchange rate without changing the size of the ability',
+    Math.abs(gov.rate * gov.range / (stock.rate * stock.range) - 1) < 0.02 &&
+    gov.rate < stock.rate,
+    `damage per metre of reach is ${f(stock.rate * stock.range / 1000, 2)} stock and ` +
+    `${f(gov.rate * gov.range / 1000, 2)} with the Governor, inside ` +
+    `${f(100 * Math.abs(gov.rate * gov.range / (stock.rate * stock.range) - 1), 1)}% — an ability ` +
+    'technology that made the ability BIGGER would be a damage multiplier wearing a hat, and the ' +
+    'ceiling that stops one is in ATTRS rather than on this shelf');
+  check('and the ceiling that does stop one is the design target doubled',
     resolve('vanguard', fit({ tech: ['governor'] })).drumfireGain <= ATTRS.drumfireGain.max &&
     resolve('vanguard', fit({ tech: ['governor'] })).drumfireReach <= ATTRS.drumfireReach.max &&
-    Math.abs(ATTRS.drumfireGain.max - ATTRS.drumfireReach.max / (1 - ATTRS.drumfireReach.max)) < 1e-9,
-    `the two ceilings are one ceiling: a reach floor of ${Math.round((1 - ATTRS.drumfireReach.max) * 100)}% ` +
-    `pays for x${f(1 + ATTRS.drumfireGain.max)} of rate and not a fraction more`);
+    1 + ATTRS.drumfireGain.max >= 2 * (1 + DRUMFIRE_GAIN) - 0.05,
+    `a full drum is x${f(1 + DRUMFIRE_GAIN)} of your cycle, which is twice an interceptor with its ` +
+    `reactor on its guns; the dial stops at x${f(1 + ATTRS.drumfireGain.max)}, which is four times one, ` +
+    `and the reach floor of ${Math.round((1 - ATTRS.drumfireReach.max) * 100)}% is 140px — inside the ` +
+    'slack around an aim point, so a reach you cannot miss from is not a reach');
 }
 check('an ability technology does nothing at all on a hull without that ability, and still costs',
   (() => { const b = drive(flown('bulwark', 'deepen'), 1);

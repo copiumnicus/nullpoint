@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.68';
+export const VERSION = '0.69';
 
 export const PATCHES = [
+  { v: '0.69', notes: [
+    'Drumfire got serious: a full drum is two and a half times your cycle, not half again',
+    'That is twice what an interceptor throws with its whole reactor on its guns',
+    'Your reach still drops to 65% — 455px, the shortest in the game, so you go in close',
+    'The Drum Governor turned around: it buys your reach back at four fifths of the drum',
+  ] },
   { v: '0.68', notes: [
     'A fully researched ship no longer prints its shield through the number beside it',
     'The station’s stat line sizes its columns to the biggest number you can reach',

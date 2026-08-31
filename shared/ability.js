@@ -89,38 +89,62 @@ export const ANCHOR_DRAG = 0.8;
 
 // What Drumfire costs: reach. To fire this fast you have to close.
 //
-// This was Lock's cost and it is unchanged, because it is the reason the ability
-// is a class identity rather than "more damage". It replaced Lock — the seekers
-// stop guessing, camouflage stops being an answer to you — which had collapsed
-// into a PvP-only ability the moment the Aspect Filter went on the shelf: a
-// technology already reveals a Bandit from any angle, so the one thing Lock beat
-// was already beaten, on a hull most people fly against the bestiary.
+// This was Lock's cost and it has never moved, through two completely different
+// gains, because it is a statement about how a fighter FIGHTS rather than a term
+// in any arithmetic. It replaced Lock — the seekers stop guessing, camouflage
+// stops being an answer to you — which had collapsed into a PvP-only ability the
+// moment the Aspect Filter went on the shelf: a technology already reveals a
+// Bandit from any angle, so the one thing Lock beat was already beaten, on a hull
+// most people fly against the bestiary.
+//
+// It stayed at 0.35 when the gain went from x1.54 to x2.50, which was a decision
+// and not an oversight. 455px is already the shortest reach in the game by 165px —
+// under the Hauler's 640, the Kestrel's 620 and the Bulwark's 820 — and it is
+// inside the envelope of every hostile worth the name: a Kedge, a Leviathan, a
+// Thresher and a Corsair Hive all reach 900. Priced on the shape, 35% already
+// leaves a full drum at 8.04M of damage-per-metre against a finished Bulwark's
+// 8.88M, so the ability does not win that axis; 45% would take it to 6.80M and
+// 50% to 6.18M, which is most of the way back to the wash this replaced.
 export const DRUMFIRE_REACH = 0.35;      // weapon range down to 65% at full
 
 // And what it buys: rate of fire, on the guns AND the racks.
 //
-// REACH TIMES RATE IS CONSERVED. Nothing here is picked — the gain is the cost,
-// read back through the identity that makes the trade honest:
+// A FULL DRUM THROWS TWICE WHAT AN INTERCEPTOR DOES WITH ITS REACTOR ON ITS GUNS.
+// That sentence is the whole derivation, and the number is solved from it against
+// the shipped game rather than chosen. Measured through the real fire()/launch()
+// loop, 60s against a parked hulk, both hulls at the top of the shop with a full
+// escort of MK-V Emitters:
 //
-//      at full, reach  = 1 - DRUMFIRE_REACH        = 0.65
-//      so       rate   = 1 / 0.65                  = x1.5385
-//      and the dial is that minus the 1 it starts at:
-//               GAIN   = 0.35 / 0.65               = 0.5385   (+53.8%)
+//      a Kestrel routed to weapons     9,353 dps   (x1.440 over its own idle)
+//      a Vanguard cold                 7,462 dps
+//      so the drum has to be     2 x 9,353 / 7,462  =  x2.5066
 //
-// So the Vanguard does not get stronger, it gets SHAPED: whatever fraction of your
-// reach you surrender, you get the same fraction of your rate of fire back, and
-// your damage per metre of reach at a full drum is exactly what it was cold.
+// and the same solve on the rocket build — five Swarm Racks against the Kestrel's
+// two — asks for x2.4020. x2.50 sits between them, so ONE constant satisfies both
+// builds and neither is averaged away. DRUMFIRE_GAIN is that minus the 1 the cycle
+// starts at.
 //
-// Both halves are LINEAR in the dial, the same shape as swellOf and dragOf, rather
-// than one being the exact reciprocal of the other. Measured over the whole dial in
-// steps of a thousandth, the product is 1.0000 cold, 1.0000 at full, and peaks at
-// 1.0471 halfway — 1.1250 with a Drum Governor fitted, which trades further along
-// the same curve. That 4.7% is the price of TWO dials rather than one: a reciprocal
-// would be a single number and no technology could retune the exchange rate. It is
-// also not a jackpot, because it is not a free multiplier — it says the best
-// exchange rate is in the middle of the dial, which is the only thing that stops a
-// scaling ability being "always full" and is what "none of them is a switch" wants.
-export const DRUMFIRE_GAIN = DRUMFIRE_REACH / (1 - DRUMFIRE_REACH);
+// What it actually DELIVERS through the loop is x1.89 of an interceptor with guns
+// and x2.01 with racks, and the 6% between them is the 30Hz TICK rather than the
+// constant. A cycle is `1 / rate` seconds counted down in whole ticks, so the rate
+// a rack really achieves is a staircase: on the guns build x2.50 and x2.60 land on
+// the same step, x1.89, and the next step up is x2.08 — overshooting twice by more
+// than x2.50 undershoots it. x2.50 is the closest either side AND the one the
+// algebra asked for, so the tick decides nothing here; it only explains the 6%.
+//
+// REACH TIMES RATE IS NO LONGER CONSERVED, and that is the point of this number.
+// It was: the gain used to BE the cost, read back through 1/(1 - 0.35) = x1.5385,
+// so a full drum threw exactly the damage per metre of reach that a cold ship did.
+// That is elegant and it produced an ability nobody would switch on. Measured, it
+// was worth 3.8% more damage than simply routing the same reactor to the guns —
+// which every hull can already do, for x1.440 — in exchange for 35% of your reach.
+// A sidegrade of a thing everybody has is not a class identity. So the trade is a
+// REAL POWER GAIN BOUGHT WITH REACH now, not a reshaping, and the honest way to say
+// so is that the fighter's damage per metre of reach goes UP: 5.22M cold, 8.04M at
+// a full drum, against a finished Bulwark's 8.88M. It buys burst, not efficiency —
+// it is still, just, the second-most efficient gun in the game, and by a long way
+// the most dangerous one inside 455px.
+export const DRUMFIRE_GAIN = 1.5;        // rate x2.50 at full
 
 // Reading a dial off the ship rather than off the constant. `stats` is a resolved
 // attribute set — or `{}` from anything that has no fit at all, which is why the
