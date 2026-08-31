@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.59';
+export const VERSION = '0.60';
 
 export const PATCHES = [
+  { v: '0.60', notes: [
+    'A mining rig is a rock somebody is holding. Fight for it before you can buy it',
+    'The claim drops you alone in a sector with the rock and a field around it',
+    'Dying there costs nothing — no toll, no cargo — and you keep nothing either',
+    'A freed rock can be flown again from the CLAIMS tab: practice, paying nothing',
+  ] },
   { v: '0.59', notes: [
     'Hulls are different ships now, not the same ship at four prices',
     'A Vanguard has five hardpoints and may fill all five with rocket racks',

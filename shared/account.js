@@ -12,8 +12,9 @@ import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
 import { sanitiseKits, sanitiseKit, DEFAULT_KIT } from './repair.js';
 import { sanitiseDevices, sanitiseDevice, DEFAULT_DEVICE } from './devices.js';
 import { sanitiseMods, HOME_PLOTS } from './research.js';
+import { ARENA_MODULES } from './arena.js';
 import { sanitiseKills } from './threats.js';
-import { MAPS, COMPANIES } from './maps.js';
+import { MAPS, COMPANIES, isArena } from './maps.js';
 import { MATERIALS } from './cargo.js';
 import { bankPlaytime } from './playtime.js';
 
@@ -39,6 +40,7 @@ export function newAccount(token, seq, now) {
     ammo: { ...STARTING_AMMO }, using: { ...DEFAULT_AMMO }, armed: { ...ARMED_ALL },
     kits: {}, kit: DEFAULT_KIT,
     devices: {}, device: DEFAULT_DEVICE, foldTo: null, lab: null, kills: {},
+    claims: [],                                   // the mining rocks you have freed
     berths: [],                                   // outposts you rent a bay at
     lastDock: null,                               // the hangar a wreck comes back to
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
@@ -73,7 +75,15 @@ export function sanitiseLab(lab, now = Date.now()) {
 export function sanitiseAccount(a, seq, now) {
   const co = COMPANIES[a?.co] ? a.co : companyFor(seq);
   const hull = HULLS[a?.hull] ? a.hull : DEFAULT_HULL;
-  const mapId = MAPS[a?.mapId] ? a.mapId : co + '1';
+  // A sector that is not in the table any more, or an instanced one that stopped
+  // existing when the process did. An arena is deliberately not a key of MAPS, so
+  // a pilot who was inside one when the server restarted lands here — and their
+  // COORDINATES have to come home with them. Keeping the arena's x,y and only
+  // swapping the sector put pilots down wherever they had been fighting, in their
+  // own home ring, outside the dock. It is the same shape as the bug that put a
+  // respawn at NaN: a position is only meaningful together with the map it is in.
+  const known = !!MAPS[a?.mapId];
+  const mapId = known ? a.mapId : co + '1';
   const stack = o => Object.fromEntries(Object.entries(o ?? {})
     .filter(([k, n]) => MATERIALS[k] && Number.isFinite(n) && n > 0)
     .map(([k, n]) => [k, Math.floor(n)]));
@@ -119,13 +129,17 @@ export function sanitiseAccount(a, seq, now) {
     // What this pilot has killed, and therefore what their threat file holds.
     kills: sanitiseKills(a?.kills),
     berths: [...new Set((Array.isArray(a?.berths) ? a.berths : []).filter(id => MAPS[id]?.outpost))],
+    // Which claim fights this pilot has won. Membership of a fixed list, so a
+    // hand-edited save cannot name a rock that does not exist, and a retired
+    // mining tier drops out cleanly rather than leaving a claim on nothing.
+    claims: [...new Set((Array.isArray(a?.claims) ? a.claims : []).filter(k => ARENA_MODULES.includes(k)))],
     lastDock: MAPS[a?.lastDock] ? a.lastDock : null,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     played: Number.isFinite(a?.played) ? Math.max(0, Math.floor(a.played)) : 0,
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,
-    x: Number.isFinite(a?.x) ? a.x : base.x,
-    y: Number.isFinite(a?.y) ? a.y : base.y,
+    x: known && Number.isFinite(a?.x) ? a.x : base.x,
+    y: known && Number.isFinite(a?.y) ? a.y : base.y,
     created: a?.created ?? now, seen: now,
   };
 }
@@ -161,6 +175,7 @@ export function carried(a) {
     foldTo: a.foldTo ?? null, lab: a.lab ?? null,
     kills: { ...(a.kills ?? {}) },
     berths: [...(a.berths ?? [])], lastDock: a.lastDock ?? null,
+    claims: [...(a.claims ?? [])],
     vault: { ...a.vault }, hold: { ...a.hold },
   };
 }
@@ -188,14 +203,23 @@ export function capture(account, p, now) {
   account.lab = p.lab ?? null;
   account.kills = { ...p.kills };
   account.berths = [...(p.berths ?? [])];   // a player built before berths existed has none
+  account.claims = [...(p.claims ?? [])];
   account.lastDock = p.lastDock ?? null;
   account.xp = p.xp;
   account.credits = p.credits;
   account.vault = { ...p.vault };
   account.hold = { ...p.hold };
-  account.mapId = p.mapId;
-  account.x = Math.round(p.ship.x);
-  account.y = Math.round(p.ship.y);
+  // Where they were, and an instanced sector is not a where. An arena stops
+  // existing with the process that made it, so writing one down writes a
+  // destination that will not be there — and the pilot comes back to it. The
+  // account keeps saying the last REAL place they stood, which is where they
+  // launched the claim from. sanitiseAccount catches this a second time on the way
+  // in off disk, because a save file may predate this line.
+  if (!isArena(p.mapId)) {
+    account.mapId = p.mapId;
+    account.x = Math.round(p.ship.x);
+    account.y = Math.round(p.ship.y);
+  }
   account.seen = now;
   return account;
 }

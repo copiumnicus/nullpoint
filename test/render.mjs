@@ -20,6 +20,8 @@ import { NAME_MAX } from '../shared/signup.js';
 import { havenBadge, HAVEN_COPY, HAVEN_BROKEN } from '../shared/haven.js';
 import { filePanel, filedIn, dossierOf } from '../shared/threats.js';
 import { labPanel, LAB_PRICE, MODULES } from '../shared/research.js';
+import { arenaId, mapOf } from '../shared/maps.js';
+import { countOf, mission, ARENA_MODULES } from '../shared/arena.js';
 import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
 
@@ -981,10 +983,16 @@ const dismiss = () => {
 
   // With a station, the panel is three ladders — and it will not sell you a rung
   // while you are sitting at the dock rather than at the station itself.
+  //
+  // `claims: ['mine1']` is not decoration. A mining rung is a rock somebody is
+  // sitting on now, so the Mining row is a CLAIM until that rock is freed and this
+  // block is about buying, not fighting — the claim gate has its own block below.
+  // Without it every assertion here fails for the wrong reason, which is exactly
+  // what happened the first time.
   const at = { x: ring.x + 400, y: ring.y };
   const labRow = packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 0, name: 'Vy' }, true);
   feed({ t: 's', ships: [me(ring.x, ring.y)], credits: 9_000_000, docked: true,
-         labs: [labRow], lab: { mods: 0, income: 0 } });
+         labs: [labRow], lab: { mods: 0, income: 0 }, claims: ['mine1'] });
   frame(t += 16); frames++;
   sent.length = 0;
   click(L.rows[0].r); frame(t += 16); frames++;
@@ -993,7 +1001,7 @@ const dismiss = () => {
 
   // Fly to it and the same click works.
   feed({ t: 's', ships: [me(at.x, at.y)], credits: 9_000_000, docked: false,
-         labs: [labRow], lab: { mods: 0, income: 0 } });
+         labs: [labRow], lab: { mods: 0, income: 0 }, claims: ['mine1'] });
   frame(t += 16); frames++;
   sent.length = 0;
   click(L.rows[0].r); frame(t += 16); frames++;
@@ -1014,7 +1022,7 @@ const dismiss = () => {
   // a rung would do to the ship you are actually flying, in your own numbers: a
   // pilot cannot tell whether "stronger" means one percent or one hundred.
   feed({ t: 's', ships: [me(at.x, at.y)], credits: 9_000_000, docked: false,
-         labs: [labRow], lab: { mods: 0, income: 0 } });
+         labs: [labRow], lab: { mods: 0, income: 0 }, claims: ['mine1'] });
   trace = []; frame(t += 16); frames++;
   const world = trace; trace = null;
   if (!world.some(c => /^fillText PRESS R /.test(c)))
@@ -1045,7 +1053,7 @@ const dismiss = () => {
   const first = quoted(rows, 'shield');
   feed({ t: 's', ships: [me(at.x, at.y)], credits: 90_000_000, docked: false,
          labs: [packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 1 << 8, name: 'Vy' }, true)],
-         lab: { mods: 1 << 8, income: 0 } });          // one shield tier built
+         lab: { mods: 1 << 8, income: 0 }, claims: ['mine1'] });   // one shield tier built
   trace = []; frame(t += 16); frames++;
   const after = trace; trace = null;
   const second = quoted(after, 'shield');
@@ -1066,7 +1074,7 @@ const dismiss = () => {
   // panel refused to say it.
   feed({ t: 's', ships: [me(at.x, at.y)], credits: 1_000, docked: false,
          labs: [packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 0, name: 'Vy' }, true)],
-         lab: { mods: 0, income: 0 } });
+         lab: { mods: 0, income: 0 }, claims: ['mine1'] });
   trace = []; frame(t += 16); frames++;
   const broke = trace; trace = null;
   const quotes = broke.some(c => /^fillText your hull [\d,]+ -> [\d,]+/.test(c));
@@ -1089,7 +1097,7 @@ const dismiss = () => {
   // A station that has been built on looks built on, to everyone, and a mine
   // running makes the credits counter move between server banks.
   const others = packLab({ id: 2_000_002, x: ring.x - 400, y: ring.y, mods: 7, name: 'Someone' }, false);
-  feed({ t: 's', ships: [me(at.x, at.y)], credits: 1_000_000,
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 1_000_000, claims: ['mine1'],
          labs: [labRow, others], lab: { mods: 1, income: MODULES.mine1.rate } });
   evt('keydown', { key: 'r' });                    // shut it, so the world is visible
   frame(t += 16); frames++;
@@ -1098,6 +1106,152 @@ const dismiss = () => {
   if (!out.some(c => /^fillText Someone /.test(c)))
     errs.push("another pilot's research station was drawn without their name on it");
   else console.log('research: every station in the ring is drawn and named, yours and theirs');
+}
+
+// A claim arena, which is a sector that is not in MAPS.
+//
+// This is the highest-risk block in the file and it is worth saying why. drawFrame
+// wraps itself in a try/catch that sets a flag suppressing every later error, so
+// ONE bare `MAPS[mapId]` left in the client is not an exception anybody sees: it is
+// a permanently black canvas with the socket still running and nothing in the
+// console. Every draw path is walked here with the world set to an instanced
+// sector — the rock, the minimap, the jump prompt, the safe-zone badge, the SPACE
+// prompt and the mission bar — because the only way to catch that is to draw it.
+{
+  dismiss();
+  const arena1 = arenaId('rendertoken', 'mine1');
+  const rock = mapOf(arena1).rock;
+  const me = (x, y) => packShip({ id: 1, x, y, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+    hp: 60, sh: 40, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, name: 'Vy' });
+  const foe = (i, x, y) => packShip({ id: 1e6 + i, x, y, heading: 1, charge: 0, co: 'x',
+    hull: i % 2 ? 'censer' : 'ironhusk', hp: 90, sh: 50, flash: 0, tgt: 1, shot: 60, abl: 70, vis: 1 });
+
+  feed({ t: 'map', map: arena1 });
+  const field = { key: 'mine1', left: 9, total: countOf('mine1'), cleared: 0, replay: 0 };
+  feed({ t: 's', ships: [me(rock.x, rock.y - 1900), foe(1, rock.x + 900, rock.y), foe(2, rock.x, rock.y + 800)],
+         credits: 250_000, docked: false, labs: [], lab: { mods: 0, income: 0 },
+         claims: [], arena: field });
+  trace = []; frame(t += 16); frames++;
+  let a = trace; trace = null;
+  const bar = mission(innerWidth, field);
+  if (!a.some(c => c.startsWith(`fillText ${bar.text} `)))
+    errs.push(`inside a claim the mission bar never said "${bar.text}"`);
+  else if (!a.some(c => /^fillText CONTESTED CLAIM /.test(c)))
+    errs.push('the rock the whole fight is about was never drawn');
+  else console.log(`claim: the sector, the rock and the bar — "${bar.text}" at ${bar.x},${bar.y}`);
+
+  // Everything a pilot can press while standing in a sector with no portals, no
+  // dock and no haven. Any of these reaching for map.portals[0] is a black screen.
+  for (const k of ['m', 'm', 'h', 'h', 'i', 'i', 'r', 'r', 'l', 'l', 'Tab', 'x', ' ']) {
+    evt('keydown', { key: k }); frame(t += 16); frames++;
+  }
+  dismiss();
+  for (const [px, py] of [[40, 40], [innerWidth / 2, innerHeight / 2], [innerWidth - 60, innerHeight - 40]]) {
+    evt('pointermove', { clientX: px, clientY: py });
+    evt('pointerdown', { clientX: px, clientY: py });
+    evt('pointerup', { clientX: px, clientY: py });
+    frame(t += 16); frames++;
+  }
+  evt('pointerleave');
+
+  // Cleared, and cleared on a REPLAY, which says something different on purpose.
+  for (const state of [{ ...field, left: 0, cleared: 1 }, { ...field, left: 0, cleared: 1, replay: 1 }]) {
+    feed({ t: 's', ships: [me(rock.x, rock.y - 600)], credits: 250_000, docked: false,
+           labs: [], lab: { mods: 0, income: 0 }, claims: ['mine1'], arena: state });
+    trace = []; frame(t += 16); frames++;
+    a = trace; trace = null;
+    const b2 = mission(innerWidth, state);
+    if (!a.some(c => c.startsWith(`fillText ${b2.text} `)))
+      errs.push(`a cleared claim never said "${b2.text}"`);
+  }
+  console.log('claim: won and won-again both say what they were for, and the rock cracks open');
+
+  // And back out. The bar has to GO, and it goes by the field being absent from
+  // the bag rather than by anything telling the client to stop drawing it.
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [me(MAPS.m1.base.x, MAPS.m1.base.y)], credits: 250_000, docked: true,
+         labs: [], lab: { mods: 0, income: 0 }, claims: ['mine1'] });
+  trace = []; frame(t += 16); frames++;
+  a = trace; trace = null;
+  if (a.some(c => /HOSTILES LEFT|CLAIM FREED|FIELD CLEAR/.test(c)))
+    errs.push('the mission bar stayed on screen after the station pulled the pilot home');
+  else console.log('claim: the bar goes away with the sector — absence is information');
+}
+
+// The CLAIMS page. A replay is not a rung — it costs nothing and buys nothing —
+// so it is its own page rather than a fourth button on the ladder.
+{
+  dismiss();
+  const ring = MAPS.m1.base, at = { x: ring.x + 400, y: ring.y };
+  const me = (x, y) => packShip({ id: 1, x, y, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+    hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, name: 'Vy' });
+  const labRow = packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 0, name: 'Vy' }, true);
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 9_000_000, docked: false,
+         labs: [labRow], lab: { mods: 0, income: 0 }, claims: ['mine1'] });
+  evt('keydown', { key: 'r' });
+  frame(t += 16); frames++;
+
+  const L = labPanel(innerWidth, innerHeight, 'ladder');
+  const C = labPanel(innerWidth, innerHeight, 'claims');
+  click(L.tabs.find(tb => tb.key === 'claims').r);
+  trace = []; frame(t += 16); frames++;
+  let a = trace; trace = null;
+  if (!a.some(c => c.includes(MODULES.mine2.name)))
+    errs.push('the CLAIMS tab opened on a page that did not list the claims');
+  else if (!a.some(c => /RUN IT AGAIN/.test(c)))
+    errs.push('a rock already freed did not offer the flight again');
+  else console.log(`claim: the CLAIMS tab lists ${ARENA_MODULES.length} rocks, freed ones offering the run again`);
+
+  // Hovering every row, because hover starts null and a row nobody hovers is a
+  // path nobody walks — two helper functions once went missing exactly this way.
+  for (const row of C.rows) { hoverAt(row.r); frame(t += 16); frames++; }
+  evt('pointerleave');
+
+  // The freed rock sends a replay; the contested one below it sends a claim.
+  sent.length = 0;
+  click(C.rows[0].r); frame(t += 16); frames++;
+  const again = sent.find(m => m.t === 'replay');
+  if (again?.key !== 'mine1')
+    errs.push(`clicking a freed rock sent ${JSON.stringify(again ?? sent.at(-1))}, not a replay`);
+  else console.log('claim: a freed rock is flown again from its own page, and pays nothing');
+
+  // Launching a claim CLOSES the panel — you are leaving, and a station panel that
+  // followed you into the fight would be a panel over a fight. So every block
+  // below reopens deliberately with a bare-space dismiss first: pressing R to
+  // "make sure it is open" is pressing a TOGGLE, and this file has been caught by
+  // that before.
+  const reopen = () => { dismiss(); evt('keydown', { key: 'r' }); frame(t += 16); frames++; };
+
+  reopen();
+  sent.length = 0;
+  click(C.rows[1].r); frame(t += 16); frames++;
+  if (sent.find(m => m.t === 'claim')?.key !== 'mine2')
+    errs.push(`clicking a contested rock sent ${JSON.stringify(sent.at(-1))}, not a claim`);
+
+  // A rock two tiers up cannot be reached, and the row has to refuse rather than
+  // offer — the panel must never send something the server will decline.
+  reopen();
+  sent.length = 0;
+  click(C.rows[2].r); frame(t += 16); frames++;
+  if (sent.some(m => m.t === 'claim' || m.t === 'replay'))
+    errs.push('the CLAIMS page offered a rock the ladder has not reached yet');
+  else console.log('claim: a rock two tiers up refuses in the same words the server would use');
+
+  // Back to the ladder, where the mining row is a fight until the rock is free.
+  click(L.tabs.find(tb => tb.key === 'ladder').r);
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 9_000_000, docked: false,
+         labs: [labRow], lab: { mods: 0, income: 0 }, claims: [] });
+  trace = []; frame(t += 16); frames++;
+  a = trace; trace = null;
+  if (!a.some(c => /CLAIM THE ROCK/.test(c)))
+    errs.push('the mining rung never said the rock had to be fought for');
+  sent.length = 0;
+  click(L.rows[0].r); frame(t += 16); frames++;
+  if (sent.find(m => m.t === 'claim')?.key !== 'mine1')
+    errs.push(`the mining rung sent ${JSON.stringify(sent.at(-1))} instead of launching the claim`);
+  else console.log('claim: the mining rung on the ladder launches the fight, not a purchase');
+  dismiss();
 }
 
 // Flying without the mouse, driven through the real key handlers and the real

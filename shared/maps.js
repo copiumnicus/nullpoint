@@ -165,3 +165,69 @@ MAPS.dev = {
 export const HOMES = Object.keys(COMPANIES).map(co => co + '1');
 // Everywhere a pilot can actually fly to on their own.
 export const GALAXY = Object.keys(MAPS).filter(id => !MAPS[id].dev);
+
+// --- instanced sectors ---------------------------------------------------------
+//
+// A claim arena is not a place in the galaxy. It exists while one pilot is
+// standing in it and is gone the moment they are not, so it is deliberately NOT in
+// MAPS, not in GALAXY, and not on the chart — two pilots claiming the same rock
+// must not be in each other's fight.
+//
+// The id IS the sector. `arena:<token>:<key>` carries everything a viewer needs to
+// draw it, so nothing about the geometry has to travel: the client is told the id
+// it is in, exactly as it always was, and derives the rest. That is what keeps
+// rule one — the server damages inside the same rock the client draws.
+//
+// The TEMPLATE is per key, not per token. Every pilot's mine2 arena looks the same;
+// only the hostiles standing in it are theirs. So this caches three objects, ever,
+// rather than one per pilot per tier — which would have been a slow leak keyed by
+// something that never gets collected.
+const ARENA = {
+  mine1: ['Ashen Float',  '#c2884f'],
+  mine2: ['Beltwreck',    '#8fc4c9'],
+  mine3: ['Cometfall',    '#74b6c9'],
+};
+export const ARENA_KEYS = Object.keys(ARENA);
+export const ARENA_PREFIX = 'arena:';
+export const ROCK_R = 300;
+
+export const arenaId = (token, key) => `${ARENA_PREFIX}${token}:${key}`;
+
+// Split one back up. The token may contain anything a token may contain, so the
+// key is taken off the END rather than by splitting on ':' — a token with a colon
+// in it would otherwise silently name a different arena.
+export function parseArena(id) {
+  if (typeof id !== 'string' || !id.startsWith(ARENA_PREFIX)) return null;
+  const cut = id.lastIndexOf(':');
+  if (cut <= ARENA_PREFIX.length - 1) return null;
+  const token = id.slice(ARENA_PREFIX.length, cut), key = id.slice(cut + 1);
+  return token && ARENA[key] ? { token, key } : null;
+}
+export const isArena = id => parseArena(id) !== null;
+
+const TEMPLATE = new Map();
+export function arenaMap(id) {
+  const at = parseArena(id);
+  if (!at) return null;
+  let m = TEMPLATE.get(at.key);
+  if (m) return m;
+  const [theme, tint] = ARENA[at.key];
+  m = { sx: 0, sy: 0, name: `CLAIM · ${theme}`, theme, tint,
+        neb: nebFor(tint, ARENA_KEYS.indexOf(at.key)),
+        // No portals, no base, no outpost — and therefore no sanctuary anywhere in
+        // it, because havenKind() has nothing to find. That is the arena's whole
+        // shape: you cannot hide in one, and you cannot walk out of one.
+        portals: [], arena: true, key: at.key,
+        rock: { x: MAP_W / 2, y: MAP_H / 2, r: ROCK_R } };
+  TEMPLATE.set(at.key, m);
+  return m;
+}
+
+// The one question "what sector is this", asked by everything on both sides.
+//
+// `MAPS[id]` was that question until an id could name a sector that is not in the
+// table. Every remaining bare `MAPS[p.mapId]` is a black screen waiting to happen:
+// the client's drawFrame throws on `map.tint`, the catch above it sets a flag that
+// suppresses every later error, and the player gets a silent, permanent black
+// canvas with the socket still running.
+export const mapOf = id => MAPS[id] ?? arenaMap(id) ?? null;
