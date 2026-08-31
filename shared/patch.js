@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.62';
+export const VERSION = '0.63';
 
 export const PATCHES = [
+  { v: '0.63', notes: [
+    'Claims got hard. Nothing in one ever breaks off — you cannot walk away and wait',
+    'And your shields do not come back in there, so the ship you arrive in is all you get',
+    'Clearing one now costs about nine tenths of your ship instead of a third',
+    'Flying into the middle of a claim kills you, at every tier, not just the first',
+    'Kedges hold the upper two rocks: they haul you back onto ground you just gave up',
+  ] },
   { v: '0.62', notes: [
     'Eight places printed two labels on top of each other. None of them do now',
     'The station’s hint line no longer runs through the INVENTORY and STATS tabs',
