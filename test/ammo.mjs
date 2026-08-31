@@ -180,8 +180,15 @@ console.log('\nthe way home');
     whyNotDevice({ devices: have, using: 'recall' }) === null);
   check('with none aboard it says so',
     /no /.test(whyNotDevice({ devices: {}, using: 'recall' })));
-  check('at a dock it is pointless and says that instead',
-    /dock/.test(whyNotDevice({ devices: have, using: 'recall', docked: true })));
+  // This used to be "at a dock it is pointless", which was true while a beacon had
+  // one destination and stopped being true the moment it asked which hangar. Being
+  // AT a dock is not the question; being at the dock you are folding TO is.
+  check('folding to where you already stand is pointless and says that instead',
+    /already standing there/.test(whyNotDevice({ devices: have, using: 'recall', atDest: true })),
+    whyNotDevice({ devices: have, using: 'recall', atDest: true }));
+  check('but standing in one hangar is no reason not to fold to another',
+    whyNotDevice({ devices: have, using: 'recall', atDest: false }) === null,
+    'you had to fly out of your own ring to be allowed to leave it');
   check('and it will not stack on itself',
     /already/.test(whyNotDevice({ devices: have, using: 'recall', busy: true })));
 

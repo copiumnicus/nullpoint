@@ -205,5 +205,27 @@ console.log('\nthe panel that sells it');
     'two copies of "which hangars are mine" disagreed once already');
 }
 
+// Folding from one hangar to another.
+//
+// The beacon refused while you were "at a dock", which was right for exactly as
+// long as it had one destination — it always went home, so being home meant there
+// was nothing to do. Once it asks WHICH hangar, that rule tells a pilot standing at
+// their own ring that they cannot reach the bay they rent four sectors out, and the
+// workaround was to fly out of your own ring in order to be allowed to leave it.
+{
+  const { whyNotDevice } = await import('../shared/devices.js');
+  const kit = { devices: { recall: 2 }, using: 'recall' };
+  check('you may fold out of a hangar, so long as it is not the one you are going to',
+    whyNotDevice({ ...kit, atDest: false }) === null,
+    'standing at your ring, folding to a rented bay — this used to be refused');
+  check('and folding to where you already stand is still refused',
+    /already standing there/.test(whyNotDevice({ ...kit, atDest: true }) ?? ''),
+    whyNotDevice({ ...kit, atDest: true }));
+  check('a fold already running still blocks a second one',
+    /already running/.test(whyNotDevice({ ...kit, busy: true }) ?? ''));
+  check('and no beacon aboard is still no beacon aboard',
+    /no Recall Beacon aboard/.test(whyNotDevice({ devices: {}, using: 'recall' }) ?? ''));
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — a berth is ${berthPrice()} cr`}\n`);
 process.exit(fails.length ? 1 : 0);

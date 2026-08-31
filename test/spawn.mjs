@@ -90,16 +90,41 @@ check('the readout says how much faster than posted a sector is running',
     `${LEV}s posted, ${LEV}s delivered — nothing comes back faster for free`);
 }
 
-// A boss is an event, not a population. The Corsair Hive's respawn comment says
-// "five minutes. It is the only one, and it should be an event", and its total is
-// one — so a naive reading of "how much of this kind is standing" says FULLY
-// STRIPPED the instant it dies, and a party of four would have it back in 54s.
-// The server excludes anything that broods from the census for exactly this.
-check('a boss is left out of it, or beating one would earn you three an hour',
-  ALIENS.hive.broods && respawnDelay(ALIENS.hive.respawn, { pilots: 4, alive: 0, total: 1 }) < 60,
-  `unexcluded, four pilots would see the Hive back in ` +
-  `${respawnDelay(ALIENS.hive.respawn, { pilots: 4, alive: 0, total: 1 }).toFixed(0)}s instead of ${ALIENS.hive.respawn}s — ` +
-  'which is why server.js skips a.def.broods when counting');
+// This used to read "a boss is left out of it, or beating one would earn you three
+// an hour", and leaving them out was the wrong call. It produced one Hive to a deep
+// sector with nothing else posted there, so killing it left the map COMPLETELY
+// EMPTY for five minutes — and an event nobody can find is not an event.
+//
+// Scarcity is the seeded count's job, not the respawn's. There are two of every
+// boss now, so killing one leaves one, and the one that died is on its way back.
+check('killing a boss leaves the sector with a boss in it',
+  respawnDelay(ALIENS.hive.respawn, { pilots: 1, alive: 1, total: 2 }) < ALIENS.hive.respawn,
+  `one of two down brings the other back in ` +
+  `${respawnDelay(ALIENS.hive.respawn, { pilots: 1, alive: 1, total: 2 }).toFixed(0)}s of its posted ` +
+  `${ALIENS.hive.respawn}s, and the survivor is still up the whole time`);
+check('and clearing both is still most of a posted respawn, not a fountain',
+  respawnDelay(ALIENS.hive.respawn, { pilots: 1, alive: 0, total: 2 }) > ALIENS.hive.respawn * 0.45,
+  `${respawnDelay(ALIENS.hive.respawn, { pilots: 1, alive: 0, total: 2 }).toFixed(0)}s solo — ` +
+  'a Hive is still an expedition, it is just not an empty map afterwards');
+
+// The rule the above is a case of, read straight out of server.js: nothing in this
+// game is posted alone. A sector holding one of something goes empty the moment
+// anybody kills it, and flying four hops to an empty map is the least interesting
+// thing this game can ask.
+{
+  const src = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const posted = [];
+  for (const m of src.matchAll(/seed\(([^,]+), '([a-z]+)', ([^)]+)\)/g)) {
+    const n = m[3].trim() === 'ALIENS_PER_MAP' ? 7 : Number(m[3]);
+    if (Number.isFinite(n)) posted.push([m[1].trim(), m[2], n]);
+  }
+  const alone = posted.filter(([, , n]) => n < 2);
+  check('nothing anywhere is posted alone',
+    posted.length > 0 && alone.length === 0,
+    alone.length ? alone.map(([w, k]) => `${k} at ${w}`).join(', ')
+                 : `${posted.length} postings, every one of them at least a pair — ` +
+                   'the gates and the deeps each held exactly one thing and went empty when it died');
+}
 
 // And the thing that would have caught the real bug here, which no assertion about
 // respawnDelay could: this module was written, tested and imported by NOTHING for

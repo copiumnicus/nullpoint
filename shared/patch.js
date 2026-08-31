@@ -8,9 +8,17 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.49';
+export const VERSION = '0.50';
 
 export const PATCHES = [
+  { v: '0.50', notes: [
+    'Beacons work from inside a hangar now — fold straight from your ring to your bay',
+    'It only refuses if you are already standing where it would put you',
+    'Two of everything, everywhere — nothing in the game is posted alone any more',
+    'Kill a Hive and there is still a Hive on that map, with another on the way',
+    'Bosses refill like everything else now: 200s with one still up, 150s if you clear both',
+    'The gates and the deeps used to go completely empty the moment you killed their one thing',
+  ] },
   { v: '0.49', notes: [
     'Rank no longer stops at 60 — it keeps climbing, and keeps counting what you do',
     'The old ceiling was about nine Corsair Hives, so people were hitting it',

@@ -320,7 +320,7 @@ for (const h of HOMES) {
   seed(co + '2', 'harrier', 2);
   seed(co + '3', 'censer', 3);                    // the other hop out: the same weight, the opposite question
   seed(co + '3', 'harrier', 5);
-  seed(co + '3', 'ironhusk', 1);
+  seed(co + '3', 'ironhusk', 2);
   seed(co + '4', 'bandit', 3);                    // the frontier, and the first real fight
   seed(co + '4', 'leviathan', 2);                 // and the first thing you cannot beat alone
   // The rung between the Harriers and the Leviathan, and the only thing out here
@@ -338,7 +338,13 @@ for (const h of HOMES) {
   // worth having, and the Drifters that used to stand here were not it.
   seed(co + '4', 'harrier', 4);
 }
-// A Thresher on each gate — the first contested ground past your own frontier, and
+// TWO of each, everywhere, and that is a rule rather than a number: nothing in the
+// game is posted alone. A sector that holds one of something is a sector that goes
+// empty the moment somebody kills it, and flying four hops to an empty map is the
+// least interesting thing this game can ask of anybody. The second one is what makes
+// the respawn a refill instead of a wait.
+//
+// Two Threshers on each gate — the first contested ground past your own frontier, and
 // the first place three companies can arrive at once. It is the right thing to meet
 // there: a mirror asks what your gun is rather than what your hull is, which is the
 // question a pilot arriving from the frontier has never been asked.
@@ -346,14 +352,14 @@ for (const h of HOMES) {
 // Nullpoint itself is still empty. Putting the only boss at the very bottom of the
 // map put it where almost nobody would meet it, and the point of the thing is to
 // be met.
-for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'thresher', 1);
+for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'thresher', 2);
 
 // The deeps were seeded with nothing at all — three sectors past the gates, which a
 // pilot can only reach by getting through one, and there was nothing there when
 // they arrived. They hold the Hive now: it is the biggest thing in the game and it
 // belongs at the furthest thing from home, not one map short of it. They are
 // contested ground too, so three companies can still arrive at once.
-for (const d of GALAXY.filter(id => MAPS[id].deep)) seed(d, 'hive', 1);
+for (const d of GALAXY.filter(id => MAPS[id].deep)) seed(d, 'hive', 2);
 
 // The hull and formation galleries, resolved once at boot. They never move, take
 // damage or shoot, so there is nothing to step — just rows to hand out.
@@ -860,8 +866,12 @@ wss.on('connection', (ws, req) => {
       return outfit();
     }
     if (m.t === 'recall') {
+      // Standing in the hangar it would fold you to, not merely standing somewhere.
+      const dest = foldTo(P, MAPS, P.foldTo);
+      const atDest = P.mapId === dest.map
+        && Math.hypot(ship.x - dest.x, ship.y - dest.y) < (dest.r ?? 0);
       const why = whyNotDevice({ devices: P.devices, using: P.device,
-                                 docked: !!P.docked, busy: !!P.folding });
+                                 atDest, busy: !!P.folding });
       if (why) return tell(why);
       const d = DEVICES[P.device];
       // Nothing is spent here. Being interrupted is already the punishment, and
@@ -1374,13 +1384,21 @@ setInterval(() => {
     // Drifters beside its two Leviathans, so clearing both Leviathans reads as
     // four of six standing and the timer barely moves.
     //
-    // A boss is deliberately not in this. Its respawn is not a population rate, it
-    // is a statement about how often the event should happen — the Corsair Hive's
-    // five minutes says "it should be an event" in as many words — and a party
-    // that beats it should not thereby be allowed to beat it three times an hour.
+    // Bosses are in this now, and that reverses a call I made when it went in.
+    //
+    // The argument for leaving them out was that a Hive's five minutes is a
+    // statement about how often the event should happen. The argument against it is
+    // what it actually produced: one Hive to a deep sector and nothing else posted
+    // there at all, so killing it left the map COMPLETELY EMPTY for five minutes.
+    // An event nobody can find is not an event, and a sector with nothing in it is
+    // not content. Scarcity is the seeded count's job — there are two now — and the
+    // respawn's job is that the place you flew to still has something in it.
+    //
+    // Escorts stay out: a brooded Bandit is not a fixture of the sector, it is
+    // something the Hive made, and it is `gone` when it dies rather than respawned.
     const alive = new Map(), total = new Map();
     for (const a of list) {
-      if (a.spawned || a.def.broods) continue;
+      if (a.spawned) continue;
       total.set(a.kind, (total.get(a.kind) ?? 0) + 1);
       if (a.dead <= 0 && !a.gone) alive.set(a.kind, (alive.get(a.kind) ?? 0) + 1);
     }
@@ -1392,7 +1410,7 @@ setInterval(() => {
     //
     // Read as posted/actual rather than by calling refillRate(): that normalises
     // to a base of 100 and would let a Drifter through the 3s floor at 0.4s.
-    const refill = a => (a.spawned || a.def.broods) ? 1
+    const refill = a => a.spawned ? 1
       : a.def.respawn / respawnDelay(a.def.respawn, {
           pilots: here.length,
           alive: alive.get(a.kind) ?? 0,

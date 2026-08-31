@@ -2524,14 +2524,14 @@ const menuRows = feed => feed === 'device' ? foldPorts().map(h => h.map) : heldG
 // one function, so the box never offers what the server will refuse.
 function recallBlocked() {
   const me = ships.get(myId);
+  // Standing in the hangar it would take you to — the same question the server
+  // asks, and not "am I at a dock". A pilot at their own ring could not fold to the
+  // bay they rent because being at a ring was the refusal.
+  const dest = foldDest();
+  const atDest = !!me && mapId === dest.map
+    && Math.hypot(me.x - dest.x, me.y - dest.y) < (dest.r ?? 0);
   return whyNotDevice({ devices: myDevices, using: myDevice,
-                        // atDock, not docked(): the client's docked() counts a rented
-                        // outpost bay and the server's does not, and a bay explicitly
-                        // never repairs. Passing the wrong one greyed both boxes out
-                        // here and told you the dock was already mending you — which
-                        // no bay does, and which the server would have disagreed with
-                        // if the button had let you ask. One rule, two copies.
-                        docked: atDock, busy: (me?.wrp ?? 0) > 0 });
+                        atDest, busy: (me?.wrp ?? 0) > 0 });
 }
 
 // Why the repair button is not available, or null. The button, its tooltip and
