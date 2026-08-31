@@ -243,8 +243,11 @@ console.log('\nstation layout');
           // whenever a pilot has nothing spare, which for most pilots most of the
           // time is the normal state of it rather than a fault. A shop shelf with
           // nothing on it is still a bug.
+          // STATS has no clickable rows at all, by design — it is a readout of where
+          // your numbers came from, not a shelf. It is checked separately below,
+          // because "has nothing to click" and "is broken" must not look the same.
           const mayBeEmpty = (tab === 'store' && page === 'drones' && st.drones === 6)
-                          || tab === 'inventory';
+                          || tab === 'inventory' || tab === 'stats';
           if (!rows.length && !mayBeEmpty) empty++;
           for (const { r } of rows) {
             // a row outside the panel is read as a click on the backdrop, which
@@ -289,7 +292,24 @@ console.log('\nstation layout');
         `${checked} layouts, ${tightest | 0}px of slack at the tightest`);
   check('rows never overlap each other, column by column', overlap === 0);
   check('the panel itself always fits the window', offscreen === 0);
-  check('no shop shelf is ever empty', empty === 0,
+  // And the readout is not allowed to be empty either — it just has its rows
+  // somewhere else. Without this, "stats may be empty" would hide a stats tab that
+  // had quietly stopped laying anything out.
+  {
+    const { SHOWN } = await import('../shared/breakdown.js');
+    const L = bayLayout(1600, 900, { tab: 'stats', hull: 'vanguard',
+      fit: { weapon: ['emitter3'], generator: ['cellA'], tech: [] },
+      escort: [], formation: 'line', mask: 0, scroll: 0 });
+    check('the stats page lists every attribute worth reading, not only the ones something changed',
+      (L.stats ?? []).length > 0 && L.stats.length + (L.scroll?.max ? 1 : 0) >= Math.min(SHOWN.length, 6),
+      `${L.stats.length} of ${SHOWN.length} attributes on screen, ${L.scroll.max}px to scroll — ` +
+      'a stat nothing touched still gets a line, or its absence reads as "this ship has no cargo hold"');
+    check('and every one of its rows is inside the window it scrolls behind',
+      L.stats.every(r => r.r.x >= L.body.x && r.r.x + r.r.w <= L.body.x + L.body.w),
+      'vertically they overhang and the client clips, the same as the threat file');
+  }
+
+  check('no shelf that sells anything is ever empty', empty === 0,
         'the drone page once every bay is full, and the inventory when you own nothing spare, ' +
         'are the only two that may be — and the inventory says so in words rather than showing a void');
 

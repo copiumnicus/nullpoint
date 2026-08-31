@@ -17,9 +17,12 @@ import { AMMO_KEYS } from './ammo.js';
 import { KIT_KEYS } from './repair.js';
 import { DEVICE_KEYS } from './devices.js';
 
+import { rowsOf as statRows, rowHeight } from './breakdown.js';
+
 export const TABS = [{ key: 'hangar', name: 'HANGAR' },
                      { key: 'store', name: 'STORE' },
-                     { key: 'inventory', name: 'INVENTORY' }];
+                     { key: 'inventory', name: 'INVENTORY' },
+                     { key: 'stats', name: 'STATS' }];
 
 // Everything you own and are not currently flying, newest ladder first. There was
 // no way to look at this at all: gear you bought and took off the ship existed
@@ -191,6 +194,39 @@ export function bayLayout(VIEW_W, VIEW_H, s = {}) {
     addEsc({ slot: 'rig', index: 0 });
     addEsc({ slot: 'form', header: true });
     for (const k of formations) addEsc({ slot: 'form', key: k });
+    return out;
+  }
+
+  // Where your numbers came from: the ship, then what you bolted to it, then the
+  // technologies, then the research ladder. Rows are different heights because a
+  // stat nothing touched needs one line and a stat three layers moved needs four,
+  // so this scrolls by PIXELS — a row-snapped scroll over uneven rows jumps by a
+  // different amount every notch, which the threat file already taught us.
+  if (tab === 'stats') {
+    // `s.drones` is a COUNT in this state object; the escort itself comes in as
+    // `s.escort`. Two different things with almost the same name, which is exactly
+    // how the first wiring of this threw.
+    const rows = statRows({ ...s, drones: Array.isArray(s.escort) ? s.escort : [] });
+    const sX = x + 20, sW = w - 40;
+    let span = 0;
+    for (const r of rows) span += rowHeight(r);
+    const max = Math.max(0, span - room);
+    const at = Math.max(0, Math.min(max, scroll));
+    const placed = [];
+    let cy = top - at;
+    for (const r of rows) {
+      const rh = rowHeight(r);
+      if (cy + rh > top && cy < top + room) placed.push({ ...r, r: { x: sX, y: cy, w: sW, h: rh } });
+      cy += rh;
+    }
+    out.stats = placed;
+    out.body = { x: sX, y: top, w: sW, h: room };
+    out.scroll = { at, max, span };
+    out.bar = max > 0 ? {
+      x: sX + sW + 6, y: top + (at / span) * room,
+      w: 3, h: Math.max(20, (room / span) * room),
+      track: { x: sX + sW + 6, y: top, w: 3, h: room },
+    } : null;
     return out;
   }
 

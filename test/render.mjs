@@ -646,6 +646,49 @@ const dismiss = () => {
   dismiss();
 }
 
+// The STATS tab: where every number on the ship came from. A new tab is exactly
+// where the INVENTORY one threw — it read G.pages[0].r on a tab that has no page
+// list and took the whole station down — so this drives the real tab click and
+// then reads the real rows.
+{
+  dismiss();
+  feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard',
+         fit: { weapon: ['emitter3'], generator: ['cellA'], tech: ['plating'] },
+         drones: [], formation: 'line', formations: ['line'], hulls: ['vanguard'],
+         gear: {}, credits: 50_000 });
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [packShip({ id: 1, x: MAPS.m1.base.x, y: MAPS.m1.base.y, heading: 0,
+           charge: 0, co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
+           rk: 0, vis: 2, name: 'Vy' })], docked: true, lab: { mods: 1 << 3, income: 0 } });
+  evt('keydown', { key: 'h' });                    // the station
+  frame(t += 16); frames++;
+  const G0 = bayLayout(innerWidth, innerHeight, { tab: 'hangar', hull: 'vanguard' });
+  const statsTab = G0.tabs.find(x => x.key === 'stats');
+  if (!statsTab) errs.push('the station has no STATS tab');
+  else {
+    click(statsTab.r); frame(t += 16); frames++;
+    trace = []; frame(t += 16); frames++;
+    const out = trace; trace = null;
+    // The layers, named, in the order they are applied.
+    const named = n => out.some(c => c.includes(n));
+    if (!out.some(c => /^fillText Hull /.test(c)))
+      errs.push('the STATS tab did not list the ship\'s attributes');
+    else if (!named('the ship itself') && !named('guns, generators'))
+      errs.push('the STATS tab showed final numbers without saying where they came from');
+    else if (!named('research station'))
+      errs.push('the STATS tab left the research ladder out of the breakdown');
+    else console.log('stats: the breakdown names every layer — ship, gear, technologies, research');
+    // Put the station back on HANGAR before leaving. bayTab is module state and the
+    // station walk two hundred lines below starts by clicking hangar rows without
+    // selecting the tab first — so leaving it on STATS made every one of those
+    // clicks land on a stats row and produce nothing. Second time this session a
+    // block of mine has leaked input state into a later one.
+    click(G0.tabs.find(x => x.key === 'hangar').r);
+    frame(t += 16); frames++;
+  }
+  dismiss();
+}
+
 // The threat file. A hostile is in it the first time you kill one and NOT BEFORE —
 // absent, not greyed out — and the count comes with it. That absence is the whole
 // design, so the assertion that matters is the negative one.

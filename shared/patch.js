@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.50';
+export const VERSION = '0.51';
 
 export const PATCHES = [
+  { v: '0.51', notes: [
+    'A STATS tab at the station: where every number on your ship came from',
+    'The ship, then your guns and generators, then technologies, then research',
+    'Each layer shows what it started with, what it ended with, and the multiple',
+  ] },
   { v: '0.50', notes: [
     'Beacons work from inside a hangar now — fold straight from your ring to your bay',
     'It only refuses if you are already standing where it would put you',

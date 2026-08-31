@@ -8,6 +8,7 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES } from '/shared/maps.js';
+import { LAYER_NAME, STAT_STEP } from '/shared/breakdown.js';
 import { berthPanel, berthPrice, whyNotBerth, whyNotBuyBerth, BERTH_RANK, BERTH_QUIET,
          homePorts, foldTo } from '/shared/berth.js';
 import { unpackLab } from '/shared/net.js';
@@ -1282,7 +1283,7 @@ addEventListener('wheel', e => {
     fileWant = Math.max(0, Math.min(max, fileWant + Math.sign(e.deltaY) * step));
     return;
   }
-  if (bayOpen && (bayTab === 'store' || bayTab === 'inventory')) {
+  if (bayOpen && (bayTab === 'store' || bayTab === 'inventory' || bayTab === 'stats')) {
     e.preventDefault?.();
     bayScroll = Math.max(0, bayScroll + (e.deltaY > 0 ? 2 : -2));
   }
@@ -1487,7 +1488,10 @@ const pickGeom = () => {
 let bayScroll = 0;                        // how far down the current shelf we are
 const bayGeom = () => bayLayout(VIEW_W, VIEW_H, {
   tab: bayTab, page: bayPage, hull: myHull, drones: myDrones.length,
-  hulls: myHulls, formations: myForms, gear: myGear, scroll: bayScroll });
+  hulls: myHulls, formations: myForms, gear: myGear, scroll: bayScroll,
+  // The STATS tab reads the whole ship, because it shows how the ship was arrived
+  // at. Same fit the game resolves, so the breakdown cannot disagree with the bars.
+  fit: myFit, escort: myDrones, rig: myRig, formation: myForm, mask: myLab?.mods ?? 0 });
 
 // The ship as the rules see it. The reactor ceiling lives in here now, so the
 // readout has to ask the ship rather than a constant.
@@ -1924,6 +1928,54 @@ function drawBay() {
     g.font = '11px ui-monospace, monospace'; g.globalAlpha = 1;
   }
 
+  // STATS: where every number on the ship came from. The ship, then what you
+  // bolted to it, then the technologies, then the research ladder — in the order
+  // they are applied, because a technology multiplies what the equipment added and
+  // showing them the other way round makes the technology look smaller than it is.
+  if (bayTab === 'stats') {
+    g.save();
+    g.beginPath(); g.rect(G.body.x, G.body.y, G.body.w, G.body.h); g.clip();
+    for (const row of G.stats ?? []) {
+      const r = row.r;
+      const val = v => row.pct ? `${(v * 100).toFixed(1)}%` : Math.round(v).toLocaleString('en-US');
+      g.font = '12px ui-monospace, monospace';
+      g.fillStyle = row.touched ? '#cfe4ff' : '#66748c';
+      g.fillText(row.label, r.x + 4, r.y + 16);
+      g.textAlign = 'right';
+      // Where it started and where it ended, side by side, because a final number
+      // on its own is exactly what this page exists to stop being the only thing.
+      g.fillStyle = '#5b6b85'; g.font = '11px ui-monospace, monospace';
+      g.fillText(val(row.base), r.x + r.w * 0.62, r.y + 16);
+      g.fillStyle = row.touched ? '#7de08a' : '#66748c'; g.font = 'bold 12px ui-monospace, monospace';
+      g.fillText(val(row.final) + (row.unit && !row.pct ? row.unit : ''), r.x + r.w - 8, r.y + 16);
+      g.textAlign = 'left';
+      g.strokeStyle = '#1d2b3d'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(r.x, r.y + 24.5); g.lineTo(r.x + r.w, r.y + 24.5); g.stroke();
+
+      let ly = r.y + 24;
+      for (const st of row.steps) {
+        ly += STAT_STEP;
+        const up = st.to > st.from;
+        g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+        g.fillText('   ' + LAYER_NAME[st.layer], r.x + 4, ly);
+        g.textAlign = 'right';
+        g.fillStyle = up ? '#7de08a' : '#e0a53f';
+        g.fillText(`${val(st.from)} \u2192 ${val(st.to)}`, r.x + r.w - 8, ly);
+        // The multiple, which is the part you cannot do in your head.
+        g.fillStyle = '#4a5568';
+        g.fillText(st.from ? `x${(st.to / st.from).toFixed(2)}` : '', r.x + r.w * 0.62, ly);
+        g.textAlign = 'left';
+      }
+    }
+    g.restore();
+    if (G.bar) {
+      g.fillStyle = 'rgba(255,255,255,0.05)';
+      g.fillRect(G.bar.track.x, G.bar.track.y, G.bar.track.w, G.bar.track.h);
+      g.fillStyle = '#3d5876'; g.fillRect(G.bar.x, G.bar.y, G.bar.w, G.bar.h);
+    }
+    g.font = '11px ui-monospace, monospace';
+  }
+
   if (bayTab === 'inventory' && !G.store.length) {
     g.textAlign = 'center'; g.font = '12px ui-monospace, monospace'; g.fillStyle = '#66748c';
     g.fillText('Nothing spare. Everything you own is bolted to the ship.',
@@ -1938,7 +1990,12 @@ function drawBay() {
     g.fillStyle = '#5a86b8';
     g.fillRect(G.bar.x, G.bar.y, G.bar.w, G.bar.h);
     g.textAlign = 'right'; g.font = '9px ui-monospace, monospace'; g.fillStyle = '#3d4757';
-    g.fillText(`${G.scroll.at + 1}-${Math.min(G.scroll.total, G.scroll.at + G.scroll.per)} of ${G.scroll.total}  ·  scroll`,
+    // "3-9 of 14" is a ROW count and only the row-snapped tabs have one. The stats
+    // page scrolls by pixels over rows of different heights, so it has no such
+    // number and printed "1-NaN of undefined" until this asked.
+    g.fillText(Number.isFinite(G.scroll?.total)
+      ? `${G.scroll.at + 1}-${Math.min(G.scroll.total, G.scroll.at + G.scroll.per)} of ${G.scroll.total}  ·  scroll`
+      : 'scroll',
                G.bar.track.x - 8, G.panel.y + G.panel.h - 16);
     g.textAlign = 'left'; g.font = '11px ui-monospace, monospace';
   }
