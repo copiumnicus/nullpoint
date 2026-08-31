@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.46';
+export const VERSION = '0.47';
 
 export const PATCHES = [
+  { v: '0.47', notes: [
+    'Shields come back as a share of the pool now, not a fixed number per second',
+    'A fully researched Bulwark took 90 minutes to refill. It takes 56 seconds',
+    'Every hull refills in the seconds it always did, however large its shield gets',
+  ] },
   { v: '0.46', notes: [
     'Press L for your THREAT FILE: everything you have killed, and how many',
     'Each entry carries its outline, its numbers, and one line on what it actually does',

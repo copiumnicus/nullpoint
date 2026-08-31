@@ -375,9 +375,10 @@ check('only one of them hides', WILD.filter(k => ALIENS[k].stealth).length === 1
     hulls.every(x => L.attrs.weaponRange > x.st.weaponRange),
     `${L.attrs.weaponRange} against ` + hulls.map(x => `${x.h} ${x.st.weaponRange}`).join(', '));
   check('so breaking off to survive hands it everything back',
-    L.attrs.shieldRegen * 25 > L.attrs.shield,
-    `${L.attrs.shieldRegen}/s rebuilds ${L.attrs.shield} shield in ` +
-    `${(L.attrs.shield / L.attrs.shieldRegen).toFixed(0)}s — a lone pilot cannot both live and finish it`);
+    L.attrs.shieldRegen * 25 > 1,
+    `${(100 * L.attrs.shieldRegen).toFixed(1)}% of its pool a second rebuilds the whole ` +
+    `${L.attrs.shield.toLocaleString('en-US')} in ${(1 / L.attrs.shieldRegen).toFixed(0)}s — ` +
+    'a lone pilot cannot both live and finish it');
   check('but it still cannot trap you: leaving always works',
     hulls.every(x => x.st.speed > L.attrs.speed),
     `${L.attrs.speed} against the slowest hull at ${Math.min(...hulls.map(x => x.st.speed))}`);

@@ -124,10 +124,36 @@ check('taking damage resets the regen clock', s.sinceHit === 0);
 for (let i = 0; i < Math.round(30 * (s.stats.shieldDelay - 0.2)); i++) stepVitals(s, dt);
 check('no regen before the delay elapses', s.shield === 0, `${s.stats.shieldDelay}s delay`);
 for (let i = 0; i < 30 * 2; i++) stepVitals(s, dt);
-check('shields come back at the stated rate',
-  Math.abs(s.shield - s.stats.shieldRegen * 1.8) < s.stats.shieldRegen * 0.15, `${s.shield.toFixed(0)} after ~1.8s`);
+// A SHARE of the pool per second, not an amount — so the seconds to full are a
+// property of the hull and stay that way however big the shield gets. As an amount
+// it was 168s on a finished Bulwark and 5,376s once the research ladder multiplied
+// the pool by 32, which is not slow regeneration, it is none.
+check('shields come back at a share of the pool, so the seconds to full never change',
+  Math.abs(s.shield - s.stats.shield * s.stats.shieldRegen * 1.8) < s.stats.shield * s.stats.shieldRegen * 0.15,
+  `${s.shield.toFixed(0)} after ~1.8s of a ${Math.round(s.stats.shield)} pool — ` +
+  `${(1 / s.stats.shieldRegen).toFixed(0)}s to full, whatever the pool is`);
 for (let i = 0; i < 30 * 60; i++) stepVitals(s, dt);
 check('regen stops at the maximum', s.shield === s.stats.shield);
+// The claim the whole change exists for: the seconds to full are a property of the
+// hull and stay that way however large the pool gets. As an amount it was 56s bare,
+// 168s finished and 5,376s at x32 research — ninety minutes, which is not slow
+// regeneration, it is none with extra steps.
+{
+  const { applyResearch, addMod, MODULE_KEYS } = await import('../shared/research.js');
+  let full = 0; for (const k of MODULE_KEYS) full = addMod(full, k);
+  const secs = st => 1 / st.shieldRegen;
+  const rows = Object.keys(HULLS).filter(h => HULLS[h].price >= 0).map(h => {
+    const bare = resolve(h);
+    return [h, secs(bare), secs(applyResearch(bare, full)), bare.shield,
+            applyResearch(bare, full).shield];
+  });
+  check('a shield takes the same time to come back however big it has grown',
+    rows.every(([, a, b]) => Math.abs(a - b) < 0.001),
+    rows.map(([h, a, , sh, big]) => `${h} ${a.toFixed(0)}s at ${Math.round(sh)} and at ${Math.round(big)}`).join(', '));
+  check('and the hulls still differ from each other, which is the part worth keeping',
+    Math.max(...rows.map(r => r[1])) / Math.min(...rows.map(r => r[1])) > 3,
+    rows.map(([h, a]) => `${h} ${a.toFixed(0)}s`).join(', ') + ' — the tank is still the slow one');
+}
 check('the hull never regenerates in the field', s.hp === s.stats.hull - 400);
 const hit = applyDamage(s, 5000);
 check('a ship dies when the hull is gone', hit.dead && s.hp === 0);

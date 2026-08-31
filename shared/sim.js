@@ -215,7 +215,7 @@ export const SHOT_FLASH = 0.16;   // s the muzzle stays lit
 // any damage at all resets the clock. Hull never regenerates in the field — the
 // only place it comes back is inside your own base ring, which is also the only
 // place regen ignores the delay.
-export const DOCK_SHIELD_MULT = 3;    // × shieldRegen while docked
+export const DOCK_SHIELD_MULT = 3;    // x the shield's own rate while docked
 export const DOCK_HULL_RATE   = 0.12; // × max hull per second, so ~8s from scrap
 // Long enough to cover a full weapon cycle plus a miss. At 1s a single missed
 // shot opened a repair window, and the dock heals ~250/s against an alien's ~50,
@@ -244,12 +244,16 @@ export function stepVitals(s, dt, docked = false) {
   if (s.shield > max) s.shield = max;
 
   if (docked && s.sinceHit >= DOCK_INTERRUPT) {
-    s.shield = Math.min(max, s.shield + s.stats.shieldRegen * m * DOCK_SHIELD_MULT * dt);
+    s.shield = Math.min(max, s.shield + max * s.stats.shieldRegen * DOCK_SHIELD_MULT * dt);
     s.hp     = Math.min(s.stats.hull, s.hp + s.stats.hull * DOCK_HULL_RATE * dt);
     return;
   }
   if (s.sinceHit < s.stats.shieldDelay / m || s.shield >= max) return;
-  s.shield = Math.min(max, s.shield + s.stats.shieldRegen * m * dt);
+  // A SHARE of the pool, so the seconds to full do not change when the pool does.
+  // `max` already carries the power boost and the hull ability, so a bigger shield
+  // refills proportionally faster and an Anchored Bulwark is not punished for the
+  // four times shield it just switched on.
+  s.shield = Math.min(max, s.shield + max * s.stats.shieldRegen * dt);
 }
 
 export function applyDamage(s, amount) {

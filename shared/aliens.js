@@ -24,7 +24,7 @@ export const ALIENS = {
     // answer — kiting works, standing still does not. Speed sits just above the
     // heaviest hull so a Cruiser cannot simply walk away, and no higher: a faster
     // one was miserable to click on.
-    attrs: { hull: 450, shield: 200, shieldRegen: 45, shieldDelay: 4,
+    attrs: { hull: 450, shield: 200, shieldRegen: 0.225, shieldDelay: 4,
              speed: 260, accel: 900, signature: 4,
              damage: 45, fireRate: 1.1, weaponRange: 520 },
     // Deliberately just inside SIGHT_R, so it is on your screen before it decides
@@ -101,7 +101,7 @@ export const ALIENS = {
   // is what "leaving always works" actually costs to promise.
   censer: {
     name: 'Censer', cls: 'Runaway', r: 28, colour: '#f0b429', shape: 'rotor',
-    attrs: { hull: 5500, shield: 1000, shieldRegen: 120, shieldDelay: 4,
+    attrs: { hull: 5500, shield: 1000, shieldRegen: 0.12, shieldDelay: 4,
              speed: 190, accel: 520, signature: 8,
              // No gun, and this is the whole brief. weaponRange 0 makes fire()
              // refuse every tick without a special case — the Bulkhead Target has
@@ -175,7 +175,7 @@ export const ALIENS = {
   thresher: {
     name: 'Thresher', cls: 'Revenant', r: 46, colour: '#e4e4e4', shape: 'facet',
     returns: 1,
-    attrs: { hull: 175550, shield: 30000, shieldRegen: 400, shieldDelay: 6,
+    attrs: { hull: 175550, shield: 30000, shieldRegen: 0.0133, shieldDelay: 6,
              speed: 200, accel: 320, signature: 9,
              damage: 80, fireRate: 1.0, weaponRange: 900 },
     aggro: 540,       // inside SIGHT_R, so it is on screen before it decides
@@ -220,7 +220,7 @@ export const ALIENS = {
   // same kiting a Drifter does once you have committed to it.
   harrier: {
     name: 'Harrier', cls: 'Skirmisher', r: 14, colour: '#8fa8ff', shape: 'blade',
-    attrs: { hull: 1420, shield: 640, shieldRegen: 55, shieldDelay: 4,
+    attrs: { hull: 1420, shield: 640, shieldRegen: 0.0859, shieldDelay: 4,
              speed: 380, accel: 1400, signature: 3,
              damage: 50, fireRate: 1.2, weaponRange: 560 },
     aggro: 480,       // inside SIGHT_R, so it is on screen before it decides
@@ -261,7 +261,7 @@ export const ALIENS = {
   // which is the progression this is here to make visible.
   ironhusk: {
     name: 'Ironhusk', cls: 'Husk', r: 26, colour: '#d0563f', shape: 'hex',
-    attrs: { hull: 4500, shield: 2000, shieldRegen: 130, shieldDelay: 5,
+    attrs: { hull: 4500, shield: 2000, shieldRegen: 0.065, shieldDelay: 5,
              speed: 190, accel: 420, signature: 6,
              damage: 90, fireRate: 0.8, weaponRange: 500 },
     // Aggro inside SIGHT_R like the Drifter's, so it is on screen before it
@@ -302,7 +302,7 @@ export const ALIENS = {
   // Bulwark at 250, so leaving always works — you just cannot leave and win.
   leviathan: {
     name: 'Leviathan', cls: 'Colossus', r: 40, colour: '#8fe04a', shape: 'crown',
-    attrs: { hull: 45000, shield: 20000, shieldRegen: 900, shieldDelay: 3,
+    attrs: { hull: 45000, shield: 20000, shieldRegen: 0.045, shieldDelay: 3,
              speed: 230, accel: 380, signature: 8,
              damage: 150, fireRate: 0.8, weaponRange: 900 },
     aggro: 520,
@@ -336,7 +336,7 @@ export const ALIENS = {
   // which is deliberate: everything dangerous about it is something else.
   hive: {
     name: 'Corsair Hive', cls: 'Mothership', r: 70, colour: '#e04fa0', shape: 'hive',
-    attrs: { hull: 450000, shield: 200000, shieldRegen: 1200, shieldDelay: 4,
+    attrs: { hull: 450000, shield: 200000, shieldRegen: 0.006, shieldDelay: 4,
              speed: 110, accel: 180, signature: 10,
              damage: 220, fireRate: 0.5, weaponRange: 1100 },
     // Escorts are the fight, so there have to be enough of them for that to be
@@ -376,7 +376,7 @@ export const ALIENS = {
     // interceptor. That is what makes the jink readable: it commits, and a
     // patient gunner can lead it. Give it fighter-grade acceleration and
     // lasers stop landing at all.
-    attrs: { hull: 22000, shield: 8000, shieldRegen: 90, shieldDelay: 5,
+    attrs: { hull: 22000, shield: 8000, shieldRegen: 0.0112, shieldDelay: 5,
              speed: 400, accel: 500, signature: 2,
              damage: 150, fireRate: 1.3, weaponRange: 640 },
     aggro: 520,       // it picks the fight, and from further out than you can see it
@@ -405,7 +405,7 @@ export const ALIENS = {
   lamprey: {
     name: 'Lamprey', cls: 'Parasite', r: 30, colour: '#3fd19b', shape: 'maw',
     siphon: { reach: 900, spool: 5.0, rate: 0.0225, mend: 0.0225 },
-    attrs: { hull: 14550, shield: 6000, shieldRegen: 200, shieldDelay: 5,
+    attrs: { hull: 14550, shield: 6000, shieldRegen: 0.0333, shieldDelay: 5,
              speed: 200, accel: 300, signature: 7,
              damage: 0, fireRate: 0.5, weaponRange: 0 },
     aggro: 500, leash: 2000, patience: 4.0, flee: 0, respawn: 45,

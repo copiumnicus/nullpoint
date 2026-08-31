@@ -25,7 +25,18 @@ export const FIRE_RATE = 1.2;
 export const ATTRS = {
   hull:        { label: 'Hull',         unit: '',    dflt: 1000, better: 'high', min: 1 },
   shield:      { label: 'Shield',       unit: '',    dflt:  800, better: 'high', min: 0 },
-  shieldRegen: { label: 'Shield regen', unit: '/s',  dflt:   40, better: 'high', min: 0 },
+  // A SHARE of the shield pool per second, not an amount.
+  //
+  // It was an amount, and an amount cannot survive a game where the pool grows. A
+  // finished Bulwark carries 4,200 shield and refilled it in 168 seconds; with the
+  // research ladder's x32 it carries 134,400 and took 5,376 — ninety minutes, which
+  // is not a slow regeneration, it is no regeneration with extra steps.
+  //
+  // Every hull's fraction is its old number over its own bare shield, so a hull
+  // refills in exactly the seconds it always did and now keeps that number however
+  // large the pool gets. The hull beside it already worked this way — DOCK_HULL_RATE
+  // is a share — so this is the shield catching up with it.
+  shieldRegen: { label: 'Shield regen', unit: '%/s', dflt: 0.05, better: 'high', min: 0, pct: true },
   shieldDelay: { label: 'Regen delay',  unit: 's',   dflt:    6, better: 'low',  min: 0.5 },
   speed:       { label: 'Speed',        unit: '',    dflt:  340, better: 'high', min: 40 },
   accel:       { label: 'Thrust',       unit: '',    dflt: 1200, better: 'high', min: 100 },
@@ -81,7 +92,7 @@ export const HULLS = {
   hauler:   { slots: { weapon: 1, generator: 1, tech: 1 }, price: 0,
               name: 'Hauler', cls: 'Tender', r: 12,
               blurb: 'The starter. The biggest hold, the weakest guns.',
-              attrs: { hull: 650, shield: 450, shieldRegen: 30, shieldDelay: 6, speed: 300, accel: 1000,
+              attrs: { hull: 650, shield: 450, shieldRegen: 0.0667, shieldDelay: 6, speed: 300, accel: 1000,
                        radar: 2200, signature: 3.5, damage: 30, fireRate: FIRE_RATE, weaponRange: 640,
                        cargo: 90, capacitor: 30, recharge: 1.5, sustain: 0.30 } },
 
@@ -90,19 +101,19 @@ export const HULLS = {
   kestrel:  { ability: 'veil', slots: { weapon: 2, generator: 2, tech: 3 }, price: 18000,
               name: 'Kestrel', cls: 'Interceptor', r: 10,
               blurb: 'Fastest and quietest. It cannot take a beating.',
-              attrs: { hull: 700, shield: 500, shieldRegen: 60, shieldDelay: 4, speed: 430, accel: 1600,
+              attrs: { hull: 700, shield: 500, shieldRegen: 0.12, shieldDelay: 4, speed: 430, accel: 1600,
                        radar: 2000, signature: 1.5, damage: 38, fireRate: FIRE_RATE, weaponRange: 620,
                        cargo: 30, capacitor: 45, recharge: 2.2, sustain: 0.33 } },
   vanguard: { ability: 'lock', slots: { weapon: 3, generator: 2, tech: 2 }, price: 26000,
               name: 'Vanguard', cls: 'Fighter', r: 13,
               blurb: 'The all-rounder. Good at everything, best at none.',
-              attrs: { hull: 1100, shield: 900, shieldRegen: 40, shieldDelay: 6, speed: 340, accel: 1200,
+              attrs: { hull: 1100, shield: 900, shieldRegen: 0.0444, shieldDelay: 6, speed: 340, accel: 1200,
                        radar: 2600, signature: 3.0, damage: 55, fireRate: FIRE_RATE, weaponRange: 700,
                        cargo: 60, capacitor: 45, recharge: 1.8, sustain: 0.33 } },
   bulwark:  { ability: 'anchor', slots: { weapon: 4, generator: 2, tech: 1 }, price: 40000,
               name: 'Bulwark', cls: 'Cruiser', r: 17,
               blurb: 'The most hull and the most guns, and the slowest.',
-              attrs: { hull: 1900, shield: 1400, shieldRegen: 25, shieldDelay: 8, speed: 250, accel: 800,
+              attrs: { hull: 1900, shield: 1400, shieldRegen: 0.0179, shieldDelay: 8, speed: 250, accel: 800,
                        radar: 3400, signature: 5.5, damage: 95, fireRate: FIRE_RATE, weaponRange: 820,
                        cargo: 120, capacitor: 60, recharge: 1.5, sustain: 0.36 } },
 };
