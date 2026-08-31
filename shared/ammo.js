@@ -268,6 +268,29 @@ export function barLayout(VIEW_W, VIEW_H) {
   return { r: { x: x0, y, w, h: BAR_BOX }, boxes };
 }
 
+// What a box's tooltip occupies when you hover one. Three boxes draw one — the two
+// weapons, the repair rack and the beacon — all at the same offset, so it is one
+// pair of numbers rather than the same two written four times.
+export const TIP_H = 20, TIP_UP = 24;
+
+// And where the SPACE prompt goes, which is ABOVE all of that.
+//
+// It used to sit 34px over the bar, which put it at VIEW_H-112..VIEW_H-88 while a
+// box tooltip covers VIEW_H-102..VIEW_H-82 — fourteen pixels of overlap, on every
+// window size, since the prompt was added. Hovering a weapon to read what is loaded
+// printed the tooltip straight through the sentence telling you what SPACE does.
+//
+// Derived rather than nudged: it clears the top of the tooltip band by PROMPT_GAP.
+// The ammunition MENU still covers it, and that is correct — a menu is something you
+// opened on purpose and it closes on the next click.
+export const PROMPT_H = 24, PROMPT_GAP = 8;
+export function promptRect(VIEW_W, VIEW_H, w) {
+  const L = barLayout(VIEW_W, VIEW_H);
+  const tipTop = L.r.y - TIP_UP;                   // the highest a hover tooltip reaches
+  return { x: Math.round((VIEW_W - w) / 2), y: tipTop - PROMPT_GAP - PROMPT_H,
+           w, h: PROMPT_H };
+}
+
 // The chooser that opens above a box. Grades run bottom-up so the one nearest
 // the box is the first in the list, and it never runs off the top.
 export const MENU_ROW = 30, MENU_W = 190;

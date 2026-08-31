@@ -5,7 +5,8 @@ import { MAPS } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS } from '../shared/gear.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
-import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu } from '../shared/ammo.js';
+import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu,
+         promptRect, TIP_H, TIP_UP } from '../shared/ammo.js';
 import { settingsLayout } from '../shared/settings.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
@@ -538,6 +539,33 @@ const dismiss = () => {
   frame(t += 16); frames++;
   frame(t += 16); frames++;
   console.log('siphon: tether drawn at six draws, plus an undetected victim, no victim and zero length');
+}
+
+// The SPACE prompt, and the strip of screen it has been fighting over since it was
+// added. It sat 34px above the bar; a box tooltip covers r.y-24 to r.y-4, so hovering
+// a weapon to read what is loaded printed the tooltip straight through the sentence
+// saying what SPACE would do. Fourteen pixels, on every window size, for the entire
+// life of the game.
+//
+// Pure geometry, which is the reason the rectangle moved into shared/ammo.js: this
+// cannot be checked by looking at a frame, only by asking one source where the two
+// things are.
+{
+  const over = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  for (const [w, h] of [[1600, 900], [1280, 720], [1024, 640], [820, 560]]) {
+    const L = barLayout(w, h), P = promptRect(w, h, 300);
+    // The tallest a hover tooltip reaches, on any of the four boxes.
+    const tips = L.boxes.map(b => ({ x: b.r.x - 60, y: b.r.y - TIP_UP, w: b.r.w + 120, h: TIP_H }));
+    if (tips.some(t => over(P, t)))
+      errs.push(`at ${w}x${h} the SPACE prompt lands on a box tooltip`);
+    else if (over(P, L.r))
+      errs.push(`at ${w}x${h} the SPACE prompt lands on the ammunition bar`);
+    else if (P.y < 0 || P.x < 0 || P.x + P.w > w)
+      errs.push(`at ${w}x${h} the SPACE prompt is off the screen`);
+  }
+  const L0 = barLayout(innerWidth, innerHeight), P0 = promptRect(innerWidth, innerHeight, 300);
+  console.log(`prompt: SPACE sits at ${P0.y}..${P0.y + P0.h}, clear of the tooltips at ` +
+              `${L0.r.y - TIP_UP}..${L0.r.y - TIP_UP + TIP_H} and the bar at ${L0.r.y}`);
 }
 
 // The safe-zone badge. Sanctuary has been in the game since the beginning and had

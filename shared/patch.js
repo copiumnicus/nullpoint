@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.41';
+export const VERSION = '0.42';
 
 export const PATCHES = [
+  { v: '0.42', notes: [
+    'The SPACE prompt sits clear of the weapon tooltips instead of under them',
+    'Combat music holds for 14 seconds, not 7 — long enough to reach the next kill',
+    'It was dropping out about a second before the next fight started, every time',
+  ] },
   { v: '0.41', notes: [
     'Fly to your research station and it tells you to press R',
     'Every rung now says what it does to the ship you are flying: hull 1,100 -> 2,200',

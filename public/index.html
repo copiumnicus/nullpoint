@@ -58,7 +58,8 @@ import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, devicePrice, whyNotDevice } from '/shared/devices.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
-         barLayout, feedMenu, gradeColour, whyNotBuy, whyNotLoad } from '/shared/ammo.js';
+         barLayout, feedMenu, gradeColour, whyNotBuy, whyNotLoad,
+         promptRect, TIP_H, TIP_UP } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
@@ -2462,10 +2463,10 @@ function drawSpacePrompt() {
   const L = barLayout(VIEW_W, VIEW_H);
   g.font = '12px ui-monospace, monospace';
   const w = 30 + g.measureText(act.label).width + 22;
-  const x = Math.round((VIEW_W - w) / 2), y = L.r.y - 34;
-  g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(x, y, w, 24);
+  const { x, y, h } = promptRect(VIEW_W, VIEW_H, w);
+  g.fillStyle = 'rgba(6,10,16,0.86)'; g.fillRect(x, y, w, h);
   g.strokeStyle = act.kind === 'stow' ? '#7de08a' : '#3d5876'; g.lineWidth = 1;
-  g.strokeRect(x + .5, y + .5, w - 1, 23);
+  g.strokeRect(x + .5, y + .5, w - 1, h - 1);
   g.fillStyle = act.kind === 'stow' ? 'rgba(125,224,138,0.16)' : 'rgba(122,180,240,0.12)';
   g.fillRect(x + 6, y + 5, 30, 14);
   g.textAlign = 'center'; g.font = '10px ui-monospace, monospace';
@@ -2548,8 +2549,8 @@ function drawDeviceBox(b) {
     g.font = '11px ui-monospace, monospace';
     const w = g.measureText(t).width + 18;
     const x = Math.max(6, Math.min(VIEW_W - w - 6, cx - w / 2));
-    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - 24, w, 20);
-    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - 23.5, w - 1, 19);
+    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - TIP_UP, w, TIP_H);
+    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - TIP_UP + .5, w - 1, TIP_H - 1);
     g.fillStyle = '#cfe4ff'; g.fillText(t, x + w / 2, r.y - 10);
   }
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
@@ -2596,8 +2597,8 @@ function drawRepairBox(b) {
     g.font = '11px ui-monospace, monospace';
     const w = g.measureText(t).width + 18;
     const x = Math.max(6, Math.min(VIEW_W - w - 6, r.x + r.w / 2 - w / 2));
-    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - 24, w, 20);
-    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - 23.5, w - 1, 19);
+    g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - TIP_UP, w, TIP_H);
+    g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - TIP_UP + .5, w - 1, TIP_H - 1);
     g.fillStyle = why && !busy ? '#e0a53f' : '#cfe4ff'; g.fillText(t, x + w / 2, r.y - 10);
   }
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
@@ -2656,8 +2657,8 @@ function drawBar() {
       g.font = '11px ui-monospace, monospace';
       const w = g.measureText(t).width + 18;
       const x = Math.max(6, Math.min(VIEW_W - w - 6, r.x + r.w / 2 - w / 2));
-      g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - 24, w, 20);
-      g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - 23.5, w - 1, 19);
+      g.fillStyle = 'rgba(6,10,16,0.95)'; g.fillRect(x, r.y - TIP_UP, w, TIP_H);
+      g.strokeStyle = '#2c3d55'; g.lineWidth = 1; g.strokeRect(x + .5, r.y - TIP_UP + .5, w - 1, TIP_H - 1);
       g.fillStyle = grade; g.fillText(t, x + w / 2, r.y - 10);
     }
     g.textAlign = 'left';

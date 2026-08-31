@@ -67,12 +67,24 @@ export const servable = (name, list) => list.includes(name) && isTrack(name.spli
 // a different track. Fighting back beats being hunted, because the moment you
 // return fire it stops being a chase.
 //
-// Arriving is instant and leaving is not. A two second lull between passes is
-// not the end of a fight, and music that drops out and comes straight back is
-// worse than music that never changed. So whichever mood was last active is held
-// for a while after the last shot, and the crossfade runs on top of that: the
-// hold is the buffer, the fade is the manners.
-export const COMBAT_HOLD = 7000;      // ms of quiet before it counts as over
+// Arriving is instant and leaving is not. A lull between passes is not the end of a
+// fight, and music that drops out and comes straight back is worse than music that
+// never changed. So whichever mood was last active is held for a while after the
+// last shot, and the crossfade runs on top of that: the hold is the buffer, the fade
+// is the manners.
+//
+// It was seven seconds, and seven was measurably the wrong side of the gap it exists
+// to cover. Farming is kill, fly, kill, and the flight is not short: a respawn puts
+// the next hostile at least SPAWN_CLEAR — 2,400px — from anybody standing there, and
+// a starter hull covers that at 300px/s. Eight seconds, before you have found it,
+// turned onto it, or closed to weapons range. So the score reliably gave up about a
+// second before the next fight started, dropped to silence, and came straight back:
+// the exact shape this hold was written to prevent, one number too small to do it.
+//
+// Fourteen is that flight with room around both ends, and it is also the Drifter's
+// posted respawn — the cadence of the content a pilot is actually farming when they
+// notice this. Escalating is still instant; only stepping down waits.
+export const COMBAT_HOLD = 14_000;    // ms of quiet before it counts as over
 
 // Escalating is instant; stepping down waits out the hold. Switching targets
 // mid-fight leaves a moment where you are not shooting at anything and something

@@ -482,6 +482,19 @@ console.log('\nthe playlist');
   check('a lull between passes does not end it', step({}, 2000) === COMBAT
     && step({ fighting: true }, 100) === COMBAT && step({}, COMBAT_HOLD - 1000) === COMBAT,
     `${COMBAT_HOLD / 1000}s of quiet is what ends it`);
+  // The number, and why it is that number. A respawn puts the next hostile at least
+  // SPAWN_CLEAR away and a starter hull flies 300px/s, so the trip between two kills
+  // is about eight seconds before you have even turned onto the thing. At seven the
+  // score gave up a second before the next fight began, every single time.
+  {
+    const { SPAWN_CLEAR } = await import('../shared/aliens.js');
+    const { resolve, DEFAULT_HULL } = await import('../shared/ships.js');
+    const flight = SPAWN_CLEAR / resolve(DEFAULT_HULL).speed * 1000;
+    check('the hold outlasts the flight from one kill to the next',
+      COMBAT_HOLD > flight * 1.5,
+      `${COMBAT_HOLD / 1000}s against ${(flight / 1000).toFixed(1)}s of flying ` +
+      `${SPAWN_CLEAR}px in a starter hull — it was 7s, which is the wrong side of that`);
+  }
   // Enough quiet ends the fight, but the score does not come straight back —
   // there is a stretch of silence first, and only on the way down.
   const { QUIET, COOLDOWN } = await import('../shared/music.js');
