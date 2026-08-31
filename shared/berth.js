@@ -51,7 +51,7 @@ export const frontierBerthPrice = () => devicePrice('recall') * BERTH_TRIPS;
 //
 // What does scale with the sector is what the sector pays, so that is the currency:
 //
-//   one Vitriol or Doldrum   2,055,480 effective hit points
+//   one Crucible or Doldrum  2,055,480 effective hit points
 //     bounty                 1,438,836   ehp x BOUNTY_RATE
 //     one full hold of ore      47,680   at the dock
 //                            + 35,760   at the counter it is standing next to, x PIRATE_RATE
@@ -95,7 +95,7 @@ export const BERTH_RANK = 8;
 
 // And the deeps ask for rank 39, which is one kill.
 //
-// Not "one kill" as a figure of speech: a Vitriol or a Doldrum pays 442,719
+// Not "one kill" as a figure of speech: a Crucible or a Doldrum pays 442,719
 // experience and rank 39 costs 437,817, so a single one of the things that lives in
 // a deep sector carries a pilot from nothing to the door. That is the rank standing
 // for the only thing it can honestly stand for out here — the frontier's gate says

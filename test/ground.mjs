@@ -15,8 +15,9 @@ import { ALIENS, WILD, effectiveHp, farmHp, newAlien, stepAlienAI, stepAlienRepa
          mayHarm, standOff, BOUNTY_RATE, XP_RATE, threatDps, bountyFor, xpFor,
          SHAPES, outlineOf } from '../shared/aliens.js';
 import { sowOf, stepSow, sowHolds, sowPoint, groundFor, inGround, groundBite,
-         stepGround, stepSnare, holdEngines, held, mayHold, HOLD, CALM } from '../shared/ground.js';
-import { newShip, step, stepVitals, applyDamage, inHaven, JUMP_TIME } from '../shared/sim.js';
+         stepGround, stepSnare, holdEngines, held, mayHold, HOLD, CALM, WARN } from '../shared/ground.js';
+import { newShip, step, stepVitals, applyDamage, inHaven, JUMP_TIME, HAVEN_R } from '../shared/sim.js';
+import { PORTAL_R } from '../shared/maps.js';
 import { poolOf } from '../shared/burn.js';
 import { fire, stepBolts, faceTarget } from '../shared/combat.js';
 import { launch, stepRockets } from '../shared/rockets.js';
@@ -27,6 +28,7 @@ import { SHIP_FIELDS, SOWN_FIELDS, STREAMS, EPHEMERAL, packSown, unpackSown, GRO
 import { MAX_FIELDS } from '../shared/delta.js';
 import { MODULE_KEYS } from '../shared/research.js';
 import { routeTo } from '../shared/power.js';
+import { DRAIN_RATE } from '../shared/siphon.js';
 import { DROPS } from '../shared/cargo.js';
 
 const fails = [];
@@ -36,7 +38,7 @@ const check = (name, ok, detail = '') => {
 };
 const dt = 1 / 30;
 const X32 = MODULE_KEYS.reduce((m, _, i) => m | (1 << i), 0);
-const V = ALIENS.vitriol, D = ALIENS.doldrum;
+const V = ALIENS.crucible, D = ALIENS.doldrum;
 
 // The reactor is ON, and on the weapons. balance.js quotes the BOOSTED gun, and a
 // bench pilot that never routed power anywhere delivered 6,450 of a finished
@@ -59,10 +61,29 @@ const pilot = (stage = 'finished', research = 0, route = 'weapons') => {
 // argued for and pinned shut.
 console.log('\nthe root');
 {
-  check('a hold is half a portal, so it can never deny a door you already opened',
-    HOLD === JUMP_TIME / 2 && CALM === JUMP_TIME,
-    `${HOLD}s held against a ${JUMP_TIME}s spool, and ${CALM}s of thrust owed afterwards — ` +
-    'three seconds is this game\'s unit of a decision already committed to');
+  // REWRITTEN, and the property it used to assert is GONE rather than moved. The hold
+  // was JUMP_TIME / 2, and the half was the whole argument: "the longest hold that can
+  // never deny a door you already opened". Five seconds is longer than a portal takes
+  // to spool, so that reasoning is dead and saying otherwise would be a test agreeing
+  // with a comment instead of with the game.
+  //
+  // The promise survives on the RULE instead, and the rule is older: a still is
+  // refused sanctuary outright, provoked or not, so a pilot who has committed to a
+  // door is inside a haven and cannot be held at all. That is what these two check
+  // now — the arithmetic claim became a geometric one.
+  check('a hold is no longer short enough to be safe, so sanctuary is what keeps a door open',
+    HOLD > JUMP_TIME && CALM === 2 * HOLD,
+    `${HOLD}s held against a ${JUMP_TIME}s spool — the old hold was ${JUMP_TIME / 2}s and could not ` +
+    `outlast a jump; this one can, so it is barred from havens instead. ${CALM}s owed back`);
+  check('and a pilot spooling a jump is twice as deep into the peace as they need to be',
+    HAVEN_R > PORTAL_R * 2,
+    `you must be inside ${PORTAL_R}px of a mouth to commit to it and the peace runs to ` +
+    `${HAVEN_R}px, so there is no band where a ship can be holding a door open and still be caught`);
+  check('what a stop DOES cost is a door you have not reached yet',
+    HOLD * 128 > HAVEN_R,
+    `stopped dead outside the peace you lose ${Math.round(HOLD * 128)}px of running at the slowest ` +
+    `fitted speed in the game, against a ${HAVEN_R}px mouth — under the old coast you kept going. ` +
+    'That is the cost the change was asked for, and leaving still works: both are slower than every hull');
 
   // THE ANTI-PERMA-ROOT CLAIM. Brute forced rather than reasoned: every still on the
   // field tries to grab every tick, which is a field no designer could build and a
@@ -81,31 +102,62 @@ console.log('\nthe root');
     return { worst, minGap, win };
   };
   const runs = [1, 2, 3, 6, 12, 40].map(greedy);
-  check('no arrangement of stills can hold a pilot for longer than one hold',
-    runs.every(r => r.worst <= HOLD + 1e-9),
+  // A tick of slack, and it is the tick the hold is applied ON: holdEngines sets the
+  // clock and stepSnare takes the frame off it afterwards, so the measured stop is a
+  // thirtieth longer than the number. Stated rather than rounded away, because a
+  // tolerance nobody explains is where a real overrun goes to hide.
+  const TICK = 1 / 30;
+  check('no arrangement of stills can stop a pilot for longer than one hold',
+    runs.every(r => r.worst <= HOLD + TICK + 1e-9),
     `${runs.length} arrangements up to forty stills all grabbing every tick: longest unbroken ` +
-    `coast ${Math.max(...runs.map(r => r.worst)).toFixed(2)}s against a stated ${HOLD}s`);
+    `stop ${Math.max(...runs.map(r => r.worst)).toFixed(2)}s against a stated ${HOLD}s plus the tick it lands on`);
   check('and a pilot is always owed a full portal spool of thrust between two of them',
     runs.every(r => r.minGap >= CALM - 1e-9),
     `shortest gap measured ${Math.min(...runs.map(r => r.minGap)).toFixed(2)}s against a stated ${CALM}s`);
-  check('so the worst ten seconds anybody can be handed still has six of thrust in it',
-    runs.every(r => r.win <= HOLD + 10 * HOLD / (HOLD + CALM) + 1e-6) && runs.every(r => 10 - r.win >= 6),
-    `${Math.max(...runs.map(r => r.win)).toFixed(2)}s of coasting in the worst ten — ` +
-    'a window that opens mid-hold pays for that hold too, which is why it is not a flat third');
-  check('a hold takes the throttle and nothing else',
+  // REWRITTEN with the clocks. At 1.5s held and 3.0s owed the worst ten seconds had
+  // 6.0s of thrust in it; at 5 and 10 a ten-second window cannot contain two stops at
+  // all, because they are fifteen seconds apart — so the worst ten is one whole stop
+  // and no more, and the bound that binds is the CYCLE rather than the window.
+  check('and two stops can never fall inside one ten-second window',
+    runs.every(r => r.win <= HOLD + TICK + 1e-6),
+    `${Math.max(...runs.map(r => r.win)).toFixed(2)}s stopped in the worst ten seconds — one stop, ` +
+    `never two, because ${HOLD} + ${CALM} is ${HOLD + CALM}s apart. Over a whole minute it is a third`);
+  // REWRITTEN, and this is the design call that was reversed rather than a number that
+  // moved. It used to read "a hold takes the throttle and nothing else" and asserted
+  // that the velocity did not change by a thousandth — momentum kept, ship coasting,
+  // and what a pilot lost was only the ability to change their mind. That is the
+  // better mechanic and it is not the one the game has: flown, a ship at speed sailed
+  // straight out of the trap that had just shut on it. The claim is now the opposite
+  // claim, and it is checked the same way.
+  check('a stop takes the way on with it, and takes all of it',
     (() => {
       const s = pilot(); s.x = 0; s.y = 0; s.tx = 5000; s.ty = 0;
       for (let i = 0; i < 60; i++) step(s, dt);                // up to speed
-      const v0 = Math.hypot(s.vx, s.vy);
+      const v0 = Math.hypot(s.vx, s.vy), x0 = s.x;
       holdEngines(s, HOLD);
-      s.tx = 0; s.ty = 5000;                                    // and now try to turn
       let t = 0; while (t < HOLD) { step(s, dt); stepSnare(s, dt); t += dt; }
-      const v1 = Math.hypot(s.vx, s.vy);
-      return Math.abs(v1 - v0) < 0.001 && Math.abs(s.vy) < 0.001 && v1 > 100;
+      return v0 > 100 && Math.hypot(s.vx, s.vy) < 1e-9 && Math.abs(s.x - x0) < 1e-9;
     })(),
-    'ordered hard about while held: the velocity does not change by a thousandth. It is ' +
-    'the acceleration that is taken, so the ship coasts rather than stopping — a stun ' +
-    'would be zeroing MAX, and clearing the destination brakes just as hard');
+    (() => {
+      const s = pilot(); s.x = 0; s.y = 0; s.tx = 5000; s.ty = 0;
+      for (let i = 0; i < 60; i++) step(s, dt);
+      const v0 = Math.hypot(s.vx, s.vy);
+      return `${v0.toFixed(0)}px/s under full burn, still ordered at the same destination, and ` +
+             `${HOLD}s later the ship has moved zero pixels. The velocity is zeroed EVERY tick the ` +
+             'clock runs, not once on the way in — once would let anything that touches the body ' +
+             'afterwards put it back into motion inside a still';
+    })());
+  check('and it still never touches the trigger, the target or the beacon',
+    (() => {
+      const s = pilot(); s.x = 0; s.y = 0;
+      const mark = newShip(400, 0, 'bulwark');
+      holdEngines(s, HOLD);
+      let shots = 0, t = 0;
+      while (t < HOLD) { step(s, dt); stepSnare(s, dt); shots += fire(s, mark, dt).length; t += dt; }
+      return shots > 0;
+    })(),
+    'a stun that took the guns as well would be a five-second death sentence rather than ' +
+    'a five-second problem, and this game has never taken a trigger away');
   check('and it never touches the trigger, the target or the beacon',
     (() => {
       const s = pilot(); s.x = 0; s.y = 0;
@@ -167,20 +219,59 @@ console.log('\nthe root');
 // --- what the ground does -----------------------------------------------------
 console.log('\nthe ground');
 {
-  check('both rates are a share of the pilot, so research cannot make either one safer',
+  // REWRITTEN because both now carry a GUN, and threatDps sums the two: a gun is a
+  // flat number of points and the ground is a share, so the total is deliberately NOT
+  // flat any more. That is the design rather than a regression — the gun is the part
+  // the balance model already knows how to price, and the ground is the part that
+  // cannot decay. So the claim measures the halves separately, which is a stronger
+  // thing to be able to say than the one it replaces.
+  check('the GROUND is a share of the pilot, so research can never make it safer',
     (() => {
-      const secs = k => STAGE_KEYS.map(st => stageEhp(st) / threatDps(k, stageEhp(st), stageEhp(st)));
-      return ['vitriol', 'doldrum'].every(k => {
-        const s = secs(k); return Math.max(...s) / Math.min(...s) < 1.05;
+      const secs = k => STAGE_KEYS.map(st => stageEhp(st) / (ALIENS[k].sow.rate * stageEhp(st)));
+      return ['crucible', 'doldrum'].every(k => {
+        const t = secs(k); return Math.max(...t) / Math.min(...t) < 1.02;
       });
     })(),
-    `standing in one kills you in ${(1 / V.sow.rate).toFixed(1)}s and the other in ` +
+    `standing in the plasma kills you in ${(1 / V.sow.rate).toFixed(1)}s and in a still in ` +
     `${(1 / D.sow.rate).toFixed(1)}s, at every stage of the game and every rung of research`);
-  check('a pool is half a rung under on model and a still is a full rung under it',
-    Math.abs(V.sow.rate - ANCHORS.pressure / Math.sqrt(10)) < 1e-5 &&
-    Math.abs(D.sow.rate - ANCHORS.pressure / 10) < 1e-5,
-    `${V.sow.rate} is ANCHORS.pressure / sqrt(10) and ${D.sow.rate} is pressure / 10 — ` +
-    'the ground that holds you is deliberately not the ground that kills you');
+  check('and the GUN is the flat half, which is what the model knows how to price',
+    (() => {
+      const gun = k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate;
+      const want = ANCHORS.pressure * stageEhp('finished');
+      return ['crucible', 'doldrum'].every(k => Math.abs(gun(k) - want) / want < 0.01)
+          && ALIENS.crucible.attrs.fireRate !== ALIENS.doldrum.attrs.fireRate;
+    })(),
+    (() => {
+      const gun = k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate;
+      return `${gun('crucible').toFixed(0)} dps each, which is ANCHORS.pressure x ` +
+             `stageEhp('finished') = ${(ANCHORS.pressure * stageEhp('finished')).toFixed(0)} — the ` +
+             'model\'s own answer to "what must a hostile at that stage throw". Same dps, different ' +
+             `trigger: ${ALIENS.crucible.attrs.damage} x ${ALIENS.crucible.attrs.fireRate} against ` +
+             `${ALIENS.doldrum.attrs.damage} x ${ALIENS.doldrum.attrs.fireRate}. It MOVES when the ` +
+             'shop moves, so a hull change fails here rather than leaving them quoting a stage nobody flies';
+    })());
+  check('a gun you cannot out-range, and ground that reaches past even that',
+    ['crucible', 'doldrum'].every(k =>
+      ALIENS[k].attrs.weaponRange > 820 && ALIENS[k].sow.reach > ALIENS[k].attrs.weaponRange),
+    `${ALIENS.crucible.attrs.weaponRange}px of barrel against 620-820 of hull, and ${V.sow.reach}px ` +
+    'of sowing past that — so backing off past 900 leaves the band where the ground still lands and ' +
+    'the gun has stopped, which is the layer these two grew when they grew barrels');
+  // REWRITTEN with the rates. They were pressure/sqrt(10) and pressure/10 — half a
+  // rung and a full rung UNDER on model — and the designer flew that and asked for
+  // three times the plasma and five times the still. Both land on numbers this game
+  // already had an argument for, which is why the ask and the ladder agree here
+  // rather than fighting: x3 of the old pool is 0.0427 and ANCHORS.pressure is 0.045,
+  // within 5%, so the plasma takes the model's own definition of a dangerous hostile.
+  // x5 of the old still is exactly DRAIN_RATE, a Lamprey's tether, which has its own
+  // paragraph in siphon.js about why half of on-model is the honest share for
+  // something you cannot dodge.
+  check('the plasma is on model and the still is half of it',
+    Math.abs(V.sow.rate - ANCHORS.pressure) < 1e-9 &&
+    Math.abs(D.sow.rate - DRAIN_RATE) < 1e-9 &&
+    Math.abs(D.sow.rate - V.sow.rate / 2) < 1e-9,
+    `${V.sow.rate} is ANCHORS.pressure exactly and ${D.sow.rate} is DRAIN_RATE, a Lamprey's ` +
+    'tether — so the still is half the plasma, and the ground that holds you is still ' +
+    'deliberately not the ground that kills you');
   // WHY IT IS UNDER the model rather than over it, which looks wrong until you do the
   // arithmetic. ANCHORS.pressure is 4.5% of a pilot per second, and that number was
   // set against the anchor fight: 8.68 seconds, so an on-model hostile takes 39% of
@@ -196,19 +287,19 @@ console.log('\nthe ground');
       // arithmetic. And it is not merely gentle: standing in a pool for the whole
       // fight still kills you (129% of the ship), so what the low rate buys is that
       // leaving works, not that staying is free. See the SEAM on alienFor's `dps`.
-      return ['vitriol', 'doldrum'].every(k =>
+      return ['crucible', 'doldrum'].every(k =>
         fight(k) > ANCHOR_FIGHT * 4
         && ALIENS[k].sow.rate < ANCHORS.pressure
         && V.sow.rate * fight(k) > 1);
     })(),
     (() => {
-      const f = farmHp('vitriol') / (stageDps(POSTING.vitriol.stage) * POSTING.vitriol.party);
+      const f = farmHp('crucible') / (stageDps(POSTING.crucible.stage) * POSTING.crucible.party);
       return `${f.toFixed(0)}s against an ${ANCHOR_FIGHT.toFixed(1)}s anchor: on model per second ` +
              `would owe ${(100 * ANCHORS.pressure * f).toFixed(0)}% of the pilot over one fight. This ` +
              `owes ${(100 * V.sow.rate * f).toFixed(0)}% if you never leave the ground, and measured ` +
              'a pilot flying the counter is standing in it 24% of the time';
     })());
-  check('patches never stack, so a Vitriol cannot delete anybody by sowing twice on one spot',
+  check('patches never stack, so a Crucible cannot delete anybody by sowing twice on one spot',
     (() => {
       const s = pilot('finished', X32);
       s.x = 0; s.y = 0;
@@ -221,23 +312,47 @@ console.log('\nthe ground');
     })(),
     'six pools on one point take exactly what one takes — and threatDps counts a sower\'s ' +
     'rate once for the same reason, so the model and the tick agree');
-  check('a Vitriol can never have more ground down than it says it may',
+  check('a Crucible can never have more ground down than it says it may',
     V.sow.every === V.sow.life / V.sow.max && D.sow.every === D.sow.life / D.sow.max,
     `${V.sow.max} pools x ${V.sow.life}s / ${V.sow.every}s and ${D.sow.max} stills x ` +
     `${D.sow.life}s / ${D.sow.every}s — the cadence is life / max rather than a fourth number`);
-  check('a pool lasts exactly one lap of the fight it is in',
-    (() => {
-      const me = pilot('finished', X32);
-      const lap = 2 * Math.PI * (me.stats.weaponRange * 0.92) / me.stats.speed;
-      return Math.abs(V.sow.life - lap) / lap < 0.05;
-    })(),
-    (() => {
-      const me = pilot('finished', X32);
-      const lap = 2 * Math.PI * (me.stats.weaponRange * 0.92) / me.stats.speed;
-      return `${lap.toFixed(1)}s to circle a Vitriol at your own gun range in the slowest hull ` +
-             `that fights one, against a ${V.sow.life}s pool — the ring of ground closes exactly ` +
-             'as you come back round to where you started it';
-    })());
+  // REWRITTEN, and the reason is the carpet. `life` was one lap — 37 seconds, so the
+  // ground you laid at the start of a circuit let go as you came back round to it —
+  // and with six pools a hostile that was a beautiful relation and an unplayable
+  // screen: four of these put THIRTY-TWO live patches up at once, every one animated,
+  // and area denial that covers everything denies nothing because there is no clean
+  // ground left to steer toward.
+  //
+  // So the count came down and the size went up, which is the same mechanic said
+  // properly: a few large deliberate areas rather than a carpet. What replaces the lap
+  // is a claim about how much of the fight is DENIED, which is the thing the lap was a
+  // proxy for and is what a pilot actually experiences.
+  const ORBIT = (() => { const me = pilot('finished', X32); return me.stats.weaponRange * 0.92; })();
+  const blocked = k => (ALIENS[k].sow.max * 2 * ALIENS[k].sow.r) / (2 * Math.PI * ORBIT);
+  console.log(`     the circle a fight is fought on is ${Math.round(2 * Math.PI * ORBIT)}px around, ` +
+    `at ${Math.round(ORBIT)}px of gun range`);
+  for (const k of ['crucible', 'doldrum'])
+    console.log(`     ${ALIENS[k].name.padEnd(9)} ${ALIENS[k].sow.max} x ${ALIENS[k].sow.r}px blocks ` +
+      `${(100 * blocked(k)).toFixed(0)}% of it, one every ${ALIENS[k].sow.every}s for ${ALIENS[k].sow.life}s`);
+  check('neither of them holds more than a third of the ground its own fight is on',
+    blocked('crucible') <= 1 / 3 && blocked('doldrum') <= 1 / 3,
+    `${(100 * blocked('crucible')).toFixed(0)}% and ${(100 * blocked('doldrum')).toFixed(0)}% — ` +
+    'a hostile that holds more than a third has stopped shaping the space and started being it. ' +
+    'The sum is an upper bound and a bad one, because the pair overlaps by construction: both sow ' +
+    'at the SAME feet, so their two circles are very nearly concentric and the union is close to ' +
+    'the bigger of them alone');
+  check('and the whole map holds a handful of patches, not a carpet',
+    2 * (V.sow.max + D.sow.max) <= 6,
+    `${2 * (V.sow.max + D.sow.max)} live patches across a deep sector's two pairs, against the ` +
+    '32 that four of these used to put up at once — every one of them animated. Fewer and bigger ' +
+    'is the same mechanic said properly');
+  check('and `every` is still life over max, so nothing can ask for more ground than it may hold',
+    V.sow.every === V.sow.life / V.sow.max && D.sow.every === D.sow.life / D.sow.max,
+    `${V.sow.max} pools x ${V.sow.life}s / ${V.sow.every}s and ${D.sow.max} still x ${D.sow.life}s / ` +
+    `${D.sow.every}s. Both cadences are read off the root's own clocks: a Crucible lays one pool per ` +
+    `CALM (${CALM}s), so a pilot just freed has one fresh pool and never two, and a Doldrum lays one ` +
+    `still per HOLD + CALM (${HOLD + CALM}s), so it can never build a second to catch you inside the ` +
+    'calm it owes you');
 }
 
 // --- can it be refused? -------------------------------------------------------
@@ -245,34 +360,73 @@ console.log('\nrefusing it');
 {
   const travel = stage => {
     const s = pilot(stage, X32); s.x = 0; s.y = 0; s.tx = 1e5; s.ty = 0;
-    let t = 0; while (t < HOLD) { step(s, dt); t += dt; }
+    let t = 0; while (t < WARN) { step(s, dt); t += dt; }
     return { px: s.x, r: s.r };
   };
   const rows = STAGE_KEYS.map(st => [st, travel(st)]);
   for (const [st, r] of rows)
     console.log(`     ${st.padEnd(12)} covers ${r.px.toFixed(0).padStart(4)}px from rest in the ` +
-      `${HOLD}s the marker stands, against ${(V.sow.r + r.r).toFixed(0)}px of pool and ${(D.sow.r + r.r).toFixed(0)}px of still`);
-  check('every hull in the game can refuse a pool from a standing start',
-    rows.every(([, r]) => r.px >= V.sow.r + r.r),
-    `the pool is ${V.sow.r}px because the slowest fitted ship in the game covers ` +
-    `${rows.find(([s]) => s === 'finished')[1].px.toFixed(0)}px from rest inside the warning — ` +
-    'measured through step(), because acceleration is part of the answer');
-  check('and none of them can refuse a still, which is the whole point of one',
-    rows.filter(([st]) => st !== 'interceptor').every(([, r]) => r.px < D.sow.r + r.r),
-    `${D.sow.r}px against ${rows.find(([s]) => s === 'finished')[1].px.toFixed(0)}px of travel — ` +
-    'the Kestrel alone gets out at 457px, and a Kestrel has no business four hops out');
-  check('a still is wide enough that a pool sown anywhere inside it is wholly inside it',
-    D.sow.r >= 2 * V.sow.r,
-    `${D.sow.r} against 2 x ${V.sow.r} — that is the combo, and it is a property of the two ` +
-    'radii rather than anything either hostile knows about the other');
-  check('the warning is exactly as long as a hold, which is why the two combo',
-    V.sow.wind === HOLD && D.sow.wind === HOLD,
-    'a pilot who is not held has exactly enough time to be somewhere else, and a pilot ' +
-    'who is held has exactly none. One number, not a special case');
+      `${WARN}s the marker stands, against ${(V.sow.r + r.r).toFixed(0)}px of pool and ${(D.sow.r + r.r).toFixed(0)}px of still`);
+  // INVERTED, not adjusted. This used to read "every hull in the game can refuse a
+  // pool from a standing start", and the radius was derived from it: 165px, because
+  // the slowest fitted ship covers 184px from rest inside the warning. Flown, that is
+  // a hostile whose pools never hit anything — a Bulwark stepped aside without
+  // touching its thrusters and was never in one.
+  //
+  // So the requirement is the opposite one now, and it is met by GEOMETRY rather than
+  // by timing: the FASTEST hull in the game covers 457px from rest inside the same
+  // warning, against 570px of pool, so nothing in the shop steps out of one. What the
+  // marker buys is a chance to not be in the middle, and what leaving costs is time
+  // measured below rather than nothing at all.
+  check('nothing in the shop can step out of a pool any more, at any speed',
+    rows.every(([, r]) => r.px < V.sow.r + r.r),
+    `the widest miss is a Kestrel at ${Math.round(Math.max(...rows.map(([, r]) => r.px)))}px against ` +
+    `${V.sow.r}px of plasma. It was 165px wide and every hull cleared it; the pools stopped hitting ` +
+    'anything, which is the complaint this reverses');
+  check('and neither can they step out of a still, which was always the point of one',
+    rows.every(([, r]) => r.px < D.sow.r + r.r),
+    `${D.sow.r}px against ${Math.round(Math.max(...rows.map(([, r]) => r.px)))}px of travel at the best`);
+  // What leaving actually costs, which is the number that replaces "can you dodge it".
+  {
+    const cross = (stage, R) => {
+      const s = pilot(stage, X32); s.x = 0; s.y = 0; s.tx = 1e5; s.ty = 0;
+      let t = 0; while (s.x < R + s.r && t < 60) { step(s, dt); t += dt; }
+      return t;
+    };
+    for (const st of ['fighter', 'cruiser', 'finished'])
+      console.log(`     ${st.padEnd(12)} crosses out of the plasma in ${cross(st, V.sow.r).toFixed(1)}s ` +
+        `from a dead stop, and out of a still in ${cross(st, D.sow.r).toFixed(1)}s`);
+    check('leaving one costs real seconds instead of a sidestep',
+      cross('finished', V.sow.r) > 4 && cross('finished', D.sow.r) > 5,
+      `${cross('finished', V.sow.r).toFixed(1)}s to cross out of the plasma from the middle in the ` +
+      `slowest hull that fights one, ${(cross('finished', V.sow.r) - WARN).toFixed(1)}s of it after the ` +
+      `ground has gone live — at ${(100 * V.sow.rate).toFixed(1)}% of the ship a second`);
+  }
+  // The 2x relation is GONE, and what replaced it is better. A still used to be at
+  // least twice a pool so that a pool sown ANYWHERE inside it was wholly inside it —
+  // a guarantee about the combo bought with geometry. The pair travels together now,
+  // and both sow at the same victim's feet on the same tick, so the two circles are
+  // very nearly concentric and the guarantee comes from the posting instead. What the
+  // radii do now is give the trap a near miss: the still is wider, so its rim costs
+  // you five seconds and nothing else, and only its middle costs you five seconds
+  // inside the plasma.
+  check('the still is wider than the plasma, so the trap has a near miss in it',
+    D.sow.r > V.sow.r && D.sow.r < 2 * V.sow.r,
+    `${D.sow.r} against ${V.sow.r} — caught at the rim you lose five seconds; caught in the middle ` +
+    'you lose five seconds standing in what its Crucible poured there');
+  // RETIRED: `wind === HOLD` used to be the combo, because a pilot who was not held
+  // had exactly enough warning to be somewhere else. The radius does that job now —
+  // nothing steps out of 570px whatever the clock says — so the warning went back to
+  // being only a warning, and it is the shortest one this game gives for anything
+  // that matters.
+  check('the warning is half a portal spool, and it is only a warning now',
+    V.sow.wind === WARN && D.sow.wind === WARN && WARN === JUMP_TIME / 2 && WARN < HOLD,
+    `${WARN}s of marker against a ${HOLD}s stop — the two were the same number when the pool was ` +
+    'narrow enough to step out of, and the geometry replaced the identity');
   check('and the marker is where the ground lands, not where the hostile is',
     (() => {
       const map = MAPS.d1;
-      const a = newAlien('vitriol', 9001, map, 5, { x: 4200, y: 5600 });
+      const a = newAlien('crucible', 9001, map, 5, { x: 4200, y: 5600 });
       a.x = a.post.x; a.y = a.post.y;
       const me = pilot(); me.x = 3400; me.y = 5600;
       let at = null, t = 0;
@@ -304,17 +458,31 @@ function fight({ kinds, n = 1, research = 0, plan, secs = 900, seed = 7, spread 
     return { id: i + 1, ship: s, took: 0, inG: 0, snared: 0, onTgt: 0,
              ehp0: s.stats.hull + s.stats.shield };
   });
+  // Posted the way server.js posts them: a Crucible and a Doldrum PAIR_GAP apart, so
+  // a pull on either is a pull on both. Anything left over stands on its own.
+  const PAIR_GAP = 260;
   const foes = kinds.map((k, i) => {
     const a = newAlien(k, 5000 + i, MAP, seed + i * 13,
-      { x: AT.x + 900, y: AT.y + (i - (kinds.length - 1) / 2) * 700 });
+      { x: AT.x + 900 + (i % 2) * PAIR_GAP, y: AT.y + Math.floor(i / 2) * 900 });
     a.x = a.post.x; a.y = a.post.y; return a;
   });
+  for (let i = 0; i + 1 < foes.length; i += 2)
+    if (ALIENS[foes[i].kind].mate === foes[i + 1].kind) { foes[i].mate = foes[i + 1].id; foes[i + 1].mate = foes[i].id; }
   const ground = []; let bolts = [], rockets = [], gid = 1, t = 0, longest = 0;
   while (t < secs) {
     const alive = foes.filter(f => f.hp > 0), up = crew.filter(c => c.ship.hp > 0);
     if (!alive.length || !up.length) break;
     const here = up.map(c => ({ id: c.id, ship: c.ship, haven: inHaven(MAP, c.ship), loud: 1 }));
     for (const a of alive) {
+      // The pair hunts one pilot, exactly as server.js does it: the target is handed
+      // over before stepAlienAI so the AI keeps it on LEASH rather than on aggro, and
+      // the grudge is NOT handed over with it. Without this the harness measures two
+      // hostiles that happen to be near each other, which is the thing this change
+      // replaced.
+      if (a.mate !== undefined && a.target === null) {
+        const mate = foes.find(x => x.id === a.mate && x.hp > 0);
+        if (mate && mate.target !== null && mate.target !== undefined) a.target = mate.target;
+      }
       const tgt = stepAlienAI(a, MAP, here, dt);
       const victim = tgt ? here.find(c => c.id === tgt) : null;
       step(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
@@ -398,6 +566,22 @@ const PLANS = {
     const r = d + Math.max(-120, Math.min(120, want - d));
     me.tx = f.x + Math.cos(a0) * r; me.ty = f.y + Math.sin(a0) * r;
   },
+  // GIVES UP THE SHOT. The plasma is 560px wide and the orbit only flexes by 120, so
+  // "circle and pick a clean lane" stopped being available the moment the pools got
+  // big: there is no clean lane inside your own gun range any more. This one leaves
+  // the ground by the shortest line whatever that costs, which means flying out past
+  // 820 and not shooting for a while. It is the honest counter to an area you cannot
+  // step around, and it is the one a human reaches for.
+  quit: (t, me, foes, ground) => {
+    const inIt = ground.filter(g => Math.hypot(me.x - g.x, me.y - g.y) < g.r + me.r);
+    if (inIt.length) {
+      const g = inIt.reduce((w, x) => (x.rate > w.rate ? x : w));
+      const dx = me.x - g.x || 1, dy = me.y - g.y, d = Math.hypot(dx, dy) || 1;
+      me.tx = g.x + dx / d * (g.r + me.r + 200); me.ty = g.y + dy / d * (g.r + me.r + 200);
+      return;
+    }
+    PLANS.orbit(t, me, foes, ground);
+  },
   // and the whole counter: circle, and refuse to fly through ground already down.
   // This is an ORACLE — it reads every patch on the field including ones outside
   // radar — so what it measures is the ceiling of human play, not the average.
@@ -454,12 +638,19 @@ console.log('\nthe fight, through the real loop');
   for (const [st, rn, r] of cases)
     console.log(`     ${st.padEnd(12)} ${rn.padEnd(4)} coasted ${r.coast.toFixed(2)}s, clear of both at ` +
       `${r.clear.toFixed(2)}s, cost ${r.pct.toFixed(1)}% of the ship`);
-  check('the combo is survivable, and it costs the same share whatever you fly',
-    cases.every(([, , r]) => r.pct < 8) &&
+  // The threshold moved from 8% to 55% and that is the headline of this pass. It was
+  // "the combo is survivable"; it is now "the combo is most of your ship", which is
+  // what a five-second dead stop inside 560px of plasma costs. What has NOT moved is
+  // the property that matters more: it is the same share at x1 and at x32, because
+  // both halves of it are shares of the pilot rather than amounts.
+  check('the combo takes most of a ship, and takes the same share whatever you fly',
+    cases.every(([, , r]) => r.pct < 55) && cases.some(([, , r]) => r.pct > 30) &&
     Math.abs(cases.find(c => c[0] === 'finished' && c[1] === 'x1')[2].pct
            - cases.find(c => c[0] === 'finished' && c[1] === 'x32')[2].pct) < 0.05,
-    `${Math.max(...cases.map(c => c[2].pct)).toFixed(1)}% of the ship at worst — held at rest with ` +
-    'a pool on the spot, which is the worst arrangement the pair can build. Identical at x1 and x32');
+    `${Math.max(...cases.map(c => c[2].pct)).toFixed(1)}% of the ship at worst — held at rest for ` +
+    `${HOLD}s with a pool on the spot, which is now the NORMAL case rather than the worst one, ` +
+    'because the pair travels together and both sow at the same feet. It was 5.1% when the hold ' +
+    'was a 1.5s coast and the plasma was 165px wide. Identical at x1 and x32, to the tenth');
   // The bound is the coast plus the walk out of a still, and the walk is the slowest
   // fitted hull crossing 420px of it — 420 + 17 over 128 px/s is 3.4s, so 1.5 + 3.4
   // is 4.9 and there is no arrangement that can be slower. Written as HOLD plus that
@@ -485,26 +676,39 @@ console.log('\nthe fight, driven by the real AI');
     `${(r.t.toFixed(0) + 's').padStart(6)}   ${r.left.map(v => (100 * v).toFixed(0).padStart(3) + '%').join(' ')}`;
   const solo = {};
   for (const [pn, plan] of Object.entries(PLANS))
-    for (const kinds of [['vitriol'], ['doldrum'], ['vitriol', 'doldrum']]) {
+    for (const kinds of [['crucible'], ['doldrum'], ['crucible', 'doldrum']]) {
       const r = fight({ kinds, research: X32, plan, secs: 900 });
       solo[`${kinds.join('+')}/${pn}`] = r;
       console.log(line(`${kinds.join(' + ')} / ${pn}`, r));
     }
-  check('standing at your own gun range is what these two exist to punish',
-    solo['vitriol/kite'].dead === 1 && solo['vitriol/orbit'].left[0] < 0.2,
-    `kiting a Vitriol dies at ${solo['vitriol/kite'].t.toFixed(0)}s; circling it but flying through ` +
-    `the ground anyway finishes on ${(100 * solo['vitriol/orbit'].left[0]).toFixed(0)}% of a ship — ` +
-    'the answer is not range, and it is not even movement, it is which ground you cross');
-  check('and a pilot who flies it properly takes one of them alone',
-    solo['vitriol/fly'].killed && !solo['vitriol/fly'].dead &&
-    solo['doldrum/fly'].killed && !solo['doldrum/fly'].dead,
-    `Vitriol ${solo['vitriol/fly'].t.toFixed(0)}s at ${(100 * solo['vitriol/fly'].left[0]).toFixed(0)}% left, ` +
-    `Doldrum ${solo['doldrum/fly'].t.toFixed(0)}s at ${(100 * solo['doldrum/fly'].left[0]).toFixed(0)}% — ` +
-    'the plan is an ORACLE that reads patches outside radar, so this is the ceiling of ' +
-    'human play rather than the average of it');
+  // REWRITTEN, and read the numbers above before the sentence: a single pilot no
+  // longer takes either of these, at any policy. That is the compound effect of six
+  // changes landing together — the plasma at three times its old rate, the stills at
+  // five, a five-second DEAD STOP where there used to be a coast, patches at 560 and
+  // 720px where they were 165 and 420, and the pair posted so that pulling one pulls
+  // both. Each was asked for; this is what they add up to, and it is reported here
+  // rather than left for somebody to find in the deeps.
+  check('no policy saves a lone pilot from either of them any more',
+    ['kite', 'orbit', 'quit', 'fly'].filter(pn => solo[`crucible/${pn}`].dead === 1).length >= 3 &&
+    ['kite', 'orbit', 'quit', 'fly'].filter(pn => solo[`doldrum/${pn}`].dead === 1).length >= 3,
+    `four ways of flying it and ${['kite', 'orbit', 'quit', 'fly'].filter(pn => solo[`crucible/${pn}`].dead === 1).length} ` +
+    'of them die to ONE Crucible. It was 100% of a ship left before this pass');
+  // And the inversion, which is the part worth staring at. Standing still at your own
+  // gun range now OUTLIVES circling, because the ground lands at your feet either way
+  // and moving is what breaks the range you need to end the fight. The mechanic used
+  // to teach "keep moving"; at 560px it teaches the opposite, because there is no
+  // clean lane inside your own reach to move into.
+  check('and moving is now worse than standing still, which is the mechanic inverted',
+    solo['crucible/kite'].t > solo['crucible/orbit'].t &&
+    solo['crucible/kite'].t > solo['crucible/quit'].t,
+    `kiting lasts ${solo['crucible/kite'].t.toFixed(0)}s against ${solo['crucible/orbit'].t.toFixed(0)}s ` +
+    `circling and ${solo['crucible/quit'].t.toFixed(0)}s giving up the shot to leave the ground. A pool ` +
+    'is 560px and the orbit only flexes by 120, so leaving means leaving GUN RANGE, and a fight you ' +
+    'cannot end is one the ground wins. Measured: the plasma has to come under about 320px, or the ' +
+    'rates under about half what was asked, before movement pays again');
   check('but the PAIR kills that same pilot, which is what the deeps are for',
-    solo['vitriol+doldrum/fly'].dead === 1,
-    `dead at ${solo['vitriol+doldrum/fly'].t.toFixed(0)}s with ${solo['vitriol+doldrum/fly'].inG.toFixed(0)}s ` +
+    solo['crucible+doldrum/fly'].dead === 1,
+    `dead at ${solo['crucible+doldrum/fly'].t.toFixed(0)}s with ${solo['crucible+doldrum/fly'].inG.toFixed(0)}s ` +
     'spent in ground — neither of them knows the other exists. They both sow at their ' +
     'target\'s feet, so if they are both fighting YOU the ground lands in one place');
   // How many pilots, measured rather than intended, over three starting arrangements
@@ -513,7 +717,7 @@ console.log('\nthe fight, driven by the real AI');
   const need = [];
   for (const n of [1, 2, 3, 4]) {
     const runs = [160, 260, 420].map(spread =>
-      fight({ kinds: ['vitriol', 'doldrum'], n, research: X32, plan: PLANS.fly, secs: 1200, spread }));
+      fight({ kinds: ['crucible', 'doldrum'], n, research: X32, plan: PLANS.fly, secs: 1200, spread }));
     need.push([n, runs]);
     console.log(`     the pair against ${n} pilot${n > 1 ? 's ' : '  '} ` +
       runs.map(r => `${r.dead === n ? 'WIPED' : r.killed ? 'cleared' : 'timed out'} ${r.t.toFixed(0)}s ` +
@@ -523,49 +727,62 @@ console.log('\nthe fight, driven by the real AI');
   check('one pilot cannot have the pair, at any arrangement',
     at(1).every(r => r.dead === 1),
     `wiped at ${at(1).map(r => Math.round(r.t) + 's').join(', ')} — three starting spreads, so it is ` +
-    'the pairing rather than one seed of luck');
-  check('two can, and it costs one of the two nearly everything',
-    at(2).every(r => r.killed) && at(2).every(r => Math.min(...r.left) < 0.35),
-    `cleared at every arrangement in ${Math.round(at(2)[0].t)}s, and the worse of the two finishes on ` +
-    `${at(2).map(r => (100 * Math.min(...r.left)).toFixed(0) + '%').join(' / ')} of a ship — one of them ` +
-    'does not always come back. It was going to be four, measured against the hull table before ' +
-    'slots replaced base attributes: 8,351 dps then against 11,941 now with the reactor on the gun, ' +
-    'so the fight is 171s instead of 246 and the ground has a third less time to gather. The claim ' +
-    'moved to the measurement rather than the other way round');
-  check('and four is where it stops being close, which is not free the way a Leviathan is',
-    at(4).every(r => r.killed && r.dead === 0),
-    'a gun shoots one pilot at a time and a pool burns everybody standing in it, so party size ' +
-    'does NOT divide this the way it divides anything with a barrel — it had to be measured rather ' +
-    `than divided. Four clear the pair in ${Math.round(at(4)[0].t)}s with nobody lost`);
+    'the pairing rather than one seed of luck. And the pair is now the GUARANTEED encounter: they ' +
+    'share a post, so pulling either is pulling both');
+  // THE FINDING OF THIS PASS, and it is the one somebody has to decide about rather
+  // than a claim about a fight that works. Party size does not divide ground: a gun
+  // shoots one pilot at a time and a pool burns everybody standing in it, so the time
+  // a pilot takes to DIE is independent of how many friends they brought, while the
+  // time the pair takes to CLEAR only falls as 1/n. At 4,110,960 effective hit points
+  // the pair needs 86 seconds from a party of four and kills each of them well inside
+  // that. Measured, at the shape asked for, the pair is not completable at ANY party
+  // size — one, two, three, four and six are all wiped.
+  //
+  // The levers were measured too, and the radius dominates: at 250px of plasma a lone
+  // pilot takes a Crucible again, and the rate boundary for a party is around half
+  // what was asked. Neither of those is mine to choose, so this asserts the shape of
+  // the problem rather than a number, and it will start failing the moment somebody
+  // makes the encounter completable — which is the right way round for a claim that
+  // exists to be argued with.
+  check('and party size does not divide ground, which is why more pilots does not fix it',
+    at(2).every(r => r.dead >= 1) && at(4).every(r => r.dead >= 1),
+    `two, three and four pilots all lose ships: ${[1, 2, 3, 4].map(n =>
+      `${n}p ${at(n).map(r => r.dead).join('/')} dead`).join(', ')}. A gun shoots one pilot and a ` +
+    'pool burns everybody in it, so time-to-die is flat in party size while time-to-clear falls as ' +
+    '1/n. The pair is 4,110,960 ehp: 86s of shooting from four finished pilots, against a ship that ' +
+    'is gone in 35-50s of this ground. Measured levers, everything else held: plasma at 250px makes ' +
+    'one soloable again, and the rates at half the ask make the pair clearable by four');
   check('nothing costs a shot, which is why neither carries an effort multiplier',
-    solo['vitriol/fly'].uptime > 0.97 && solo['doldrum/fly'].uptime > 0.97,
-    `the trigger is held for ${(100 * solo['vitriol/fly'].uptime).toFixed(0)}% of the fight — circling ` +
+    solo['crucible/fly'].uptime > 0.97 && solo['doldrum/fly'].uptime > 0.97,
+    `the trigger is held for ${(100 * solo['crucible/fly'].uptime).toFixed(0)}% of the fight — circling ` +
     'at your own gun range never breaks range. A Bandit is 3.8 because 28% of what is fired ' +
     'at it lands; these land everything, so farmHp is effectiveHp and the rung is the hull');
-  check('and no hold anywhere in any of that outlasted the stated one',
-    Object.values(solo).every(r => r.longest <= HOLD + 1e-9),
-    `longest coast across ${Object.keys(solo).length} fights: ` +
-    `${Math.max(...Object.values(solo).map(r => r.longest)).toFixed(2)}s against a stated ${HOLD}s`);
+  check('and no stop anywhere in any of that outlasted the stated one',
+    Object.values(solo).every(r => r.longest <= HOLD + 1 / 30 + 1e-9),
+    `longest stop across ${Object.keys(solo).length} fights: ` +
+    `${Math.max(...Object.values(solo).map(r => r.longest)).toFixed(2)}s against a stated ${HOLD}s ` +
+    'plus the tick it lands on — the anti-chain guarantee holds inside a real fight and not only ' +
+    'in the brute force above');
 }
 
 // --- where they live ----------------------------------------------------------
 console.log('\nthe posting and the pay');
 {
   check('both stand on a rung of the ladder, half a decade above the mothership',
-    Math.abs(effectiveHp('vitriol') - 650 * Math.pow(10, 3.5)) <= 25 &&
-    effectiveHp('doldrum') === effectiveHp('vitriol'),
-    `${effectiveHp('vitriol').toLocaleString()} each — 650 x 10^3.5 to the nearest ten, the same ` +
+    Math.abs(effectiveHp('crucible') - 650 * Math.pow(10, 3.5)) <= 25 &&
+    effectiveHp('doldrum') === effectiveHp('crucible'),
+    `${effectiveHp('crucible').toLocaleString()} each — 650 x 10^3.5 to the nearest ten, the same ` +
     'arithmetic that produced the Harrier\'s 2,060 and the Thresher\'s 205,550');
   check('effective hit points are a multiple of ten, so a bounty is whole credits',
-    ['vitriol', 'doldrum'].every(k => effectiveHp(k) % 10 === 0
+    ['crucible', 'doldrum'].every(k => effectiveHp(k) % 10 === 0
       && Math.abs(effectiveHp(k) * BOUNTY_RATE - Math.round(effectiveHp(k) * BOUNTY_RATE)) < 1e-6),
-    `${effectiveHp('vitriol')} x ${BOUNTY_RATE} = ${effectiveHp('vitriol') * BOUNTY_RATE} exactly`);
+    `${effectiveHp('crucible')} x ${BOUNTY_RATE} = ${effectiveHp('crucible') * BOUNTY_RATE} exactly`);
   check('and both pay exactly what the rate says, in credits and in experience',
-    ['vitriol', 'doldrum'].every(k => ALIENS[k].bounty === bountyFor(k) && ALIENS[k].xp === xpFor(k)),
-    `${ALIENS.vitriol.bounty.toLocaleString()} cr and ${ALIENS.vitriol.xp.toLocaleString()} xp — ` +
+    ['crucible', 'doldrum'].every(k => ALIENS[k].bounty === bountyFor(k) && ALIENS[k].xp === xpFor(k)),
+    `${ALIENS.crucible.bounty.toLocaleString()} cr and ${ALIENS.crucible.xp.toLocaleString()} xp — ` +
     'farm hit points x BOUNTY_RATE and x XP_RATE, with nothing typed in');
   check('neither of them carries an effort multiplier, because neither costs you a shot',
-    (ALIENS.vitriol.effort ?? 1) === 1 && (ALIENS.doldrum.effort ?? 1) === 1,
+    (ALIENS.crucible.effort ?? 1) === 1 && (ALIENS.doldrum.effort ?? 1) === 1,
     'measured through the real loop: a pilot flying the counter holds the trigger for 100% of ' +
     'the fight, because circling at your own gun range never breaks range. A Bandit is 3.8 ' +
     'because 28% of what is fired at it lands; these land everything');
@@ -578,19 +795,27 @@ console.log('\nthe posting and the pay');
     })(),
     `${D.attrs.speed} and ${V.attrs.speed} against the slowest fitted ship in the game at ` +
     `${Math.min(...STAGE_KEYS.map(st => pilot(st, X32).stats.speed)).toFixed(0)}px/s — leaving always works`);
-  check('a sower holds station at its sowing reach, not at a gun it does not have',
+  // REWRITTEN because they have guns now. It used to read "a sower holds station at
+  // its sowing reach, not at a gun it does not have" — true while weaponRange was 0,
+  // and exactly wrong once it is 900: reading the sowing reach would park one at 770
+  // and let it rain from outside its own barrel. The fallback is still there for a
+  // sower with no gun, and this checks both halves.
+  check('a sower with a gun holds station at the gun, and one without holds at its ground',
     (() => {
-      const map = MAPS.d1;
-      const a = newAlien('vitriol', 9002, map, 3);
-      return standOff(a) === V.sow.reach && V.attrs.weaponRange === 0;
+      const a = newAlien('crucible', 9002, MAPS.d1, 3);
+      if (standOff(a) !== V.attrs.weaponRange) return false;
+      const b = newAlien('crucible', 9003, MAPS.d1, 3);
+      b.stats = { ...b.stats, weaponRange: 0 };          // what it was before it grew a barrel
+      return standOff(b) === V.sow.reach;
     })(),
-    `${V.sow.reach}px, past every hull in the shop (620-820) — reading weaponRange would be ` +
-    '0 x 0.7 and would park it inside your hull with its only mechanic having no room to work');
+    `${V.attrs.weaponRange}px of barrel, so it closes to ${Math.round(V.attrs.weaponRange * 0.7)} and ` +
+    `works both; strip the gun and it falls back to ${V.sow.reach}px of ground, because 0 x 0.7 parks ` +
+    'a hostile inside your hull with its only mechanic having no room to work');
   check('and both survive their own AI, ground and all',
     (() => {
       const map = MAPS.d1;
       const me = pilot(); me.x = 3400; me.y = 5600;
-      for (const kind of ['vitriol', 'doldrum']) {
+      for (const kind of ['crucible', 'doldrum']) {
         const a = newAlien(kind, 9100, map, 11, { x: 4000, y: 5600 });
         a.x = a.post.x; a.y = a.post.y; a.provoked.add(1);
         const here = [{ id: 1, ship: me, haven: false, loud: 1 }];
@@ -651,10 +876,10 @@ console.log('\nthe wire, the shape and the colour');
       return new Set(shapes).size === shapes.length
         && !!SHAPES[V.shape] && !!SHAPES[D.shape];
     })(),
-    `${V.shape} and ${D.shape} against ${WILD.filter(k => !['vitriol', 'doldrum'].includes(k))
+    `${V.shape} and ${D.shape} against ${WILD.filter(k => !['crucible', 'doldrum'].includes(k))
       .map(k => ALIENS[k].shape).join(', ')}`);
   check('and both outlines are closed, finite and the right way up',
-    ['vitriol', 'doldrum'].every(k => {
+    ['crucible', 'doldrum'].every(k => {
       const pts = outlineOf(k, 40);
       return pts.length >= 6 && pts.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
           && Math.max(...pts.map(([x]) => Math.abs(x))) > 20;
@@ -679,8 +904,8 @@ console.log('\nthe wire, the shape and the colour');
     const tight = Math.min(...WILD.flatMap((a, i) => WILD.slice(i + 1)
       .map(b => dE(ALIENS[a].colour, ALIENS[b].colour))));
     check('and a colour further from everything else than the game\'s own tightest pair',
-      worst('vitriol') >= 35.5 && worst('doldrum') >= 35.5,
-      `Vitriol ${V.colour} clears everything by ${worst('vitriol').toFixed(1)}, Doldrum ${D.colour} ` +
+      worst('crucible') >= 35.5 && worst('doldrum') >= 35.5,
+      `Crucible ${V.colour} clears everything by ${worst('crucible').toFixed(1)}, Doldrum ${D.colour} ` +
       `by ${worst('doldrum').toFixed(1)}, in CIE-Lab dE76 against ten hostiles, six ores and the ` +
       `range furniture. The tightest pair in the bestiary is ${tight.toFixed(1)}`);
     check('and the two of them are unmistakable for each other, which matters most',
@@ -689,7 +914,7 @@ console.log('\nthe wire, the shape and the colour');
       'are looking at is the whole decision');
   }
   check('and both drop something, at the rung their toughness says',
-    !!DROPS.vitriol && !!DROPS.doldrum && DROPS.vitriol[0].mat === 'platinum',
+    !!DROPS.crucible && !!DROPS.doldrum && DROPS.crucible[0].mat === 'platinum',
     'rollDrop reads a missing kind as "drops nothing", which is how the Ironhusk shipped ' +
     'paying only its bounty');
 }

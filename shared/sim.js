@@ -185,20 +185,25 @@ export function step(s, dt, bounds = WORLD) {
   if (s.jumpCd > 0) s.jumpCd -= dt;
   stepPower(s.power, dt, s.stats);
   const thr = boostOf(s.power, 'thrusters', s.stats);
-  // Engines out. `snare` is seconds of no thrust left on the clock, put there by a
-  // Doldrum's Slack Water and taken off by stepSnare in shared/ground.js.
+  // STOPPED. `snare` is seconds of it left on the clock, put there by a Doldrum's
+  // Slack Water and taken off by stepSnare in shared/ground.js.
   //
-  // It zeroes the ACCELERATION and nothing else, which is the whole of what makes it
-  // shippable. Zeroing MAX instead would ask the ship to brake to a stop, which is a
-  // stun with extra steps; leaving both alone and clearing the destination brakes it
-  // just as hard, because a body with nowhere to go is a body decelerating at full
-  // thrust. With no acceleration there is nothing to change the velocity with, so the
-  // ship keeps exactly the momentum it had and coasts — there is no drag anywhere in
-  // this function to take it away. The pilot keeps their guns, their target, their
-  // drone, their beacon and their heading; what they lose is the ability to change
-  // their mind for a second and a half. See shared/ground.js for why that is the only
-  // version of a root this game is allowed to have.
-  const MAX = speedOf(s) * thr, ACC = (s.snare ?? 0) > 0 ? 0 : s.stats.accel * thr;
+  // The first cut of this zeroed the ACCELERATION and left the momentum alone, so a
+  // ship carried on going wherever it was already pointed and lost only the ability
+  // to change its mind. That is a nicer mechanic and it is not the one the game has:
+  // flown, a pilot at speed sailed straight out of the trap that had just shut on
+  // them and barely noticed it. So the velocity goes too, and it is zeroed EVERY
+  // TICK the clock is running rather than once on the way in — zeroing it once would
+  // let anything that touches the body afterwards put a ship back into motion inside
+  // a still and quietly turn the stop back into a coast.
+  //
+  // Everything that is not the throttle is untouched. The pilot keeps their guns,
+  // their target, their rockets, their drone, their beacon, their heading and their
+  // shields; they simply cannot be anywhere else for five seconds. See
+  // shared/ground.js for the two clocks that stop that being a perma-root, and for
+  // why a portal mouth is still a portal mouth.
+  const stopped = (s.snare ?? 0) > 0;
+  const MAX = speedOf(s) * thr, ACC = stopped ? 0 : s.stats.accel * thr;
 
   let wantVx = 0, wantVy = 0;
   if (s.dx !== null) {
@@ -218,6 +223,10 @@ export function step(s, dt, bounds = WORLD) {
   const ex = wantVx - s.vx, ey = wantVy - s.vy;
   const em = Math.hypot(ex, ey), budget = ACC * dt;
   if (em > 0.001) { const k = Math.min(1, budget / em); s.vx += ex * k; s.vy += ey * k; }
+
+  // And the way on goes with it. After the error correction rather than before, so
+  // there is nothing left for this tick's acceleration budget to have added.
+  if (stopped) { s.vx = 0; s.vy = 0; }
 
   s.x += s.vx * dt;
   s.y += s.vy * dt;

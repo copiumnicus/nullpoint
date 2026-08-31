@@ -38,8 +38,8 @@ console.log('\nand what one costs in the deeps');
   const { DROPS, MATERIALS, PIRATE_RATE } = await import('../shared/cargo.js');
   // What the sector pays, re-derived here rather than copied out of the comment, so
   // the price and the thing it is priced in cannot drift apart silently.
-  const ore = DROPS.vitriol.reduce((t, d) => t + d.p * ((d.min + d.max) / 2) * MATERIALS[d.mat].value, 0);
-  const kill = ALIENS.vitriol.bounty + ore * PIRATE_RATE;
+  const ore = DROPS.crucible.reduce((t, d) => t + d.p * ((d.min + d.max) / 2) * MATERIALS[d.mat].value, 0);
+  const kill = ALIENS.crucible.bounty + ore * PIRATE_RATE;
   const kills = DEEP_BERTH / kill;
 
   check('a deep bay is ten million, and the deep sectors are the only place that is true',
@@ -59,7 +59,7 @@ console.log('\nand what one costs in the deeps');
   check('it is priced in what the sector pays: six to eight kills of what lives there',
     kills >= 6 && kills <= 8,
     `${kills.toFixed(2)} kills at ${Math.round(kill).toLocaleString('en-US')} cr each ` +
-    `(${ALIENS.vitriol.bounty.toLocaleString('en-US')} bounty + ${Math.round(ore * PIRATE_RATE).toLocaleString('en-US')} of ore at the counter)`);
+    `(${ALIENS.crucible.bounty.toLocaleString('en-US')} bounty + ${Math.round(ore * PIRATE_RATE).toLocaleString('en-US')} of ore at the counter)`);
   check('which is a little under two clears of the sector it stands in',
     kills / 4 > 1.4 && kills / 4 < 2.1,
     `${(kills / 4).toFixed(2)} clears — a deep sector is posted with four sowers`);
@@ -103,8 +103,8 @@ console.log('\nand who they will rent to in the deeps');
   // What the number stands for, and it is a sentence somebody could disagree with:
   // one of the things that lives in a deep sector is the whole entry fee.
   check('and the rank IS one kill of what lives there',
-    levelFor(ALIENS.vitriol.xp).level >= DEEP_BERTH_RANK,
-    `a Vitriol pays ${ALIENS.vitriol.xp.toLocaleString('en-US')} xp, which is rank ${levelFor(ALIENS.vitriol.xp).level}`);
+    levelFor(ALIENS.crucible.xp).level >= DEEP_BERTH_RANK,
+    `a Crucible pays ${ALIENS.crucible.xp.toLocaleString('en-US')} xp, which is rank ${levelFor(ALIENS.crucible.xp).level}`);
   // The bug this one exists to stop: a gate you can only pass by already being
   // through it is a wall. The door has to open from the gate side.
   check('the door opens from outside, so you arrive already able to rent',

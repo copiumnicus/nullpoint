@@ -63,7 +63,7 @@ check('every alien in the wild drops something', WILD.every(k => DROPS[k]),
                  // same Ore Tender they took to a gate, so the ceiling is the same 240
                  // — which is the point of this row: it is the hold of the PILOT, not a
                  // property of the hostile, and it stops climbing once the hold does.
-                 vitriol: 240, doldrum: 240 };
+                 crucible: 240, doldrum: 240 };
 
   for (const k of WILD) {
     const ehp = effectiveHp(k), rung = oreRung(ehp), t = DROPS[k];

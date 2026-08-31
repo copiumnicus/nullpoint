@@ -152,12 +152,27 @@ console.log('\nwhat the fight is');
   check('and it is never the thing that kills them',
     rows.every(([s, m]) => !duel(s, m, 'park').died && !duel(s, m, 'kite').died),
     'four stages x two ways of flying it, no deaths');
-  check('it is the most dangerous gun in the bestiary per second actually delivered', (() => {
+  // REWRITTEN, and it is the ladder working rather than the Kedge slipping. This read
+  // "the most dangerous gun in the bestiary", full stop, and it was true until the
+  // deeps grew barrels: a Crucible and a Doldrum throw 438 each, which is not a chosen
+  // number but ANCHORS.pressure x stageEhp('finished') — the model's own answer for a
+  // stage five rungs past this one. A gate hostile out-gunning the deepest sector in
+  // the galaxy would have been the thing to fix.
+  //
+  // What is still the Kedge's, and is the half that mattered, is DELIVERY: it collects
+  // nearly all of its nominal because you cannot hold range on it, where a Bandit
+  // throws 195 and lands 17. So the claim keeps its sentence and narrows its scope to
+  // the ladder the Kedge is actually on.
+  const gunOf = k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate;
+  check('nothing on this side of the deeps hits harder, and what does is five rungs out', (() => {
     const armed = WILD.filter(k => ALIENS[k].attrs.damage > 0);
-    return armed.every(k => k === 'kedge' ||
-      ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate <= K.attrs.damage * K.attrs.fireRate);
-  })(), `${f(K.attrs.damage * K.attrs.fireRate, 0)} nominal, and it collects ~95% of it because you cannot hold range — ` +
-        'a Bandit throws 195 and lands 17 of it, because dodging your bolts takes its own gun off you');
+    const deeps = armed.filter(k => farmHp(k) > farmHp('hive'));
+    return armed.every(k => k === 'kedge' || deeps.includes(k) || gunOf(k) <= gunOf('kedge'))
+        && deeps.length > 0 && deeps.every(k => gunOf(k) > gunOf('kedge'));
+  })(), `${f(gunOf('kedge'), 0)} nominal, and it collects ~95% of it because you cannot hold range — ` +
+        'a Bandit throws 195 and lands 17 of it, because dodging your bolts takes its own gun off you. ' +
+        `Only the deeps out-gun it, at ${f(gunOf('crucible'), 0)}, and that number is the balance ` +
+        'model\'s own demand for the stage they are posted at rather than anybody\'s taste');
 }
 
 console.log('\nleaving is a toll, not a wall');

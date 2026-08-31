@@ -22,12 +22,13 @@
 // A ring is a fight you hold at arm's length. Ground is a fight where the arm's
 // length keeps getting taken away from you, one patch at a time.
 //
-// TWO KINDS, ONE FILE. A Vitriol lays Aqua Regia — a pool that eats whatever stands
-// in it — and a Doldrum lays Slack Water, which barely burns at all and instead
-// cuts your engines the moment you cross into it. They are one module because they
-// are one object with two numbers filled in differently: a place, a radius, a
-// lifetime, a rate and a hold. A third kind later is a row in a definition, not a
-// second copy of all this. That is the seam, and `hold` and `rate` are its names.
+// TWO KINDS, ONE FILE. A Crucible lays White Heat — a pool of star-tapped plasma
+// that eats whatever stands in it — and a Doldrum lays Slack Water, which barely
+// burns and instead stops you dead the moment you cross into it. They are one module
+// because they are one object with two numbers filled in differently: a place, a
+// radius, a lifetime, a rate and a hold. A third kind later is a row in a
+// definition, not a second copy of all this. That is the seam, and `hold` and `rate`
+// are its names.
 //
 // Nothing here does I/O and nothing here knows what a ship is beyond x, y, r and a
 // pool of hit points. Both sides import it: the server damages inside the patch and
@@ -45,50 +46,77 @@ export const sowOf = def => def?.sow ?? null;
 
 // --- the two clocks that make a root shippable --------------------------------
 //
-// This game has never taken movement away from a player and it is not about to
-// start. shared/kedge.js says the quiet part out loud — "Maximum time without
-// control from a fix: zero seconds, and that is the whole reason this is allowed to
-// exist in a game where the alternative was a stun" — and a stun is still the wrong
-// answer. What Slack Water takes is narrower and it is stated exactly:
+// WHAT SLACK WATER TAKES, and it is a stun. It was not: the first cut zeroed your
+// acceleration for 1.5s and kept your momentum in full, so a ship carried on going
+// wherever it was already pointed and what it lost was only the ability to change
+// its mind. That is a better mechanic and it is not the one the game has, because
+// it was flown and it did not read as being caught — a pilot at speed sailed
+// straight out of the trap that had just closed on them and barely noticed. So the
+// velocity goes too. You are STOPPED, dead, where you stand, for HOLD seconds.
 //
-//   YOUR ENGINES, NOT YOUR SHIP. Thrust is refused for HOLD seconds. Momentum is
-//   kept in full — no drag, no braking, no turn — so a ship that was going
-//   somewhere carries on going there at exactly the speed it had. You still shoot,
-//   still pick targets, still launch, still run a repair drone, still hold a portal
-//   mouth, still finish a Recall Beacon. What you cannot do is CHANGE YOUR MIND.
+// What is left to you is everything that is not the throttle: the trigger, the
+// target, the rockets, a repair drone, a Recall Beacon, your heading, your shields.
+// A still takes the one thing and takes all of it.
 //
-// Which is what makes it a combo rather than a nuisance: the answer to a pool of
-// Aqua Regia is to steer out of it, and this is the one thing in the game that
-// takes steering away. It is also why the counter is legible from the cockpit and
-// costs nothing to learn — before you cross a still, be pointed somewhere you would
-// be happy to be in a second and a half.
-//
-// HOLD is half of JUMP_TIME, and the half is the argument. Three seconds is this
-// game's unit of a decision you have already committed to: a portal's spool, a
-// Kedge's fuse. A hold as long as one of those could deny a pilot a door they had
-// already opened, and sanctuary is the one promise this game keeps. Half of it is
-// the longest hold that always leaves time to finish what you started.
-export const HOLD = JUMP_TIME / 2;                 // 1.5s
+// HOLD is five seconds, and it is the designer's number rather than a derived one —
+// it is the length of trouble they want a pilot to be in. Everything below is
+// derived FROM it, which is the arrangement that matters: one argued number and the
+// rest following, so moving it moves the whole promise together.
+export const HOLD = 5.0;
 
-// And CALM is the whole of it: after every hold, a pilot is owed one full portal
-// spool of guaranteed thrust before any patch may touch them again.
+// THE PROPERTY THAT IS GONE, said out loud rather than quietly dropped. The old
+// hold was JUMP_TIME / 2, and the half was the argument: "the longest hold that can
+// never deny a door you already opened", because three seconds is what a portal
+// takes to spool. Five seconds is longer than a portal, so that reasoning is dead.
+//
+// The promise survives anyway, and it survives on the rule rather than on the
+// clock: a still is refused sanctuary outright, provoked or not — see server.js,
+// which gates the hold on inHaven() — and a pilot spooling a jump is inside a
+// portal mouth by definition. PORTAL_R is 120 and HAVEN_R is 288, so anybody who
+// has committed to a door is more than twice as deep into the peace as they need to
+// be. A door you have already opened still cannot be taken from you.
+//
+// What IS new is that a door you have NOT yet reached is further away. Stopped dead
+// at 300px from a mouth you were running for, you are five seconds later to it than
+// you were, and under the old coast you would have kept going. That is a real cost
+// and it is the cost the change was asked for. Leaving still works — both sowers
+// are slower than every hull in the game and their leash is 2,600 — it is simply
+// dearer now, which is the whole of what the deeps are for.
+export const PORTAL_KEPT = 'sanctuary, not duration';
+
+// And CALM is what a pilot is owed back. TWICE the hold, which is not a taste: it
+// is the invariant the first version stated and the only part of it worth keeping —
+// a pilot always has at least twice as much control as they lose, whatever is
+// standing on the field. At 1.5s held that meant 3.0s owed; at 5.0s it means 10.0.
 //
 // It is not decoration and it is not politeness. Two stills overlapping, or one
 // still and a pilot who keeps drifting back over its rim, is a perma-root by
 // arithmetic unless something refuses — and a root that can be chained is not
-// shippable at any duration. With these two numbers the worst case any arrangement
-// of stills, hostiles or pilots can produce is stated and bounded:
+// shippable at any duration, least of all this one. With these two numbers the
+// worst case any arrangement of stills, hostiles or pilots can produce is stated
+// and bounded:
 //
-//   longest unbroken engines-out  =  HOLD                        = 1.5s
-//   thrust owed after every hold  =  CALM                        = 3.0s
-//   engines out over t seconds    <= HOLD + t x HOLD/(HOLD+CALM)
+//   longest unbroken stop         =  HOLD                        =  5.0s
+//   thrust owed after every stop  =  CALM  =  2 x HOLD           = 10.0s
+//   stopped over t seconds        <= HOLD + t x HOLD/(HOLD+CALM)
 //
 // The first two are exact and hold whatever is standing on the field. The third is
 // the first two added up and it is deliberately NOT stated as a flat third: a
-// window that opens mid-hold pays for that hold as well, so the worst ten seconds
-// a pilot can be handed is 4.0s of coasting and not 3.3s. Measured, not assumed.
-// test/ground.mjs brute-forces the arrangements and asserts all three.
-export const CALM = JUMP_TIME;                     // 3.0s
+// window that opens mid-stop pays for that stop as well. test/ground.mjs
+// brute-forces the arrangements and asserts all three against the sweep.
+export const CALM = 2 * HOLD;                      // 10.0s
+
+// How long a marker stands before the ground under it goes live.
+//
+// This used to BE the hold — `wind: HOLD` on both definitions, and the equality was
+// the combo: a pilot who is not held has exactly enough warning to be somewhere
+// else, and a pilot who is held has exactly none. That identity is retired, and it
+// is retired because the radius replaced it. A pool is 560px wide now and the
+// fastest hull in the game covers 463px from rest inside a warning this long, so
+// NOBODY steps out of one on the clock any more — the warning stopped being a
+// dodge and went back to being a warning. So it is set to the shortest one this
+// game gives for anything that matters: half a portal spool.
+export const WARN = JUMP_TIME / 2;                 // 1.5s
 
 // May this ship be held right now? One predicate, because both halves of the
 // guarantee above are this question and a second copy of it would disagree — which
@@ -99,16 +127,21 @@ export const CALM = JUMP_TIME;                     // 3.0s
 // seconds would quietly become forever.
 export const mayHold = s => !((s?.snare ?? 0) > 0) && !((s?.calm ?? 0) > 0);
 
-// Puts the engines out. The calm is set when the hold ENDS rather than here, so a
-// pilot who is held for the full 1.5s and one who is held for a tick both get the
-// same three seconds afterwards.
+// Stops the ship. The calm is set when the hold ENDS rather than here, so a pilot
+// held for the full five seconds and one held for a tick both get the same ten
+// afterwards.
+//
+// The velocity is not zeroed here. It is zeroed in step(), every tick the clock is
+// running, and that is deliberate: killing it once would let anything that touches
+// the body afterwards — a collapse, a shove, the boundary clamp — put a ship back
+// into motion inside a still and quietly make the stop a coast again.
 export function holdEngines(s, secs = HOLD) {
   s.snare = Math.max(0, secs);
   s.calm = 0;
 }
 
 // Both clocks, advanced wherever ships are advanced. Called after step(), so the
-// tick a hold is spent is a tick with no thrust in it.
+// tick a hold is spent is a tick the ship actually stood still for.
 export function stepSnare(s, dt) {
   if ((s.snare ?? 0) > 0) {
     s.snare = Math.max(0, s.snare - dt);
@@ -152,7 +185,7 @@ export function stepSow(a, victim, hold, dt) {
   // `every` is the cadence and it is life / max rather than a number anybody
   // picked, so a definition cannot ask for more patches than it is allowed to
   // have — see the note on `max` in aliens.js. The cooldown runs from the DROP,
-  // and the wind-up is inside it, so a Vitriol's real cadence is `every` and not
+  // and the wind-up is inside it, so a Crucible's real cadence is `every` and not
   // `every + wind`.
   a.sowCool = Math.max(0, (S.every ?? 0) - (S.wind ?? HOLD));
   return { at };
@@ -179,7 +212,7 @@ export const sowHolds = (a, victim, haven) =>
 // `by` is the sower's provoked set, carried by REFERENCE rather than copied. That
 // is the whole of how sanctuary survives the thing that made the patch: mayHarm()
 // asks whether this pilot provoked the owner, and the answer has to keep being
-// right for the twenty seconds a pool outlives a Vitriol somebody has killed. A
+// right for the twenty seconds a pool outlives a Crucible somebody has killed. A
 // copy would freeze the answer at the moment of sowing; an owner id would be a
 // second lookup and a dangling reference the moment the sector repopulates.
 export const groundFor = (a, at) => {

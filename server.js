@@ -6,7 +6,7 @@ import { fire, stepBolts, faceTarget } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
-         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf } from './shared/aliens.js';
+         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf, roamPoint } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, BENCH_SLOTS, propFit } from './shared/devmap.js';
 import { respawnDelay } from './shared/spawn.js';
 import { sanitiseKills } from './shared/threats.js';
@@ -334,6 +334,37 @@ const seed = (mapId, kind, n) => {
     list.push(newAlien(kind, alienId++, mapOf(mapId), mapId.charCodeAt(0) * 977 + i * 7919 + kind.length));
   aliens.set(mapId, list);
 };
+
+// Two hostiles that fly together, and the whole of what that takes.
+//
+// `def.mate` names the other kind and nothing more; the pairing itself is POSTS,
+// which the game already has. A post pins an alien to a slot — it spawns there,
+// returns there when idle, and respawns there — so two posts PAIR_GAP apart are two
+// hostiles that arrive together, drift back together and reform together after one
+// of them dies. There is no third way of saying "these two are together" and there
+// did not need to be.
+//
+// PAIR_GAP is 260px. It is under the 540 aggro either of them has, so anything that
+// wakes one is inside the other's notice too — which is what makes pulling one
+// pulling both — and it is far enough that they read as two hulls rather than one
+// blob at the radar ranges a pilot meets them at. Both are enormous (r 76 and 82),
+// so at 260 they are plainly one object with two halves.
+//
+// `mate` on the live alien is the other's ID, which is what the target handover in
+// the tick reads. It is deliberately NOT a reference: an alien that died and
+// respawned is the same object, but holding an object here would outlive a sector
+// rebuild and holding an index would not survive the `gone` sweep.
+const PAIR_GAP = 260;
+const pair = (mapId, a, b) => {
+  const list = aliens.get(mapId) ?? [];
+  const at = roamPoint(mapOf(mapId), a.rand, list.map(x => x.post).filter(Boolean));
+  for (const [who, side] of [[a, -1], [b, 1]]) {
+    who.post = { x: at.x + side * PAIR_GAP / 2, y: at.y };
+    who.x = who.post.x; who.y = who.post.y;
+    who.way = who.post;
+  }
+  a.mate = b.id; b.mate = a.id;
+};
 // The firing line, plus the bench west of the dock where the range furniture
 // stands. The Bulkhead has aggro 0 and damage 0 — it is a thing you shoot AT to
 // read a number off, so it belongs beside the dock rather than out with the
@@ -413,10 +444,10 @@ for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'hive', 2);
 // ground is only frightening on a map you have chosen to work rather than one you are
 // passing through.
 //
-// Two Vitriols and two Doldrums on each, and the PAIRING is the fight. Either alone
+// Two Crucibles and two Doldrums on each, and the PAIRING is the fight. Either alone
 // is answerable — you steer out of a pool, and a still on its own barely burns. Both
 // at once is what the deeps are for: a Doldrum's Slack Water takes your steering for
-// a second and a half, and a Vitriol lays its ground where you were standing when the
+// a second and a half, and a Crucible lays its ground where you were standing when the
 // wind-up began. Neither of them has to know the other exists for that to happen —
 // they both sow at their target's feet, so if they are both fighting YOU their ground
 // lands in the same place by construction. See shared/ground.js.
@@ -427,7 +458,30 @@ for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'hive', 2);
 // this game teaches pulling. There is no aggro tell, no leash indicator and no line in
 // the threat file about it. Whoever adds one should start here, because this is the
 // posting that made it matter.
-for (const d of GALAXY.filter(id => MAPS[id].deep)) { seed(d, 'vitriol', 2); seed(d, 'doldrum', 2); }
+//
+// TWO PAIRS, not four wanderers. A Crucible and a Doldrum are posted together and
+// come as one thing: pulling either is pulling both, which is what makes the combo
+// the NORMAL case rather than the worst one. Neither of them knows what the other is
+// DOING — they share a place and a target and nothing else, and the ground still
+// lands in one spot only because both sow at their victim's feet. That property was
+// the elegant part and it survives untouched.
+//
+// When one dies the survivor fights on. That is a design call and it is the reward
+// for splitting them: a lone Crucible is ground you can walk out of and a lone
+// Doldrum is 44 seconds of nuisance, so breaking the pair is what turns an encounter
+// you cannot solo into two you can. The pair reforms when the dead one comes back to
+// its post, five minutes later.
+//
+// Two pairs rather than one, per the rule above: a sector holding one of something
+// goes empty the moment somebody kills it. Two pairs is also what makes pulling
+// possible at all — and a party that engages both at once is wiped, measured, which
+// is the pulling lesson nothing in this game teaches.
+for (const d of GALAXY.filter(id => MAPS[id].deep)) {
+  seed(d, 'crucible', 2); seed(d, 'doldrum', 2);
+  const here = aliens.get(d);
+  const cs = here.filter(a => a.kind === 'crucible'), ds = here.filter(a => a.kind === 'doldrum');
+  for (let i = 0; i < Math.min(cs.length, ds.length); i++) pair(d, cs[i], ds[i]);
+}
 
 // --- claims -------------------------------------------------------------------
 //
@@ -870,10 +924,10 @@ const fixes = new Map();
 const pods = new Map();      // mapId -> cargo adrift
 const hits = new Map();      // mapId -> damage numbers still climbing
 // Ground somebody sowed and has not yet expired. It is per SECTOR rather than per
-// hostile for the reason that IS the mechanic: a pool outlives the Vitriol that laid
+// hostile for the reason that IS the mechanic: a pool outlives the Crucible that laid
 // it, so hanging it off the alien would delete it on the tick that made it matter
 // most — the one where you finally killed the thing and flew into what it left.
-const sown = new Map();      // mapId -> patches of Aqua Regia and Slack Water
+const sown = new Map();      // mapId -> patches of White Heat and Slack Water
 let groundId = 1;
 
 // Every per-sector list, named once.
@@ -2240,6 +2294,26 @@ setInterval(() => {
         // looking, rather than on top of whoever killed it.
         if (a.dead <= 0) { if (a.spawned) a.gone = true; else respawnAlien(a, map, here.map(c => c.ship)); }
         continue; }
+      // A pair hunts one pilot. Before stepAlienAI rather than after, so the AI
+      // validates the handover this tick the same way it validates any other target —
+      // an inherited one is kept on LEASH (2,600) rather than on aggro (540), which is
+      // exactly what makes "pull one and you have pulled both" true at the range a
+      // pilot actually opens fire from.
+      //
+      // It hands over the target and NOT the grudge. The Hive's brood block does add
+      // to `provoked`, and it is right to: an escort is launched at somebody who has
+      // already found the Hive. Here the mate may never have been shot at, and
+      // provocation is what overrides sanctuary — so copying it would let a Doldrum
+      // follow into a portal mouth somebody its Crucible was cross with. mayHarm()
+      // still holds for anyone who has not pulled the trigger.
+      //
+      // This is where they fly, not what they do. Neither of them can see the other's
+      // ground, its wind-up or its cooldown, and the combo still works only because
+      // both sow at their victim's feet.
+      if (a.mate !== undefined && a.target === null) {
+        const mate = list.find(x => x.id === a.mate && x.dead <= 0 && x.hp > 0);
+        if (mate && mate.target !== null && mate.target !== undefined) a.target = mate.target;
+      }
       const tgt = stepAlienAI(a, map, here, dt);
 
       // A mothership launches escorts, but only once it has noticed somebody — a
@@ -2390,7 +2464,7 @@ setInterval(() => {
         const may = victim ? sowHolds(a, victim.ship, victim.haven) : false;
         const drop = stepSow(a, victim?.ship ?? null, may, dt);
         // A definition may not have more patches alive than it says. The OLDEST goes
-        // rather than the newest being refused: refusing would mean a Vitriol that had
+        // rather than the newest being refused: refusing would mean a Crucible that had
         // saturated the field stopped doing the only thing it does, and a pilot could
         // farm one from a corner it had already used up.
         if (drop) {
@@ -2610,7 +2684,7 @@ setInterval(() => {
         // with — so a pool cannot cook somebody parked in a portal mouth who never
         // touched the thing, and it CAN reach somebody who shot it and ran there.
         // `g.by` is the sower's provoked set by reference, so that answer keeps being
-        // right for the thirty seconds a pool outlives the Vitriol that laid it.
+        // right for the thirty seconds a pool outlives the Crucible that laid it.
         //
         // The HOLD does not. Sanctuary is refused to a still outright, provoked or
         // not, and that is shared/kedge.js's rule rather than a new one: fixHolds()
@@ -2622,7 +2696,7 @@ setInterval(() => {
         const bit = groundBite(g, id, p.ship, inside && mayHarm({ provoked: g.by }, { id, haven }),
                                poolOf(p.ship), dt);
         // Patches do NOT stack. A ship standing where two pools overlap takes the
-        // worse of them and not the sum — which is what stops six of a Vitriol's own
+        // worse of them and not the sum — which is what stops six of a Crucible's own
         // patches being a delete button, and it is the same claim threatDps makes when
         // it counts a sower's rate once rather than `max` times.
         if (bit.burn > worst) worst = bit.burn;

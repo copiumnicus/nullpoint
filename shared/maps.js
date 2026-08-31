@@ -154,7 +154,7 @@ for (const [i, g] of GATES.entries())
 //   is laid where its victim was STANDING, and nothing may be sown on a pilot in
 //   sanctuary, so every patch in the game has its centre at 420px or more from the
 //   middle of this ring. Two 420px circles that far apart share 39% of their area,
-//   and a Vitriol's 165px pool on the rim covers 7%: the shop can be made awkward
+//   and a Crucible's 560px pool on the rim covers 25%: the shop can be made awkward
 //   and it can never be sealed.
 //
 // It IS sanctuary, like every other outpost — see inOutpost() in sim.js. That is
@@ -172,11 +172,21 @@ for (const [i, g] of GATES.entries())
 //
 // SEAM, and it is worth naming because it is the one gap: sowHolds() refuses on a
 // haven with NO provocation exception (it is fixHolds()'s rule, and shared/ground.js
-// says why). A Vitriol and a Doldrum have no gun at all, so a pilot who reaches this
+// says why). A Crucible and a Doldrum both carry guns now, so a pilot who reaches this
 // ring is safe from NEW ground however much they provoked — only what is already on
 // the floor can reach them. Whoever gives the deeps' sowers a weapon closes that on
 // their own, since a gun goes through mayHarm().
-const DEEP_POST = { x: 6000, y: 6000, r: 420 };
+// Sized against the GROUND, not against the frontier's ring, and both numbers moved
+// when the deeps got bigger patches. 720 is the widest patch in the game — a
+// Doldrum's still — so the widest thing anyone can lay on this rim covers 39% of
+// it: the shop can be made awkward and never sealed. At the frontier's 420 the
+// same still took 88%, which is a shop you cannot reach.
+//
+// And 2,500px off the midline rather than 2,000, because every door in a deep
+// sector sits on y = 4000. That leaves 1,492px of open sky between the portal
+// mouth's peace and the shop's — wider than a still is across (1,440), so no
+// single patch can seal the shop off from the way out either.
+const DEEP_POST = { x: 6000, y: 6500, r: 720 };
 
 for (const [i, d] of DEEPS.entries())                                   // stage 2: edges plus dead centre
   mk(d.id, place(d.ang, RAD.deep), `D-${i + 1}`, i + 1,

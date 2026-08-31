@@ -594,26 +594,31 @@ export const POSTING = Object.freeze({
   // the deeps got something bigger; the fight it is did not change.
   hive:      { stage: 'finished',    seconds: 180, party: 4,
                why: 'a five-minute respawn and a brood of twelve: an event, not a kill' },
-  // server.js: two of each on every deep sector, respawn 300s. `party` is MEASURED
-  // rather than intended — test/ground.mjs runs the real AI against one, two, three
-  // and four finished pilots all flying the counter, over three arrangements each:
+  // server.js: TWO PAIRS on every deep sector, respawn 300s. A Crucible and a Doldrum
+  // share a post now, so pulling either is pulling both and the pair is the encounter
+  // rather than the worst case.
   //
-  //   the pair, 1 pilot    WIPED at every arrangement, 171-209s
-  //   the pair, 2 pilots   cleared, 174-180s, and one of the two ends under 30%
-  //   the pair, 3 pilots   cleared at 118s, comfortable
-  //   all four hostiles    wipes 2 and 3, and costs a party of four three ships
+  // `party` is the number this asks for and it is a number nobody can currently pay.
+  // Measured through the real AI at the shipped shape — plasma on model in a 560px
+  // pool, stills at half of it in 720px, a five-second dead stop, and both carrying
+  // the model's own 438 dps — the pair wipes one, two, three, four and six finished
+  // pilots. It is not completable at any party size, and that is stated here rather
+  // than rounded into a number that looks reasonable.
   //
-  // So the encounter is the PAIR and the pair wants two, which is the Leviathan's
-  // number five rungs up: the thing past a gate you cannot take alone. It was going
-  // to be four, measured against the hull table before slots replaced base
-  // attributes — a finished Bulwark delivered 8,351 dps then and delivers 11,941 now
-  // with its reactor on the gun, so the fight went from 246s to 171s and the ground
-  // has a third less time to accumulate. The claim moved to the measurement rather
-  // than the other way round.
-  vitriol:   { stage: 'finished',    seconds: 91, party: 2,
-               why: '2,055,480 over two finished builds. Measured: 175s, both under 70%' },
+  // WHY, precisely, because the reason is what a fix has to attack: ground does not
+  // divide by party size. A gun shoots one pilot at a time, so four pilots each take a
+  // quarter of the barrels; a pool burns everybody standing in it, so four pilots each
+  // take all of it. Time-to-die is therefore flat in party size while time-to-clear
+  // only falls as 1/n, and at 4,110,960 effective hit points the pair needs 86 seconds
+  // of four finished guns against ships that are gone in 35 to 50.
+  //
+  // Measured levers, everything else held: the plasma radius dominates — at 250px a
+  // lone pilot takes a Crucible again — and the rates are second, with the boundary
+  // around half of what was asked. Cadence and patch lifetime barely move it.
+  crucible:  { stage: 'finished',    seconds: 91, party: 2,
+               why: 'the number the rung asks for. Measured, no party size clears the pair — see test/ground.mjs' },
   doldrum:   { stage: 'finished',    seconds: 91, party: 2,
-               why: 'the same rung and the same fight; what differs is that it takes your steering' },
+               why: 'the same rung and the same gun; what differs is that it stops you dead for five seconds' },
 });
 
 // --- the conformance report ---------------------------------------------------

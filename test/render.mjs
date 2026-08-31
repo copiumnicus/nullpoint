@@ -732,13 +732,13 @@ const dismiss = () => {
   // both kinds, from the moment the marker appears to the moment the ground goes out
   for (const k of [0, 1])
     for (const [on, p] of [[0, 0.02], [0, 0.4], [0, 0.99], [1, 0], [1, 0.3], [1, 0.7], [1, 0.99]]) {
-      feed({ t: 's', ships: [me4, sower(k ? 'doldrum' : 'vitriol', { abl: on ? 0 : Math.round(p * 100) })],
+      feed({ t: 's', ships: [me4, sower(k ? 'doldrum' : 'crucible', { abl: on ? 0 : Math.round(p * 100) })],
              sown: [patch(50 + k, k, on, p)] });
       frame(t += 16); frames++; drew++;
       frame(t += 40); frames++; drew++;           // and again, so the blisters and the ripple move
     }
   // the combo, on one screen: a pool inside a still, both sowers winding
-  feed({ t: 's', ships: [me4, sower('vitriol', { abl: 60 }), sower('doldrum', { abl: 30 })],
+  feed({ t: 's', ships: [me4, sower('crucible', { abl: 60 }), sower('doldrum', { abl: 30 })],
          sown: [patch(60, 1, 1, 0.5), packSown({ id: 61, x: 6100, y: 4100, r: 195, p: 0.2, k: 0, on: 1 }),
                 packSown({ id: 62, x: 6000, y: 4000, r: 195, p: 0.6, k: 0, on: 0 })] });
   frame(t += 16); frames++;

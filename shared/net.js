@@ -156,7 +156,7 @@ export const unpackFix = arr => { const o = {}; for (let i = 0; i < FIX_FIELDS.l
 // they have no identity, live under a second, and the one field on them that
 // matters changes every tick. A patch is the exact opposite of all three — it lives
 // twelve to thirty-six seconds, it has an id, and SIX of its seven fields never change
-// once it is laid. Measured, at the steady state of a deep sector — two Vitriols at
+// once it is laid. Measured, at the steady state of a deep sector — two Crucibles at
 // six pools each and two Doldrums at two stills, sixteen patches at 30Hz:
 //
 //     sent whole every tick   12.76 KiB/s     more than every bolt, rocket, blast
@@ -191,7 +191,7 @@ export const unpackSown = arr => { const o = {}; for (let i = 0; i < SOWN_FIELDS
 // Which kind of ground, as an integer. Declared here rather than as a string on the
 // row because the client draws from it and the server writes it, and a spelling
 // kept in two places is the drift this file exists to prevent.
-export const GROUND_KINDS = ['regia', 'slack'];
+export const GROUND_KINDS = ['white', 'slack'];
 export const groundK = kind => Math.max(0, GROUND_KINDS.indexOf(kind));
 
 export const STREAMS = {

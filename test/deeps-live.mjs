@@ -84,6 +84,9 @@ chat('/gear');           await wait(250);
 // --- who lives where, found by flying rather than assumed --------------------
 // A deep sector is 12,000 x 8,000 and a Bulwark's radar is a fraction of that, so
 // "the sector is populated" has to be answered by sweeping it the way a pilot would.
+// Where the sweep last saw each kind, so a later leg can fly straight there instead
+// of hunting for something that kills it on the way.
+const seenAt = new Map();
 const sweep = async (map, secs = 60) => {
   chat('/tp ' + map); await wait(1200);
   const seen = new Map();
@@ -96,16 +99,16 @@ const sweep = async (map, secs = 60) => {
     i++;
     for (let k = 0; k < 26; k++) {
       await wait(140);
-      for (const f of foes()) seen.set(f.id, f.hull);
+      for (const f of foes()) { seen.set(f.id, f.hull); seenAt.set(f.hull, { x: f.x, y: f.y }); }
     }
   }
   return seen;
 };
 const deep = await sweep('d1');
-check('the deeps hold two Vitriols and two Doldrums, and nothing else',
-  [...deep.values()].filter(v => v === 'vitriol').length >= 2 &&
+check('the deeps hold two Crucibles and two Doldrums, and nothing else',
+  [...deep.values()].filter(v => v === 'crucible').length >= 2 &&
   [...deep.values()].filter(v => v === 'doldrum').length >= 2 &&
-  [...new Set(deep.values())].every(v => ['vitriol', 'doldrum'].includes(v)),
+  [...new Set(deep.values())].every(v => ['crucible', 'doldrum'].includes(v)),
   `d1: ${[...deep.values()].sort().join(', ')}`);
 const gate = await sweep('g1');
 check('and the Corsair Hive has moved to the gates, beside the Thresher and the Kedges',
@@ -117,7 +120,7 @@ check('and the Corsair Hive has moved to the gates, beside the Thresher and the 
 // --- the mechanics, in the real sector ---------------------------------------
 //
 // d1 rather than /dev. The firing line has all twelve hostiles inside 600px of each
-// other, so flying up to a Vitriol there puts you inside a Thresher, a Hive and a
+// other, so flying up to a Crucible there puts you inside a Thresher, a Hive and a
 // Leviathan as well — measured, a bare Bulwark went from 100% to 31% of hull in four
 // seconds and it was almost none of it the ground. The deeps hold four things and
 // none of them shoot.
@@ -137,10 +140,19 @@ const anyOf = hull => (P.last?.ships ?? []).map(unpackShip).find(s => s.co === '
 // hull and nothing to hang on it, so this pilot has no gun to provoke anybody with —
 // being NOTICED has to be what starts the fight, which is also the honest test of
 // stepAlienAI on a hostile whose weaponRange is zero.
-const closeTo = async (hull, secs) => {
+const closeTo = async (hull, secs, goTo = null) => {
   const seen = { ghost: false, live: false, abl: 0, kinds: new Set(), hp0: null, hpLow: null,
                  snare: 0, holds: 0, longest: 0, gaps: [] };
   let target = anyOf(hull);
+  if (!target && goTo) {                          // fly to where the sweep last saw one
+    send({ t: 'intent', mode: 'pt', x: goTo.x, y: goTo.y });
+    for (let k = 0; k < 260 && !target; k++) {
+      await wait(120); target = anyOf(hull);
+      if (k % 10 === 0) { chat('/heal'); send({ t: 'intent', mode: 'pt', x: goTo.x, y: goTo.y }); }
+      if (!me()) { send({ t: 'respawn' }); await wait(1200); chat('/tp d1'); await wait(1400);
+                   send({ t: 'intent', mode: 'pt', x: goTo.x, y: goTo.y }); }
+    }
+  }
   if (!target) {                                  // go and find one
     for (const [x, y] of [[2000, 2000], [10000, 2000], [10000, 6000], [2000, 6000], [6000, 4000]]) {
       send({ t: 'intent', mode: 'pt', x, y });
@@ -149,9 +161,19 @@ const closeTo = async (hull, secs) => {
     }
   }
   if (!target) return seen;
-  const t0 = Date.now(); let wasHeld = false, from = 0, lastEnd = null;
+  const t0 = Date.now(); let wasHeld = false, from = 0, lastEnd = null, healAt = 0;
   while (Date.now() - t0 < secs * 1000) {
     await wait(60);
+    // `/ship bulwark` grants a hull and nothing to hang on it, and these two now throw
+    // 438 dps each on top of the ground. A pilot with no gun and no research does not
+    // live long enough to watch a full cadence, so the observer is kept alive rather
+    // than the hostiles made gentler — what is being checked here is the WIRE, not the
+    // fight, and the fight is measured in test/ground.mjs against a real build.
+    // Healed hard rather than occasionally. On the firing line a bare Bulwark stands
+    // inside twelve hostiles at once and 438 dps of these two on top; four seconds
+    // between heals was not enough and the observer kept dying mid-wind-up, which
+    // reads as "the mechanic never fired" when what happened is the pilot left.
+    if (Date.now() - healAt > 1200) { chat('/heal'); healAt = Date.now(); }
     const live = at(target.id) ?? target;
     const m2 = me();
     // hull AND shield. A pool burns whatever is standing in it, shields included —
@@ -159,8 +181,17 @@ const closeTo = async (hull, secs) => {
     // eaten, which is the thing that actually happens first.
     if (m2) { const pool2 = m2.hp + m2.sh;
               seen.hp0 ??= pool2; seen.hpLow = Math.min(seen.hpLow ?? pool2, pool2); }
-    // hold just inside its aggro, which is where the fight is
-    send({ t: 'intent', mode: 'pt', x: live.x - 380, y: live.y });
+    // Close to inside its aggro (540) until it has noticed, then BACK OFF to 1,000px
+    // and sit there. That band is the layer these two grew when they grew barrels: the
+    // gun reaches 900 and the sowing reaches 1,100, so at 1,000 the ground still lands
+    // on you and the barrel has stopped. It is also the only way an unarmed, unresearched
+    // observer lives long enough to watch a five-second stop happen — measured, closer
+    // in it died inside the wind-up and the dial never got past 52 of 100.
+    const noticed = (live.tgt ?? 0) !== 0;
+    const want = noticed ? 1000 : 380;
+    const dx = m2 ? m2.x - live.x : -1, dy = m2 ? m2.y - live.y : 0;
+    const dd = Math.hypot(dx, dy) || 1;
+    send({ t: 'intent', mode: 'pt', x: live.x + (dx / dd) * want, y: live.y + (dy / dd) * want });
     if ((live.abl ?? 0) > seen.abl) seen.abl = live.abl;
     for (const p of ground()) { seen.kinds.add(p.k); if (p.on === 0) seen.ghost = true; else seen.live = true; }
     const sn = P.last?.snare ?? 0;
@@ -174,17 +205,31 @@ const closeTo = async (hull, secs) => {
   return seen;
 };
 
-const V = await closeTo('vitriol', 40);
-check('a Vitriol lays ground over the wire, and the marker comes before the patch',
+const V = await closeTo('crucible', 40);
+check('a Crucible lays ground over the wire, and the marker comes before the patch',
   V.ghost && V.live, `both phases seen on a real socket; ${ground().length} patches standing at the end`);
 check('the wind-up rides `abl` on the hostile row, with no new ship field',
   V.abl > 0 && V.abl <= 100, `abl peaked at ${V.abl} of 100 — draw, spin, fix, load, sow, all one integer`);
-check('and standing in Aqua Regia costs the ship, shields first, as a share',
+check('and standing in White Heat costs the ship, shields first, as a share',
   V.hpLow < V.hp0, `hull + shield went ${V.hp0} -> ${V.hpLow} (of 200) parked in it — a field ` +
   'burns whatever is standing in it, which is the Censer\'s rule one rung out');
 
 chat('/heal'); await wait(400);
-const D = await closeTo('doldrum', 55);
+// The still leg flies to a REMEMBERED position rather than searching for one, and the
+// reason is the change itself. A deep sector is 12,000 x 8,000 and a bare Bulwark with
+// no gun now dies to 438 dps and a pool taking 4.5% of it a second, so a pilot that
+// has to go looking dies several times on the way and every death puts it in a company
+// ring. The sweep above already saw where everything was standing; this uses that.
+//
+// The firing line was the other option and it is worse: /dev posts twelve hostiles
+// inside 600px of each other, so an observer there is being shot by all of them and
+// dies mid-wind-up — measured, the Doldrum's dial never got past 36 of 100 because
+// its victim kept ceasing to exist.
+chat('/tp d1'); await wait(1600);
+if (!me()) { send({ t: 'respawn' }); await wait(1300); chat('/tp d1'); await wait(1600); }
+chat('/heal'); await wait(400);
+const D = await closeTo('doldrum', 80, seenAt.get('doldrum'));
+console.log(`     the still leg: ${D.holds} stops, abl peaked ${D.abl}`);
 check('crossing Slack Water takes the engines, and the wire says so',
   D.snare > 0 && D.snare <= HOLD + 0.05,
   `the bag carried snare=${D.snare.toFixed(2)}s against a ceiling of ${HOLD}s, ${D.holds} times`);
@@ -197,7 +242,7 @@ check('and a pilot always gets a full portal spool of thrust back between two of
                 : 'only one hold in the window');
 check('both kinds of ground reached the client',
   new Set([...V.kinds, ...D.kinds]).size === 2,
-  `kinds seen: ${[...new Set([...V.kinds, ...D.kinds])].map(k => ['regia', 'slack'][k] ?? k).join(', ')}`);
+  `kinds seen: ${[...new Set([...V.kinds, ...D.kinds])].map(k => ['white', 'slack'][k] ?? k).join(', ')}`);
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — live over the wire'}\n`);
 P.ws.close();
