@@ -958,6 +958,33 @@ const dismiss = () => {
   else console.log(`research: the second rung starts where the first one left off — ` +
     `${first.now} -> ${first.then} -> ${second.then}`);
 
+  // BROKE most of the time and hardest to notice: the gain was an else-branch of
+  // the refusal, so a pilot who could not afford a rung was shown "costs 2,000,000
+  // cr, you cannot pay yet" INSTEAD of what it would do for them. The one moment
+  // somebody most needs to know what they are saving toward was the one moment the
+  // panel refused to say it.
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 1_000, docked: false,
+         labs: [packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 0, name: 'Vy' }, true)],
+         lab: { mods: 0, income: 0 } });
+  trace = []; frame(t += 16); frames++;
+  const broke = trace; trace = null;
+  const quotes = broke.some(c => /^fillText your hull [\d,]+ -> [\d,]+/.test(c));
+  const distance = broke.some(c => /to go/.test(c));
+  if (!quotes)
+    errs.push('a pilot who cannot afford a rung was not told what it would do for them');
+  else if (!distance)
+    errs.push('a pilot who cannot afford a rung was not told how far off it is');
+  else console.log('research: with 1,000 credits it still quotes the gain, and says how far off it is');
+
+  // And hovering a rung says what the rest of the ladder is worth.
+  hoverAt(L.rows[1].r);
+  trace = []; frame(t += 16); frames++;
+  const tip = trace; trace = null;
+  if (!tip.some(c => /rungs left on this ladder/.test(c)))
+    errs.push('hovering a research rung said nothing about the rest of the ladder');
+  else console.log('research: hovering a rung prices the whole ladder above it');
+  hoverAt({ x: 4, y: 4, w: 1, h: 1 });
+
   // A station that has been built on looks built on, to everyone, and a mine
   // running makes the credits counter move between server banks.
   const others = packLab({ id: 2_000_002, x: ring.x - 400, y: ring.y, mods: 7, name: 'Someone' }, false);

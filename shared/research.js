@@ -332,7 +332,12 @@ export const partsOf = mask => modsOf(mask).map(k => LOOKS[k]).filter(Boolean);
 // UI geometry is a shared rule (see CLAUDE.md rule one) — the client both draws
 // and hit-tests from this, because a row you can see and cannot click is the same
 // bug as a row outside its panel, and that has happened twice.
-export const LAB_ROW = 62, LAB_HEAD = 96, LAB_W = 560, LAB_PAD = 18;
+// 78 rather than 62: a row carries four lines now. What the rung is called, what it
+// does to YOUR ship, what that is worth, and — only if you cannot pay — how far off
+// you are. The price used to REPLACE the gain when you could not afford it, which
+// is precisely backwards: the moment a pilot most needs to know what they are
+// saving toward is the moment they cannot buy it yet.
+export const LAB_ROW = 78, LAB_HEAD = 96, LAB_W = 560, LAB_PAD = 18;
 
 export function labPanel(VIEW_W, VIEW_H) {
   const w = Math.min(LAB_W, VIEW_W - 40);
@@ -388,6 +393,15 @@ export function rungGain(mask, line, stats) {
 }
 
 // What one row says, so the panel and its test cannot disagree about it.
+// How far off you are, in words short enough to sit beside the gain rather than
+// instead of it. whyNotBuild's sentence is for a refusal; this is for a goal.
+export function shortOf(mask, line, credits) {
+  const next = nextOn(mask, line);
+  if (!next) return null;
+  const gap = MODULES[next].price - credits;
+  return gap > 0 ? gap : 0;
+}
+
 export function rowState(mask, line, credits) {
   const at = tierOn(mask, line), next = nextOn(mask, line);
   const m = next ? MODULES[next] : null;

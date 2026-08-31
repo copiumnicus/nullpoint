@@ -18,6 +18,7 @@ import { havenBadge, havenLine, TONE } from '/shared/haven.js';
 import { filePanel, filedIn, dossierOf, fileProgress, totalKills,
          FILE_PAD, FILE_HEAD, FILE_ROW } from '/shared/threats.js';
 import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, rungGain, partsOf,
+         shortOf, tiersOf,
          applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
 import { ATTRS, HULLS, resolve, slotsOf } from '/shared/ships.js';
@@ -402,6 +403,7 @@ function drawLab() {
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
     return;
   }
+  const tips = [];
   for (const row of L.rows) {
     const st = rowState(mask, row.line, credits);
     const why = st.next ? whyNotBuild(st.next, { credits, mask, near }) : null;
@@ -432,29 +434,77 @@ function drawLab() {
       // bar. "Twice the hull" is a fact about the module; "1,100 -> 2,200" is a fact
       // about you, and it is the one that decides whether a million credits is worth
       // it. A pilot cannot tell whether "stronger" means one percent or one hundred.
+      // What it does to YOUR ship, ALWAYS — whether or not you can pay for it today.
+      // This used to be an else-branch of the refusal, so the moment a pilot most
+      // needs to know what they are saving toward was the one moment the panel
+      // refused to say. A price with no reason attached is not a goal.
       const gain = rungGain(mask, row.line, myStats());
-      g.font = '10px ui-monospace, monospace';
-      if (why) {
-        g.fillStyle = '#7f8fa6';
-        g.fillText(why, row.r.x + 12, row.r.y + 54);
-      } else if (gain) {
-        g.fillStyle = '#7de08a';
+      const gap = shortOf(mask, row.line, credits);
+      const poor = gap > 0;
+      if (gain) {
+        g.font = '11px ui-monospace, monospace';
+        g.fillStyle = poor ? '#4e8a5c' : '#7de08a';       // dimmer when saving, never hidden
         g.fillText(gain.label, row.r.x + 12, row.r.y + 54);
-        g.fillStyle = '#66748c';
-        const w = g.measureText(gain.label).width;
-        g.font = '9px ui-monospace, monospace';
-        g.fillText(gain.sub, row.r.x + 12 + w + 12, row.r.y + 54);
+        g.font = '9px ui-monospace, monospace'; g.fillStyle = '#66748c';
+        g.fillText(gain.sub, row.r.x + 12, row.r.y + 68);
       } else {
-        g.fillStyle = '#7f8fa6';
+        g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
         g.fillText(st.does, row.r.x + 12, row.r.y + 54);
       }
-      g.font = '10px ui-monospace, monospace';
       g.textAlign = 'right';
       g.font = '12px ui-monospace, monospace';
-      g.fillStyle = why ? '#66748c' : '#ffd479';
+      g.fillStyle = poor ? '#8a7038' : '#ffd479';
       g.fillText(`${fmtCredits(st.price)} ${CURRENCY.short}`, row.r.x + row.r.w - 12, row.r.y + 40);
+      // The distance, not the refusal. "Costs 2000000 cr, you cannot pay yet" is
+      // what a button says when you press it; a shelf should say how far off it is.
+      g.font = '9px ui-monospace, monospace';
+      if (poor) {
+        g.fillStyle = '#e0a53f';
+        g.fillText(`${fmtCredits(gap)} ${CURRENCY.short} to go`, row.r.x + row.r.w - 12, row.r.y + 68);
+      } else if (why) {
+        g.fillStyle = '#66748c';
+        g.fillText(why.length > 34 ? why.slice(0, 33) + '\u2026' : why,
+                   row.r.x + row.r.w - 12, row.r.y + 68);
+      } else {
+        g.fillStyle = '#7de08a';
+        g.fillText('ready', row.r.x + row.r.w - 12, row.r.y + 68);
+      }
       g.textAlign = 'left';
+
+      // And on hover, the whole ladder: what the rungs above this one are worth, so
+      // a pilot can see where the line ends before committing to the first step.
+      if (hot && gain) tips.push({ row, st, gain, gap, why });
     }
+  }
+  // The tooltip, over everything else on the panel. It says what the rest of this
+  // ladder is worth, which is the question a pilot actually has when they are three
+  // rungs from the top and deciding whether to start.
+  for (const tip of tips) {
+    const rest = tiersOf(tip.row.line).filter(k => MODULES[k].tier > tip.st.tier);
+    const owed = rest.reduce((n, k) => n + MODULES[k].price, 0);
+    const top = MODULES[rest.at(-1)];
+    const lines = [
+      tip.gain.label,
+      tip.gain.sub,
+      tip.why && !tip.gap ? tip.why : '',
+      rest.length > 1
+        ? `${rest.length} rungs left on this ladder, ${fmtCredits(owed)} ${CURRENCY.short} in all`
+        : 'the last rung on this ladder',
+      top?.does ? `at the top: ${top.does}` : '',
+    ].filter(Boolean);
+    g.font = '10px ui-monospace, monospace';
+    const wide = Math.max(...lines.map(t2 => g.measureText(t2).width)) + 24;
+    const bh = 12 + lines.length * 14;
+    const bx = Math.max(8, Math.min(VIEW_W - wide - 8, tip.row.r.x + 20));
+    const by = tip.row.r.y + tip.row.r.h + 6 + bh > VIEW_H
+      ? tip.row.r.y - bh - 6 : tip.row.r.y + tip.row.r.h + 6;
+    g.fillStyle = 'rgba(4,7,12,0.97)'; g.fillRect(bx, by, wide, bh);
+    g.strokeStyle = '#3d5876'; g.lineWidth = 1;
+    g.strokeRect(bx + .5, by + .5, wide - 1, bh - 1);
+    lines.forEach((t2, i) => {
+      g.fillStyle = i === 0 ? '#7de08a' : i === lines.length - 1 ? '#7f8fa6' : '#a8bcd4';
+      g.fillText(t2, bx + 12, by + 18 + i * 14);
+    });
   }
   g.font = '12px ui-monospace, monospace';
 }

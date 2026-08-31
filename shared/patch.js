@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.51';
+export const VERSION = '0.52';
 
 export const PATCHES = [
+  { v: '0.52', notes: [
+    'Research rungs say what they do for you even when you cannot afford them yet',
+    'And how far off you are — "640k cr to go" instead of a flat refusal',
+    'Hover a rung to see what the rest of that ladder costs and ends at',
+  ] },
   { v: '0.51', notes: [
     'A STATS tab at the station: where every number on your ship came from',
     'The ship, then your guns and generators, then technologies, then research',
