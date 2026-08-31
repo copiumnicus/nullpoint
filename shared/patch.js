@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.67';
+export const VERSION = '0.68';
 
 export const PATCHES = [
+  { v: '0.68', notes: [
+    'A claim is a hunt now: everything in it sees you from the far side of the map',
+    'They all come at once, at their own speeds, so the field arrives as a stream',
+    'Correction to 0.64 — your shields DO come back in a claim. That was a mistake',
+    'The fields are smaller and every one of them is already on its way to you',
+    'A Kedge holds the deepest rock, hauling you back into the rings you just left',
+  ] },
   { v: '0.67', notes: [
     'The Vanguard’s system is rate of fire now — every gun and every rack cycles faster',
     'Half again the shots at full, and your reach drops to 65% to pay for it',
