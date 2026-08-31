@@ -17,6 +17,7 @@ import { sanitiseKills } from './threats.js';
 import { MAPS, COMPANIES, isArena } from './maps.js';
 import { MATERIALS } from './cargo.js';
 import { bankPlaytime } from './playtime.js';
+import { sanitiseView } from './viewport.js';
 
 const CALLSIGNS = ['Vex', 'Harrow', 'Kite', 'Sable', 'Rook', 'Marlow', 'Quill', 'Ash', 'Bram',
   'Corvid', 'Dray', 'Fen', 'Grist', 'Halcyon', 'Iber', 'Jax', 'Kesh', 'Lund', 'Mire', 'Nox',
@@ -45,6 +46,7 @@ export function newAccount(token, seq, now) {
     lastDock: null,                               // the hangar a wreck comes back to
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
     played: 0,                                    // seconds actually flown, idle tail excluded
+    view: null,                                   // the window they play in — advisory, see viewport.js
     mapId: home, x: base.x, y: base.y,
     created: now, seen: now,
   };
@@ -136,6 +138,10 @@ export function sanitiseAccount(a, seq, now) {
     lastDock: MAPS[a?.lastDock] ? a.lastDock : null,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     played: Number.isFinite(a?.played) ? Math.max(0, Math.floor(a.played)) : 0,
+    // What window they play in. Advisory only — see viewport.js for why nothing in
+    // the simulation may read it — and it deliberately outlives a /reset: a pilot
+    // who threw their progress away still has the same monitor in front of them.
+    view: sanitiseView(a?.view, now),
     vault: stack(a?.vault), hold: stack(a?.hold),
     mapId,
     x: known && Number.isFinite(a?.x) ? a.x : base.x,
@@ -177,6 +183,11 @@ export function carried(a) {
     berths: [...(a.berths ?? [])], lastDock: a.lastDock ?? null,
     claims: [...(a.claims ?? [])],
     vault: { ...a.vault }, hold: { ...a.hold },
+    // The window they play in, which /reset deliberately hands straight back —
+    // it is a fact about their hardware, not about their progress. The reset path
+    // carries it across to the fresh account for that reason; everything else in
+    // this list comes back empty from a new one.
+    view: a.view ?? null,
   };
 }
 
@@ -209,6 +220,7 @@ export function capture(account, p, now) {
   account.credits = p.credits;
   account.vault = { ...p.vault };
   account.hold = { ...p.hold };
+  account.view = p.view ?? null;
   // Where they were, and an instanced sector is not a where. An arena stops
   // existing with the process that made it, so writing one down writes a
   // destination that will not be there — and the pilot comes back to it. The
