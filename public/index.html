@@ -1340,7 +1340,12 @@ addEventListener('wheel', e => {
   }
   if (bayOpen && (bayTab === 'store' || bayTab === 'inventory' || bayTab === 'stats')) {
     e.preventDefault?.();
-    bayScroll = Math.max(0, bayScroll + (e.deltaY > 0 ? 2 : -2));
+    // The shop and the locker scroll by ROWS; the stats page scrolls by PIXELS,
+    // because its rows are different heights. Two of anything a notch is two rows
+    // on one and two pixels on the other — which is a page that does not move, and
+    // is why the attributes below the fold could not be reached at all.
+    const step = bayTab === 'stats' ? 62 : 2;
+    bayScroll = Math.max(0, bayScroll + (e.deltaY > 0 ? step : -step));
   }
 }, { passive: false });
 addEventListener('keyup', e => steerDown.delete(e.key.toLowerCase()));
@@ -1779,7 +1784,12 @@ function drawTip(tip, at) {
 
 function drawBay() {
   const G = bayGeom(), P = G.panel;
-  const stats = resolve(myHull, myFit, escortOf(myDrones, myRig), myForm), bare = resolve(myHull, emptyFit());
+  // Both sides researched. The strip is the row you watch WHILE you click from one
+  // hull to another, and it never showed the ladder — which is exactly why research
+  // looked like it stopped working on a hull swap. `bare` has to be researched too,
+  // or the green delta credits the whole ladder to whatever you just bolted on and
+  // a rack with no plating in it reads "+13,300 hull".
+  const stats = myStats(), bare = applyResearch(resolve(myHull, emptyFit()), myLab?.mods ?? 0);
   const home = docked();
   const at = hover && hover.x > P.x && hover.x < P.x + P.w && hover.y > P.y && hover.y < P.y + P.h ? hover : null;
   const over = r => at && at.x > r.x && at.x < r.x + r.w && at.y > r.y && at.y < r.y + r.h;
@@ -3038,7 +3048,12 @@ requestAnimationFrame(function frame(now) {
 
 function drawFrame(now) {
   const map = MAPS[mapId], me = ships.get(myId);
-  const st = resolve(myHull, myFit);          // your resolved stats, wanted by minimap and hud alike
+  // myStats(), not a bare resolve(). This printed the hull the SHOPS sold you — 1,900
+  // on a Bulwark the server was flying at 15,200 — and it dropped the escort and the
+  // formation too, so it read GUN 113 on a ship doing 2,815. It is the readout a pilot
+  // stares at while they swap hulls, which is why research looked like it broke on a
+  // hull swap: nothing broke, that number never had it.
+  const st = myStats();                       // your resolved stats, wanted by minimap and hud alike
 
   // Thruster tracks how fast you are actually going, measured off the smoothed
   // render position — the server never sends velocity and does not need to.

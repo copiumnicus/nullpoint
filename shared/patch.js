@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.54';
+export const VERSION = '0.55';
 
 export const PATCHES = [
+  { v: '0.55', notes: [
+    'Fixed: your hull and shield readouts showed what the shops sold you, not what you fly',
+    'Research WAS working — the two numbers you watch while swapping ships never showed it',
+    'The HUD also ignored your escort and formation: GUN 113 on a ship doing 2,815',
+    'And the STATS page scrolls properly now, so you can reach the rows below the fold',
+  ] },
   { v: '0.54', notes: [
     'A Thresher now carries its payload over its head — watch it fill as you shoot it',
     'Stop shooting for a second and the chamber halves, and so does the next bolt',

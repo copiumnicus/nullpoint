@@ -709,6 +709,27 @@ const dismiss = () => {
     else if (!named('research station'))
       errs.push('the STATS tab left the research ladder out of the breakdown');
     else console.log('stats: the breakdown names every layer — ship, gear, technologies, research');
+
+    // The HUD's own hull number, which is a different code path from the STATS tab
+    // and was a bare resolve() — it printed the hull the SHOPS sold you while the
+    // server flew the researched one, and dropped the escort and the formation with
+    // it. That is the readout a pilot watches while swapping hulls, which is why
+    // research looked like it broke on a hull swap.
+    click(G0.tabs.find(x => x.key === 'hangar').r);
+    frame(t += 16); frames++;
+    dismiss();
+    feed({ t: 's', ships: [packShip({ id: 1, x: MAPS.m1.base.x, y: MAPS.m1.base.y, heading: 0,
+             charge: 0, co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
+             rk: 0, vis: 2, name: 'Vy' })], docked: true,
+           lab: { mods: (1 << 3) | (1 << 4), income: 0 } });    // hull x4
+    trace = []; frame(t += 16); frames++;
+    const hud = trace; trace = null;
+    const hu = hud.find(c => /^fillText .*HU \d/.test(c));
+    const shown = hu && Number((hu.match(/HU (\d+)/) ?? [])[1]);
+    if (!hu) errs.push('the HUD drew no hull readout at all');
+    else if (shown === 1100)
+      errs.push(`the HUD printed the hull the shops sold (${shown}) while research made it 4400`);
+    else console.log(`stats: the HUD prints the hull the server is flying — ${shown}, not the shop's 1,100`);
     // Put the station back on HANGAR before leaving. bayTab is module state and the
     // station walk two hundred lines below starts by clicking hangar rows without
     // selecting the tab first — so leaving it on STATS made every one of those
