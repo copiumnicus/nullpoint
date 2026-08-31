@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.60';
+export const VERSION = '0.61';
 
 export const PATCHES = [
+  { v: '0.61', notes: [
+    'A loaded Thresher now throws back the sharpest gun in the shop — 12,083 a bolt',
+    'It was capped at 855. Stand still in a finished ship and you are gone in 3.7s',
+    'It still cannot throw more than money can buy, and it still empties if you stop',
+    'Bring a smaller gun: a Kestrel that weaves kills one without breaking a sweat',
+  ] },
   { v: '0.60', notes: [
     'A mining rig is a rock somebody is holding. Fight for it before you can buy it',
     'The claim drops you alone in a sector with the rock and a field around it',
