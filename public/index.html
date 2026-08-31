@@ -1235,7 +1235,11 @@ addEventListener('wheel', e => {
   }
   if (fileOpen) {
     e.preventDefault?.();
-    fileScroll = Math.max(0, fileScroll + (e.deltaY > 0 ? 1 : -1));
+    // Clamped at BOTH ends. Unbounded above, scrolling past the last entry kept
+    // counting, so coming back up did nothing until every phantom step had been
+    // undone — which reads exactly like a panel that does not scroll at all.
+    const max = filePanel(VIEW_W, VIEW_H, 0, filedIn(myKills).length).maxScroll;
+    fileScroll = Math.max(0, Math.min(max, fileScroll + (e.deltaY > 0 ? 1 : -1)));
     return;
   }
   if (bayOpen && (bayTab === 'store' || bayTab === 'inventory')) {

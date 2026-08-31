@@ -681,6 +681,34 @@ const dismiss = () => {
     errs.push('a recorded hostile did not explain what it does');
   else console.log('threats: killed hostiles are filed with their count, unkilled ones are absent — ' +
     `${filedIn({ drifter: 1, thresher: 1 }).join(', ')} of 9`);
+  // It scrolls, and it comes back. The wheel was clamped at zero and not at the
+  // end, so scrolling past the last entry kept counting and coming back up did
+  // nothing until every phantom step had been undone — indistinguishable from a
+  // panel that does not scroll.
+  feed({ t: 's', ships: [],
+         kills: Object.fromEntries(WILD.map((k, i) => [k, i + 1])) });   // all of them
+  frame(t += 16); frames++;
+  const F = filePanel(innerWidth, innerHeight, 0, WILD.length);
+  if (F.maxScroll <= 0) errs.push('the threat file fits every hostile, so scrolling cannot be tested');
+  else {
+    const topRow = () => {
+      trace = []; frame(t += 16); frames++;
+      const out2 = trace; trace = null;
+      const first = filedIn(Object.fromEntries(WILD.map((k, i) => [k, i + 1])));
+      return first.find(k => out2.some(c => c.startsWith(`fillText ${ALIENS[k].name} `)));
+    };
+    const before = topRow();
+    for (let i = 0; i < 3; i++) { evt('wheel', { deltaY: 240 }); frame(t += 16); frames++; }
+    const scrolled = topRow();
+    if (scrolled === before) errs.push('the threat file did not scroll when the wheel was turned');
+    // Far past the end, then all the way back: it must return, not owe steps.
+    for (let i = 0; i < 40; i++) { evt('wheel', { deltaY: 240 }); frame(t += 16); frames++; }
+    for (let i = 0; i < 4; i++) { evt('wheel', { deltaY: -240 }); frame(t += 16); frames++; }
+    const back = topRow();
+    if (back !== before)
+      errs.push(`scrolling to the end and back left the threat file on ${back} instead of ${before}`);
+    else console.log(`threats: the file scrolls (${F.fit} of ${WILD.length} at a time) and comes back`);
+  }
   evt('keydown', { key: 'l' }); frame(t += 16); frames++;   // shut it
 }
 

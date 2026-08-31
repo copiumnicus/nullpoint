@@ -8,9 +8,12 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.47';
+export const VERSION = '0.48';
 
 export const PATCHES = [
+  { v: '0.48', notes: [
+    'The threat file scrolls properly — it used to get stuck once you passed the end',
+  ] },
   { v: '0.47', notes: [
     'Shields come back as a share of the pool now, not a fixed number per second',
     'A fully researched Bulwark took 90 minutes to refill. It takes 56 seconds',
