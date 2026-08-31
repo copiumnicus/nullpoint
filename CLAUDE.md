@@ -167,6 +167,25 @@ have not reached, a multiplier is a fight you cannot lose. The first thing to us
 one is the berth at a pirate outpost (`shared/berth.js`), where rank stands for
 whether the pirates have heard of you.
 
+**What the invariant is actually about is MONEY, not time.** This section used to
+read as though any earned power were forbidden, and it sent an agent designing a
+quest reward down a rabbit hole trying not to give one. That is the wrong reading
+and it cost real work. The rule is that **you cannot buy your way past somebody**:
+no purchase strictly dominates, every technology gives something up, and credits
+never turn into an unanswerable ship.
+
+Time is not money here. A player who goes and kills a hundred Corsair Hives has
+done something, and it is fine — good, in fact — for that to end in a reward with
+real power in it. Grinding for an unlock is the genre working as intended; the
+thing being prevented is a wallet, not an afternoon. So when you are weighing a
+reward, ask *"could someone skip this with a credit card?"* rather than *"does
+this make a veteran stronger?"* — the second question has the answer "yes, and
+that is the point".
+
+The rank-gate paragraph above still stands, because a RANK is a side effect of
+playing at all rather than a thing you set out to earn. A quest is the opposite:
+it names its price in kills up front and you choose to pay it.
+
 ---
 
 ## Rule six: comments say why, and name the bug
