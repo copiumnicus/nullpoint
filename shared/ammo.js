@@ -141,6 +141,74 @@ export const gradeColour = tier => GRADE_COLOUR[tier] ?? GRADE_COLOUR[1];
 // that reach 900px or better it turns half your ship into a quarter more time,
 // and against everything you already out-range it is a quarter more time for
 // nothing at all. Load it for the frontier; do not load it to farm.
+
+// --- what a warhead costs, and why it went up sevenfold ------------------------
+//
+// A warhead arms ONE ROCKET. It always did — but a rocket used to be a SEVENTH of
+// what a Cyclone Rack put in the air, and it is now the whole of it. Same damage
+// leaving the rails, a seventh of the rounds spent doing it, so at the old 1.500 cr
+// a round the endgame ammunition bill fell by 7x the day the racks were reworked.
+//
+// Measured, because this shelf has been wrong in both directions before and the
+// comment at the top of the file names both. Rocket ammunition as a share of the
+// bounty on the thing it is fired at is scale-free — a bounty is farmHp x
+// BOUNTY_RATE, so it is the same number for a Drifter and for a Crucible:
+//
+//     before the rework   0.631% of the bounty      a 159-fold return
+//     after it, unpriced  0.090% of the bounty    a 1,110-fold return
+//
+// A thousandfold return is exactly the shape the x1/x3/x5 experiment was reverted
+// for — "a x5 round costs 0.2% of the bounty it earns, so nothing BELOW the top
+// grade was ever worth loading either".
+//
+// So the per-round number follows the rocket, and the factor is not chosen: the
+// rung this shelf calibrates on is the Cyclone Rack — it is what the fourth grade
+// is gated on, NEEDS.head4 — and that rung went from 261.4 points a rocket to
+// 1,830, which is RAILS = 7 exactly. The base goes up by the same 7:
+//
+//     HEAD_BASE = 1.500 x 7 = 10.500 cr a warhead
+//
+// A Cyclone volley therefore costs 10.50 cr for 1,830 points, to the penny what it
+// cost before the rework, and the four grades keep the ladder's own shape on top of
+// it — x1.00 / x1.20 / x1.40 / x1.60 per point of what the round carries.
+//
+// WHAT THIS DOES TO THE LOWER RUNGS, because it is not nothing. A Sparrow Pod's
+// rocket did not get bigger — it was always one rocket — so it now pays a Cyclone's
+// warhead for a Sparrow's warhead of damage. Cost per point of damage across the
+// ladder, which is the number test/ammo.mjs pins:
+//
+//     Sparrow 0.0875   Shrike 0.0182   Osprey 0.0100   Cyclone 0.0057 cr a point
+//
+// — monotonically down, the same direction it ran before (0.0125 to 0.0057) and a
+// steeper slope, because the rungs' rockets themselves got steeper. Climbing the
+// rack ladder still makes every point of damage cheaper to deliver, which is the
+// property that matters.
+//
+// And in a real fight rather than in the abstract. Twelve Drifters each, through
+// the actual fire()/launch()/stepAlienAI loop, ammunition as a share of the bounty:
+//
+//     Hauler + 1 Sparrow      1.52%  ->  8.94%     (66x back becomes 11x)
+//     Kestrel + 2 Shrike      2.06%  ->  5.09%
+//     Bulwark + 3 Osprey      5.03%  ->  7.01%
+//     Vanguard + 5 Cyclone   11.62%  -> 11.62%     635 cr either way, to the credit
+//
+// The rung the shelf calibrates on does not move at all, which is what this reprice
+// was for. The Vanguard is the dearest row on that table both before and after for
+// a reason that has nothing to do with price: a 9,150 volley on a 650-hit-point
+// husk is mostly wasted, which is the "do not load it to farm" shape the long grade
+// already talks about six paragraphs up.
+//
+// THE ALTERNATIVE, MEASURED AND NOT BUILT. A flat per-round price cannot hold the
+// cost per point level across a ladder whose rockets now span 15x, and the thing
+// that would is a warhead being a UNIT OF CHARGE that a big rocket spends several
+// of — 1/5/9/15 of them at 120 points each, which lands every rung within 6% of
+// 0.0128 and makes the endgame bill 2.15x what it was. It is not built because it
+// is a second rule about consumption sitting next to the one rule about price, and
+// because the brief for this pass was to hold the endgame volley's cost where it
+// already was rather than to raise it. The numbers are here so it is a decision
+// rather than an oversight.
+export const HEAD_BASE = 10.5;    // cr a warhead at x1.00, before the grade premium
+
 export const REACH_MULT = 2;                                        // how much further it throws
 export const REACH_EDGE = (1 + DRUMFIRE_GAIN) * (1 - DRUMFIRE_REACH);   // 1.625
 const TOP_MULT   = 1.50;                                            // the hottest round on the ladder
@@ -166,21 +234,22 @@ export const AMMO = {
            pack: 2000, price: 1560, colour: GRADE_COLOUR[4],
            blurb: 'Twice the reach, at four fifths of the punch.' },
 
-  // For launchers. One warhead per rocket, so a Swarm Rack is fifteen a volley.
-  head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, reach: 1, pack: 400, price:  600,
+  // For launchers. ONE WARHEAD PER ROCKET, and a rack throws one rocket — so a
+  // warhead is a volley's worth from one rail, whatever rung the rail is.
+  head1: { name: 'Standard Warheads', for: 'rocket', tier: 1, mult: 1.00, reach: 1, pack: 400, price: 4200,
            colour: GRADE_COLOUR[1],
            blurb: 'A mass-produced shaped charge. Any rack fires it.' },
-  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 1.25, reach: 1, pack: 400, price:  900,
+  head2: { name: 'Tandem Warheads',   for: 'rocket', tier: 2, mult: 1.25, reach: 1, pack: 400, price: 6300,
            colour: GRADE_COLOUR[2],
            blurb: 'Two stages, to beat shielding. 20% dearer per point.' },
-  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: TOP_MULT, reach: 1, pack: 400, price: 1260,
+  head3: { name: 'Antimatter Heads',  for: 'rocket', tier: 3, mult: TOP_MULT, reach: 1, pack: 400, price: 8820,
            colour: GRADE_COLOUR[3],
            blurb: 'Unstable, and it lands hard. 40% dearer per point.' },
   // A sustainer is the second-stage motor that keeps a missile flying once the
   // boost is spent, and it is paid for in warhead: the charge comes out to make
-  // room for it. 1.500 cr/point x 1.60 x 2.4375 x 400 = 2340.
+  // room for it. HEAD_BASE 10.500 cr x 1.60 x 2.4375 x 400 = 16380.
   head4: { name: 'Sustainer Heads',   for: 'rocket', tier: 4, mult: REACH_DMG, reach: REACH_MULT,
-           pack: 400, price: 2340, colour: GRADE_COLOUR[4],
+           pack: 400, price: 16380, colour: GRADE_COLOUR[4],
            blurb: 'A bigger motor, a smaller charge. Twice the reach.' },
 };
 
@@ -273,7 +342,7 @@ export function bestTierFor(feed, fit, drones = [], EQUIPMENT) {
   return best;
 }
 
-// Spoken, not spelled: MK is "em-kay", so it is an MK-I and a Swarm Rack.
+// Spoken, not spelled: MK is "em-kay", so it is an MK-I and an Osprey Rack.
 const an = w => /^[aeiou]/i.test(w) || /^(mk|f|h|l|m|n|r|s|x)[^a-z]/i.test(w) ? 'an' : 'a';
 
 // The WEAKEST gun of the right sort you are carrying, and where it is. Buying asks

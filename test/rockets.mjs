@@ -1,12 +1,16 @@
 import { EQUIPMENT, sanitiseFit, sanitiseDrones, MAX_LAUNCHERS } from '../shared/gear.js';
 import { HULLS, resolve, slotsOf, gunsOf } from '../shared/ships.js';
-import { newShip, refit } from '../shared/sim.js';
+import { newShip, refit, step, stepVitals } from '../shared/sim.js';
 import { launch, stepRockets, launcherRoom, launchersIn, isLauncher,
          ROCKET_SPEED, ROCKET_TTL, ROCKET_RATE, SPREAD, ROCKET_R,
          turnRate, TURN_MIN, TURN_MAX, TERMINAL_R, TERMINAL_TURN } from '../shared/rockets.js';
-import { fire } from '../shared/combat.js';
+import { fire, faceTarget } from '../shared/combat.js';
 import { FIRE_RATE } from '../shared/ships.js';
-import { BOOST } from '../shared/power.js';
+import { BOOST, routeTo, boostOf } from '../shared/power.js';
+import { ALIENS, newAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading } from '../shared/aliens.js';
+import { MAPS } from '../shared/maps.js';
+import { roundPrice } from '../shared/ammo.js';
+import { bountyFor, effectiveHp } from '../shared/aliens.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -16,32 +20,65 @@ const check = (name, ok, detail = '') => {
 const dt = 1 / 30;
 const fit = o => ({ weapon: [], generator: [], tech: [], ...o });
 const PODS = Object.keys(EQUIPMENT).filter(isLauncher).sort((a, b) => EQUIPMENT[a].tier - EQUIPMENT[b].tier);
-const rocketsOf = k => EQUIPMENT[k].mods.find(([a]) => a === 'rockets')[2];
 const volleyOf  = k => EQUIPMENT[k].mods.find(([a]) => a === 'rocketVolley')[2];
+// What a rack ACTUALLY puts up, asked of the game rather than read off a mod — the
+// count is derived in resolve() now, which is the whole point of this file's first
+// section. A rack fitted alone throws one rocket carrying its declared damage.
+const railsOf   = (k, n = 1) => resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(n).fill(k) }))).rockets;
+const dmgEachOf = k => { const s = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [k] })));
+                         return s.rocketVolley / s.rockets; };
 
 // A dummy that just sits there, so flight is the only thing under test.
 const mark = (x, y, r = 13) => ({ x, y, vx: 0, vy: 0, r, hp: 1e9, shield: 0, sinceHit: 0,
                                   stats: { hull: 1e9, shield: 0 }, shieldHit: 0 });
 
 console.log('\nthe rack');
-console.log('     ' + PODS.map(k => `${EQUIPMENT[k].name} ${rocketsOf(k)}x${volleyOf(k) / rocketsOf(k)}`).join('   '));
-// Odd numbers, and the reason is the fan: an odd rack keeps one rocket down the
-// aim line with the rest arcing in around it, which is what "none of them is aimed
-// at the target to begin with, except the middle one" below is measuring. The
-// fourth rung is seven for that reason and not because seven came next.
-check('the ladder is one, three, five and seven rockets',
-  PODS.map(rocketsOf).join() === '1,3,5,7' && PODS.every(k => rocketsOf(k) % 2 === 1),
-  'a better launcher throws more, not harder — and always an odd number of them');
-check('a better rack throws more rockets AND heavier ones',
-  PODS.every((k, i) => i === 0 || (rocketsOf(k) > rocketsOf(PODS[i - 1])
-                                && volleyOf(k) / rocketsOf(k) > volleyOf(PODS[i - 1]) / rocketsOf(PODS[i - 1]))),
-  PODS.map(k => `${rocketsOf(k)}x${Math.round(volleyOf(k) / rocketsOf(k))}`).join('  '));
+console.log('     ' + PODS.map(k => `${EQUIPMENT[k].name} 1x${dmgEachOf(k)}`).join('   '));
+// REWRITTEN, not deleted, and the rule it asserts is the opposite of the one it
+// used to. It read "the ladder is one, three, five and seven rockets" and argued for
+// odd numbers, because an odd fan keeps a rocket down the aim line. A rung buys
+// DAMAGE PER ROCKET now and never count: five Cyclone Racks on a Vanguard threw 35
+// rockets sharing 9,150 and now throw five carrying 1,830 each, for the same 9,150.
+// Past two racks the old volley was more objects than a pilot could follow, and 35
+// rows a tick on the wire to say so.
+check('every rack throws exactly one rocket, whatever rung it is',
+  PODS.every(k => railsOf(k) === 1),
+  PODS.map(k => `${EQUIPMENT[k].name} ${railsOf(k)}x${dmgEachOf(k)}`).join('  '));
+check('and five of them throw five, not thirty-five',
+  railsOf(PODS.at(-1), 5) === 5 &&
+  resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(5).fill(PODS.at(-1)) }))).rocketVolley === 5 * volleyOf(PODS.at(-1)),
+  `a finished Vanguard: ${railsOf(PODS.at(-1), 5)} rockets, ` +
+  `${5 * volleyOf(PODS.at(-1))} damage — the same volley, seven times fewer objects`);
+// The old assertion here was "a better rack throws more rockets AND heavier ones".
+// Half of it survives and the other half is now forbidden.
+check('a better rack throws the same one rocket, harder',
+  PODS.every((k, i) => i === 0 || (railsOf(k) === railsOf(PODS[i - 1])
+                                && dmgEachOf(k) > dmgEachOf(PODS[i - 1]))),
+  PODS.map(k => `${dmgEachOf(k)}`).join(' -> '));
 check('and each rung costs more', PODS.every((k, i) => i === 0 || EQUIPMENT[k].price > EQUIPMENT[PODS[i - 1]].price));
 check('two racks of a model land that rocket twice, not one twice as hard', (() => {
   const one = resolve('bulwark', fit({ weapon: [PODS[2]] }));
   const two = resolve('bulwark', fit({ weapon: [PODS[2], PODS[2]] }));
   return two.rockets === one.rockets * 2 && two.rocketVolley / two.rockets === one.rocketVolley / one.rockets;
 })());
+
+// --- and the rule is structural, not a coincidence ----------------------------
+//
+// The count used to be `['rockets','add',7]` on the top rack, which made "one rack,
+// one rocket" a property of four numbers that anybody could retype. It is DERIVED in
+// resolve() now, and these two are what say so: no rack in the shop declares a
+// count, and a rack that did would be ignored.
+check('no launcher in the shop declares a rocket count at all',
+  PODS.every(k => !EQUIPMENT[k].mods.some(([a]) => a === 'rockets')),
+  'the count is derived from how many are mounted, so a rung cannot sell quantity');
+check('and a rack that tried to would be ignored', (() => {
+  EQUIPMENT.__testrack = { name: 'Test Rack', slot: 'weapon', kind: 'rocket', tier: 9, price: 1,
+                           blurb: 'x', mods: [['rockets', 'add', 9], ['rocketVolley', 'add', 100]] };
+  try {
+    const s = resolve('vanguard', fit({ weapon: ['__testrack', '__testrack'] }));
+    return s.rockets === 2;
+  } finally { delete EQUIPMENT.__testrack; }
+})(), 'a mod claiming nine rails still gets one per rack — resolve() writes the count last');
 
 console.log('\nas many as the hull allows, and never on a drone');
 // Rewritten, not deleted: the rule was "three to a ship, however many weapon slots
@@ -56,7 +93,7 @@ check(`a rack takes at most ${MAX_LAUNCHERS} launchers unless the hull says othe
 check('and the Vanguard is the hull that says otherwise',
   sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(6).fill(PODS[2]) })).weapon.length === 5 &&
   slotsOf('vanguard').launchers === 5,
-  'five hardpoints and five racks — 25 rockets a volley, and the one loadout no escort can imitate');
+  'five hardpoints and five racks — five rockets a volley, and the one loadout no escort can imitate');
 check('the fourth is dropped, not the first',
   sanitiseFit(slotsOf('bulwark'), fit({ weapon: [PODS[0], PODS[1], PODS[2], PODS[2]] }))
     .weapon.join() === [PODS[0], PODS[1], PODS[2]].join());
@@ -65,7 +102,8 @@ check('lasers alongside them are untouched',
     .weapon.filter(k => !isLauncher(k)).join() === 'emitter5');
 check('a drone refuses a launcher outright',
   sanitiseDrones([PODS[2], 'emitter5', PODS[0]], {}).join() === ',emitter5,',
-  'six drones with swarm racks would put thirty rockets up on one trigger');
+  `six drones with ${EQUIPMENT[PODS.at(-1)].name}s would add ${(6 * volleyOf(PODS.at(-1))).toLocaleString()} ` +
+  'damage a volley to a hull that already fills five hardpoints with them');
 check('launcherRoom counts down and floors at zero, per hull',
   launcherRoom('bulwark', fit()) === MAX_LAUNCHERS &&
   launcherRoom('bulwark', fit({ weapon: [PODS[0]] })) === MAX_LAUNCHERS - 1 &&
@@ -90,12 +128,20 @@ check('a rocket build still fires the hull cannons', (() => {
 
 console.log('\nthe fan');
 {
-  const s = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [PODS[2]] })));
+  // FIVE RACKS, not one. This block used to fit a single rack and get five rockets,
+  // because the third rung was called the Swarm Rack and threw five. Five rockets is
+  // five racks now, and that is the change stated as a fit rather than as a number.
+  const s = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(5).fill(PODS[2]) })));
   s.heading = 0;
   const tgt = mark(600, 0);        // inside a Fighter's 700px reach
   let salvo = [];
   for (let i = 0; i < 120 && !salvo.length; i++) salvo = launch(s, tgt, dt);
-  check('a Swarm Rack puts five up at once', salvo.length === 5, 'the fan is the point');
+  check('a Vanguard with five racks puts five up at once', salvo.length === 5, 'the fan is the point');
+  check('and they are five WHOLE rockets, not five shares of one',
+    salvo.every(r => Math.abs(r.dmg - salvo[0].dmg) < 1e-9) &&
+    Math.abs(salvo[0].dmg - volleyOf(PODS[2]) * boostOf(s.power, 'weapons', s.stats)) < 1e-6,
+    `${Math.round(salvo[0].dmg)} damage each against the rung's declared ${volleyOf(PODS[2])} — ` +
+    `the volley used to be this number divided by five`);
   const angs = salvo.map(r => r.heading).sort((a, b) => a - b);
   console.log('     launch headings: ' + angs.map(a => (a * 180 / Math.PI).toFixed(0) + '°').join('  '));
   check('they leave spread across the aim line, not down it',
@@ -144,10 +190,12 @@ console.log('\nthe chase');
   check('it is slower to arrive than a bolt would be', r1.hit > r1.len / 1000,
     `${r1.hit.toFixed(2)}s against ${(r1.len / 1000).toFixed(2)}s for a bolt`);
 
-  // The outermost rocket of a five-fan is thrown 66 degrees off and has the
-  // furthest to come back. All five have to land, or the top rack is a downgrade.
+  // The outermost rocket of a five-fan is thrown 109 degrees off and has the
+  // furthest to come back. All five have to land, or the top rack is a downgrade —
+  // and that mattered more the day a rocket went from 261 damage to 1,830, because
+  // the outer pair is now 40% of the volley instead of 6% of it.
   {
-    const s2 = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [PODS[2]] })));
+    const s2 = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(5).fill(PODS[2]) })));
     s2.heading = 0;
     const tgt2 = mark(600, 0);
     let air2 = [];
@@ -196,8 +244,12 @@ console.log('\nnothing sitting still gets away');
     && turnRate(9, 1e9) === TURN_MAX && turnRate(0, TERMINAL_R - 1) === TERMINAL_TURN,
     'far out it holds back, which is what makes the arc');
 
+  // FIVE RACKS. The claim below is still "35 rockets across seven ranges, none
+  // lost" and it is still 35 rockets — it is five rails at seven ranges now instead
+  // of one rack's seven-fan at five. The number that matters is unchanged and the
+  // fit that produces it moved, which is exactly what the rework did.
   const parked = (dist, r) => {
-    const s2 = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [PODS[2]] })));
+    const s2 = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(5).fill(PODS[2]) })));
     s2.heading = 0;
     const tgt = mark(dist, 0, r);
     let air = [];
@@ -216,7 +268,7 @@ console.log('\nnothing sitting still gets away');
   }
   console.log('     a parked bulkhead: ' + line.join('  '));
   check('every rocket lands on something that is not moving', missed === 0,
-    `${shots} rockets across seven ranges, none lost`);
+    `${shots} rockets across seven ranges, none lost — and a lost one is now 1,830 damage, not 261`);
   check('on a small hull too', (() => {
     let lost = 0;
     for (const d of [120, 250, 400, 550, 690]) { const r = parked(d, 10); lost += r.n - r.landed; }
@@ -243,18 +295,18 @@ console.log('\nnothing sitting still gets away');
   const { REACH_MULT } = await import('../shared/ammo.js');
   const FURTHEST = Math.max(...Object.keys(HULLS).map(h => resolve(h).weaponRange)) * REACH_MULT;
   const long = (dist, r, pod) => {
-    const s = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [pod] })));
+    const s = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(5).fill(pod) })));
     s.stats = { ...s.stats, weaponRange: 1e6 };     // the magazine's reach, stood in for
     s.heading = 0;
     const tgt = mark(dist, 0, r);
     let air = [];
     for (let i = 0; i < 400 && !air.length; i++) air = launch(s, tgt, dt);
+    const n = air.length;
     let landed = 0, t = 0, last = 0;
     while (t < ROCKET_TTL + 0.5 && air.length) {
       const h = stepRockets(air, dt); if (h.length) last = t; landed += h.length; t += dt;
     }
-    return { n: PODS.indexOf(pod) >= 0 ? Math.round(EQUIPMENT[pod].mods.find(([a]) => a === 'rockets')[2]) : 0,
-             landed, last };
+    return { n, landed, last };
   };
   let lost = 0, shots = 0, slowest = 0;
   const line = [];
@@ -281,6 +333,113 @@ console.log('\nnothing sitting still gets away');
     'A third doubling, a slower rocket or a shorter TTL is what would take it there');
 }
 
+// --- and none of it breaks against something that MOVES -----------------------
+//
+// The section above is a FLOOR, not a hit rate: nothing in this game stands still.
+// It earned its place because rockets once orbited a parked hulk, and it stays for
+// the same reason — but "none lost against a hulk" says nothing about the fight the
+// weapon is actually used in, and the day a rocket went from 261 damage to 1,830
+// that stopped being good enough. A miss costs seven times what it did.
+//
+// So this is the real measurement: rockets fired at hostiles driven by the actual
+// stepAlienAI, in server.js's own tick order, across the speed range of the
+// bestiary and in three postures — brawling inside 315px, standing off at 595px,
+// and chasing one through the panic run every hostile does under its `flee` line.
+//
+// It is 0.15s of wall clock, which is why it lives here rather than in a script
+// beside the repo that nobody re-runs.
+console.log('\nwhat it does to something that is moving');
+{
+  const MAP = MAPS.d1, AT = { x: 3400, y: 5600 };
+  const shooter = () => {
+    const f = sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(5).fill(PODS.at(-1)) }));
+    const s = newShip(AT.x, AT.y, 'vanguard', f, [], 'wedge', null, 0);
+    routeTo(s.power, 'weapons');
+    s.stats = { ...s.stats, hull: 1e12 }; s.hp = 1e12;
+    return s;
+  };
+  // Fleeing is a RATIO — hp under def.flee x hull — so the panic run is forced with
+  // an enormous hull and a hundredth of it in hit points, NOT by setting hp to 1.
+  // With hp 1 the first rocket to land killed the target and stepRockets discarded
+  // every other rocket in the air as "target gone", which reads as a 34% hit rate
+  // that is really a 100% one. That artefact is what the first draft of this table
+  // measured, and it is the reason the seeker was very nearly rebuilt.
+  const foe = (kind, dist, seed, fleeing) => {
+    const a = newAlien(kind, 5000, MAP, seed, null);
+    a.x = AT.x + dist; a.y = AT.y;
+    a.stats = { ...a.stats, hull: 1e12 };
+    a.hp = fleeing ? 1e10 : 1e12;
+    a.post = null; a.provoked.add(1); a.target = 1;
+    return a;
+  };
+  const run = (kind, { dist, hold, seed, fleeing = false, secs = 30 }) => {
+    const me = shooter(), a = foe(kind, dist, seed, fleeing);
+    let air = [], fired = 0, landed = 0, t = 0;
+    const tick = (launching) => {
+      const here = [{ id: 1, ship: me, haven: false, loud: 1 }];
+      const breaking = stepEvade(a, air.filter(r => r.target === a), MAP, dt);
+      const tgt = stepAlienAI(a, MAP, here, dt);
+      const victim = tgt ? here.find(c => c.id === tgt) : null;
+      step(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
+      if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = jinkHeading(a, victim?.ship);
+      else faceTarget(a, victim?.ship);
+      if (fleeing) a.hp = 1e10;
+      // The pilot flies it: holds at `hold` of the rack's reach, so it closes on
+      // something running and backs off something crowding. A parked shooter turns
+      // "the target left" into "the rocket missed".
+      const want = me.stats.weaponRange * hold, d = Math.hypot(a.x - me.x, a.y - me.y) || 1;
+      me.tx = a.x - (a.x - me.x) / d * want; me.ty = a.y - (a.y - me.y) / d * want;
+      me.dx = me.dy = null;
+      step(me, dt); stepVitals(me, dt, false);
+      faceTarget(me, a);
+      if (launching) { const salvo = launch(me, a, dt); fired += salvo.length; for (const r of salvo) air.push(r); }
+      landed += stepRockets(air, dt).length;
+    };
+    while (t < secs) { tick(true); t += dt; }
+    // Let whatever is up finish or burn out, so nothing counts as lost merely for
+    // being in the air when the clock stopped.
+    for (let i = 0; i < Math.ceil((ROCKET_TTL + 1) / dt) && air.length; i++) tick(false);
+    return { fired, landed };
+  };
+  const CASES = [['brawl', { dist: 400, hold: 0.45 }], ['standoff', { dist: 700, hold: 0.85 }],
+                 ['fleeing', { dist: 600, hold: 0.85, fleeing: true }]];
+  const KINDS = ['hive', 'kedge', 'ironhusk', 'leviathan', 'drifter', 'harrier', 'bandit'];
+  const rate = {};
+  console.log('     hostile         speed  evades      brawl  standoff   fleeing');
+  for (const k of KINDS) {
+    rate[k] = {};
+    const cells = [];
+    for (const [name, opt] of CASES) {
+      let f = 0, l = 0;
+      for (const seed of [7, 19, 31]) { const r = run(k, { ...opt, seed }); f += r.fired; l += r.landed; }
+      rate[k][name] = 100 * l / f;
+      cells.push(`${(100 * l / f).toFixed(0)}%`.padStart(10));
+    }
+    console.log(`     ${ALIENS[k].name.padEnd(15)}${String(ALIENS[k].attrs.speed).padStart(4)}` +
+                `${ALIENS[k].evades ? '     yes' : '      no'}${cells.join('')}`);
+  }
+  const STEADY = KINDS.filter(k => !ALIENS[k].evades);
+  check('a rocket lands on anything in the bestiary that is not built to dodge',
+    STEADY.every(k => rate[k].brawl === 100 && rate[k].standoff === 100),
+    'twelve fights from a Corsair Hive at 110 to a Harrier at 380, brawling and standing off: ' +
+    'every rocket fired, every rocket landed');
+  check('and it still lands on one running for its life',
+    STEADY.filter(k => rate[k].fleeing === 100).length === STEADY.length - 1 &&
+    rate.harrier.fleeing > 85,
+    `the Harrier is the one that gets away with any of it — ${rate.harrier.fleeing.toFixed(0)}% ` +
+    `at 380 speed against a ${ROCKET_SPEED}px/s rocket with ${ROCKET_TTL}s of motor, and ` +
+    'everything slower than it loses nothing');
+  // The one hostile the seeker is NOT allowed to solve. Evasion is a Bandit's whole
+  // reason to exist and camouflage is the same mechanic seen from the other side —
+  // a floor as well as a ceiling, because a dodge nobody can beat is a health bar
+  // behind a curtain.
+  check('and a Bandit still dodges better than a third of it',
+    rate.bandit.brawl > 30 && rate.bandit.brawl < 80,
+    `${rate.bandit.brawl.toFixed(0)}% lands in a brawl, ${rate.bandit.fleeing.toFixed(0)}% on one running — ` +
+    'a seeker that leads its target was built for this table, measured, and rejected: it ' +
+    'moved nothing except this row, and it moved it the wrong way');
+}
+
 console.log('\nwhat a rack is worth');
 {
   const TOP = 'emitter5', POD = PODS[2];
@@ -294,7 +453,7 @@ console.log('\nwhat a rack is worth');
   const share = podSlots / gunSlots;
   const WEDGE = 1.12;
   console.log(`     three MK-V in the rack:  ${Math.round(gunSlots)} dps, every bolt dodgeable at range`);
-  console.log(`     three Swarm Racks:       ${Math.round(podSlots)} dps, ` +
+  console.log(`     three Osprey Racks:      ${Math.round(podSlots)} dps, ` +
               `${Math.round(pods.rockets)} rockets a volley that follow you`);
   // A launcher costs you a slot you cannot get back — three to a ship, none on a
   // drone — so out of that slot it has to beat the gun it replaced. It did not,
@@ -332,6 +491,45 @@ console.log('\nwhat a rack is worth');
   const plain  = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [POD, POD, POD] })), escort, 'line');
   check('the Attack Wedge lifts rockets too', wedged.rocketVolley > plain.rocketVolley,
     'otherwise it reads as "fit lasers"');
+  // And it lifts the DAMAGE, never the count. A percentage of a rocket is not a
+  // thing, and resolve() writes the count after the multipliers so nothing can try.
+  check('but it cannot conjure a sixth rocket out of five racks',
+    wedged.rockets === plain.rockets && wedged.rockets === 3,
+    'a formation multiplies what a rack lands, not how many rails it has');
+}
+
+// --- what it costs to feed --------------------------------------------------
+//
+// A warhead arms one rocket, and a rocket is now seven times the thing it was at
+// the top of the ladder. If the price had stayed where it was, the endgame
+// ammunition bill would have fallen sevenfold overnight — measured, from 0.631% of
+// the bounty on what you shot to 0.090%, which is a 1,110-fold return on the crate.
+// The shelf has been that wrong before in both directions and shared/ammo.js names
+// both times.
+console.log('\nwhat it costs to feed');
+{
+  const perPoint = k => {
+    const s = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [k] })));
+    return s.rockets * roundPrice('head1') / s.rocketVolley;
+  };
+  console.log('     ' + PODS.map(k => `${EQUIPMENT[k].name} ${perPoint(k).toFixed(4)}`).join('   ') + ' cr a point');
+  check('a Cyclone volley costs exactly what it cost before the rework',
+    Math.abs(railsOf(PODS.at(-1)) * roundPrice('head1') - 10.5) < 1e-9,
+    `one warhead at ${roundPrice('head1').toFixed(2)} cr against seven at 1.50 — 10.50 either way, for 1,830 points`);
+  check('and climbing the rack ladder still makes every point of damage cheaper',
+    PODS.every((k, i) => i === 0 || perPoint(k) < perPoint(PODS[i - 1])),
+    PODS.map(k => perPoint(k).toFixed(4)).join(' > '));
+  // Scale-free, because a bounty is farmHp x BOUNTY_RATE: the share is the same for
+  // a Drifter and for a Crucible, which is what makes it one number to argue about.
+  const s = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: [PODS.at(-1)] })));
+  const crPerPoint = s.rockets * roundPrice('head1') / (s.rocketVolley * (1 + s.boost));
+  const share = k => 100 * effectiveHp(k) * crPerPoint / bountyFor(k);
+  console.log(`     a Crucible: ${Math.round(effectiveHp('crucible') * crPerPoint).toLocaleString()} cr of warheads ` +
+              `against a ${bountyFor('crucible').toLocaleString()} cr bounty`);
+  check('and feeding the top rack costs the same share of a bounty it always did',
+    Math.abs(share('crucible') - 0.631) < 0.01 && Math.abs(share('drifter') - share('crucible')) < 1e-9,
+    `${share('crucible').toFixed(3)}% of the bounty, a ${Math.round(1 / (share('crucible') / 100)).toLocaleString()}-fold ` +
+    'return — the same for every hostile in the game, because a bounty is effective hp x BOUNTY_RATE');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`

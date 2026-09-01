@@ -180,46 +180,70 @@ export const EQUIPMENT = {
               blurb: 'More gun than the mount was built for. You wear the weight.',
               mods: [['damage', 'add', 700], ['speed', 'add', -3.5]] },
 
-  // Launchers — the other thing a weapon slot will take. Three to a ship, never on
-  // a drone. Each rack shadows a rung of the emitter ladder and beats it: about a
-  // fifth more damage out of the same slot, for about a sixth more money. That
-  // premium is what pays for the three real costs — the cap of three however many
-  // slots the hull has, no drone ever carrying one, and a second or two in the air
-  // before any of it lands. Without it there was no reason to fit one at all.
-  // Damage is declared for the whole volley, so two racks of the same model land
-  // the same rocket twice rather than one twice as hard.
+  // Launchers — the other thing a weapon slot will take. Three to a ship unless the
+  // hull says otherwise, never on a drone. Each rack shadows a rung of the emitter
+  // ladder and beats it: about a fifth more damage out of the same slot, for about a
+  // sixth more money. That premium is what pays for the three real costs — the cap
+  // however many slots the hull has, no drone ever carrying one, and a second or two
+  // in the air before any of it lands. Without it there was no reason to fit one.
+  //
+  // --- ONE RACK, ONE ROCKET -----------------------------------------------------
+  //
+  // A rung buys DAMAGE PER ROCKET and never count. It used to buy both: the ladder
+  // carried `['rockets','add',1/3/5/7]` alongside the damage, so five Cyclone Racks
+  // on a Vanguard threw 35 rockets a volley for 9,150 — 261 apiece — and past the
+  // second rack there was nothing on screen a pilot could follow. The same five
+  // racks now throw FIVE rockets for the same 9,150, 1,830 apiece.
+  //
+  // The numbers below did not move. `rocketVolley` was already declared per rack
+  // and summed across the rack, so the volley total is what it always was; what
+  // changed is that it is no longer divided by a fan. Read one row at a time it is
+  // now simply what one rocket of that rung lands, and the ladder is
+  //
+  //     Sparrow   120     Shrike  576     Osprey 1050     Cyclone  1830
+  //
+  // Count is DERIVED — resolve() sets it from how many launchers are mounted and
+  // ignores any mod claiming otherwise, so a rack added later cannot quietly go back
+  // to selling quantity. Two racks of the same model still land that rocket twice
+  // rather than one twice as hard.
   pod1: { name: 'Sparrow Pod', slot: 'weapon', kind: 'rocket', tier: 1, price:  3200,
           blurb: 'One rocket. It will find you.',
-          mods: [['rockets', 'add', 1], ['rocketVolley', 'add', 120]] },
-  pod2: { name: 'Triad Rack',  slot: 'weapon', kind: 'rocket', tier: 2, price: 19000,
-          blurb: 'Three, thrown wide and closing.',
-          mods: [['rockets', 'add', 3], ['rocketVolley', 'add', 576]] },
-  pod3: { name: 'Swarm Rack',  slot: 'weapon', kind: 'rocket', tier: 3, price: 40000,
-          blurb: 'Five. Turning away only buys you a second.',
-          mods: [['rockets', 'add', 5], ['rocketVolley', 'add', 1050]] },
+          mods: [['rocketVolley', 'add', 120]] },
+  // RENAMED, because the old names were counts and the count is gone. A Triad Rack
+  // that throws one rocket and a Swarm Rack that throws one rocket are two names
+  // that actively lie about the thing they are on, which is worse than a name that
+  // says nothing. The two that did not lie kept theirs: a Sparrow is small and a
+  // Cyclone is a single storm rather than a number of them, so the ladder now reads
+  // as one warhead getting heavier — sparrow, shrike, osprey, and then the weather.
+  pod2: { name: 'Shrike Rack',  slot: 'weapon', kind: 'rocket', tier: 2, price: 19000,
+          blurb: 'A warhead with weight behind it. Light hulls come apart.',
+          mods: [['rocketVolley', 'add', 576]] },
+  pod3: { name: 'Osprey Rack',  slot: 'weapon', kind: 'rocket', tier: 3, price: 40000,
+          blurb: 'Heavy enough that turning away only buys you a second.',
+          mods: [['rocketVolley', 'add', 1050]] },
   // The fourth rack, beside the sixth emitter and sold at the same counter. The
   // shadow above is not a figure of speech — it is exact, and it is what this is
   // derived from. Measured against the ladder it shadows, in delivered dps:
   //
   //   Sparrow Pod  66.0 against an MK-II's   54.0   x1.2222
-  //   Triad Rack  316.8 against an MK-IV's  264.0   x1.2000
-  //   Swarm Rack  577.5 against an MK-V's   480.0   x1.2031
+  //   Shrike Rack 316.8 against an MK-IV's  264.0   x1.2000
+  //   Osprey Rack 577.5 against an MK-V's   480.0   x1.2031
   //   Cyclone Rack 1006.5 against an MK-VI's 840.0  x1.1982
   //
   // so `rocketVolley` is 700 x FIRE_RATE x 1.20 / ROCKET_RATE = 1832.7, and 1830 is
-  // that to within 0.15% — the same rounding the Swarm Rack's 1050 already carries.
-  // Seven rails, because the ladder is odd numbers and an odd fan keeps a rocket
-  // down the middle with the rest arcing in around it.
+  // that to within 0.15% — the same rounding the Osprey Rack's 1050 already carries.
+  // That is now the damage of ONE rocket, and it is the biggest single thing any
+  // weapon in the game puts in the air.
   //
   // Price is the shadow's, in the shelf's own currency: the racks charge
   // DELIVERY_PREMIUM over the emitter they beat — 1.231, 1.1875, 1.176 measured —
   // so 1,500,000 x 1.18 = 1,770,000. It gives up what every launcher gives up and
   // it is the reason the cap exists: never on a drone, and never more than the hull
-  // allows, so five of these on a Vanguard is 35 rockets a volley and no escort in
-  // the game can imitate it.
+  // allows, so five of these on a Vanguard is a five-rocket volley worth 9,150 and
+  // no escort in the game can imitate it.
   pod4: { name: 'Cyclone Rack', slot: 'weapon', kind: 'rocket', tier: 4, price: 1770000,
-          blurb: 'Seven, and the sky closes.',
-          mods: [['rockets', 'add', 7], ['rocketVolley', 'add', 1830]] },
+          blurb: 'One rocket. Whatever it reaches stops existing.',
+          mods: [['rocketVolley', 'add', 1830]] },
 
   // generators — reactor gear. Capacitor, recharge and the free trickle.
   cellA: { name: 'A-Cell Generator', slot: 'generator', tier: 1, price:  1200,
@@ -485,7 +509,7 @@ export const EQUIPMENT = {
   // The cross-system version: one dps product bought out of the other. A drone
   // can never carry a launcher, so the rack is capped at three however big the
   // hull — which is what stops this being a general damage multiplier. Measured:
-  // +25% on a Hauler with one Sparrow Pod, +33% on a Bulwark with three Swarm
+  // +25% on a Hauler with one Sparrow Pod, +33% on a Bulwark with three Osprey
   // Racks, -12% on the same Bulwark once twelve drones are carrying emitters, and
   // a flat -30% for anyone with no rack at all. It only pays the build that gave
   // something up to earn it.

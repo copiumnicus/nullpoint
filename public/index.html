@@ -2052,12 +2052,16 @@ const fmt = v => Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
 const headline = k => {
   const e = EQUIPMENT[k];
   const pick = a => e.mods.find(([n]) => n === a);
-  const m = pick(e.kind === 'rocket' ? 'rockets' : e.slot === 'weapon' ? 'damage'
+  // A launcher's headline is what its ONE rocket lands. It used to read the
+  // `rockets` mod and print "7 rockets", which was the number that told you which
+  // rack you wanted when a rung bought quantity. A rung buys damage now — every rack
+  // throws exactly one — so the count says nothing and the warhead says everything.
+  const m = pick(e.kind === 'rocket' ? 'rocketVolley' : e.slot === 'weapon' ? 'damage'
               : e.slot === 'generator' ? 'shield' : null) ?? e.mods[0];
   if (!m) return '';
   const [attr, op, v] = m;
   return op === 'mul' ? `${ATTRS[attr].label} ${v > 0 ? '+' : ''}${Math.round(v * 100)}%`
-       : attr === 'rockets' ? `${v} rocket${v === 1 ? '' : 's'}`
+       : attr === 'rocketVolley' ? `${fmt(v)} a rocket`
        : `${v > 0 ? '+' : ''}${fmt(v)} ${ATTRS[attr].label.toLowerCase()}`;
 };
 
@@ -3962,7 +3966,12 @@ function drawFrame(now) {
     for (const r of rockets) {
       const c = Math.cos(r.h), sn = Math.sin(r.h);
       const x = r.x + c * ahead, y = r.y + sn * ahead;
-      const len = 7 + Math.min(6, Math.sqrt(Math.max(0, r.w)) * 0.35);
+      // How big a rocket is drawn, from what it carries. It used to be
+      // `min(6, sqrt(w) * 0.35)`, which was tuned when the whole ladder ran 120 to
+      // 261 a rocket — every rung above the second saturated the clamp, and now that
+      // a Cyclone's rocket is 1,830 EVERY rung would. A rack you paid 1.77m for has
+      // to look like it. 120 -> 9.6px, 576 -> 12.8, 1050 -> 14.8, 1830 -> 17.
+      const len = 7 + Math.min(10, Math.sqrt(Math.max(0, r.w)) * 0.24);
       g.save(); g.translate(x, y); g.rotate(r.h);
       // exhaust first, so the body sits on top of it
       const flame = 12 + Math.sin(now / 40 + x) * 4;

@@ -241,7 +241,7 @@ console.log('\nthe fight');
   const row = (l, r) => `     ${l.padEnd(22)}${(r.killed ? r.secs.toFixed(1) + 's' : '90s+').padStart(6)}   ` +
     `${String(Math.round(r.hit * 100)).padStart(3)}% land   visible ${Math.round(r.seen * 100)}%`;
   console.log(row('MK-V lasers', guns));
-  console.log(row('Swarm Racks', pods));
+  console.log(row('Osprey Racks', pods));
   console.log(row('if it never dodged', still));
   console.log(row('a Drifter, for scale', soft));
 

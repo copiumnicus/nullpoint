@@ -69,10 +69,20 @@ export const ATTRS = {
   capacitor:   { label: 'Capacitor',    unit: 's',   dflt:   45, better: 'high', min: 1 },
   recharge:    { label: 'Recharge',     unit: '/s',  dflt:  1.8, better: 'high', min: 0.1 },
   sustain:     { label: 'Free output',  unit: '',    dflt: 0.33, better: 'high', min: 0, max: 0.9 },
-  // Rockets are counted and paid for as a volley, not per launcher: adding a
-  // rack adds both its rockets and its share of the damage, so two racks of the
-  // same model land the same rocket twice rather than one twice as hard.
+  // ONE ROCKET PER RACK, and it is derived rather than fitted — see resolve(),
+  // which sets it from how many launchers are actually mounted and lets no mod
+  // near it. A rack's TIER buys damage per rocket; it never buys count. Five
+  // Cyclone Racks on a Vanguard are five rockets, not thirty-five.
+  //
+  // It stays in ATTRS because the stat page, the breakdown and the shop tip all
+  // read it like any other row. Nothing may FIT it, which is why resolve() writes
+  // it beside `boost` and `berths` rather than in the mod loop.
   rockets:     { label: 'Rockets',      unit: '',    dflt:    0, better: 'high', min: 0 },
+  // Declared per RACK, and a rack throws one rocket — so this is what one rocket
+  // carries, and the ship-wide number is what the whole volley lands. Two racks of
+  // the same model land that rocket twice rather than one twice as hard, which is
+  // the same sentence it has always been; what changed is that the second rocket
+  // is a second RAIL rather than a seventh of a fan.
   rocketVolley:{ label: 'Rocket volley', unit: '',   dflt:    0, better: 'high', min: 0 },
 
   // --- the escort ------------------------------------------------------------
@@ -274,7 +284,12 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
   const out = {}, pct = {};
   for (const [k, a] of Object.entries(ATTRS)) out[k] = hull.attrs[k] ?? a.dflt;
 
+  // How many launchers are actually mounted, counted in the same pass that reads
+  // their mods so the two can never be looking at different fits. See `out.rockets`
+  // at the bottom: the COUNT is this number and nothing else may touch it.
+  let racks = 0;
   for (const key of [...fitList(fit), ...droneItems(drones)]) {
+    if (EQUIPMENT[key]?.kind === 'rocket') racks++;
     for (const [attr, op, v] of EQUIPMENT[key]?.mods ?? []) {
       if (!(attr in out)) continue;                       // unknown attribute: ignore, never crash
       if (op === 'add') out[attr] += v;
@@ -345,6 +360,23 @@ export function resolve(hullKey, fit = emptyFit(), drones = [], formation = DEFA
   // It is on the stat block because it is the only place a pilot can be shown where
   // two extra bays came from. shared/breakdown.js draws it as the fifth layer.
   out.berths = baysOf(hullKey, extra);
+  // ONE ROCKET PER RACK. Written here, last, and deliberately not as a mod.
+  //
+  // It used to be `['rockets','add',7]` on the Cyclone Rack and 1/3/5 on the three
+  // below it, which made "a better launcher throws more of them" a property of four
+  // numbers rather than a rule: five Cyclones on a Vanguard came out at 35 rockets a
+  // volley, sharing 9,150 damage 261 at a time, and past two racks nobody could
+  // count what was in the air. Fitting a fifth rack now adds a fifth ROCKET, and the
+  // rung you bought decides how hard that one rocket lands.
+  //
+  // Derived rather than added so a rack CANNOT break it by carrying the wrong mod —
+  // that is the whole reason it moved. It is written after the `pct` loop as well,
+  // so no technology and no formation can multiply a count: the fan is the number of
+  // things you bolted on, and a percentage of a rocket is not a thing.
+  //
+  // Aliens are untouched: they never go through resolve(), they declare `rockets`
+  // on their own stat block, and a hostile fan is a fact about that hostile.
+  out.rockets = racks;
   return out;
 }
 
