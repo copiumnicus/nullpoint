@@ -270,10 +270,23 @@ console.log('\nbreaking off when it is losing');
 
   const cornered = hurt(0.05); cornered.x = 700; cornered.y = 700;
   const pursuer = newShip(1200, 1200, 'vanguard');
+  const corner0 = { x: cornered.x, y: cornered.y };
   fight(cornered, pursuer, 20);
   check('running never takes it out of charted space',
     cornered.x > 0 && cornered.y > 0 && cornered.x < MAP_W && cornered.y < MAP_H
     && cornered.hp === cornered.stats.hull * 0.05, 'no shear damage taken');
+  // REWRITTEN, and this is the assertion that was missing rather than wrong. The
+  // claim above is satisfied by a hostile that does not move at all — standing
+  // still is comfortably inside charted space — so it passed for as long as the
+  // bug existed. A fleeing hostile with its back to an edge had its escape point
+  // CLAMPED onto its own position and stopped dead: measured at m2's east edge,
+  // 15px of flight against 1,267 in the open, and 24 out of a corner. The
+  // designer reported it twice. Running now turns until it finds room, so it
+  // slides along the wall rather than pressing into it.
+  check('and a cornered runner still actually runs',
+    Math.hypot(cornered.x - corner0.x, cornered.y - corner0.y) > 900,
+    `${Math.round(Math.hypot(cornered.x - corner0.x, cornered.y - corner0.y))}px out of a corner in 20s — ` +
+    'it was 24, because a clamped escape point put the destination where it already stood');
 
   const escaped = foe(3000, 3000, 8);
   escaped.hp = escaped.stats.hull * 0.1; escaped.sinceHit = 0;
