@@ -260,19 +260,87 @@ console.log('\nwhat a rung is worth, in your own numbers');
     R.rungGain(top, 'hull', st) === null, 'the row says it is the top instead');
 }
 
+console.log('\nthe tech tree');
+{
+  const { holdValue, pocketValue } = await import('../shared/cargo.js');
+  const bought = R.addMod(0, 'pocket1');
+  check('the tree is a second family on the SAME mask, not a second mask',
+    R.TREE.every(line => R.tiersOf(line).length > 0) &&
+    R.hasPocket(bought) && !R.hasPocket(0) && R.sanitiseMods(bought) === bought,
+    `${R.MODULE_KEYS.length} modules of ${R.MAX_MODULES} — ${R.MAX_MODULES - R.MODULE_KEYS.length} bits ` +
+    'of headroom left, so a tree upgrade costs nothing on the account and nothing on the wire');
+  // A tree entry is its own line with one tier on it, which is what lets every
+  // ladder function work on it unchanged. Two upgrades sharing a line would make
+  // the second say "you are already past this one" the moment you bought the first.
+  check('a tree upgrade is a ladder line with one rung, so it climbs like everything else',
+    R.TREE.every(line => R.tiersOf(line).length === 1) &&
+    R.rowState(0, 'pocket', 1e12).next === 'pocket1' && R.rowState(bought, 'pocket', 0).done,
+    R.TREE.map(l => `${l}: ${R.tiersOf(l).join(', ')}`).join(' · ') + ' — one line per upgrade');
+  check('it refuses in the same words the ladder does, from the same function',
+    R.whyNotBuild('pocket1', { credits: 0, mask: 0, near: true }) === `costs ${R.POCKET_PRICE} cr — you cannot pay yet` &&
+    R.whyNotBuild('pocket1', { credits: 1e12, mask: 0, near: false }) === 'fly to your station to build on it' &&
+    R.whyNotBuild('pocket1', { credits: 1e12, mask: bought, near: true }) === 'already built',
+    'one whyNotBuild, so the panel can never offer something the server then declines');
+  // The whole anti-pay-to-win argument for putting it on the research station: it
+  // is bought with credits and it does not touch a single number on the ship, so
+  // no pilot is harder to kill for owning one and the stats page owes it nothing.
+  const st = { hull: 1900, shield: 3700, damage: 500, speed: 300, cargo: 120 };
+  check('the tree buys income and not power — nothing on the ship moves',
+    JSON.stringify(R.applyResearch(st, bought)) === JSON.stringify(st) &&
+    R.incomeOf(bought) === 0,
+    'a Pocket Dimension is worth credits per hour and zero hit points, so a pilot who owns one ' +
+    'is exactly as easy to kill as a pilot who does not');
+  check('and it is priced in the hold you are actually carrying, not in prose',
+    (() => {
+      const g2 = R.treeGain('pocket1', { platinum: 180, iridium: 24 });
+      return g2 && g2.worth === holdValue({ platinum: 180, iridium: 24 })
+                && g2.paid === pocketValue({ platinum: 180, iridium: 24 }) && /\d/.test(g2.label);
+    })(),
+    R.treeGain('pocket1', { platinum: 180, iridium: 24 }).label +
+    ' — "sells your ore" is a fact about the module, a number is a fact about you');
+  check('an empty hold is told what the module does rather than quoted a zero',
+    !/0/.test(R.treeGain('pocket1', {}).label) && R.treeGain('pocket1', {}).worth === 0,
+    R.treeGain('pocket1', {}).label);
+  // Named because it was a real bug for one draft: rungGain read
+  // `line === 'hull' ? 'hull' : 'shield'`, so the tree page quoted a Pocket
+  // Dimension as a shield upgrade the first time it drew.
+  check('a tree line has no rung to quote on the ladder page, and says so rather than guessing',
+    R.rungGain(0, 'pocket', { hull: 1900, shield: 3700 }) === null,
+    'it is priced in what it pays, not in what it makes your ship');
+  check('an upgrade nobody has written a gain line for still draws, from `does`',
+    R.treeGain('nothing-yet', {}) === null,
+    'rule seven: the second tree entry is a row of data, and it works before anybody prices it');
+}
+
 console.log('\nthe panel');
 {
   for (const [w, h] of [[1600, 900], [1024, 700], [420, 380]]) {
-    const L = R.labPanel(w, h);
-    const inside = r => r.x >= L.panel.x && r.y >= L.panel.y
-                     && r.x + r.w <= L.panel.x + L.panel.w && r.y + r.h <= L.panel.y + L.panel.h;
-    // `L.rows.every(inside)` passes every() the INDEX as the second argument, which
-    // is harmless here but was not when `inside` took the row rather than its rect.
-    check(`at ${w}x${h} every row is inside the panel and on the screen`,
-      L.panel.x >= 0 && L.panel.y >= 0 && L.panel.x + L.panel.w <= w
-      && L.rows.every(row => inside(row.r)),
-      `${L.rows.length} rows, panel ${L.panel.w}x${L.panel.h}`);
+    // Every PAGE, not just the first. The strip is drawn from the same rectangles
+    // the click handler tests, and a tab you can see and cannot press is the same
+    // bug as a row outside its panel — which this codebase has shipped twice.
+    for (const tab of R.LAB_TAB_KEYS) {
+      const L = R.labPanel(w, h, tab);
+      const inside = r => r.x >= L.panel.x && r.y >= L.panel.y
+                       && r.x + r.w <= L.panel.x + L.panel.w && r.y + r.h <= L.panel.y + L.panel.h;
+      // `L.rows.every(inside)` passes every() the INDEX as the second argument, which
+      // is harmless here but was not when `inside` took the row rather than its rect.
+      check(`at ${w}x${h} the ${tab} page keeps every row and every tab inside the panel`,
+        L.panel.x >= 0 && L.panel.y >= 0 && L.panel.x + L.panel.w <= w
+        && L.rows.every(row => inside(row.r)) && L.tabs.every(t2 => inside(t2.r)),
+        `${L.rows.length} rows, ${L.tabs.length} tabs, panel ${L.panel.w}x${L.panel.h}`);
+    }
+    // One size on every page, so switching tabs never moves a row under the cursor
+    // — a click landing on the row you were not looking at is the same bug as a
+    // row you cannot click at all.
+    const boxes = R.LAB_TAB_KEYS.map(k => JSON.stringify(R.labPanel(w, h, k).panel));
+    check(`at ${w}x${h} the panel is one size whichever page is on it`,
+      new Set(boxes).size === 1, `${R.LAB_TAB_KEYS.length} pages, ${boxes[0]}`);
   }
+  check('every page has somewhere to go, and the tab strip names all of them',
+    R.LAB_TABS.length === R.LAB_TAB_KEYS.length &&
+    R.LAB_TABS.every(t2 => t2.name && R.labPanel(1600, 900, t2.key).rows.length > 0) &&
+    R.labPanel(1600, 900, 'nonsense').tab === 'ladder',
+    R.LAB_TABS.map(t2 => t2.name).join(' · ') + ' — and an unknown page falls back rather than drawing an empty box');
   const st = R.rowState(0, 'hull', 1e12);
   check('a fresh ladder offers its first rung by name and price',
     st.tier === 0 && st.next === 'hull1' && st.price === R.MODULES.hull1.price && !st.done,

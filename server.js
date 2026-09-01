@@ -11,7 +11,8 @@ import { DEV_ID, PROPS, PEN_SLOTS, BENCH_SLOTS, propFit } from './shared/devmap.
 import { respawnDelay } from './shared/spawn.js';
 import { sanitiseKills } from './shared/threats.js';
 import { LAB_PRICE, MODULES, claimPlot, plotAt, plotsFor, incomeOf, earnedOver,
-         cappedSecs, addMod, whyNotStake, whyNotBuild, nearLab, applyResearch } from './shared/research.js';
+         cappedSecs, addMod, whyNotStake, whyNotBuild, nearLab, applyResearch,
+         hasPocket, POCKET_EVERY } from './shared/research.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy,
          whyNotLoad, loadable } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
@@ -56,8 +57,8 @@ import * as store from './store.js';
 import crypto from 'node:crypto';
 import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop, approachPod,
          POD_LIFE, SCOOP_R, SCOOP_TIME, droneSpeed, rigAt, DWELL, mayScoop,
-         pirateValue, PIRATE_RATE, claimLapsed, CLAIM_TIME, tollOn, DEATH_TOLL,
-         BOND } from './shared/cargo.js';
+         pirateValue, PIRATE_RATE, pocketValue, claimLapsed, CLAIM_TIME,
+         tollOn, DEATH_TOLL, BOND } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD,
          mapOf, arenaId, isArena } from './shared/maps.js';
 import { ARENAS, countOf, postsFor, arrivalAt,
@@ -2142,6 +2143,47 @@ setInterval(() => {
     if (p.lab && incomeOf(p.lab.mods) > 0 && wall - (p.paidAt ?? 0) >= 1000) {
       p.paidAt = wall;
       if (bankLab(p, wall)) touch(p);
+    }
+    // The Pocket Dimension: the hold goes to your own hangar and comes back as
+    // credits, every POCKET_EVERY seconds, wherever you are.
+    //
+    // Date.now() and not the tick's `now`, for exactly the reason bankLab is on
+    // the wall clock two lines up — the tick counts from when the process started,
+    // and mixing the two is what made the mine pay nothing for a day. This does
+    // not accrue offline the way the mine does, and that is the point rather than
+    // an omission: a mine keeps working while you are away, a dimension sells what
+    // is IN YOUR SHIP, and your ship is not out there when you are not.
+    //
+    // `soldAt` is seeded on the first tick a pilot owns one rather than at login,
+    // so buying it does not pay out on the same frame — the first sale is a full
+    // period after it starts working, which is also what stops a reconnect being
+    // a way to skip the wait.
+    //
+    // NOT INSIDE A DUEL, and it is the same shape of rule as the shield line above:
+    // a duel's stake is a tenth of your credits AND THE WHOLE HOLD, so a hold that
+    // sells itself thirty seconds in is not a stake. It would let a pilot carry a
+    // full hold into a fight, watch it turn into a balance that is only a tenth at
+    // risk, and put nothing of it on the table. A claim needs no such line because
+    // shared/arena.js already refuses to let you enter one carrying anything.
+    if (p.lab && hasPocket(p.lab.mods) && !isDuelMap(here)) {
+      if (p.soldAt === undefined) p.soldAt = wall;
+      if (wall - p.soldAt >= POCKET_EVERY * 1000) {
+        p.soldAt = wall;
+        const units = Object.values(p.hold).reduce((t, n) => t + n, 0);
+        // The clock runs whether or not there was anything to sell — it is the
+        // dimension's cycle, not a queue — but an empty hold says nothing. A
+        // message every thirty seconds forever, most of them reporting zero, is
+        // the spam this readout was designed around: the client anchors its
+        // countdown on the last real sale and runs its own clock between them.
+        if (units > 0) {
+          const paid = pocketValue(p.hold);
+          p.hold = {};
+          p.credits += paid;
+          touch(p);
+          if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sold', cr: paid, units,
+                                                               credits: p.credits }));
+        }
+      }
     }
     // Composite Plating is re-seated whenever you are standing at a dock, which is
     // what makes the save once per OUTING rather than once per life: a pilot who

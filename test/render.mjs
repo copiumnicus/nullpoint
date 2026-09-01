@@ -17,7 +17,7 @@ import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packSown } from '../shared/net.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
-import { MATERIALS } from '../shared/cargo.js';
+import { MATERIALS, fmtCredits } from '../shared/cargo.js';
 import { ALIENS, WILD } from '../shared/aliens.js';
 import { SIGHT_R } from '../shared/sim.js';
 import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
@@ -1359,6 +1359,96 @@ const dismiss = () => {
   if (!out.some(c => /^fillText Someone /.test(c)))
     errs.push("another pilot's research station was drawn without their name on it");
   else console.log('research: every station in the ring is drawn and named, yours and theirs');
+}
+
+// The TECH TREE: the third page of the research station, and the one thing on it.
+//
+// Driven rather than drawn, because the whole point of this harness is that two
+// helper functions once went missing while every frame still rendered. A tab that
+// draws and does not switch, and a row that draws and does not sell, are both
+// bugs this file has caught before — in this exact panel.
+{
+  dismiss();
+  const ring = MAPS.m1.base;
+  const at = { x: ring.x + 400, y: ring.y };
+  const me = (x, y) => packShip({ id: 1, x, y, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+    hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, name: 'Vy' });
+  const bare = packLab({ id: 2_000_001, x: at.x, y: at.y, mods: 0, name: 'Vy' }, true);
+  const load2 = { platinum: 120, iridium: 20 };
+
+  // Standing at the station with the money, holding a hold worth having.
+  feed({ t: 'map', map: 'm1' });
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 20_000_000, docked: false,
+         labs: [bare], lab: { mods: 0, income: 0 }, claims: [], hold: load2, cap: 300 });
+  evt('keydown', { key: 'r' }); frame(t += 16); frames++;
+  const L3 = labPanel(innerWidth, innerHeight, 'tree');
+  const strip = labPanel(innerWidth, innerHeight);           // the tabs are the same on every page
+  const tab = strip.tabs.find(x => x.key === 'tree');
+  click(tab.r);
+  trace = []; frame(t += 16); frames++;
+  const tree = trace; trace = null;
+  const price = fmtCredits(MODULES.pocket1.price);
+  if (!tree.some(c => c.includes(MODULES.pocket1.name)))
+    errs.push('the TECH TREE tab did not switch to a page naming what is on it');
+  else if (!tree.some(c => c.startsWith(`fillText ${price} `)))
+    errs.push('the TECH TREE named an upgrade without saying what it costs');
+  // The row is priced in the hold the pilot is carrying, not in prose about ore.
+  else if (!tree.some(c => /^fillText your hold now: .* -> .* every \d+s/.test(c)))
+    errs.push('the TECH TREE described a Pocket Dimension without saying what it would pay ME');
+  else console.log('research: the TECH TREE offers ' + MODULES.pocket1.name + ' at ' + price +
+    ' — "' + tree.find(c => /^fillText your hold now/.test(c)).replace(/^fillText /, '')
+      .replace(/ [\d.]+ [\d.]+$/, '') + '"');
+
+  sent.length = 0;
+  click(L3.rows[0].r); frame(t += 16); frames++;
+  if (sent.find(m => m.t === 'build')?.key !== 'pocket1')
+    errs.push(`the TECH TREE row sent ${JSON.stringify(sent.find(m => m.t === 'build'))} rather than building it`);
+  else console.log('research: the row on it sells, through the same build the ladder uses');
+
+  // Owning it, the panel says so instead of offering it again — and the HUD says
+  // what it will pay and when, because a thing that fires every thirty seconds
+  // while you fly is invisible otherwise. Panel shut first: this is a world check.
+  const built = 1 << Object.keys(MODULES).indexOf('pocket1');
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 20_000_000, docked: false,
+         labs: [packLab({ id: 2_000_001, x: at.x, y: at.y, mods: built, name: 'Vy' }, true)],
+         lab: { mods: built, income: 0 }, claims: [], hold: load2, cap: 300 });
+  trace = []; frame(t += 16); frames++;
+  const owned = trace; trace = null;
+  if (!owned.some(c => /^fillText RESEARCHED /.test(c)))
+    errs.push('a Pocket Dimension already built was still being offered for sale');
+  dismiss(); frame(t += 16); frames++;                      // a click on bare space, never a toggle key
+  trace = []; frame(t += 16); frames++;
+  const hud2 = trace; trace = null;
+  const line = hud2.find(c => /^fillText CARGO /.test(c));
+  if (!/POCKET .* \/ 30s/.test(line ?? ''))
+    errs.push(`owning a Pocket Dimension, the HUD never said what it would pay: "${line}"`);
+  else console.log('research: the HUD carries the sale — "' +
+    line.replace(/^fillText /, '').replace(/ [\d.]+ [\d.]+$/, '') + '"');
+
+  // And a sale that has landed reads as a sale rather than as the hold falling
+  // out of the ship: the figure, and then a countdown to the next one.
+  feed({ t: 'sold', cr: 9_450, units: 140, credits: 20_009_450 });
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 20_009_450, docked: false,
+         labs: [packLab({ id: 2_000_001, x: at.x, y: at.y, mods: built, name: 'Vy' }, true)],
+         lab: { mods: built, income: 0 }, claims: [], hold: {}, cap: 300 });
+  trace = []; frame(t += 16); frames++;
+  const after2 = trace; trace = null;
+  const sold = after2.find(c => /^fillText CARGO /.test(c));
+  if (!sold?.includes(`POCKET +${fmtCredits(9_450)} `))
+    errs.push(`a Pocket Dimension sale emptied the hold without saying it had sold it: "${sold}"`);
+  // Two-and-a-half seconds later it is a countdown again rather than a stale figure.
+  else {
+    const perf = performance.now;
+    performance.now = () => perf.call(performance) + 4000;
+    trace = []; frame(t += 16); frames++;
+    const back = trace; trace = null;
+    performance.now = perf;
+    const later = back.find(c => /^fillText CARGO /.test(c));
+    if (!/POCKET .* in \d+s/.test(later ?? ''))
+      errs.push(`four seconds after a sale the HUD was still showing the receipt: "${later}"`);
+    else console.log('research: a sale flashes the figure and then counts down to the next one');
+  }
+  dismiss();
 }
 
 // A claim arena, which is a sector that is not in MAPS.
@@ -2751,6 +2841,12 @@ const dismiss = () => {
           // in this sweep — the stat strip that overflowed is on all four.
           if (P.keys[0] === 'h')
             for (const tab of bayLayout(w, h, {}).tabs) { click(tab.r); shots(2); }
+          // And the research station is three, for the same reason: RESEARCH was
+          // the only page this sweep had ever drawn, so CLAIMS went in unswept and
+          // the TECH TREE would have too. Every page is a different set of rows in
+          // the same rectangle, which is exactly where a label runs out of one.
+          if (P.keys[0] === 'r')
+            for (const tab of labPanel(w, h).tabs) { click(tab.r); shots(2); }
           WATCH = null;
           for (const k of P.keys) evt('keydown', { key: k });   // the same key closes it
           frame(t += 16); frames++;
