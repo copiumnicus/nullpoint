@@ -13,7 +13,7 @@
 // nobody spawns there, and only an admin can reach it — `/dev`.
 
 import { MAPS, MAP_W, MAP_H } from './maps.js';
-import { HULLS } from './ships.js';
+import { HULLS, resolve, DEFAULT_HULL } from './ships.js';
 import { FORMATION_KEYS, FORMATIONS } from './formation.js';
 import { ALIENS } from './aliens.js';
 import { topTier } from './gear.js';
@@ -80,16 +80,64 @@ const PEN_X    = 700;
 // is supposed to fit inside — the Leviathan pushed it to 6.4s and the Hive would
 // have pushed it further. A grid grows at half the rate in the direction that
 // costs, and stays inside the bound to ten hostiles.
-const PEN_COLS = 2;
-const PEN_ROWS = Math.ceil(KINDS.length / PEN_COLS);
-export const PEN_SLOTS = KINDS.map((kind, i) => {
-  const col = i % PEN_COLS, row2 = Math.floor(i / PEN_COLS);
-  return {
-    kind, id: 2e6 + i,
-    x: CX + PEN_X + col * PEN_GAP,
-    y: CY + (row2 - (PEN_ROWS - 1) / 2) * PEN_GAP,  // strung symmetrically about the dock
-  };
-});
+// THE ROOM'S OWN BOUND, read off the game rather than typed: a starter hull's radar.
+// Everything above is written around it — "nothing is further out than one short
+// burn", "you can see the next thing from where you are standing" — and test/sim.mjs
+// holds the line on it. Reading it here is what lets the layout below OBEY it instead
+// of being checked against it afterwards and found one slot over.
+const ROOM_R = resolve(DEFAULT_HULL).radar;
+
+// EACH COLUMN IS AS TALL AS THE ROOM ALLOWS AT ITS OWN DISTANCE OUT, and that
+// replaces a fixed two-column grid with a fixed row count.
+//
+// The old shape was `ceil(kinds / 2)` rows, every column the same height, and it
+// walked out to sea one hostile at a time exactly as the single line it replaced
+// did — just at half the rate. The comment above already named the ceiling ("stays
+// inside the bound to ten hostiles") and the roster reached thirteen: two columns of
+// seven put the far corner at 2,220px against a starter hull's 2,200, so the room had
+// quietly broken its own promise and the only tell was a failing test.
+//
+// The fix is to stop treating the pen as a rectangle and start treating it as what it
+// actually has to fit inside, which is a CIRCLE. A column at x has room for a chord of
+// 2 x sqrt(ROOM_R^2 - x^2), so the inner column holds seven slots and the next holds
+// six — 700px out has 4,170px of usable height and 1,300px out has only 3,550. Filling
+// each to its own height rather than to a shared row count is the whole change, and it
+// is worth 235px at thirteen hostiles: the far corner drops from 2,220 to 1,985.
+//
+// It also stops being a cliff. Columns are added as they are needed and each one is
+// shorter than the last, so the room holds seventeen before it runs out — and when it
+// does, `roomFull` below says so out loud rather than posting a hostile past the
+// horizon. THAT is the seam: the next fix is a second bank west of the dock, which is
+// where the range furniture already stands.
+const colHeight = x => Math.max(1, Math.floor(2 * Math.sqrt(Math.max(0, ROOM_R * ROOM_R - x * x)) / PEN_GAP) + 1);
+export const PEN_SLOTS = (() => {
+  const out = [];
+  for (let col = 0; out.length < KINDS.length; col++) {
+    const x = PEN_X + col * PEN_GAP;
+    const room = x >= ROOM_R ? 0 : colHeight(x);
+    if (!room) break;                                   // no column left inside the room
+    const n = Math.min(room, KINDS.length - out.length);
+    for (let j = 0; j < n; j++) {
+      const kind = KINDS[out.length];
+      out.push({ kind, id: 2e6 + out.length,
+                 x: CX + x,
+                 y: CY + (j - (n - 1) / 2) * PEN_GAP }); // each column strung about the dock
+    }
+  }
+  return out;
+})();
+// How many the room could still take. Exported so test/sim.mjs can hold the line on
+// the promise rather than on today's roster — a hostile that did not fit would
+// silently not be posted, which is the one failure mode this whole block has.
+export const PEN_ROOM = (() => {
+  let n = 0;
+  for (let col = 0; ; col++) {
+    const x = PEN_X + col * PEN_GAP;
+    if (x >= ROOM_R) return n;
+    n += colHeight(x);
+  }
+})();
+export const roomFull = PEN_SLOTS.length < KINDS.length;
 
 // Range furniture, west of the dock and well clear of both galleries: 700px out,
 // 900px off the nearest mannequin, and 1,400px from the nearest posted hostile so
@@ -98,13 +146,18 @@ export const BENCH_SLOTS = BENCH.map((kind, i) => ({
   kind, id: 2e6 + 500 + i, x: CX - 700 - i * PEN_GAP, y: CY,
 }));
 
+// The box drawn round the line. Read off the slots rather than rebuilt from the
+// column and row counts, because the columns are ragged now and a rectangle computed
+// from a row count that no longer exists would be a box some of its own slots stand
+// outside — which test/sim.mjs already asserts against, and which is the same bug as
+// a row you can see and cannot click.
 const PEN_PAD = 260;
-export const PEN = {
-  x: Math.min(...PEN_SLOTS.map(s => s.x)) - PEN_PAD,
-  y: Math.min(...PEN_SLOTS.map(s => s.y)) - PEN_PAD,
-  w: (PEN_COLS - 1) * PEN_GAP + PEN_PAD * 2,
-  h: (PEN_ROWS - 1) * PEN_GAP + PEN_PAD * 2,
-};
+const span = f => { const v = PEN_SLOTS.map(f); return { lo: Math.min(...v), hi: Math.max(...v) }; };
+export const PEN = (() => {
+  const x = span(s2 => s2.x), y = span(s2 => s2.y);
+  return { x: x.lo - PEN_PAD, y: y.lo - PEN_PAD,
+           w: x.hi - x.lo + PEN_PAD * 2, h: y.hi - y.lo + PEN_PAD * 2 };
+})();
 
 // The dock labels itself, so it is not in here.
 export const LABELS = [

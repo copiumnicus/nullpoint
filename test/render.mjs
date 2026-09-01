@@ -15,7 +15,7 @@ import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu, forWeapon,
 import { settingsLayout } from '../shared/settings.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packSown } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packSown, packPlates, PLATE_STEPS } from '../shared/net.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
 import { ALIENS, WILD } from '../shared/aliens.js';
@@ -702,6 +702,59 @@ const dismiss = () => {
   feed({ t: 's', ships: [me3, mirror({ abl: NaN })] });
   frame(t += 16); frames++;
   console.log(`mirror: the chamber drawn over ${drew} frames from empty to full, plus a missing dial and a NaN`);
+}
+
+// An answering ring, through the real draw path: eight wedges, every one of them
+// cold, warm and about to go, plus the number the hottest would throw.
+//
+// It exists for the same reason the sown-ground block below does, and the reason is
+// rule three's: the ring is drawn from a STREAM that is empty on every map but one,
+// so nothing else in this suite ever enters the code path. A draw path nobody runs is
+// a draw path nobody has tested, which is exactly how two helper functions went
+// missing while every frame still rendered.
+//
+// The last four rows are the guards, and each one is a way the wire can legitimately
+// arrive wrong: no ring row at all for a hostile that has plates (a keyframe that
+// crossed a radar edge), a column that is undefined (a short row), a column that is
+// NaN, and a column past PLATE_STEPS. All four must draw the hull and no wedge, or a
+// wedge clamped to full — never a NaN radius, alpha or colour, which the harness
+// rejects outright.
+{
+  dismiss();
+  feed({ t: 'map', map: 'x0' });
+  const slab = (extra = {}) => packShip({ id: 1_000_800, x: 6600, y: 4000, heading: 2.2, charge: 0,
+    co: 'x', hull: 'antiphon', hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1, name: '', ...extra });
+  const me5 = packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'bulwark',
+    hp: 90, sh: 100, flash: 0, tgt: 1_000_800, shot: 0, rk: 0, guns: 4, lvl: 12, drones: 0, form: 0,
+    dmask: 0, psys: 0, plvl: 0, vis: 2, name: 'you' });
+  const ring = cs => packPlates({ id: 1_000_800, plates: cs });
+  let drew = 0;
+  // One plate walking round the ring, warming and cooling, which is what a pilot
+  // flying this correctly actually produces.
+  for (let i = 0; i < 8; i++) {
+    for (const c of [0.1, 0.45, 0.8, 1]) {
+      const cs = Array.from({ length: 8 }, (_, j) => j === i ? c : Math.max(0, c - 0.3 * ((8 + i - j) % 8)));
+      feed({ t: 's', ships: [me5, slab()], plates: [ring(cs)] });
+      frame(t += 16); frames++; drew++;
+      frame(t += 140); frames++; drew++;        // and again, so the beat actually moves
+    }
+  }
+  // every plate cold, and every plate full
+  feed({ t: 's', ships: [me5, slab()], plates: [ring(new Array(8).fill(0))] });
+  frame(t += 16); frames++; drew++;
+  feed({ t: 's', ships: [me5, slab()], plates: [ring(new Array(8).fill(1))] });
+  frame(t += 16); frames++; drew++;
+  // the guards
+  feed({ t: 's', ships: [me5, slab()], plates: [] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, 5, undefined, 3]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, NaN, 4, NaN, 9, 0, 0, 0, 0]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, 9e9, -40, PLATE_STEPS, 0, 0, 0, 0, 0]] });
+  frame(t += 16); frames++;
+  console.log(`ring: eight plates drawn over ${drew} frames, cold to full, plus a missing row, ` +
+              'a short row, a NaN column and one past the top step');
 }
 
 // Sown ground, through the real draw path — both kinds, the wind-up ghost and the

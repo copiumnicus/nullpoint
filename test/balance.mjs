@@ -380,11 +380,25 @@ console.log('\nwhat the model currently says about the game (it reports, it does
   // fail in the other direction — if content guns ever run AHEAD of the hulls they
   // are shot at, a fight starts getting harder for the whole game instead, which is
   // the same bug with the sign flipped.
-  check('content dps has caught up with the player\'s hull, and does not lead it',
-    Math.max(...dl) / Math.min(...dl) <= stageEhp('finished') / stageEhp('arrival') * 1.02,
+  // REWRITTEN AGAIN, and only the right-hand side moved. The claim has always been
+  // "content guns span what player hulls span" — the two must climb together, or the
+  // game gets quietly safer (or quietly harder) the further out you go. What it was
+  // measured against was `finished`, the top of the CLIMB, and that stopped being the
+  // top of the shop when a deep-sector counter started selling a sixth rung.
+  //
+  // The Antiphon is the hostile that made it matter, and it makes the claim tighter
+  // rather than looser: its gun is ANCHORS.pressure x stageEhp('deep'), the model's
+  // own answer at the stage it is posted for, exactly as the deeps' guns are the
+  // model's answer at theirs. So both sides of this ratio are now the same expression
+  // — 14.36 of gun against 14.36 of hull, agreeing to 0.05% — and it can still fail
+  // in either direction the moment somebody adds a gun the shop has no hull for.
+  check('content dps spans what the player\'s hull spans, and neither leads',
+    Math.max(...dl) / Math.min(...dl) <= stageEhp('deep') / stageEhp('arrival') * 1.02,
     `${f(Math.max(...dl) / Math.min(...dl))}x across the ${armed.length} armed hostiles against ` +
-    `${f(stageEhp('finished') / stageEhp('arrival'))}x of player effective hp — it was 5.2 against 6.4, ` +
-    'and the two hostiles in the deeps are what closed it: their guns ARE the model\'s own number');
+    `${f(stageEhp('deep') / stageEhp('arrival'))}x of player effective hp — it was 5.2 against 6.4 ` +
+    'before the deeps got guns, and the Antiphon holds the top of both: its 711 is ' +
+    'ANCHORS.pressure x stageEhp(\'deep\') the way a Drifter\'s 49.5 is the same product at ' +
+    '\'arrival\'');
   // Two hostiles have no gun now, and they are the answer to the line above rather
   // than exceptions to it: a Lamprey drinks a share of your hull and a Censer burns
   // a share of everything you have, so the seconds each needs are FLAT across the

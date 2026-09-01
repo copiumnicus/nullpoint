@@ -97,6 +97,7 @@ export const husk = (rung, k) => {
 //   hive         5   Platinum     80   240 of a 240     ~47680 cr   (capped)
 //   crucible      5   Platinum     80   240 of a 240     ~47680 cr   (capped)
 //   doldrum      5   Platinum     80   240 of a 240     ~47680 cr   (capped)
+//   antiphon     5   Platinum     80   240 of a 240     ~47680 cr   (capped, 1.0% of bounty)
 //
 // The k column is min(value target, hold ceiling), rounded. test/cargo.mjs
 // re-derives every one of these from shared/aliens.js and fails if a number here
@@ -120,6 +121,18 @@ export const DROPS = {
   // one, which is the rule working rather than a coincidence.
   crucible:   husk(5, 80),
   doldrum:   husk(5, 80),
+  // And the top of the ladder, where the ceiling binds hardest of all — which is
+  // worth saying plainly rather than papering over. 0.14 credits per point of
+  // 6,500,000 is 910,000 credits of platinum, which is about nineteen Ore Tenders;
+  // it drops ONE, the same 240 of platinum a Corsair Hive does, worth ~47,700. That
+  // is 1.0% of its 4,550,000 bounty, against 3.3% for a Crucible and 10.5% for a
+  // Hive.
+  //
+  // The ore ladder has simply run out. It is six metals long and a hold is a hold,
+  // so past the Hive the ONLY axis a reward can still grow on is the bounty — and
+  // that is the right one for a hostile posted for four pilots, because credits split
+  // and a pod does not. Nobody ferries nineteen loads out of Nullpoint.
+  antiphon:  husk(5, 80),
 };
 
 // A pod dropped by a shared kill belongs to one of the pilots who earned it, so

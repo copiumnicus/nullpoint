@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, shieldWait, WORLD, boundsOf, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
-import { fire, stepBolts, faceTarget } from './shared/combat.js';
+import { fire, stepBolts, faceTarget, BOLT_SPEED } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
@@ -32,9 +32,12 @@ import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix,
-         packSown, groundK } from './shared/net.js';
+         packSown, groundK, packPlates } from './shared/net.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror } from './shared/aliens.js';
+// The answering ring, and the one thing it needs handed to it: bolt speed, because
+// shared/plates.js imports only the wire and combat.js owns how fast a bolt flies.
+import { stepRing, answer as ringAnswer, platesOf } from './shared/plates.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
 import { sowOf, stepSow, sowHolds, groundFor, inGround, groundBite, stepGround,
@@ -410,9 +413,11 @@ for (const h of HOMES) {
 // there: a mirror asks what your gun is rather than what your hull is, which is the
 // question a pilot arriving from the frontier has never been asked.
 //
-// Nullpoint itself is still empty. Putting the only boss at the very bottom of the
-// map put it where almost nobody would meet it, and the point of the thing is to
-// be met.
+// Nullpoint is no longer empty — see the Antiphon below. What is still true is the
+// sentence that emptied it: putting the ONLY boss at the very bottom of the map put
+// it where almost nobody would meet it. The answer was never "leave the middle
+// bare", it was "do not make the middle the only place a boss lives", and the gates
+// keep theirs.
 for (const g of GALAXY.filter(id => MAPS[id].gate)) seed(g, 'thresher', 2);
 // And four Kedges beside it. A gate held one Thresher and nothing else, which made
 // it a corridor rather than a sector: the only thing standing there returns every
@@ -484,6 +489,34 @@ for (const d of GALAXY.filter(id => MAPS[id].deep)) {
   const cs = here.filter(a => a.kind === 'crucible'), ds = here.filter(a => a.kind === 'doldrum');
   for (let i = 0; i < Math.min(cs.length, ds.length); i++) pair(d, cs[i], ds[i]);
 }
+
+// --- Nullpoint --------------------------------------------------------------------
+//
+// The middle of the map, five hops out, three doors and no base. It has been empty
+// since the galaxy was drawn, and the reason it was left empty was a good one: the
+// only boss in the game was standing there and almost nobody was meeting it. That is
+// fixed by the gates keeping a Hive rather than by the middle staying bare.
+//
+// TWO ANTIPHONS, per the rule that runs through all of this: nothing in the game is
+// posted alone, because a sector holding one of something goes empty the moment
+// somebody kills it, and flying five hops to an empty map is the least interesting
+// thing this game can ask of anybody. They are NOT paired the way a Crucible and a
+// Doldrum are — a pair is a combo and two of these are two fights. 6,500,000
+// effective hit points each is the ceiling of the bestiary; two at once is not a
+// harder encounter, it is the same encounter twice, and the aggro that decides which
+// one you have taken is the ordinary 540.
+//
+// AND NOTHING ELSE, which is the one place this sector breaks the rule every other
+// map follows. Everywhere else keeps something a rung or two under its ceiling
+// because "a sector with nothing workable in it is a sector you fly through" —
+// Harriers beside the Bandits, Kedges beside the Thresher. Nullpoint is not a
+// sector anybody flies THROUGH: all three of its doors lead back to the deeps it
+// came from, so it is a destination and the only reason to be here is the thing in
+// the middle of it. A rung underneath would be a Crucible and a Doldrum, and
+// balance.js already says out loud that the pair is not completable at any party
+// size — putting them here would not be something workable, it would be a second
+// wall in front of the first.
+for (const x of GALAXY.filter(id => MAPS[id].core)) seed(x, 'antiphon', 2);
 
 // --- claims -------------------------------------------------------------------
 //
@@ -2507,6 +2540,25 @@ setInterval(() => {
       // magazine, which is what makes the meter over its head fall while a pilot
       // holds fire instead of flicking back to zero once a shot has gone.
       stepMirror(a, dt);
+      // An answering ring. It bleeds first, then answers, in that order and for the
+      // same reason the chamber above is stepped before fire(): the charge a pilot is
+      // told about has to be the charge the answer was drawn from, and reading it
+      // after the bolt has left would put a number on the screen one tick stale.
+      //
+      // The answer does NOT go through fire(). fire() leads its target — it aims at
+      // where the ship will be — and this is the one shot in the game that must NOT,
+      // because going where the plate was struck from rather than where the pilot is
+      // now is the entire mechanic. It is a bolt in the same list, drawn by the same
+      // code, at the same speed; only the aim is different.
+      //
+      // Sanctuary is the SAME `here` the AI was handed, filtered by the same
+      // mayHarm() every other weapon in the game goes through: a pilot standing in a
+      // portal mouth who has not shot at it is not on the line, however hot the plate
+      // in front of them. Two copies of "where is it safe to stand" is exactly how the
+      // workshop dock ended up refusing to sell anything for a day.
+      stepRing(a, dt);
+      const reply = ringAnswer(a, dt, here.filter(c => mayHarm(a, c)), BOLT_SPEED);
+      if (reply) bolts.get(mapId).push(reply);
       // A Lamprey has no gun at all — the tether is instead of firing, not as well
       // as it, and fire() produces nothing for one anyway because its weaponRange is
       // 0. Sanctuary is gated on the SAME `haven` the AI was just handed rather than
@@ -2731,7 +2783,11 @@ setInterval(() => {
                              n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
                              by: h.rocket.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
       tally(h.target, h.rocket.owner ?? null, h.split.shield + h.split.hull);
-      storeHit(h.target, h.split.shield + h.split.hull);
+      // `h.raw` and `h.from`: what arrived before any plate turned it, and which way
+      // it arrived from. A mirror ignores the bearing and a ring is nothing but it —
+      // storeHit routes on the DEFINITION, so a hostile with both would still be
+      // wrong in exactly one place rather than silently in none.
+      storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
       goadBurn(h.target, h.split.shield + h.split.hull, alienEhp(h.target));
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.rocket.owner ?? null);
     }
@@ -2742,7 +2798,7 @@ setInterval(() => {
                              n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
                              by: h.bolt.owner ?? null, t: HIT_TIME, ttl: HIT_TIME });
       tally(h.target, h.bolt.owner ?? null, h.split.shield + h.split.hull);
-      storeHit(h.target, h.split.shield + h.split.hull);
+      storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
       goadBurn(h.target, h.split.shield + h.split.hull, alienEhp(h.target));
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.bolt.owner ?? null);
     }
@@ -3069,11 +3125,19 @@ setInterval(() => {
       field.push({ id: a.id, x: a.sowAt.x, y: a.sowAt.y, r: a.def.sow.r,
                    k: groundK(a.def.sow.kind), on: 0, p: Math.max(0, Math.min(1, a.sow)) });
     }
+    // An answering ring, for any hostile in this sector that has one and that THIS
+    // pilot can see. The filter is `ships.has(a.id)` and not a second distance test:
+    // `ships` is the radar answer already worked out above, so a boss you have not
+    // detected cannot leak eight glowing plates onto your screen — and there is one
+    // copy of "may this pilot see that", not two. Two copies is the workshop dock.
+    const rings = (aliens.get(V.mapId) ?? [])
+      .filter(a => platesOf(a.def) && a.dead <= 0 && ships.has(a.id));
     const streams = { ships, pods: new Map(cans.map(c => [c.id, packPod(c)])),
                       labs: new Map(yardHere.map(l => [l.id, packLab(l, l.token === V.token)])),
                       sown: new Map(field
                         .filter(g => Math.hypot(g.x - V.ship.x, g.y - V.ship.y) <= reach + g.r)
-                        .map(g => [g.id, packSown(g)])) };
+                        .map(g => [g.id, packSown(g)])),
+                      plates: new Map(rings.map(a => [a.id, packPlates(a)])) };
     const bag = { hold: V.hold, cap: V.ship.stats.cargo,
       // Seconds of engines-out left, for the pilot it is happening to. It rides the
       // bag rather than the ship row because the bag is a set difference — anything

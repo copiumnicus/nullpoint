@@ -194,11 +194,54 @@ export const unpackSown = arr => { const o = {}; for (let i = 0; i < SOWN_FIELDS
 export const GROUND_KINDS = ['white', 'slack'];
 export const groundK = kind => Math.max(0, GROUND_KINDS.indexOf(kind));
 
+// An answering ring: one row per hostile that has one, and one column per plate.
+// `id` is the hostile's own id, so the row and the ship row are the same thing seen
+// twice and nothing has to be matched up by position.
+//
+// WHY IT IS A STREAM AND NOT A FIELD ON THE SHIP ROW, which is the question this
+// codebase makes you answer with numbers. SHIP_FIELDS is at 30 of a hard 31 —
+// the mask is a signed 32-bit integer — and eight charges do not fit in `abl`,
+// which is one 0..100 dial. So there were two honest shapes, and both were priced
+// through the real delta codec over thirty seconds of two Antiphons with a pilot
+// walking their fire around each ring:
+//
+//   one packed 24-bit field on the ship row      +0.036 KiB/s   and the last slot gone
+//   its own stream, eight columns at 0..100       0.721
+//   its own stream, eight columns at 0..15        0.150
+//   its own stream, one packed 24-bit column      0.100
+//   sent whole every tick, eight columns          1.38
+//
+// The packed field on the ship row is the cheapest and it is not what shipped. It
+// costs almost nothing because a boss's row is already moving every tick, so the
+// extra integer rides a message that was going anyway — but it spends the LAST
+// field in the wire format on one hostile in one sector, and puts a column on every
+// pilot, pod-hauler and Drifter in the galaxy for it. FIX_FIELDS and SOWN_FIELDS
+// both went the other way for exactly this reason, and both say so above.
+//
+// EIGHT COLUMNS AT 0..15, then, at 0.150 KiB/s — a quarter of what sixteen ground
+// patches cost, which this file already accepts. The resolution is the measurement
+// and not a preference, the same way SOWN_FIELDS' two decimal places are: at 0..100
+// every plate ticks a new value every frame and the ring costs 0.721 KiB/s; at
+// sixteen steps it changes every fourth frame and costs 0.150. One step is 6% of a
+// discharge, which is under the resolution of a glow — and the top step is exact,
+// which is the only one a pilot has to read precisely.
+//
+// The column count is FIXED here and shared/plates.js clamps `n` to it, because a
+// definition asking for a ninth plate would otherwise drop it silently off the
+// snapshot and draw a cold wedge that was about to fire.
+export const PLATE_FIELDS = ['id', 'p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'];
+export const PLATE_STEPS  = 15;
+const step = c => Math.max(0, Math.min(PLATE_STEPS, Math.round((c || 0) * PLATE_STEPS))) | 0;
+export const packPlates   = o   => [o.id, ...Array.from({ length: PLATE_FIELDS.length - 1 },
+                                                        (_, i) => step(o.plates?.[i]))];
+export const unpackPlates = arr => { const o = {}; for (let i = 0; i < PLATE_FIELDS.length; i++) o[PLATE_FIELDS[i]] = arr[i]; return o; };
+
 export const STREAMS = {
-  ships: streamOf('s', SHIP_FIELDS, 'id'),
-  pods:  streamOf('p', POD_FIELDS,  'id'),
-  labs:  streamOf('l', LAB_FIELDS,  'id'),
-  sown:  streamOf('g', SOWN_FIELDS, 'id'),
+  ships:  streamOf('s', SHIP_FIELDS,  'id'),
+  pods:   streamOf('p', POD_FIELDS,   'id'),
+  labs:   streamOf('l', LAB_FIELDS,   'id'),
+  sown:   streamOf('g', SOWN_FIELDS,  'id'),
+  plates: streamOf('a', PLATE_FIELDS, 'id'),
 };
 
 // Deliberately NOT deltaed, and this is the measurement that says so rather than
