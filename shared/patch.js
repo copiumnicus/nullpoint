@@ -8,9 +8,13 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.87';
+export const VERSION = '0.88';
 
 export const PATCHES = [
+  { v: '0.88', notes: [
+    'A Crucible and its Doldrum prowl the sector now instead of standing where they spawned',
+    'They move together, at their own speeds, and reform after a fight',
+  ] },
   { v: '0.87', notes: [
     'One browser, up to four pilots. The menu lists them; pick one and you fly it',
     'NEW PILOT starts a second character from nothing — a starter ship among friends',

@@ -1348,6 +1348,34 @@ export function broodReady(a, dt) {
 // `away` is the ships to keep clear of. Tried first with the clearance and then,
 // if the sector is too crowded to honour it, without — a hostile that refuses to
 // come back at all would be worse than one that comes back nearer than ideal.
+// A pair does not hold station forever. `pair()` gives both halves a POST, and the
+// idle branch of stepAlienAI says what a post means: walk back to it and hold
+// there. That is right for a firing line and wrong for two things that are meant
+// to be prowling a sector together — welded 260px apart on one spot for the life
+// of the server, which is what the designer saw and called stupid.
+//
+// The fix is to move the post rather than to take it away. Everything a pair needs
+// already falls out of that: they travel at their own speeds, keep their spacing
+// because each is walking to its own post, reform after a fight because a post is
+// still where you go when nothing is happening, and respawn where they belong.
+//
+// This is only the CLOCK and the arrival test, because picking the point needs the
+// sector's other posts and those live on the server. Both halves must be home
+// before either moves — otherwise the one that arrives first drags the anchor away
+// from the one still walking, and they never travel as a pair at all.
+export const PAIR_DRIFT = 14;     // seconds of holding station before somewhere new
+export const PAIR_HOME  = 140;    // how near its own post counts as arrived
+
+export function driftReady(a, mate, dt) {
+  if (!a || !mate || a.target !== null || mate.target !== null) return false;
+  const home = who => who.post && Math.hypot(who.post.x - who.x, who.post.y - who.y) < PAIR_HOME;
+  if (!home(a) || !home(mate)) { a.driftIn = PAIR_DRIFT; return false; }
+  a.driftIn = (a.driftIn ?? PAIR_DRIFT) - dt;
+  if (a.driftIn > 0) return false;
+  a.driftIn = PAIR_DRIFT;
+  return true;
+}
+
 export function roamPoint(map, rand, away = []) {
   for (const clear of [SPAWN_CLEAR, 0]) {
     for (let i = 0; i < 40; i++) {
