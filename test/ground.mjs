@@ -11,7 +11,7 @@
 // step, stepSnare, stepVitals, fire, launch and stepBolts, in the order server.js
 // calls them.
 
-import { ALIENS, WILD, effectiveHp, farmHp, newAlien, stepAlienAI, stepAlienRepair,
+import { driftReady, PAIR_DRIFT, PAIR_HOME, ALIENS, WILD, effectiveHp, farmHp, newAlien, stepAlienAI, stepAlienRepair,
          mayHarm, standOff, BOUNTY_RATE, XP_RATE, threatDps, bountyFor, xpFor,
          SHAPES, outlineOf } from '../shared/aliens.js';
 import { sowOf, stepSow, sowHolds, sowPoint, groundFor, inGround, groundBite,
@@ -964,6 +964,38 @@ console.log('\nthe wire, the shape and the colour');
     !!DROPS.crucible && !!DROPS.doldrum && DROPS.crucible[0].mat === 'platinum',
     'rollDrop reads a missing kind as "drops nothing", which is how the Ironhusk shipped ' +
     'paying only its bounty');
+}
+
+console.log('\nthe pair prowls instead of standing on its spawn');
+{
+  // A pair is held together by POSTS, and a post means "walk back here and hold".
+  // So the mechanism that made them a pair is the same one that welded them to one
+  // spot for the life of the server — 260px apart, never moving, which is what the
+  // designer saw. The post moves now, and this is the clock that moves it.
+  const make = (x, y, target = null) =>
+    ({ x, y, target, post: { x, y }, id: 1 });
+  const a = make(0, 0), mate = make(260, 0);
+
+  check('a pair with nobody to shoot at eventually goes somewhere else',
+    (() => { let fired = 0;
+             for (let i = 0; i < Math.ceil(PAIR_DRIFT * 30) + 2; i++)
+               if (driftReady(a, mate, 1 / 30)) fired++;
+             return fired === 1; })(),
+    `once every ${PAIR_DRIFT}s of holding station — often enough that a sector is not a diorama, ` +
+    'rarely enough that they are not skittering');
+
+  check('but not while either of them is still walking to its post',
+    (() => { const far = make(0, 0); far.x = 4000;      // a long way from its own post
+             let fired = 0;
+             for (let i = 0; i < Math.ceil(PAIR_DRIFT * 30) * 2; i++)
+               if (driftReady(a, far, 1 / 30)) fired++;
+             return fired === 0; })(),
+    `${PAIR_HOME}px counts as home — the half that arrives first must not drag the anchor ` +
+    'away from the half still on its way, or they never travel as a pair at all');
+
+  check('and never while one of them has somebody',
+    !driftReady(make(0, 0), make(260, 0, 7), 1 / 30),
+    'a fight is not the time to wander off, and the target is handed over between them anyway');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`

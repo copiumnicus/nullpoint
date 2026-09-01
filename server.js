@@ -7,7 +7,8 @@ import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rocket
 import { throwOrbs, stepOrbs, ORB_SPEED, orbsOf } from './shared/orbs.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
-         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf, roamPoint } from './shared/aliens.js';
+         forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf, roamPoint,
+         driftReady } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, BENCH_SLOTS, propFit } from './shared/devmap.js';
 import { respawnDelay } from './shared/spawn.js';
 import { sanitiseKills } from './shared/threats.js';
@@ -361,6 +362,11 @@ const seed = (mapId, kind, n) => {
 // respawned is the same object, but holding an object here would outlive a sector
 // rebuild and holding an index would not survive the `gone` sweep.
 const PAIR_GAP = 260;
+// How far a pair moves when it decides to move. Not a crossing: measured live at an
+// uncapped roam, a Crucible at speed 120 arrived while its Doldrum at 90 was still
+// five seconds behind, and they read as 1,384px apart — two hostiles that happen to
+// be in the same sector rather than a pair. At 1,200 the slower half lags about 270.
+const PAIR_HOP = 1200;
 const pair = (mapId, a, b) => {
   const list = aliens.get(mapId) ?? [];
   const at = roamPoint(mapOf(mapId), a.rand, list.map(x => x.post).filter(Boolean));
@@ -2483,6 +2489,27 @@ setInterval(() => {
       if (a.mate !== undefined && a.target === null) {
         const mate = list.find(x => x.id === a.mate && x.dead <= 0 && x.hp > 0);
         if (mate && mate.target !== null && mate.target !== undefined) a.target = mate.target;
+        // And when neither of them has anybody, the pair PROWLS instead of standing
+        // on the spot it spawned on. Moving the post rather than removing it, so the
+        // idle branch's "walk back to your post" carries them across the sector
+        // together at their own speeds, still PAIR_GAP apart because each is walking
+        // to its own. The lower id picks, once, for both — two halves each choosing
+        // would walk them apart within a minute.
+        else if (mate && driftReady(a, mate, dt) && a.id < mate.id) {
+          const taken = list.filter(x => x !== a && x !== mate).map(x => x.post).filter(Boolean);
+          const want = roamPoint(map, a.rand, taken);
+          // A HOP, not a crossing. roamPoint picks anywhere in the sector, and over
+          // 2,000px a Crucible at 120 arrives while its Doldrum at 90 is still five
+          // seconds out — measured live at 1,384px apart, which is a pair only in the
+          // bookkeeping. Capped at PAIR_HOP the slower half lags a few hundred px and
+          // they read as two things travelling together, which is the whole point of
+          // pairing them.
+          const dx = want.x - a.x, dy = want.y - a.y, far = Math.hypot(dx, dy) || 1;
+          const k = Math.min(1, PAIR_HOP / far);
+          const at = { x: a.x + dx * k, y: a.y + dy * k };
+          for (const [who, side] of [[a, -1], [mate, 1]])
+            who.post = { x: at.x + side * PAIR_GAP / 2, y: at.y };
+        }
       }
       const tgt = stepAlienAI(a, map, here, dt);
 

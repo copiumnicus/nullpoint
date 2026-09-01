@@ -8,14 +8,29 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.88';
+export const VERSION = '0.91';
 
 export const PATCHES = [
-  { v: '0.88', notes: [
+  { v: '0.91', notes: [
     'Ironhusks stopped firing lasers. They throw a shotgun of big slow orbs instead',
     'Get off the line and it costs you nothing. Hold it and the whole fan goes through you',
     'A Leviathan walks three volleys of them across your course. Breaking once is not enough',
     'Both still hit for exactly what they always did — you can just be somewhere else now',
+  ] },
+  { v: '0.90', notes: [
+    'CRITICAL DAMAGE: the screen goes red when your hull will not last another four seconds',
+    'It reads the rate you are losing hull, so it fires at 5% on a Bulwark and 44% on a Kestrel',
+    'It gets louder as you get closer, and it is silent when nothing is shooting you',
+    'Dying in the margin says so once, not twice — the hull warning takes the shear one over',
+  ] },
+  { v: '0.89', notes: [
+    'A wounded hostile with its back to the edge of the map runs along it, not into it',
+    'They were stopping dead — 15px of flight where open space gets 1,267',
+    'A Harrier that decides to leave now outruns your rockets. It could not before',
+  ] },
+  { v: '0.88', notes: [
+    'A Crucible and its Doldrum prowl the sector now instead of standing where they spawned',
+    'They move together, at their own speeds, and reform after a fight',
   ] },
   { v: '0.87', notes: [
     'One browser, up to four pilots. The menu lists them; pick one and you fly it',

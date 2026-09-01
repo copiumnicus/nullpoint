@@ -6,7 +6,7 @@
 
 import { ATTRS } from './ships.js';
 import { MAP_W, MAP_H } from './maps.js';
-import { newBody, inHaven } from './sim.js';
+import { newBody, inHaven, sizeOf } from './sim.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, burnBurst,
          pyreFor, inPyre, poolOf, inBurn } from './burn.js';
 import { fixOf } from './kedge.js';
@@ -1288,6 +1288,15 @@ const LOSE_INTEREST = 'patience';
 // working to stay alive, it starts showing you its flank.
 
 export const EVADE_LEAD = 0.9;    // s of flight time it reacts inside
+// Fleeing. FLEE_RUN is how far it commits to in one decision; FLEE_EDGE is how
+// close to the rim of charted space it is willing to be put, so a runner does not
+// park itself on the shear. FLEE_TURNS is tried in order and is what stops a
+// hostile pressing into a wall — straight away first, then wider, alternating
+// sides so it slides along whichever edge it happens to be on.
+export const FLEE_RUN   = 2200;
+export const FLEE_EDGE  = 500;
+export const FLEE_TURNS = [0, 0.5, -0.5, 1.0, -1.0, 1.5, -1.5, 2.0, -2.0, 2.6, -2.6];
+
 export const EVADE_RUN  = 160;    // px it commits to — a jink, not a departure
 export const WEAVE_MIN  = 0.5, WEAVE_MAX = 1.0;     // s between reversals
 
@@ -1409,6 +1418,34 @@ export function broodReady(a, dt) {
 // `away` is the ships to keep clear of. Tried first with the clearance and then,
 // if the sector is too crowded to honour it, without — a hostile that refuses to
 // come back at all would be worse than one that comes back nearer than ideal.
+// A pair does not hold station forever. `pair()` gives both halves a POST, and the
+// idle branch of stepAlienAI says what a post means: walk back to it and hold
+// there. That is right for a firing line and wrong for two things that are meant
+// to be prowling a sector together — welded 260px apart on one spot for the life
+// of the server, which is what the designer saw and called stupid.
+//
+// The fix is to move the post rather than to take it away. Everything a pair needs
+// already falls out of that: they travel at their own speeds, keep their spacing
+// because each is walking to its own post, reform after a fight because a post is
+// still where you go when nothing is happening, and respawn where they belong.
+//
+// This is only the CLOCK and the arrival test, because picking the point needs the
+// sector's other posts and those live on the server. Both halves must be home
+// before either moves — otherwise the one that arrives first drags the anchor away
+// from the one still walking, and they never travel as a pair at all.
+export const PAIR_DRIFT = 14;     // seconds of holding station before somewhere new
+export const PAIR_HOME  = 140;    // how near its own post counts as arrived
+
+export function driftReady(a, mate, dt) {
+  if (!a || !mate || a.target !== null || mate.target !== null) return false;
+  const home = who => who.post && Math.hypot(who.post.x - who.x, who.post.y - who.y) < PAIR_HOME;
+  if (!home(a) || !home(mate)) { a.driftIn = PAIR_DRIFT; return false; }
+  a.driftIn = (a.driftIn ?? PAIR_DRIFT) - dt;
+  if (a.driftIn > 0) return false;
+  a.driftIn = PAIR_DRIFT;
+  return true;
+}
+
 export function roamPoint(map, rand, away = []) {
   for (const clear of [SPAWN_CLEAR, 0]) {
     for (let i = 0; i < 40; i++) {
@@ -1969,10 +2006,29 @@ export function stepAlienAI(a, map, contenders, dt) {
     // but it will not trade any more. Running is clamped inside charted space so
     // it does not simply kill itself on the shear.
     if (a.hp <= a.stats.hull * a.def.flee) {
-      const dx = a.x - t.ship.x, dy = a.y - t.ship.y, m = Math.hypot(dx, dy) || 1;
       a.dx = a.dy = null;
-      a.tx = Math.max(500, Math.min(MAP_W - 500, a.x + (dx / m) * 2200));
-      a.ty = Math.max(500, Math.min(MAP_H - 500, a.y + (dy / m) * 2200));
+      // Straight away from you, UNLESS that runs into the edge of charted space —
+      // in which case turn until it does not. Clamping the destination instead is
+      // what shipped, and with its back to a wall the clamp collapsed the target
+      // onto the hostile's own position: it "arrived" on the spot and stood there.
+      // Measured on a Drifter at m2's east edge, 15px of flight against 1,267 in
+      // open space, and cornered it was 24. The designer reported it twice as
+      // "when they are fleeing, they just stand still", and they were right both
+      // times — it runs into the wall rather than along it.
+      //
+      // The turn is tried both ways so it slides along whichever edge it is on
+      // rather than always the same way round, and the sector's OWN size is what
+      // bounds it, because a map has had its own dimensions since duels landed.
+      const { w, h } = sizeOf(map);
+      const away = Math.atan2(a.y - t.ship.y, a.x - t.ship.x);
+      for (const turn of FLEE_TURNS) {
+        const ang = away + turn;
+        const tx = Math.max(FLEE_EDGE, Math.min(w - FLEE_EDGE, a.x + Math.cos(ang) * FLEE_RUN));
+        const ty = Math.max(FLEE_EDGE, Math.min(h - FLEE_EDGE, a.y + Math.sin(ang) * FLEE_RUN));
+        // Far enough to be a departure rather than a shuffle. Without this it takes
+        // the first turn that moves it at all, which against a corner is a metre.
+        if (Math.hypot(tx - a.x, ty - a.y) > FLEE_RUN * 0.35) { a.tx = tx; a.ty = ty; break; }
+      }
       return null;                                           // fleeing, not firing
     }
     const d = dist(t), hold = standOff(a) * 0.7;
