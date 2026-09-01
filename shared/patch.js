@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.79';
+export const VERSION = '0.80';
 
 export const PATCHES = [
+  { v: '0.80', notes: [
+    'The ammunition chooser lists every grade your weapon takes, not just the ones you hold',
+    'A crate you have not bought shows a 0 instead of vanishing — it was reading as a refusal',
+    'A bay your hull cannot berth no longer decides what you are allowed to load',
+    'And a ship with no launcher at all can no longer load warheads for one',
+  ] },
   { v: '0.79', notes: [
     'The reactor refills your shields a third faster now, not just into a bigger pool',
     'Ten seconds after a fight a Vanguard sits at 31% shield instead of 18%',
