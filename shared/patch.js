@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.91';
+export const VERSION = '0.92';
 
 export const PATCHES = [
+  { v: '0.92', notes: [
+    'Ping the chart: hit PING on the minimap, then click a spot — or shift-click it',
+    'Everyone in the sector sees it for eight seconds, with your callsign on it',
+    'One ping every ten seconds. The button counts the wait down and says so if you are early',
+  ] },
   { v: '0.91', notes: [
     'Ironhusks stopped firing lasers. They throw a shotgun of big slow orbs instead',
     'Get off the line and it costs you nothing. Hold it and the whole fan goes through you',

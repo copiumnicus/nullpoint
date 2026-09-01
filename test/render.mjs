@@ -17,7 +17,8 @@ import { joinLayout } from '../shared/join.js';
 import { ROSTER_KEY, TOKEN_KEY as TOK } from '../shared/brand.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, PLATE_STEPS } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, PLATE_STEPS } from '../shared/net.js';
+import { pingChip, pingLayout, PING_MAX } from '../shared/ping.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
 import { ALIENS, WILD } from '../shared/aliens.js';
@@ -277,9 +278,24 @@ const keep = (m, k, v) => {
   if (!m.has(k)) m.set(k, { v, n: 0, sizes: new Set() });
   const f = m.get(k); f.n++; f.sizes.add(SIZE);
 };
+// The longest handle the join form allows, and the name the rich sweep flies and
+// pings under. Up here rather than inside the sweep because the counter below has
+// to know it — see PINGED.
+const SWEPT_NAME = 'W'.repeat(NAME_MAX);
+// How many frames actually carried a ping callsign on the chart.
+//
+// The same claim the panel coverage in the sweep makes, and for the same reason: a
+// fixture that quietly stopped reaching the screen passes every rule in this file,
+// because an empty plot cannot print anything through anything. Counted here
+// rather than by drawing an extra frame somewhere, because the latency heartbeat
+// fires once every 1,000ms of FRAME time and the sign-out block asserts a
+// signed-out client sends nothing — so adding two frames anywhere moves that
+// heartbeat into its window and fails a test about something else entirely.
+let PINGED = 0;
 const analyse = () => {
   SEEN++;
   const els = T.els;
+  if (els.some(e => e.kind === 'text' && !e.world && e.size === 9 && e.text === SWEPT_NAME)) PINGED++;
   for (const c of collisions(els, innerWidth, innerHeight)) keep(FOUND, key(c), c);
   for (const c of crossings(els, innerWidth, innerHeight))
     keep(CROSS, `${same(c.a.text)}|${Math.round(c.r.w)}x${Math.round(c.r.h)}`, c);
@@ -634,6 +650,161 @@ const dismiss = () => {
     else console.log(`a plotted course lands under the cursor: at ${innerWidth}x${innerHeight} the `
       + `view zooms to ${z.toFixed(3)}, so clicks ${B.x - A.x}px apart plot ${wantX.toFixed(1)} apart`);
   }
+}
+
+// Pinging the chart, driven the way a player drives it.
+//
+// The plot already carries a gesture: a click on it is a course order, and it is
+// how people fly. Everything here is about the two surviving each other — that
+// arming, pinging and the cooldown all work, AND that a plain click on the plot
+// still plots a course afterwards. A ping that broke click-to-move would be worse
+// than no ping.
+{
+  dismiss();
+  frame(t += 16); frames++;
+  const mmW = Math.min(260, innerWidth * 0.22), mmH = mmW * (8000 / 12000);
+  const MM = { x: innerWidth - mmW - 16, y: innerHeight - mmH - 16, w: mmW, h: mmH };
+  const CH = pingChip(MM);
+  const mid = { clientX: MM.x + MM.w * 0.5, clientY: MM.y + MM.h * 0.3 };
+  const hit = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+
+  sent.length = 0;
+  hit(CH);                                       // arm
+  frame(t += 16); frames++;
+  evt('pointerdown', mid);                       // and pick a spot
+  evt('pointerup', {});
+  const marks = sent.filter(m => m.t === 'mark');
+  const strays = sent.filter(m => m.t === 'intent' && m.mode === 'pt');
+  if (marks.length !== 1) errs.push(`arming the chip and clicking the plot sent ${marks.length} pings, not 1`);
+  else if (strays.length) errs.push('a ping also plotted a course — the chart cannot mean both at once');
+  else {
+    const S = { w: 12000, h: 8000 };
+    const wantX = (mid.clientX - MM.x) / MM.w * S.w, wantY = (mid.clientY - MM.y) / MM.h * S.h;
+    if (Math.abs(marks[0].x - wantX) > 1 || Math.abs(marks[0].y - wantY) > 1)
+      errs.push(`a ping landed at ${marks[0].x.toFixed(0)},${marks[0].y.toFixed(0)} and was clicked at ` +
+                `${wantX.toFixed(0)},${wantY.toFixed(0)}`);
+    else console.log('ping: the chip arms the chart and the next click drops a ping where it was clicked, ' +
+                     `${wantX.toFixed(0)},${wantY.toFixed(0)} in a 12,000x8,000 sector`);
+  }
+
+  // Shift-click is the same thing without arming first — one gesture for a hand
+  // already on the keyboard, and the reason the chip is not the only way in.
+  sent.length = 0;
+  evt('pointerdown', { ...mid, shiftKey: true });
+  evt('pointerup', {});
+  if (sent.filter(m => m.t === 'mark').length !== 1)
+    errs.push('shift-clicking the plot did not ping it');
+  else console.log('ping: shift-clicking the plot pings it without arming anything first');
+
+  // AND THE COURSE ORDER STILL WORKS. This is the assertion the whole feature is
+  // on trial for: the plot is how people fly, and a click on it with nothing armed
+  // and nothing held has to still be a destination.
+  sent.length = 0;
+  evt('pointerdown', mid);
+  evt('pointerup', {});
+  const course = sent.filter(m => m.t === 'intent' && m.mode === 'pt');
+  if (course.length !== 1 || sent.some(m => m.t === 'mark'))
+    errs.push(`a plain click on the plot sent ${course.length} course orders and ` +
+              `${sent.filter(m => m.t === 'mark').length} pings — it must be exactly 1 and 0`);
+  else console.log('ping: click-to-move survives it — an unarmed, unshifted click on the plot is still a course');
+
+  // Arming is a MODE, and a mode that outlives the click you changed your mind
+  // about is a trap: arm it, decide to fly across the sector instead, and the next
+  // course order you plot on the chart is a ping.
+  sent.length = 0;
+  hit(CH);                                       // arm
+  evt('pointerdown', { clientX: 300, clientY: 300 });   // then think better of it
+  evt('pointerup', {});
+  evt('pointerdown', mid);                       // and plot a course on the chart
+  evt('pointerup', {});
+  if (sent.some(m => m.t === 'mark')) errs.push('an armed ping survived a click somewhere else');
+  else console.log('ping: arming is cancelled by a click anywhere else, so it cannot ambush a later course');
+
+  // A ping on cooldown says so rather than doing nothing. The countdown is the
+  // SERVER's, out of the bag, so this feeds one and checks both the readout on the
+  // chip and what a click on it says. Four silent refusals is what this is for.
+  feed({ t: 's', ships: [], ping: 7 });
+  frame(t += 16); frames++;
+  const said = T.els.some(e => e.kind === 'text' && String(e.text).includes('PING 7s'));
+  if (!said) errs.push('a ping on cooldown drew no wait on the chip');
+  sent.length = 0;
+  // TWO CLOCKS, and this block owns one of them, exactly the way the quest banner
+  // above does: say() stamps the refusal with performance.now() and the draw
+  // measures its age against the timestamp the FRAME was handed, which in here is a
+  // counter thousands of milliseconds ahead of the real one. The CLICK has to be
+  // inside the anchor too, not only the frame — stamping with the real clock and
+  // reading against the fake one leaves the sentence four seconds stale before it
+  // is written, so it clears itself on the frame that should have drawn it. Which
+  // reads, exactly, as the silent refusal this assertion exists to catch.
+  const realPerf = performance.now;
+  performance.now = () => t;
+  let spoke = false;
+  try {
+    hit(CH);
+    frame(t += 16); frames++;
+    spoke = T.els.some(e => e.kind === 'text' && /recharging/i.test(String(e.text)));
+  } finally { performance.now = realPerf; }
+  if (sent.some(m => m.t === 'mark')) errs.push('a chip on cooldown still sent a ping');
+  if (!spoke) errs.push('clicking a cooling ping chip refused in silence');
+  if (said && spoke) console.log('ping: on cooldown the chip reads PING 7s, and clicking it says why in words');
+
+  // And the wait clears the moment the bag stops mentioning it — absence is the
+  // readout, the same contract `arena` and `duel` have.
+  feed({ t: 's', ships: [] });
+  frame(t += 16); frames++;
+  if (T.els.some(e => e.kind === 'text' && /PING \d+s/.test(String(e.text))))
+    errs.push('the cooldown stayed on the chip after the server stopped sending one');
+  sent.length = 0;
+  hit(CH);
+  evt('pointerdown', mid);
+  evt('pointerup', {});
+  if (!sent.some(m => m.t === 'mark')) errs.push('the ping never came back after its cooldown lapsed');
+  else console.log('ping: the wait clears when the server stops sending one, and the next ping goes');
+  dismiss();
+  frame(t += 16); frames++;
+}
+
+// Where a name lands on a plot 180px wide, which is the whole reason the layout
+// is in shared/ping.js rather than in the client.
+//
+// Three pings in the same corner is the case a player will actually produce — a
+// fight happens somewhere and everyone points at it — and two callsigns printed on
+// one line is the one outcome a reader cannot recover from. Asserted here against
+// the real layout at every window size the sweep covers, because the frame rules
+// can only catch what the sweep happens to draw and this is a claim about all of
+// them.
+{
+  const NAME = 'W'.repeat(NAME_MAX);
+  const near = [0, 1, 2].map(i => ({ id: i, x: 6000 + i * 40, y: 4000 + i * 30, p: i * 0.2, name: NAME }));
+  let worst = Infinity, tightest = '';
+  for (const [w, h] of SIZES) {
+    const mmW = Math.min(260, w * 0.22), mmH = mmW * (8000 / 12000);
+    const MM = { x: w - mmW - 16, y: h - mmH - 16, w: mmW, h: mmH };
+    const rows = pingLayout(near, MM, { w: 12000, h: 8000 });
+    if (rows.length !== 3) { errs.push(`three pings laid out ${rows.length} rows at ${w}x${h}`); continue; }
+    for (const r of rows) {
+      if (r.x < MM.x - 0.01 || r.x + r.w > MM.x + MM.w + 0.01 ||
+          r.y < MM.y - 0.01 || r.y + r.h > MM.y + MM.h + 0.01)
+        errs.push(`a ping label runs outside the ${Math.round(mmW)}px plot at ${w}x${h}`);
+      if (r.y + r.h > pingChip(MM).y)
+        errs.push(`a ping label lands on the PING button at ${w}x${h}`);
+    }
+    // Measured on the INK and not on the chips, because ink is what uilint's
+    // crowding rule measures: a 9px line is 0.72em of cap over the baseline and
+    // 0.2em of descender under it, and two labels closer than that descender are
+    // one label as far as a reader is concerned.
+    const ink = r => ({ top: r.ty - 0.72 * 9, bot: r.ty + 0.2 * 9 });
+    for (let i = 1; i < rows.length; i++) {
+      const gap = ink(rows[i]).top - ink(rows[i - 1]).bot;
+      if (gap < 0) errs.push(`two ping labels share a line at ${w}x${h}`);
+      if (gap < worst) { worst = gap; tightest = `${w}x${h}`; }
+    }
+  }
+  if (worst >= 0.2 * 9)
+    console.log(`ping: three pings 50px apart get three lines, never two names on one — ` +
+                `${worst.toFixed(1)}px of clear ink at the tightest window (${tightest}), ` +
+                `against the 1.8px a 9px descender needs`);
+  else errs.push(`two ping labels are ${worst.toFixed(1)}px apart at ${tightest}, under a descender`);
 }
 
 // The changelog. An icon that does nothing when clicked is worse than no icon,
@@ -3211,8 +3382,24 @@ const dismiss = () => {
       applyResearch(resolve(h, fitFor(h), ESCORT, 'wedge'), ALL_MODS)[k])).length));
     // Whichever hull prints the longest number is the one worth sweeping in.
     const RICH = Object.keys(HULLS).sort((a, b) => digits(b) - digits(a))[0];
-    const LONG_NAME = 'W'.repeat(NAME_MAX);        // the longest handle the form allows
+    const LONG_NAME = SWEPT_NAME;                  // the longest handle the form allows
     const ALL_GEAR = Object.fromEntries(Object.keys(EQUIPMENT).map(k => [k, 99]));
+    // A full chart of pings, in the state that has the longest of everything else.
+    // PING_MAX of them, three within fifty pixels of each other so the layout has to
+    // pull them onto separate rows, one in each far corner so a label has to be
+    // flipped to the other side of its dot and clamped inside the plot, and every
+    // one of them under the longest handle the join form allows. The whole point is
+    // that the sweep's rules — nothing printed through anything, nothing written
+    // across a control — see them at all seven window sizes, because a name on a
+    // 180px plot is exactly where that goes wrong.
+    const PINGS = [
+      packPing({ id: 91, x: 6000,  y: 4000, p: 0,    name: LONG_NAME }),
+      packPing({ id: 92, x: 6050,  y: 4030, p: 0.15, name: LONG_NAME }),
+      packPing({ id: 93, x: 6100,  y: 4060, p: 0.3,  name: LONG_NAME }),
+      packPing({ id: 94, x: 0,     y: 0,    p: 0.5,  name: LONG_NAME }),
+      packPing({ id: 95, x: 12000, y: 8000, p: 0.7,  name: LONG_NAME }),
+      packPing({ id: 96, x: 12000, y: 40,   p: 0.95, name: 'A' }),
+    ].slice(0, PING_MAX);
 
     const ship = (hull, name, extra = {}) => packShip({ id: 1, x: MAPS.m1.base.x, y: MAPS.m1.base.y,
       heading: 0, charge: 0, co: 'm', hull, hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0,
@@ -3244,7 +3431,7 @@ const dismiss = () => {
                using: { laser: AMMO_KEYS[0], rocket: AMMO_KEYS.at(-1) },
                armed: { laser: true, rocket: true } });
         feed({ t: 'map', map: 'm1' });
-        feed({ t: 's', ships: [ship(RICH, LONG_NAME)],
+        feed({ t: 's', ships: [ship(RICH, LONG_NAME)], pings: PINGS, ping: 7,
                hold: Object.fromEntries(Object.keys(MATERIALS).map(k => [k, 9999])),
                cap: 99_999, credits: 9_999_999, docked: true,
                vault: Object.fromEntries(Object.keys(MATERIALS).map(k => [k, 999_999])),
@@ -3328,6 +3515,10 @@ const dismiss = () => {
     if (missing.length) errs.push(`the sweep never drew ${missing.length} panel(s): ${missing.join(', ')}`);
     else console.log(`  ok   every panel is swept in every state  — ${PANELS.length} panels x ` +
                      `${STATES.length} states x ${SIZES.length} window sizes, each one seen drawing itself`);
+    if (PINGED < SIZES.length)
+      errs.push(`the chart carried a ping callsign on ${PINGED} frames — the sweep is asserting about an empty plot`);
+    else console.log(`  ok   the swept chart is actually carrying pings  — ${PINGED} frames drew ` +
+                     `${PINGS.length} of them under a ${NAME_MAX}-character handle, at ${SIZES.length} window sizes`);
 
     globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
     evt('resize'); SIZE = '1600x900';

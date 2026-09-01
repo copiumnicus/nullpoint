@@ -339,8 +339,16 @@ console.log('\nwhat is deliberately not deltaed');
   // keyed. shared/net.js carries the full table, including the shape that was cheaper
   // still and did not ship, which was one packed integer on the ship row: it costs
   // 0.036 and spends the LAST field in SHIP_FIELDS on one hostile in one sector.
-  check('ships, pods, stations, sown ground and an answering ring are the ones worth diffing',
-    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown', 'plates']),
+  // REWRITTEN A THIRD TIME, and this row makes the argument from the other end. A
+  // ping lives eight seconds and has an id, so it clears the first two tests the
+  // same way ground and plates do — but the field that decides its cost is the one
+  // that CANNOT change: a sixteen-character callsign. Priced through the real codec
+  // at four pilots each pinging the instant their cooldown clears, 3.2 live on
+  // average: 3.820 KiB/s sent whole every tick against 0.567 keyed, and 1.502 of
+  // that 3.820 is the name being re-transmitted thirty times a second. Keyed, it
+  // rides the add and then goes quiet, exactly the way `name` does on a ship row.
+  check('ships, pods, stations, sown ground, an answering ring and a ping are the ones worth diffing',
+    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown', 'plates', 'pings']),
     'long-lived, keyed, and 82% of the traffic in a crowded sector');
   check('and nothing is in both lists',
     !Object.keys(STREAMS).some(k => EPHEMERAL.includes(k)),

@@ -253,12 +253,56 @@ export const packPlates   = o   => [o.id, ...Array.from({ length: PLATE_FIELDS.l
                                                         (_, i) => step(o.plates?.[i]))];
 export const unpackPlates = arr => { const o = {}; for (let i = 0; i < PLATE_FIELDS.length; i++) o[PLATE_FIELDS[i]] = arr[i]; return o; };
 
+// A ping: one pilot pointing at a place on the chart, with their callsign nailed
+// to it. Where, how far through its eight seconds, and who dropped it.
+//
+// THE NAME IS ON THE ROW AND NOT LOOKED UP FROM THE SHIP, and that is the whole
+// reason this is a stream of its own rather than two numbers hung off a pilot's
+// row. `name` on SHIP_FIELDS reaches you only for a ship your radar has, which
+// is correct for a ship and wrong for a ping: a ping is a deliberate broadcast
+// and crosses radar by design (see shared/ping.js), so a pilot 4,000px away in
+// the dark can drop one and it has to arrive with a name on it. A client
+// matching a ping to a ship row it does not have would draw an anonymous ring,
+// which is the same bug as no ping at all. SHIP_FIELDS is at 30 of a hard 31
+// besides, and a point in space plus a name is three fields.
+//
+// WHY IT IS KEYED AND NOT EPHEMERAL, priced through the real delta codec over
+// thirty seconds — four pilots each pinging the instant their cooldown clears,
+// which holds 3.2 live on average:
+//
+//   sent whole every tick        3.820 KiB/s   of which 1.502 is the callsign
+//   keyed, p at 3 decimals       1.261
+//   keyed, p at 2 decimals       0.567
+//   keyed, p at 1 decimal        0.087
+//
+// The EPHEMERAL note below says those go whole because they have no identity,
+// live under a second, and the one field that matters changes every tick. A ping
+// is the opposite of the first two: it lives eight seconds and it has an id. And
+// the third is what the split above is really measuring — 40% of the cost of
+// sending it whole is re-transmitting a sixteen-character callsign thirty times
+// a second, and a name is the one field on a ping that can never change. Keyed,
+// it rides the add and then goes quiet, exactly the way `name` does on a ship
+// row.
+//
+// TWO DECIMAL PLACES on `p`, and unlike SOWN_FIELDS that is where the resolution
+// stops rather than being taken further down. A tenth is 6.6x cheaper again and
+// it is not honest here: `p` drives an OPACITY over the last third of the life,
+// so a tenth of an eight-second ping is 0.8s of a 2.6s fade — four visible steps,
+// which reads as a label blinking out rather than fading. A patch of ground could
+// take that cut because one percent of a thirty-six-second countdown arc is under
+// the resolution of the thing it draws; a four-frame fade is not.
+export const PING_FIELDS = ['id', 'x', 'y', 'p', 'name'];
+export const packPing   = o   => [o.id, Math.round(o.x), Math.round(o.y),
+                                  +Math.max(0, Math.min(1, o.p)).toFixed(2), o.name ?? ''];
+export const unpackPing = arr => { const o = {}; for (let i = 0; i < PING_FIELDS.length; i++) o[PING_FIELDS[i]] = arr[i]; return o; };
+
 export const STREAMS = {
   ships:  streamOf('s', SHIP_FIELDS,  'id'),
   pods:   streamOf('p', POD_FIELDS,   'id'),
   labs:   streamOf('l', LAB_FIELDS,   'id'),
   sown:   streamOf('g', SOWN_FIELDS,  'id'),
   plates: streamOf('a', PLATE_FIELDS, 'id'),
+  pings:  streamOf('n', PING_FIELDS,  'id'),
 };
 
 // Deliberately NOT deltaed, and this is the measurement that says so rather than
