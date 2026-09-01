@@ -763,7 +763,7 @@ const dismiss = () => {
   const me5 = packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'bulwark',
     hp: 90, sh: 100, flash: 0, tgt: 1_000_800, shot: 0, rk: 0, guns: 4, lvl: 12, drones: 0, form: 0,
     dmask: 0, psys: 0, plvl: 0, vis: 2, name: 'you' });
-  const ring = cs => packPlates({ id: 1_000_800, plates: cs });
+  const ring = (cs, st = []) => packPlates({ id: 1_000_800, plates: cs, strain: st });
   let drew = 0;
   // One plate walking round the ring, warming and cooling, which is what a pilot
   // flying this correctly actually produces.
@@ -775,6 +775,26 @@ const dismiss = () => {
       frame(t += 140); frames++; drew++;        // and again, so the beat actually moves
     }
   }
+  // And one plate STRAINING, all the way to the moment it goes — the second half of
+  // the ring's story and a path nothing else in this suite enters. The seam eating
+  // along the rim is drawn from `s`, which climbs and never falls, so it has to be
+  // driven separately from the charge rather than inferred from it.
+  for (const w of [0.05, 0.2, 0.4, 0.6, 0.8, 0.95, 1]) {
+    const st = Array.from({ length: 8 }, (_, j) => j === 3 ? w : 0);
+    feed({ t: 's', ships: [me5, slab()], plates: [ring([0, 0, 0, 0.7, 0, 0, 0, 0], st)] });
+    frame(t += 16); frames++; drew++;
+    frame(t += 140); frames++; drew++;
+  }
+  // A ring coming apart, one wedge at a time, to the last one standing and then none.
+  // The hole is drawn instead of the plate rather than over it, so every count from
+  // zero to all eight is its own branch through that loop.
+  for (let k = 0; k <= 8; k++) {
+    const st = Array.from({ length: 8 }, (_, j) => j < k ? 1 : 0.3);
+    const cs = Array.from({ length: 8 }, (_, j) => j < k ? 0 : 0.6);
+    feed({ t: 's', ships: [me5, slab()], plates: [ring(cs, st)] });
+    frame(t += 16); frames++; drew++;
+    frame(t += 140); frames++; drew++;
+  }
   // every plate cold, and every plate full
   feed({ t: 's', ships: [me5, slab()], plates: [ring(new Array(8).fill(0))] });
   frame(t += 16); frames++; drew++;
@@ -785,12 +805,14 @@ const dismiss = () => {
   frame(t += 16); frames++;
   feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, 5, undefined, 3]] });
   frame(t += 16); frames++;
-  feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, NaN, 4, NaN, 9, 0, 0, 0, 0]] });
+  feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, NaN, 4, NaN, 9, 0, 0, 0, 0, NaN, undefined, 9e9, -3]] });
   frame(t += 16); frames++;
-  feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, 9e9, -40, PLATE_STEPS, 0, 0, 0, 0, 0]] });
+  feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, 9e9, -40, PLATE_STEPS, 0, 0, 0, 0, 0,
+                                                 PLATE_STEPS + 9, -40, PLATE_STEPS, 0, 0, 0, 0, 0]] });
   frame(t += 16); frames++;
-  console.log(`ring: eight plates drawn over ${drew} frames, cold to full, plus a missing row, ` +
-              'a short row, a NaN column and one past the top step');
+  console.log(`ring: eight plates drawn over ${drew} frames — cold to full, straining to the break, ` +
+              'and coming apart one wedge at a time to all eight, plus a missing row, a short row, ' +
+              'a NaN column and one past the top step');
 }
 
 // Sown ground, through the real draw path — both kinds, the wind-up ghost and the

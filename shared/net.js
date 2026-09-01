@@ -229,11 +229,38 @@ export const groundK = kind => Math.max(0, GROUND_KINDS.indexOf(kind));
 // The column count is FIXED here and shared/plates.js clamps `n` to it, because a
 // definition asking for a ninth plate would otherwise drop it silently off the
 // snapshot and draw a cold wedge that was about to fire.
-export const PLATE_FIELDS = ['id', 'p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'];
+//
+// TWO COLUMNS A PLATE, and the second one was free. `p` is how hard the plate is
+// RIGHT NOW — it bleeds on a half-life, so it changes every few frames and it is what
+// this stream costs. `s` is how far through failing it is, which is the opposite kind
+// of number: it only ever climbs, it never bleeds, and it moves one step every few
+// SECONDS. Measured through the same codec and the same two rings, sixty seconds of a
+// pilot committed to one bearing:
+//
+//     charge only, 8 columns          0.086 KiB/s
+//     charge and strain, 16 columns   0.094
+//
+// Eight pennies. A monotonic column is nearly free under a delta mask, which is the
+// same fact SOWN_FIELDS states from the other end when it says its ONE moving column
+// is what decides the price.
+//
+// AND `s` AT THE TOP STEP MEANS BROKEN, which is not an overloaded field: strain
+// saturates at exactly 1 and a plate is broken at exactly 1, so they are the same
+// number and the top step is where they both land. `floor` below rather than `round`
+// so a plate at 0.97 cannot read as gone one step early — the one place in this
+// packer where rounding would be a lie rather than a resolution.
+export const PLATE_FIELDS = ['id', 'p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7',
+                             's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7'];
 export const PLATE_STEPS  = 15;
 const step = c => Math.max(0, Math.min(PLATE_STEPS, Math.round((c || 0) * PLATE_STEPS))) | 0;
-export const packPlates   = o   => [o.id, ...Array.from({ length: PLATE_FIELDS.length - 1 },
-                                                        (_, i) => step(o.plates?.[i]))];
+// A plate is broken at strain 1 and nowhere below it, so the top step is reserved for
+// exactly that and everything short of it floors into 0..14.
+const wear = v => (v >= 1 ? PLATE_STEPS
+                          : Math.max(0, Math.min(PLATE_STEPS - 1, Math.floor((v || 0) * PLATE_STEPS))) | 0);
+export const PLATE_COLS   = (PLATE_FIELDS.length - 1) / 2;
+export const packPlates   = o   => [o.id,
+                                    ...Array.from({ length: PLATE_COLS }, (_, i) => step(o.plates?.[i])),
+                                    ...Array.from({ length: PLATE_COLS }, (_, i) => wear(o.strain?.[i]))];
 export const unpackPlates = arr => { const o = {}; for (let i = 0; i < PLATE_FIELDS.length; i++) o[PLATE_FIELDS[i]] = arr[i]; return o; };
 
 export const STREAMS = {

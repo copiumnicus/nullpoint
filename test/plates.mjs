@@ -38,12 +38,13 @@ import { ALIENS, WILD, effectiveHp, farmHp, newAlien, stepAlienAI, stepAlienRepa
          MIRROR, soakOf, payloadOf, outlineOf, dialsOn } from '../shared/aliens.js';
 import { platesOf, plateAt, plateMid, arcOf, plateArc, plateCount, plateFill, plateHalf,
          newRing, stepRing, storeBearing, softAt, hottest, dischargeOf, deflectOf,
-         spreadOf, answer, PLATE_MAX, ANSWER_FLOOR } from '../shared/plates.js';
+         spreadOf, answer, PLATE_MAX, ANSWER_FLOOR,
+         crackOf, holeOf, broke, brokenCount, openAt } from '../shared/plates.js';
 import { newShip, step, stepVitals, applyDamage, inHaven } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 import { MAPS } from '../shared/maps.js';
 import { ANCHORS, POSTING, buildFor, stageDps, stageEhp } from '../shared/balance.js';
-import { PLATE_FIELDS, PLATE_STEPS, STREAMS, packPlates, unpackPlates } from '../shared/net.js';
+import { PLATE_FIELDS, PLATE_STEPS, PLATE_COLS, STREAMS, packPlates, unpackPlates } from '../shared/net.js';
 import { diffRows, applyRows } from '../shared/delta.js';
 import { MODULE_KEYS } from '../shared/research.js';
 import { routeTo } from '../shared/power.js';
@@ -109,11 +110,18 @@ console.log('\nthe ring');
   // The wire and the ring are ONE number, read off the field list rather than typed
   // twice. A definition asking for a ninth plate would silently drop it off the
   // snapshot, and the client would draw a cold wedge that was about to fire.
+  //
+  // REWRITTEN when the stream grew a second column a plate: it was
+  // `PLATE_FIELDS.length - 1` when every column was a charge, and the row now carries
+  // a charge AND a strain for each, so the count is the half. Read off net.js either
+  // way — the point of the claim is that nobody can type the two apart, and that is
+  // still exactly what it checks.
   check('the ring can never be wider than the snapshot that carries it',
-    PLATE_MAX === PLATE_FIELDS.length - 1 && plateCount(A) <= PLATE_MAX &&
+    PLATE_MAX === PLATE_COLS && PLATE_FIELDS.length === 1 + 2 * PLATE_COLS &&
+    plateCount(A) <= PLATE_MAX &&
     plateCount({ ...A, plates: { ...A.plates, n: 40 } }) === PLATE_MAX,
-    `${plateCount(A)} plates against ${PLATE_FIELDS.length - 1} columns — plates.js reads PLATE_MAX ` +
-    'off net.js, so the two cannot be changed apart');
+    `${plateCount(A)} plates against ${PLATE_COLS} columns of charge and ${PLATE_COLS} of strain — ` +
+    'plates.js reads PLATE_MAX off net.js, so the two cannot be changed apart');
   // A hostile shows exactly one dial on `abl`, and this one shows none: its ring rides
   // its own stream. dialsOn reads the DEFINITION, which is what stops a second
   // mechanic's dial silently never reaching the client.
@@ -276,6 +284,7 @@ function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
              ehp0: s.stats.hull + s.stats.shield };
   });
   let bolts = [], t = 0, answers = 0, thrown = 0, hits = 0, heat = 0, samples = 0;
+  let dealtAll = 0, firstBreak = null, into = 0;          // when the ring first gave, and what it cost to get there
   while (t < secs && foe.hp > 0) {
     const here = team.map(c => ({ id: c.id, ship: c.ship, haven: inHaven(MAP, c.ship), loud: 1 }));
     // the hostile, exactly as server.js orders it
@@ -303,6 +312,7 @@ function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
         // exactly what server.js does with a hit on a hostile: the RAW amount and the
         // bearing it came from, routed on the definition
         storeHit(foe, h.raw ?? landed, h.from);
+        dealtAll += landed;
         const who = team.find(c => c.id === h.bolt.owner);
         if (who && t >= warm) who.dealt += landed;
       } else {
@@ -310,6 +320,7 @@ function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
         if (who && t >= warm) { who.took += landed; if (h.bolt.plate !== undefined) hits++; }
       }
     }
+    if (firstBreak === null && brokenCount(foe) > 0) { firstBreak = t; into = dealtAll; }
     // Held alive, and the shield put back with them: a measurement of pressure has to
     // outlast the pilot or it is a measurement of how long the first one lived.
     for (const c of team) { c.ship.hp = c.hp0; c.ship.shield = c.sh0; }
@@ -323,63 +334,85 @@ function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
   // after it — one bolt of slop on a ninety-second window, and a share over 1.0 in a
   // printed table reads as a bug rather than as rounding.
   return { t, crew: crew, took, answers: answers / span, landed: thrown ? Math.min(1, hits / thrown) : 0,
+           broke: brokenCount(foe), firstBreak, into, dealt: dealtAll,
+           strain: Math.max(0, ...(foe.strain ?? [0])),
+           dps: dealtAll / Math.max(1e-9, t) / crew,
+           left: Math.max(0, foe.hp + foe.shield) / (foe.stats.hull + foe.stats.shield),
            heat: samples ? heat / samples : 0,
            through: team.reduce((v, c) => v + c.dealt, 0) / Math.max(1e-9, team.reduce((v, c) => v + c.fired, 0)),
            ehp0: team[0].ehp0 };
 }
 
-// --- property two: does circling beat standing still? ----------------------------
+// --- THE DECISION: circle and stay safe, or commit and break through --------------
 //
-// This one first, because if it fails the hostile is the deeps again and nothing else
-// matters. test/ground.mjs asserts the opposite for a Crucible, in as many words:
-// "moving is now worse than standing still, which is the mechanic inverted".
+// This block used to be called "does circling beat standing still", and it asserted
+// that it did — 3,376 points a second holding a bearing against 684 circling. That was
+// true, it was the approved design, and flown it turned out to be the whole fight:
+// with nothing to aim AT, the only correct play was to circle forever, and the ring
+// was a damage tax rather than a decision. The designer's words were "all of them are
+// hard from every side — we deal too much damage from every side, so they should
+// break", and shared/aliens.js had already conceded the arithmetic in advance.
 //
-// WHAT THE PILOT IS BUYING, so the numbers below can be read rather than trusted: the
-// answer goes to the place your last bolt left from, so the miss you get is your own
-// tangential speed times the round trip — your bolt out and the answer back. At the
-// deep shelf's bare 74 px/s and the 630px the hostile chooses to stand at, that is
-// 1.4 seconds and about 108px against an answer 96px wide plus your hull. It clears,
-// and it does not clear by much, which is the right shape: a pilot who circles lazily
-// or gets pinned closer in is answered anyway.
+// So the claim is REWRITTEN rather than deleted, and it is a harder claim than it was:
+// circling still has to be the safe play, committing has to be the fast one, and
+// NEITHER may dominate. A hostile with one correct answer is an instruction; a hostile
+// with two is a fight.
 //
-// AND THE INSTRUMENT'S OWN OPTIMISM, stated rather than buried: `orbit` here flies a
+// WHAT THE PILOT IS BUYING EITHER WAY. Circling: the answer goes to the place your
+// last bolt left from, so the miss is your own tangential speed times the round trip,
+// which at the 630px this thing stands at is 1.4 seconds and about 108px against an
+// answer 71px wide plus a hull. Committing: you hold the bearing, eat every answer,
+// and the wedge in front of you takes strain equal to the damage it TURNS — one
+// plateful of that and it is gone, and a hole lets through double what a plate lets
+// through at all.
+//
+// AND THE INSTRUMENT'S OWN OPTIMISM, stated rather than buried: `orbit` flies a
 // PERFECT circle at full throttle for the whole fight, which no person does. It is the
-// ceiling of the counter and not the average of it — a pilot at 60% of that tangential
-// speed is inside the answer again. Read the zero below as "this is escapable", not as
-// "this is free".
-console.log('\nstanding still against circling, at the deep shelf');
+// ceiling of that counter, not the average of it — a pilot at 60% of that tangential
+// speed is inside the answer again, and every survival number here is a floor.
+console.log('\nthe two ways to fly it, at the deep shelf');
 const still = {};
 {
   for (const plan of ['hold', 'weave', 'orbit'])
     for (const [label, reachMul] of [['reach', 0.92], ['close', 0.32]]) {
-      const r = expose({ plan, reachMul, crew: 1 });
+      const r = expose({ plan, reachMul, crew: 1, secs: 120 });
       still[`${plan}/${label}`] = r;
       console.log(`     ${plan.padEnd(6)} at ${label.padEnd(6)} ${n(r.took).padStart(7)} points a second   ` +
-        `${(100 * r.landed).toFixed(0).padStart(3)}% of answers land   ` +
-        `${(100 * r.heat).toFixed(0)}% hottest plate   ${(100 * r.through).toFixed(0)}% of fire through the armour   ` +
+        `${(100 * r.landed).toFixed(0).padStart(3)}% of answers land   ${r.broke} broken   ` +
+        `${(100 * r.through).toFixed(0)}% of fire through the armour   ` +
         `dead in ${(r.ehp0 / r.took).toFixed(1)}s`);
     }
   const hold = still['hold/reach'], orbit = still['orbit/reach'];
-  check('circling beats standing still, which is the mechanic the deeps inverted',
-    orbit.took < hold.took * 0.5 && orbit.landed < 0.1,
-    `${n(hold.took)} points a second standing at your own gun range against ${n(orbit.took)} circling ` +
-    `at it — x${(hold.took / orbit.took).toFixed(1)}, and the pilot delivers the same fire either way. ` +
-    `${(100 * hold.landed).toFixed(0)}% of answers find a pilot who holds still and ` +
-    `${(100 * orbit.landed).toFixed(0)}% find one who does not. test/ground.mjs asserts the opposite ` +
+  // HALF THE OLD CLAIM SURVIVES INTACT: circling is still the safe way to fly it, and
+  // the answer still cannot find a pilot who keeps turning. That was the property the
+  // deeps destroyed and it is the one that must not be given back.
+  check('circling is still the safe way to fly it, and the answer still cannot find you',
+    orbit.took < hold.took * 0.6 && orbit.landed < 0.1 && hold.landed > 0.9,
+    `${n(orbit.took)} points a second circling against ${n(hold.took)} committed — ` +
+    `${(100 * orbit.landed).toFixed(0)}% of answers find a pilot who keeps turning and ` +
+    `${(100 * hold.landed).toFixed(0)}% find one who does not. test/ground.mjs asserts the OPPOSITE ` +
     'about a Crucible — "moving is now worse than standing still, which is the mechanic inverted" — ' +
-    'because a pool lands at your FEET and moving buys nothing. An answer lands on your BEARING');
-  // The plausible mistake, and it has to lose: in-and-out is movement and it is not a
-  // change of bearing, and the answer tracks the range on purpose.
-  check('and moving in and out along the same line is not moving at all',
-    still['weave/reach'].landed > 0.6 && still['weave/reach'].took > orbit.took * 2,
-    `${(100 * still['weave/reach'].landed).toFixed(0)}% of answers still land on a pilot weaving in and ` +
-    `out at ${n(still['weave/reach'].took)} a second, against ${(100 * orbit.landed).toFixed(0)}% and ` +
-    `${n(orbit.took)} circling. The answer tracks the RANGE and not the angle on purpose, so this is ` +
-    'standing still by the only measure the ring keeps — the difference between "keep moving" and ' +
-    '"do not stand still relative to what you are shooting"');
-  // And the price of the dodge, which is what settles the plate count and stops
-  // circling being free everywhere: the miss is your tangential speed times the round
-  // trip, and the round trip collapses as you close.
+    'because a pool lands at your FEET. An answer lands on your BEARING, and that is the difference');
+  // AND THE OTHER HALF IS NEW, and it is the reason the change exists: circling is safe
+  // and it opens NOTHING. A pilot who never commits is never answered and never gets
+  // through the armour either, which is what turns a rate into a decision.
+  check('but circling opens nothing, which is what makes it a decision instead of an instruction',
+    orbit.broke === 0 && hold.broke > 0 && hold.through > 1.2 && orbit.through < 1,
+    `committing broke ${hold.broke} wedge${hold.broke === 1 ? '' : 's'} and put ` +
+    `${(100 * hold.through).toFixed(0)}% of its fire into the core; circling broke ${orbit.broke} and ` +
+    `put ${(100 * orbit.through).toFixed(0)}%. A hole is worth x${holeOf(A)} and a hard plate x` +
+    `${(1 - deflectOf(A)).toFixed(1)}, so the span between the worst place to stand and the best is ` +
+    `x${(holeOf(A) / (1 - deflectOf(A))).toFixed(0)} — and strain is the damage a plate TURNS, so a ` +
+    'wedge you never heated can never be broken');
+  // The plausible mistake, and it still has to lose: in-and-out is movement and it is
+  // not a change of bearing, and the answer tracks the range on purpose.
+  check('and moving in and out along the same line is still not moving at all',
+    still['weave/reach'].landed > 0.6,
+    `${(100 * still['weave/reach'].landed).toFixed(0)}% of answers still land on a pilot weaving in ` +
+    `and out, against ${(100 * orbit.landed).toFixed(0)}% circling. The answer tracks the RANGE and ` +
+    'not the angle on purpose, so this is standing still by the only measure the ring keeps — the ' +
+    'difference between "keep moving" and "do not stand still relative to what you are shooting". ' +
+    'It does break wedges, which is right: it is a commitment, just a badly flown one');
   check('the dodge is bought with range, and closing in spends it',
     still['orbit/close'].landed > 0.8 && still['orbit/close'].took > orbit.took * 3,
     `circling at 262px still eats ${(100 * still['orbit/close'].landed).toFixed(0)}% of the answers — ` +
@@ -388,49 +421,154 @@ const still = {};
     'this bites, and a pilot pinned in cannot turn their way out of it');
 }
 
-// --- property one: does party size divide the answer? ----------------------------
+// --- and which one actually wins ---------------------------------------------------
+//
+// The block above says the two ways FEEL different. This one runs both to the kill,
+// because "circling is safer" and "committing is faster" are only a decision if
+// neither of them is also the other. If one policy clears sooner AND cheaper there is
+// no decision, there is a right answer with a wrong answer beside it.
+console.log('\nboth of them, run to the kill');
+{
+  const race = {};
+  for (const plan of ['orbit', 'hold']) {
+    const r = expose({ plan, crew: 1, secs: 600, warm: 8 });
+    race[plan] = r;
+    console.log(`     ${plan.padEnd(6)} cleared in ${r.t.toFixed(0).padStart(4)}s   ` +
+      `${n(r.took * (r.t - 8)).padStart(9)} points taken   ${r.broke} wedges broken   ` +
+      `${(100 * r.through).toFixed(0)}% of fire through the armour`);
+  }
+  const cost = p => race[p].took * (race[p].t - 8);
+  check('committing is faster and circling is cheaper, and neither is both',
+    race.hold.t < race.orbit.t * 0.85 && cost('hold') > cost('orbit'),
+    `${race.hold.t.toFixed(0)}s and ${n(cost('hold'))} points committed against ` +
+    `${race.orbit.t.toFixed(0)}s and ${n(cost('orbit'))} circling — ` +
+    `${(100 * (1 - race.hold.t / race.orbit.t)).toFixed(0)}% off the clock for ` +
+    `${(100 * cost('hold') / cost('orbit') - 100).toFixed(0)}% more hull. THAT is the fight this ` +
+    'change was asked for: it used to be one number, 684 against 3,376, with circling strictly ' +
+    'better and nothing at all to aim at');
+  // And the honest floor. Both columns have to fit inside a ship somebody can actually
+  // be flying five hops out, or neither is a policy — it is two ways of dying.
+  //
+  // The bench pilot above carries NO research, which is 15,462 effective hit points
+  // and is not the pilot this is posted for: nothing in the deeps is survivable at x1
+  // and balance.js does not pretend otherwise. The hull to hold this against is the
+  // researched one, and it is read off the same builder rather than typed.
+  const rich = pilot('deep', X32);
+  const ehp = rich.stats.hull + rich.stats.shield;
+  check('and a fully researched deep-shelf pilot survives either one, solo',
+    cost('hold') < ehp && cost('orbit') < ehp && cost('hold') > ehp * 0.4,
+    `${n(cost('hold'))} committed and ${n(cost('orbit'))} circling against ${n(ehp)} of researched ` +
+    `ship — ${(100 * cost('hold') / ehp).toFixed(0)}% and ${(100 * cost('orbit') / ehp).toFixed(0)}% ` +
+    'of it, before a shield mends anything or a repair drone runs. That is the bracket `crack` was ' +
+    'set inside: at three platefuls the committed column is 514,639 and does not fit, so committing ' +
+    'would stop being available at all. Read as a floor and not a verdict — `orbit` flies a perfect ' +
+    'circle at full throttle for five minutes and `hold` never once breaks off, and a person does ' +
+    'neither');
+}
+
+// --- what a wedge costs, and what it is worth --------------------------------------
+//
+// The change asked for one number to be derived: what breaking a plate costs to
+// achieve. It is not a number in the definition — `crack` is one plateful of damage
+// TURNED — so what it costs in damage DEALT depends entirely on how hard the wedge is
+// being held, which is the whole point. This block reads it off the real loop.
+console.log('\nwhat it costs to break one');
+{
+  const solo = still['hold/reach'];
+  console.log(`     one pilot, committed   first wedge at ${solo.firstBreak?.toFixed(0) ?? '-'}s, ` +
+    `${n(solo.into)} points into it, ${n(solo.took * (solo.firstBreak ?? 0))} points taken getting there`);
+  check('a wedge is broken by the damage it TURNS, so a cold one can never be broken',
+    solo.broke > 0 && solo.firstBreak > 8,
+    `${n(crackOf(A))} points turned — ${A.plates.crack} platefuls of the same plateful soak itself ` +
+    `defines, and the count is measured rather than chosen: see the sweep in aliens.js. At full ` +
+    `hardness that is ${n(crackOf(A) / deflectOf(A))} points into the bearing; at the ${(100 * solo.heat).toFixed(0)}% a ` +
+    'lone deep-shelf gun actually holds a wedge at, it is several times that. Nothing new is ' +
+    'measured to get it: the strain IS what softAt() already turns away');
+  // PERMANENT for the life of the fight, and that is a decision rather than an
+  // omission. A wedge paid for in answers and then handed back is a fight with no
+  // progress in it.
+  const a2 = newAlien('antiphon', 11, MAPS.x0, 3, { x: 6000, y: 4000 });
+  a2.plates[0] = 1; a2.strain[0] = 1;
+  for (let k = 0; k < 60 * 30; k++) stepRing(a2, dt);          // a minute of nothing at all
+  check('and a broken wedge stays broken for the whole fight',
+    broke(a2, 0) && a2.plates[0] === 0,
+    'a minute of bleeding does not mend it, and it is held at zero charge so `hottest` can never ' +
+    'offer it again. It comes back with the rest of the ring on the five-minute respawn, out of ' +
+    'newRing() — a wedge you paid for and then lost again is a fight with no progress in it');
+  // A hole is not merely un-armoured, it is open, and the two ends of the span are one
+  // dial read both ways.
+  const a3 = newAlien('antiphon', 12, MAPS.x0, 3, { x: 6000, y: 4000 });
+  a3.plates[0] = 1;
+  const hard = softAt(a3, 0);
+  a3.strain[0] = 1;
+  check('and what you get for it is the exact opposite of what the plate was doing',
+    Math.abs(hard - (1 - deflectOf(A))) < 1e-9 && Math.abs(softAt(a3, 0) - holeOf(A)) < 1e-9 &&
+    Math.abs(holeOf(A) * hard - 1) < 1e-9,
+    `x${hard.toFixed(1)} through a plate at full against x${holeOf(A).toFixed(1)} through the hole it ` +
+    'leaves — one dial, `deflect`, read from both ends, so the two can never be argued apart and ' +
+    'moving one moves the other');
+  // And what all eight means. The ring has one voice; take every mouth off it and it
+  // has nothing left to say.
+  const a4 = newAlien('antiphon', 13, MAPS.x0, 3, { x: 6000, y: 4000 });
+  for (let i = 0; i < plateCount(A); i++) { a4.strain[i] = 1; a4.plates[i] = 0; }
+  const silent = answer(a4, 10, [{ id: 1, ship: { x: 6800, y: 4000, hp: 1, r: 17 } }], BOLT_SPEED);
+  check('all eight broken is the end of the fight rather than a stage of it',
+    silent === null && hottest(a4) === -1 && brokenCount(a4) === plateCount(A) &&
+    softAt(a4, 0) === holeOf(A),
+    'nothing left to charge, nothing left to answer with, and every bearing open at ' +
+    `x${holeOf(A)}. What is left is its 711 barrel against a bare core taking double, so stripping ` +
+    `the ring is the kill in all but name. Getting there costs ${n(plateCount(A) * crackOf(A))} points ` +
+    `TURNED — ${(100 * plateCount(A) * crackOf(A) / effectiveHp('antiphon')).toFixed(0)}% of its own hit ` +
+    'points if it were turning everything, and several times that in damage dealt at the hardness a ' +
+    'real gun holds a wedge at. It is a party\'s job, not one pilot\'s');
+}
+
+// --- property one: does party size STILL divide the answer? ------------------------
 //
 // The headline, and the reason the hostile exists at all. balance.js's POSTING says
 // the deep pair is not completable at ANY party size because ground does not divide:
 // "a gun shoots one pilot at a time, so four pilots each take a quarter of the
 // barrels; a pool burns everybody standing in it, so four pilots each take all of it."
 //
-// A ring has one voice. It answers its hottest plate once a cycle, so the answers are
-// shared out — and the plate a pilot is not standing on COOLS while it waits its turn,
-// which is what turns "shared out" into a real division rather than the same total
-// arriving on a rota. Both halves are in one number: the half-life is one cycle.
-//
-// Measured with everybody holding an ASSIGNED bearing rather than circling, and that
-// is the pitch's own scenario — "four pilots on four bearings" — rather than a way of
-// making the number look better. It is the case where the ring lands everything it
-// throws, so what is left in the curve is the division and nothing else. Four pilots
-// who all circle perfectly take nothing at all from the ring, which is the block
-// above, and a party that mixes the two is somewhere between.
+// It measured 1.00 / 0.50 / 0.33 / 0.17 before plates could break, and the whole point
+// of re-measuring is that breaking could have destroyed it: a party opens holes, holes
+// stop answering, and a curve that only falls because the ring has been dismantled is
+// not the same claim. It is measured with everybody holding an ASSIGNED bearing, which
+// is the pitch's own scenario — "four pilots on four bearings" — and it is now also the
+// scenario where four wedges are being broken at once, which is the natural play.
 console.log('\nthe party curve, four pilots on four bearings');
 {
-  const at = [1, 2, 3, 4].map(crew => [crew, expose({ crew, plan: 'station' })]);
+  const at = [1, 2, 3, 4].map(crew => [crew, expose({ crew, plan: 'station', secs: 120 })]);
   const solo = at[0][1];
   for (const [crew, r] of at)
     console.log(`     ${crew} pilot${crew > 1 ? 's ' : '  '} ${n(r.took).padStart(7)} points a second each   ` +
-      `x${(r.took / solo.took).toFixed(2)} of solo   ${(r.answers).toFixed(2)} answers/s   ` +
+      `x${(r.took / solo.took).toFixed(2)} of solo   ${r.broke} wedges broken   ` +
       `${(100 * r.heat).toFixed(0)}% hottest plate   time to die x${(solo.took / r.took).toFixed(2)}`);
   const took = k => at.find(([c]) => c === k)[1].took;
-  // MONOTONIC, and that is the whole claim. Not "four is easier than one" — every
-  // step has to help, or a party of three has a reason to leave somebody behind.
-  check('every pilot you bring makes the fight lighter for all of them',
+  const brk = k => at.find(([c]) => c === k)[1].broke;
+  check('every pilot you bring still makes the fight lighter for all of them',
     took(2) < took(1) && took(3) < took(2) && took(4) < took(3),
     [1, 2, 3, 4].map(c => `${c}p ${n(took(c))}/s`).join('  ') +
-    ' — a ring answers ONE bearing a cycle, so the answers are shared out');
-  check('and time-to-die RISES with party size, which is the property the deeps do not have',
+    ' — a ring answers ONE bearing a cycle, so the answers are shared out, and the plate a pilot is ' +
+    'not standing on cools while it waits its turn');
+  check('and time-to-die still RISES with party size, which the deeps do not manage',
     took(4) < took(1) * 0.6,
     `each of four takes ${(100 * took(4) / took(1)).toFixed(0)}% of what one takes, so a pilot lives ` +
-    `x${(took(1) / took(4)).toFixed(2)} longer for bringing three friends — while the fight gets 4x ` +
-    'shorter. balance.js says of the deeps: "time-to-die is flat in party size while time-to-clear ' +
-    'falls as 1/n", and that is exactly why no party size clears them. This is the inverse, and it ' +
-    'is one mechanic rather than a special case: the plate a pilot is not standing on cools while ' +
-    'it waits its turn to be answered, and it halves in exactly one cycle');
-  // And the total over the whole fight, which is the number a party actually feels:
-  // per-second falls AND the fight is 1/n as long, so the two multiply.
+    `x${(took(1) / took(4)).toFixed(2)} longer for bringing three friends while the fight gets 4x ` +
+    'shorter. It was 1.00 / 0.50 / 0.33 / 0.17 before wedges could break and it is ' +
+    [1, 2, 3, 4].map(c => (took(c) / took(1)).toFixed(2)).join(' / ') + ' now, so breaking did not ' +
+    'cost the property this hostile exists for — which it easily could have, since a party opens ' +
+    'holes and a hole stops answering');
+  // AND THE NEW HALF: a party does not merely survive better, it opens the ring
+  // faster, and that needed no arranging. Strain goes with CHARGE and charge goes up
+  // with party size, because a wedge waits longer for its turn to be answered.
+  check('and a party breaks the ring faster than one pilot can, without being given anything',
+    brk(4) > brk(1),
+    `${[1, 2, 3, 4].map(c => `${c}p broke ${brk(c)}`).join(', ')} in the same two minutes. Nothing ` +
+    'here is a party bonus: strain is the damage a wedge TURNS, a wedge turns `deflect x charge`, ' +
+    'and charge climbs with party size because a plate waits longer for its turn. Four pilots run ' +
+    'their wedges about twice as hot as one does, so four bearings come apart while one is still ' +
+    'working on its first');
   const clear = c => effectiveHp('antiphon') / (c * stageDps('deep'));
   check('so what a whole fight costs each pilot falls faster than one over party size',
     took(4) * clear(4) < took(1) * clear(1) / 6,

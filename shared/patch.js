@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.88';
+export const VERSION = '0.89';
 
 export const PATCHES = [
+  { v: '0.89', notes: [
+    "Lean on ONE of the Antiphon's plates long enough and it BREAKS. The core is open there",
+    'A broken wedge stops deflecting and stops answering, and lets through double',
+    'The rim of each plate shows how close it is to going — circling never breaks one',
+    'So it is a choice: circle and stay safe, or commit and take a third off the fight',
+  ] },
   { v: '0.88', notes: [
     'A Crucible and its Doldrum prowl the sector now instead of standing where they spawned',
     'They move together, at their own speeds, and reform after a fight',

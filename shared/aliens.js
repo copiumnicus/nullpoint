@@ -938,7 +938,16 @@ export const ALIENS = {
       // for the DODGE and for the party, and both want a plate wide enough that one
       // pilot owns one bearing. Eight wedges of 45 degrees is two per pilot at the
       // party size this is posted for, and it is the widest the wire carries:
-      // shared/net.js prices eight columns at 0.150 KiB/s and says why.
+      // shared/net.js prices eight columns at 0.094 KiB/s and says why.
+      //
+      // AND THAT SECOND ROW IS WHY `crack` EXISTS, which is worth saying here rather
+      // than only where the number is. The cooling being unreachable was written down
+      // as a limitation and it shipped as one, and what it produced in the cockpit was
+      // exactly what the arithmetic predicted: every wedge warm all the time, no soft
+      // spot anywhere, and a mechanic that read as a flat damage tax. A ring that can
+      // only harden has no second state, so there is nothing for a pilot to aim AT.
+      // Breaking is the second state, and the count feeds it too — a plate is one
+      // eighth of the ring's total armour, so eight of them is what "strip it" costs.
       n: 8,
       // ONE PERCENT OF ITSELF, dealt into one bearing inside the decay window, fills
       // that plate — 65,000 points. A SHARE and not an amount, which is MIRROR's own
@@ -990,6 +999,60 @@ export const ALIENS = {
       // before the answer arrives — and a real cost on a party that all shoots one
       // bearing, which is the thing the ring exists to punish.
       deflect: 0.5,
+      // WHAT IT TAKES TO BREAK ONE, in platefuls of damage TURNED. Two, and it is
+      // MEASURED rather than chosen.
+      //
+      // Why there is a break at all is the designer's, after flying it: "his shield
+      // should be breaking when we shoot it from one side long enough — right now all
+      // of them are hard from every side." The note on `n` above conceded the
+      // arithmetic in advance: a wedge cannot be walked cold at any speed a heavy hull
+      // can fly, so under a real gun every plate sits warm, there is no soft spot
+      // anywhere, and a ring that can only harden is a rate rather than a decision.
+      //
+      // WHAT THE NUMBER IS SET BY is not the size of it. It is that COMMITTING MUST BUY
+      // TIME WITH HULL rather than getting both — a hostile with one correct answer is
+      // an instruction, and it does not matter which answer. Run to the kill through
+      // the real loop, one deep-shelf pilot, circling against committed:
+      //
+      //     crack   breaks at   clears in   costs      against circling
+      //      1         47s        172s      240,385    47% off the clock for   6% more hull
+      //      1.5       69s        184s      307,405    44%                    36%
+      //      2         91s        196s      374,485    40%                    66%
+      //      3        136s        220s      514,639    33%                   128%
+      //      4        180s        248s      654,586    24%                   190%
+      //
+      // Circling is 328s and 226,098 at every one of them, because it never opens
+      // anything at all.
+      //
+      // ONE is where this change started and it is unshippable: six percent more hull
+      // for half the clock is not a decision, it is the ring's old failure pointing the
+      // other way — one correct play, and the other one strictly worse. THREE is
+      // unshippable from the far end, and for a harder reason: 514,639 is more than the
+      // 494,781 a fully researched deep-shelf hull HAS, so committing stops being
+      // available to a lone pilot at all and the ring is back to one answer. TWO is the
+      // last step that leaves both doors open, and it is the one that reads as a trade
+      // from the cockpit — a third off the fight for two thirds more of your ship.
+      //
+      // WHAT IT COSTS IN DAMAGE DEALT is not a number that can be written here, and
+      // that is the mechanic rather than a gap: strain is the damage a plate TURNS and
+      // a plate turns `deflect x charge`, so the bill depends entirely on how hard the
+      // wedge is being held when you pay it.
+      //
+      //      at full hardness            130,000 / 0.5           =   260,000 points
+      //      one deep-shelf pilot        130,000 / (0.5 x 0.14)  = 1,857,000
+      //      four of them, one bearing   130,000 / (0.5 x 0.43)  =   605,000
+      //
+      // So a party opens the ring far faster than one pilot can, and nothing had to be
+      // arranged for it: a plate waits longer for its turn to be answered when there
+      // are more bearings, so it runs hotter, so it strains quicker. Measured, four
+      // pilots break three wedges in the time one breaks its first.
+      //
+      // AND IT IS PERMANENT for the life of the fight. A wedge you paid for in answers
+      // and then had to pay for again is a fight with no progress in it — the whole
+      // point is that shooting one side LONG ENOUGH gets you something you keep. It
+      // comes back with the rest of the ring on the five-minute respawn, because
+      // respawnAlien rebuilds it from newRing().
+      crack: 2,
       // How far the answer carries. 1,800, which is past the longest reach money can
       // buy: Collimated Cells double a Bulwark's 820 to 1,640. See the note on
       // weaponRange above — a boss you can shoot from outside its answer is a boss
