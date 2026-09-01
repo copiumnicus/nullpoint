@@ -48,7 +48,7 @@
 // the same number in two places, which is the thing the whole of shared/ exists to
 // prevent — and it would fail in the worst possible way, with the ring running one
 // plate wider than the snapshot can carry.
-import { PLATE_FIELDS, PLATE_STEPS } from './net.js';
+import { PLATE_COLS, PLATE_STEPS } from './net.js';
 
 // --- the ring on a definition ---------------------------------------------------
 //
@@ -63,7 +63,7 @@ export const platesOf = def => def?.plates ?? null;
 // and the client would draw a cold wedge that was about to fire — which is the one
 // failure this whole file exists to prevent. Read off the field list rather than
 // written down, so the two cannot be changed apart.
-export const PLATE_MAX = PLATE_FIELDS.length - 1;
+export const PLATE_MAX = PLATE_COLS;
 export const plateCount = def => Math.max(1, Math.min(PLATE_MAX, platesOf(def)?.n ?? 0));
 
 // A PLATE HALVES IN ONE OF THE RING'S OWN ANSWERING CYCLES, and that is MIRROR.half
@@ -130,9 +130,13 @@ export const arcOf = (def, i) => {
 //
 // It stays on the server: the wedge is the tell and the bolt itself is the rest of
 // it, so there is nothing here the wire has to carry twice.
+// `a.strain` is the third array and the only one that never goes down: how far each
+// wedge is through failing, 0..1 as a share of `crack`. A ring comes back whole on a
+// respawn and not before — see the note on crackOf, and respawnAlien in aliens.js.
 export function newRing(def) {
   const n = plateCount(def);
-  return { plates: new Array(n).fill(0), plateFrom: new Array(n).fill(null) };
+  return { plates: new Array(n).fill(0), strain: new Array(n).fill(0),
+           plateFrom: new Array(n).fill(null) };
 }
 
 // Bleed. Called once a tick, before anything reads the ring.
@@ -141,6 +145,7 @@ export function stepRing(a, dt) {
   if (!platesOf(def) || !a.plates) return;
   const k = Math.pow(2, -dt / plateHalf(def));
   for (let i = 0; i < a.plates.length; i++) {
+    if (broke(a, i)) { a.plates[i] = 0; continue; }    // nothing left to bleed
     a.plates[i] *= k;
     // Otherwise it asymptotes and a wedge never draws cold — one pixel of glow says
     // "still loaded" to a pilot who has done everything right. Same guard, same
@@ -163,10 +168,69 @@ export function stepRing(a, dt) {
 // leaning on, which is the mechanic saying so in the one place a pilot is already
 // looking.
 export const deflectOf = def => Math.max(0, Math.min(0.5, platesOf(def)?.deflect ?? 0));
+
+// --- and what breaks it ----------------------------------------------------------
+//
+// THE PROBLEM THIS FIXES, in the words it was reported in: "when we find them, all of
+// them are hard from every side — we deal too much damage from every side, so they
+// should break." That is this file's own stated weakness read back from the cockpit.
+// The note on the plate count already said it: at any speed a heavy hull can fly, a
+// wedge cannot be walked cold, so under a real gun every plate sits warm all the time,
+// there is never a soft spot anywhere, and the ring reads as a flat damage tax with
+// bolts attached. Hardness with no failure state is not a decision, it is a rate.
+//
+// So a plate that is made to work fails. WHAT COUNTS AS WORK is the thing it was
+// already doing and the one number this file did not previously keep: the damage it
+// TURNED. `softAt` says a plate turns `deflect x charge` of everything that hits it;
+// that share is now added up, and when it reaches one plateful the plate is gone.
+//
+//     strain += amount x deflect x charge          the damage it stopped
+//     broken  when strain reaches `crack x fill`   one plateful of stopping
+//
+// Three properties fall straight out of that and none of them had to be arranged:
+//
+//   a cold plate cannot be broken   it turns nothing, so it strains not at all. You
+//                                   cannot crack a wedge you have not heated, and
+//                                   walking your fire round the ring opens nothing.
+//   the armour kills itself         a plate is destroyed by exactly the thing it is
+//                                   for. Nothing new has to be measured or drawn.
+//   a party breaks it faster        strain goes with CHARGE, and charge goes up with
+//                                   party size, because a plate waits longer for its
+//                                   turn to be answered. Four pilots on four bearings
+//                                   run their plates twice as hot as one does, so the
+//                                   ring fails about twice as fast per pilot.
+//
+// It is a SHARE of one plateful for the reason the fill itself is: dimensionless, so
+// the wire needs no normalising constant and the rung is still one edit.
+export const crackOf = def => (platesOf(def)?.crack ?? 0) * plateFill(def);
+
+// Whether a wedge is gone. Broken IS strain at one — the same number, not a second
+// flag beside it — which is why the wire carries one column for both and its top step
+// means gone. A flag would be a second copy of a fact, and a second copy disagrees.
+export const broke = (a, i) => (a?.strain?.[i] ?? 0) >= 1;
+export const brokenCount = a => (a?.strain ?? []).reduce((v, x) => v + (x >= 1 ? 1 : 0), 0);
+export const openAt = (a, ang) => broke(a, plateAt(a?.def, ang));
+
+// WHAT A HOLE IS WORTH, and it is the same dial read the other way round. A plate at
+// full turns `deflect` of what reaches it — a half, and never more, because past a
+// half the armour is doing more work than the core. A plate that is GONE is the exact
+// opposite of that, so it lets through `1 / (1 - deflect)`: double.
+//
+// One number, used symmetrically, so moving `deflect` moves both ends together and
+// they can never be argued apart. The span a pilot is playing inside is therefore
+// x0.5 leaning on a hard wedge against x2.0 pouring through a hole — a factor of FOUR
+// between the worst place to stand and the best, which is what makes breaking one
+// worth the answers it costs.
+export const holeOf = def => 1 / Math.max(0.01, 1 - deflectOf(def));
 export const softAt = (a, ang) => {
   const def = a?.def;
   if (!platesOf(def) || !a.plates) return 1;
-  const c = a.plates[plateAt(def, ang)] ?? 0;
+  const i = plateAt(def, ang);
+  // A hole, and it is the one place this returns more than 1. Clamped at the top by
+  // holeOf's own derivation rather than by a literal, so the two ends of the span move
+  // together with `deflect`.
+  if (broke(a, i)) return holeOf(def);
+  const c = a.plates[i] ?? 0;
   return Math.max(0, Math.min(1, 1 - deflectOf(def) * (Number.isFinite(c) ? c : 0)));
 };
 
@@ -184,6 +248,22 @@ export function storeBearing(a, amount, from) {
   const fill = plateFill(def);
   if (!(fill > 0)) return;
   const i = plateAt(def, ang);
+  // A hole takes nothing and remembers nothing. It is not armour any more, so there is
+  // no charge to raise, no strain left to add and no line to answer down — the shot
+  // simply goes through, at holeOf() times what it would have been worth.
+  if (broke(a, i)) return;
+  // The damage this plate STOPPED, which is the same quantity softAt() just handed to
+  // combat.js and not a second measurement of it. Taken against the charge BEFORE this
+  // hit lands, because that is the hardness that did the stopping.
+  const crack = crackOf(def);
+  if (crack > 0) {
+    const turned = amount * deflectOf(def) * Math.max(0, Math.min(1, a.plates[i] ?? 0));
+    a.strain[i] = Math.min(1, (a.strain[i] ?? 0) + turned / crack);
+    // The moment it goes, it goes cold too: a broken wedge must never be left holding
+    // a charge, or `hottest` would keep offering it and the client would draw a hole
+    // that is somehow still glowing.
+    if (a.strain[i] >= 1) { a.plates[i] = 0; return; }
+  }
   a.plates[i] = Math.min(1, (a.plates[i] ?? 0) + amount / fill);
   if (Number.isFinite(from.x) && Number.isFinite(from.y)) a.plateFrom[i] = { x: from.x, y: from.y };
 }
@@ -195,7 +275,12 @@ export function storeBearing(a, amount, from) {
 export function hottest(a) {
   if (!a?.plates?.length) return -1;
   let best = -1, hot = 0;
-  for (let i = 0; i < a.plates.length; i++) if (a.plates[i] > hot) { hot = a.plates[i]; best = i; }
+  // A hole has no voice. It is held at zero charge by storeBearing anyway, so this
+  // guard is belt as well as braces — but it is the line that makes "all eight broken"
+  // mean the ring has gone silent, which is the end of the fight rather than a stage
+  // of it, so it is worth being explicit about.
+  for (let i = 0; i < a.plates.length; i++)
+    if (!broke(a, i) && a.plates[i] > hot) { hot = a.plates[i]; best = i; }
   return best;
 }
 

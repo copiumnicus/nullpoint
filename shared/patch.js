@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.92';
+export const VERSION = '0.93';
 
 export const PATCHES = [
+  { v: '0.93', notes: [
+    "Lean on ONE of the Antiphon's plates long enough and it BREAKS. The core is open there",
+    'A broken wedge stops deflecting and stops answering, and lets through double',
+    'The rim of each plate shows how close it is to going — circling never breaks one',
+    'So it is a choice: circle and stay safe, or commit and take a third off the fight',
+  ] },
   { v: '0.92', notes: [
     'Ping the chart: hit PING on the minimap, then click a spot — or shift-click it',
     'Everyone in the sector sees it for eight seconds, with your callsign on it',

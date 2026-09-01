@@ -5262,6 +5262,12 @@ function drawFrame(now) {
     if (ring && platesOf(rdef)) {
       const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
       const heat = i => { const v = (ring[`p${i}`] ?? 0) / PLATE_STEPS; return v > 0 ? Math.min(1, v) : 0; };
+      // How far through failing, and the top step means GONE — one column carrying one
+      // quantity, because strain saturates at exactly 1 and a plate breaks at exactly
+      // 1. See PLATE_FIELDS. `gone` is therefore an equality and not a threshold, so
+      // there is no window in which a wedge is drawn as armour and hit-tested as a hole.
+      const wear = i => { const v = (ring[`s${i}`] ?? 0) / PLATE_STEPS; return v > 0 ? Math.min(1, v) : 0; };
+      const gone = i => (ring[`s${i}`] ?? 0) >= PLATE_STEPS;
       const n = plateCount(rdef);
       const r0 = Math.max(2, R * 1.20), r1 = Math.max(r0 + 2, R * 1.52);
       // One turn of its trigger is one second and a plate halves in one of them, so
@@ -5271,11 +5277,36 @@ function drawFrame(now) {
       let hot = 0, hotAt = 0;
       g.save(); g.translate(s.rx, s.ry);
       for (let i = 0; i < n; i++) {
-        const c2 = heat(i);
-        if (c2 > hot) { hot = c2; hotAt = i; }
+        const c2 = heat(i), w2 = wear(i), out = gone(i);
+        if (!out && c2 > hot) { hot = c2; hotAt = i; }
         const { from, to } = arcOf(rdef, i);
         // A hair of gap between wedges, or eight plates read as one ring.
         const pad = 0.045;
+        // A HOLE. Three separate readings, because "this is where you aim" is the one
+        // thing on this hostile a pilot must never have to squint at: the armour is not
+        // drawn at all, the core shows through as a wash of its own hot colour, and the
+        // two edges of the missing wedge are left as stubs so the gap has a SHAPE
+        // rather than merely being an absence.
+        if (out) {
+          const grd = g.createRadialGradient(0, 0, Math.max(1, R * 0.5), 0, 0, Math.max(2, r1 + R * 0.34));
+          grd.addColorStop(0, 'rgba(255,148,86,0.42)');
+          grd.addColorStop(1, 'rgba(255,120,60,0)');
+          g.fillStyle = grd;
+          g.beginPath();
+          g.moveTo(0, 0);
+          g.arc(0, 0, Math.max(2, r1 + R * 0.34), from + pad, to - pad);
+          g.closePath(); g.fill();
+          // the torn ends of the plates either side of it
+          g.strokeStyle = 'rgba(255,196,142,0.75)';
+          g.lineWidth = 1.6;
+          for (const e of [from + pad, to - pad]) {
+            g.beginPath();
+            g.moveTo(Math.cos(e) * r0, Math.sin(e) * r0);
+            g.lineTo(Math.cos(e) * r1, Math.sin(e) * r1);
+            g.stroke();
+          }
+          continue;
+        }
         g.beginPath();
         g.arc(0, 0, r1, from + pad, to - pad);
         g.arc(0, 0, r0, to - pad, from + pad, true);
@@ -5287,8 +5318,22 @@ function drawFrame(now) {
         g.strokeStyle = `rgba(255,238,196,${al(0.10 + 0.60 * c2)})`;
         g.lineWidth = 1 + 1.8 * c2;
         g.stroke();
+        // AND HOW FAR THROUGH FAILING IT IS, which is a different question from how
+        // hot it is and needs a different answer. The charge is what the wedge is
+        // about to throw and it goes up and down all fight; this only ever climbs, so
+        // it is drawn as a bar rather than as a glow — a seam eating along the outer
+        // rim of the plate, from one edge toward the other. When it reaches the far
+        // edge the plate is gone, and that is the whole of what a pilot deciding
+        // whether to commit needs to read.
+        if (w2 > 0) {
+          g.strokeStyle = `rgba(255,${Math.round(150 - 60 * w2)},${Math.round(90 - 50 * w2)},${al(0.45 + 0.5 * w2)})`;
+          g.lineWidth = 1.5 + 2.2 * w2;
+          g.beginPath();
+          g.arc(0, 0, Math.max(2, r1 - 1), from + pad, from + pad + (to - from - 2 * pad) * w2);
+          g.stroke();
+        }
       }
-      // And the one that is about to go, marked outward along its own wedge — the
+      // And the one that is about to be answered, marked outward along its own wedge — the
       // direction the bolt leaves by. It only appears once the plate is past half,
       // because a mark on every wedge is a mark on none.
       if (hot > 0.5) {
