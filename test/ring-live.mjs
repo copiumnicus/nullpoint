@@ -228,18 +228,28 @@ for (let k = 0; k < 120; k++) {
 // lived instead of any of that. What the fight COSTS is measured on the bench, where
 // nobody has to be revived, and it is measured in points: 353,131 committed against
 // 220,410 circling, over a 494,781-point researched hull.
-// Every SECOND. Measured on this exact loadout against this exact hostile: committed
-// at 700px, an unresearched deep-shelf Bulwark loses its shield in two seconds and is
-// destroyed in three. Nothing about that is a surprise — balance.js does not pretend
+// Every HALF second. Measured on this exact loadout against this exact hostile:
+// committed at 700px, an unresearched deep-shelf Bulwark loses its shield in two
+// seconds and is destroyed in three, and one discharge is 2,900 of a 15,462-point
+// ship — so a one-second window still loses pilots, and every death is a long flight
+// back that smears strain across the wedges it crosses. Nothing about that is a surprise — balance.js does not pretend
 // anything out here is survivable without research, and the bench measures the cost
 // properly against a 494,781-point researched hull. What this file is checking is that
 // the RING works, and a pilot who is destroyed at three seconds measures how long they
 // lived instead of any of it.
-const HEAL_EVERY = 1;
+const HEAL_EVERY = 0.5;
 const R2 = 700;
-// Back out, back to Nullpoint, and back into range. Returns once the pilot is standing
-// where they were, or gives up so the caller's own timeout still governs.
-async function revive() {
+// Back out, back to Nullpoint, and back to the SAME BEARING. The bearing argument is
+// the whole reason this is a function: returning to a default one instead put the
+// pilot on wedge 0 and let the main loop sweep them round to wherever they had been
+// committed, and a sweep is fire spread over three wedges. Measured, that alone was
+// the difference between a wedge breaking at 181s and nothing breaking in five
+// minutes — [15 13 0 0 0 0 0 0] against [3 0 0 4 4 0 0 0].
+//
+// It does NOT shoot on the way in, for the same reason: `target` is left unset until
+// the pilot is on station, so the flight back cannot smear strain across the wedges it
+// crosses.
+async function revive(bear = 0) {
   if (!dead) return false;
   send({ t: 'respawn' });
   await wait(1200);
@@ -247,14 +257,14 @@ async function revive() {
   say('/tp x0');
   await wait(1400);
   dead = false;
-  for (let k = 0; k < 120; k++) {
+  for (let k = 0; k < 160; k++) {
     const f = findFoe();
     if (!f) { send({ t: 'intent', mode: 'pt', x: 6000, y: 4000 }); await wait(400); continue; }
-    send({ t: 'intent', mode: 'pt', x: f.x + R2, y: f.y });
-    send({ t: 'target', id: f.id });
+    send({ t: 'intent', mode: 'pt', x: f.x + Math.cos(bear) * R2, y: f.y + Math.sin(bear) * R2 });
     say('/heal');
     await wait(400);
-    if (Math.abs(Math.hypot(me.x - f.x, me.y - f.y) - R2) < 110) return true;
+    const off = Math.hypot(me.x - (f.x + Math.cos(bear) * R2), me.y - (f.y + Math.sin(bear) * R2));
+    if (off < 140) return true;
   }
   return true;
 }
@@ -262,6 +272,9 @@ async function phase(name, secs, fly) {
   rings = []; answers = []; barrels = new Set(); onMe = [];
   const peak = new Array(8).fill(0);
   let bear = 0, bn = 0, lastHeal = 0;
+  // Where the pilot was standing when the phase started, so a respawn goes back there.
+  const f0 = findFoe();
+  const mb0 = f0 ? Math.atan2(me.y - f0.y, me.x - f0.x) : 0;
   const t0 = Date.now();
   while (Date.now() - t0 < secs * 1000) {
     const f = findFoe();
@@ -269,7 +282,7 @@ async function phase(name, secs, fly) {
     await wait(250);
     const el = (Date.now() - t0) / 1000;
     if (el - lastHeal > HEAL_EVERY) { say('/heal'); lastHeal = el; }
-    if (dead) await revive();
+    if (dead) await revive(mb0);
     for (const r of rings.splice(0)) for (let i = 0; i < 8; i++) peak[i] = Math.max(peak[i], r[`p${i}`] ?? 0);
     if (f) { bear += Math.atan2(me.y - f.y, me.x - f.x); bn++; }
   }
@@ -321,7 +334,7 @@ console.log(`\n     its hull is at ${f3?.hp}% and its shield at ${f3?.sh}% after
 console.log('\n  committing to one bearing until it breaks:');
 {
   let bear = null;
-  await revive();
+  await revive(0);
   {
     const f = findFoe();
     bear = Math.atan2(me.y - f.y, me.x - f.x);
@@ -363,7 +376,7 @@ console.log('\n  committing to one bearing until it breaks:');
     // back somewhere else and committed there instead. The whole point of this block is
     // that ONE wedge is being leaned on, so the bearing is chosen once and flown back
     // to; the loop below already steers to it from wherever the respawn put them.
-    if (dead) await revive();
+    if (dead) await revive(bear);
     if (Math.round(el) % 30 === 0 && Math.round(el) !== lastLog && row) {
       lastLog = Math.round(el);
       const st = Array.from({ length: 8 }, (_, i) => row[`s${i}`] ?? 0);
@@ -383,7 +396,7 @@ console.log('\n  committing to one bearing until it breaks:');
     await wait(250);
     const el1 = (Date.now() - t1) / 1000;
     if (el1 - heal1 > HEAL_EVERY) { say('/heal'); heal1 = el1; }
-    if (dead) await revive();
+    if (dead) await revive(bear);
   }
   after = mine.splice(0);
   const last = trace[trace.length - 1] ?? [];
