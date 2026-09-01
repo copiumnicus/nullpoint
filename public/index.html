@@ -73,7 +73,8 @@ import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/re
 import { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, devicePrice, whyNotDevice } from '/shared/devices.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
          barLayout, feedMenu, gradeColour, gradeReach, whyNotBuy, whyNotLoad,
-         promptRect, TIP_H, TIP_UP } from '/shared/ammo.js';
+         promptRect, TIP_H, TIP_UP, buyRow, priceRight,
+         whyNotBuySays } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 
@@ -2046,6 +2047,35 @@ const shipCtx = () => ({ hull: myHull, fit: myFit, drones: escortOf(myDrones, my
 const reachFor = feed => (myStats().weaponRange ?? 0) * gradeReach(myUsing?.[feed]);
 const myReach  = () => Math.max(...FEEDS.map(reachFor));
 
+// What an ammunition row calls itself, in one place, because ammoBuys() below
+// MEASURES this string to decide where the buy buttons start. A second copy that
+// drifted by one word would move the buttons under the draw's feet.
+const ammoRowName = k => `${AMMO[k].name}   crate of ${AMMO[k].pack}`;
+
+// The x1 x10 x100 buttons on an ammunition row, worked out ONCE and used by both
+// the draw and the hit test. Two copies of "where is the x100 button" is the
+// workshop dock in miniature, and this one would have taken the click and bought
+// a different number from the one under the cursor.
+//
+// The widths are measured here rather than in shared/ammo.js because that file
+// has no canvas and will not keep a second copy of a font metric — the same
+// contract statStrip() already runs on. The font is PUT BACK afterwards: this is
+// called from the click path as well, where a font left set leaks into whatever
+// the next frame draws first.
+const ammoBuys = (k, r) => {
+  const was = g.font;
+  g.font = '12px ui-monospace, monospace';
+  const nameW = g.measureText(ammoRowName(k)).width;
+  g.font = '11px ui-monospace, monospace';
+  // One character of the price's own font between the name and the price, which
+  // is exactly the clearance the layout rules ask for between two labels sharing
+  // a line. Measured, never written down: see above.
+  const gap = g.measureText(' ').width;
+  const priceW = g.measureText(`${fmtCredits(AMMO[k].price)} ${CURRENCY.short}`).width;
+  g.font = was;
+  return buyRow(r, nameW + gap + priceW);
+};
+
 function bayClick(v) {
   const G = bayGeom();
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
@@ -2141,7 +2171,14 @@ function bayClick(v) {
       const a = AMMO[it.k];
       const locked = whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT });
       if (locked) return say(`${a.name} ${locked}`, '#e0a53f');
-      return credits >= a.price ? send({ t: 'buyammo', key: it.k, n: 1 })
+      // Which button, off the same rectangles the row drew. Anywhere else on the
+      // row is still one crate — that is what it has always done and what the
+      // footer along the bottom still promises.
+      const n = ammoBuys(it.k, it.r).find(b => inside(b.r))?.n ?? 1;
+      // One crate is the price of entry. Past that the server buys as many as the
+      // purse covers and the receipt says how many, so a x100 click with 60 crates
+      // of money is a purchase rather than a click that does nothing.
+      return credits >= a.price ? send({ t: 'buyammo', key: it.k, n })
         : say(`A crate of ${a.name} costs ${fmtCredits(a.price)} ${CURRENCY.short}`, '#e0a53f');
     }
     if (it.kind === 'kit') {
@@ -2680,7 +2717,7 @@ function drawBay() {
                : it.kind === 'hull' ? HULLS[it.k].name
                : it.kind === 'form' ? FORMATIONS[it.k].name
                : it.kind === 'drone' ? `Drone ${myDrones.length + 1}`
-               : it.kind === 'ammo' ? `${AMMO[it.k].name}   crate of ${AMMO[it.k].pack}`
+               : it.kind === 'ammo' ? ammoRowName(it.k)
                : it.kind === 'kit' ? KITS[it.k].name
                : it.kind === 'device' ? DEVICES[it.k].name
                                      : EQUIPMENT[it.k].name;
@@ -2725,8 +2762,11 @@ function drawBay() {
         ? ['Sold only at a pirate outpost, and only to pilots who rent a bay there',
            'Only at a pirate outpost, and only with a bay rented there',
            'Pirate outpost only, with a rented bay']
+      // Three wordings, from shared/ammo.js rather than assembled here — the shelf
+      // and the chat line have to refuse in the same words, and this line shares
+      // its baseline with the rounds-held count exactly the way the two above do.
       : it.kind === 'ammo'
-        ? [whyNotBuy(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })]
+        ? whyNotBuySays(it.k, { fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT })
       : [];
     const locked = why[0] ? why : null;
 
@@ -2745,6 +2785,29 @@ function drawBay() {
     g.fillRect(r.x, r.y, r.w, r.h);
     g.strokeStyle = it.owned ? '#2c3d55' : afford ? '#3d5876' : '#2c3d55'; g.lineWidth = 1;
     g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+
+    // Buy by the crate, ten crates, or a hundred. A locked grade gets none of
+    // them: that row already spends its second line saying why it cannot be
+    // bought, and three dead buttons would be three more things to try.
+    //
+    // Drawn BEFORE the row's own labels on purpose. A rect painted after a label
+    // covers it and the layout rules read that as layering doing its job, so
+    // buttons drawn last would hide a name or a price growing into them instead
+    // of reporting it.
+    const buys = it.kind === 'ammo' && !locked ? ammoBuys(it.k, r) : null;
+    for (const b of buys ?? []) {
+      const hot = over(b.r);
+      g.fillStyle = hot && afford ? 'rgba(255,212,121,0.16)' : 'rgba(255,255,255,0.05)';
+      g.fillRect(b.r.x, b.r.y, b.r.w, b.r.h);
+      g.strokeStyle = afford ? '#3d5876' : '#2c3d55'; g.lineWidth = 1;
+      g.strokeRect(b.r.x + .5, b.r.y + .5, b.r.w - 1, b.r.h - 1);
+      g.fillStyle = !afford ? '#4a5568' : hot ? '#ffd479' : '#8ab4e6';
+      g.font = '10px ui-monospace, monospace'; g.textAlign = 'center';
+      // Same baseline as the price beside it, so the strip reads as one line.
+      g.fillText(b.label, b.r.x + b.r.w / 2, r.y + 20);
+      g.textAlign = 'left';
+    }
+
     g.fillStyle = locked ? '#8a93a3' : '#cfe4ff'; g.font = '12px ui-monospace, monospace';
     g.fillText(locked ? '\u{1F512} ' + name : name, r.x + 12, r.y + 20);
     // A locked row says the reason where its description would be, in the colour
@@ -2765,8 +2828,12 @@ function drawBay() {
       g.fillText(`click to break up · ${Math.round(SCRAP_RATE * 100)}% of ${fmtCredits(
         it.kind === 'own' ? EQUIPMENT[it.k].price : HULLS[it.k].price)}`, r.x + r.w - 12, r.y + 35);
     }
+    // A row with buy buttons on it does not own its own right edge, so the price
+    // stops where shared/ammo.js says the buttons begin — the same trick the
+    // company hangar's SELL button taught, and for the same reason: the count and
+    // the button were two numbers for one edge and printed through each other.
     else { g.fillStyle = afford ? '#ffd479' : '#7a6a45'; g.font = '11px ui-monospace, monospace';
-           g.fillText(`${fmtCredits(price)} ${CURRENCY.short}`, r.x + r.w - 12, r.y + 20); }
+           g.fillText(`${fmtCredits(price)} ${CURRENCY.short}`, priceRight(r, buys), r.y + 20); }
     if (note) { g.fillStyle = '#7de08a'; g.font = '10px ui-monospace, monospace';
                 g.fillText(note, r.x + r.w - 12, r.y + 35); }
     g.textAlign = 'left'; g.globalAlpha = 1; g.font = '11px ui-monospace, monospace';

@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.82';
+export const VERSION = '0.83';
 
 export const PATCHES = [
+  { v: '0.83', notes: [
+    'Ammunition sells ten and a hundred crates at a time: ×1 ×10 ×100 on every row',
+    'Short of the full order it buys what you can afford, and the receipt says how many',
+    'A crate you cannot afford at all now says so instead of the click doing nothing',
+    'On a small window a locked grade no longer prints its reason through your round count',
+  ] },
   { v: '0.82', notes: [
     'The research station has a third page: a TECH TREE of permanent upgrades',
     'The first is a Pocket Dimension, ten million — it sells your ore every 30s',
@@ -22,8 +28,7 @@ export const PATCHES = [
     'Same damage leaving the rails — a Cyclone rocket lands 1,830 where seven landed 261',
     'The Triad and Swarm Racks are now the Shrike and the Osprey. One warhead, bigger',
     'A heavier warhead is drawn heavier, so you can see what somebody is flying',
-    'Warheads cost seven times more, because one of them now arms seven times the rocket',
-  ] },
+    'Warheads cost seven times more, because one of them now arms seven times the rocket',  ] },
   { v: '0.80', notes: [
     'The ammunition chooser lists every grade your weapon takes, not just the ones you hold',
     'A crate you have not bought shows a 0 instead of vanishing — it was reading as a refusal',

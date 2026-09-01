@@ -14,7 +14,7 @@ import { LAB_PRICE, MODULES, claimPlot, plotAt, plotsFor, incomeOf, earnedOver,
          cappedSecs, addMod, whyNotStake, whyNotBuild, nearLab, applyResearch,
          hasPocket, POCKET_EVERY } from './shared/research.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy,
-         whyNotLoad, loadable } from './shared/ammo.js';
+         whyNotLoad, loadable, buyCrates } from './shared/ammo.js';
 import { isTrack, typeOf, servable } from './shared/music.js';
 import { nameProblem, cleanName } from './shared/signup.js';
 import { MUSIC_DIRS, pickDir } from './config.js';
@@ -1717,12 +1717,31 @@ wss.on('connection', (ws, req) => {
       // not strand the ammunition in your hold.
       const why = whyNotBuy(m.key, { fit: ship.fit, drones: ship.drones, EQUIPMENT });
       if (why) return tell(why);
-      const crates = Math.max(1, Math.min(99, Math.floor(+m.n) || 1));
+      // The clamp stays — a client must never be able to ask for a billion crates —
+      // but it is now the BIGGEST BUTTON THE SHELF DRAWS rather than a number
+      // somebody typed. It was 99, which is the one value that makes a x100 button
+      // a liar: it took the click, charged for 99 and said nothing about the
+      // hundredth. buyCrates() is the same clamp the shelf is built from.
+      const want = buyCrates(m.n);
+      // Fill the order as far as the purse goes rather than refusing it whole.
+      // `if (P.credits < cost) return` was survivable while a click meant one
+      // crate; with a x100 button a pilot three credits short clicked and the game
+      // said NOTHING — a refused click and a successful one looking identical from
+      // the outside is the exact bug receipt() was written for. So a short order is
+      // filled and the receipt says how short, and only an EMPTY order is refused —
+      // out loud, with the price and the balance in it.
+      const crates = Math.min(want, Math.floor(P.credits / a.price));
+      if (crates < 1)
+        return tell(`${a.name}: a crate is ${a.price} credits and you hold ${Math.floor(P.credits)}`);
       const cost = a.price * crates;
-      if (P.credits < cost) return;
       P.credits -= cost;
       P.ammo[m.key] = (P.ammo[m.key] ?? 0) + a.pack * crates;   // no cap, on purpose
-      receipt(a.name, cost, `${a.pack * crates} rounds · ${P.ammo[m.key]} held`);
+      // The receipt says the usual thing normally and names the shortfall when
+      // there is one. It cannot say both: the toast's note line has 31 characters
+      // before it reaches the balance printed on the same baseline.
+      receipt(a.name, cost, crates < want
+        ? `${crates}/${want} crates · ${a.pack * crates} rounds`
+        : `${a.pack * crates} rounds · ${P.ammo[m.key]} held`);
       return outfit();
     }
     if (m.t === 'buyformation') {
