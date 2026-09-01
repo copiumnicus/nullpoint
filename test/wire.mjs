@@ -326,8 +326,15 @@ console.log('\nwhat is deliberately not deltaed');
   // sector, sixteen patches at 30Hz: 12.76 KiB/s sent whole against 0.61 keyed, and
   // the whole figure is more than every bolt, rocket, blast and hit in a twenty-pilot
   // brawl, which the line above already prices at 3.5.
-  check('ships, pods, research stations and sown ground are the ones worth diffing',
-    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown']),
+  // REWRITTEN AGAIN, same argument, one more row: an Antiphon's ring of eight plates.
+  // It is the sown-ground case exactly — a keyed collection whose columns mostly sit
+  // still — and it was priced the same way through the real codec, two rings at 30Hz
+  // with a pilot walking their fire around each: 1.38 KiB/s sent whole against 0.150
+  // keyed. shared/net.js carries the full table, including the shape that was cheaper
+  // still and did not ship, which was one packed integer on the ship row: it costs
+  // 0.036 and spends the LAST field in SHIP_FIELDS on one hostile in one sector.
+  check('ships, pods, stations, sown ground and an answering ring are the ones worth diffing',
+    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown', 'plates']),
     'long-lived, keyed, and 82% of the traffic in a crowded sector');
   check('and nothing is in both lists',
     !Object.keys(STREAMS).some(k => EPHEMERAL.includes(k)),

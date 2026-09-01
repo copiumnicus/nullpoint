@@ -8,6 +8,11 @@ import { applyDamage, SHOT_FLASH, rangeOf, rateOf } from './sim.js';
 import { boostOf } from './power.js';
 import { droneAt } from './formation.js';
 import { EQUIPMENT } from './gear.js';
+// An answering ring turns part of what lands on a hardened plate. It is applied here
+// rather than inside applyDamage() because THE BEARING IS THE THING, and this is the
+// one place that knows where a bolt came from. softAt() returns 1 for everything
+// without plates, which is everything but one hostile.
+import { softAt } from './plates.js';
 
 // Bolt speed is a balance dial, not a cosmetic one. A shot has to be slow enough
 // that a ship can accelerate clear of where it was aimed: displacement goes with
@@ -106,6 +111,14 @@ export function fire(a, b, dt, mag = null) {
     const travel = Math.hypot(b.x - m.x, b.y - m.y) / BOLT_SPEED;
     out.push({
       sx: m.x, sy: m.y,
+      // Where the SHIP was, as well as where the barrel was. They are not the same
+      // point and an Antiphon's ring needs the first: `sx,sy` is a muzzle, and a
+      // muzzle is a drone up to 200px off your flank. Measured on the bench, aiming
+      // the ring's answer at the muzzle sent 53% of them at empty space beside a
+      // pilot who had never moved — a whole plate's width of error at the range this
+      // fight is fought from, and it made standing still LOOK like the counter.
+      // Server-side only: packBolt names its eight fields, so this costs no wire.
+      ox: a.x, oy: a.y,
       ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
       dmg: each, target: b, foe: !!a.isAlien, w: Math.round(each), gr: mag?.tier ?? 0,
       t: travel, ttl: Math.max(0.001, travel),
@@ -125,9 +138,30 @@ export function stepBolts(list, dt) {
     list.splice(i, 1);
     const tg = b.target;
     if (!tg || tg.hp <= 0) continue;
-    if (Math.hypot(tg.x - b.ax, tg.y - b.ay) > HIT_R + tg.r) continue;
-    const split = applyDamage(tg, b.dmg);        // how much the shields caught vs the hull
-    hits.push({ bolt: b, target: tg, dead: tg.hp <= 0, split });
+    // `slack` is per bolt, defaulting to HIT_R. HIT_R is the slack on an AIMED shot,
+    // where the aim point already led the target; an Antiphon's discharge is not
+    // aimed at anybody — it goes down the bearing its plate was struck from — so how
+    // far off that line you have got by the time it arrives is the entire mechanic,
+    // and the width of the answer is the unit a pilot has to beat. Nothing else in
+    // the game sets it, so nothing else changes.
+    if (Math.hypot(tg.x - b.ax, tg.y - b.ay) > (b.slack ?? HIT_R) + tg.r) continue;
+    // Which way it arrived from, taken once here and handed on. Two different things
+    // want it — the plate that turns part of the hit, and the same plate hardening
+    // from it — and working it out twice in two files is exactly the rule kept in two
+    // places that shared/ exists to prevent.
+    //
+    // The BEARING picks the plate; the PLACE is what that plate answers back down, and
+    // it has to be both, because the hostile moves in the second between being hit and
+    // answering. See newRing() in shared/plates.js for the measurement that cost.
+    const fx = b.ox ?? b.sx, fy = b.oy ?? b.sy;
+    const from = { a: Math.atan2(fy - tg.y, fx - tg.x), x: fx, y: fy };
+    const split = applyDamage(tg, b.dmg * softAt(tg, from.a));   // shields vs hull, after the plate
+    // `raw` is what ARRIVED, before the plate turned any of it, because that is what
+    // hardens the plate. Charging off what got through instead would make a hot plate
+    // stop heating — a self-limiting armour that rewards the one pilot the ring
+    // exists to punish. It equals the split for everything without plates, since
+    // applyDamage splits an amount rather than clamping it.
+    hits.push({ bolt: b, target: tg, dead: tg.hp <= 0, split, from, raw: b.dmg });
   }
   return hits;
 }

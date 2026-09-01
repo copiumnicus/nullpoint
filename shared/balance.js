@@ -669,6 +669,29 @@ export const POSTING = Object.freeze({
                why: 'the number the rung asks for. Measured, no party size clears the pair — see test/ground.mjs' },
   doldrum:   { stage: 'finished',    seconds: 91, party: 2,
                why: 'the same rung and the same gun; what differs is that it stops you dead for five seconds' },
+  // server.js: TWO in Nullpoint, respawn 300s, and nothing else in the sector.
+  //
+  // The first row in this table read at `deep` rather than at `finished`, and that is
+  // a decision rather than an oversight. Every other posting is read at the stage a
+  // pilot could plausibly arrive holding; the deep shelf is sold at a deep-sector
+  // outpost, which is the LAST hop before Nullpoint, so a pilot standing here has
+  // already walked past the counter. That is the opposite of the Thresher's case —
+  // MIRROR is pinned to `finished` precisely because the deep shelf is four hops PAST
+  // the gate it stands on, and berth.js's rule is that "a gate you can only pass by
+  // already being through it is a wall".
+  //
+  // 79 seconds is arithmetic and not an intention: 6,500,000 over four deep-shelf
+  // guns at 20,526 each. The rung was picked first, off the bestiary's ladder of
+  // tens, and this is the fight it buys.
+  //
+  // `party: 4` is measured rather than asked for, and it is the claim this hostile
+  // exists to make. Damage taken per pilot per second falls 3,372 / 1,686 / 1,124 / 560
+  // at one, two, three and four pilots — 1.00 / 0.50 / 0.33 / 0.17 — so TIME-TO-DIE
+  // RISES with party size while time-to-clear still falls as 1/n. That is the property
+  // the two rows above do not have and the whole reason they are not completable. See
+  // test/plates.mjs, which measures the curve rather than trusting it.
+  antiphon:  { stage: 'deep',        seconds: 79, party: 4,
+               why: '6,500,000 over four deep-shelf guns is 79s, and the deep shelf is sold one hop before it' },
 });
 
 // --- the conformance report ---------------------------------------------------

@@ -396,15 +396,33 @@ console.log('\nthe field');
   // being called harmless, and threatDps exists precisely because it is not the
   // whole story — it folds in a mothership's escort and a mirror's chamber, which
   // are not barrels and are not what this is about.
+  // NARROWED, not weakened, and the narrowing is what the claim was always about.
+  // It measured every barrel in the WILD roster and asked that none of them could kill
+  // a finished pilot inside twenty seconds. That was the same set as "what a claim can
+  // post" for as long as every hostile in the game was postable in one, and it stopped
+  // being when the Antiphon arrived: 711 dps needs 13.7s, and it is not in any roster,
+  // is not meant to be, and could not be — a claim is a sector one pilot opens on their
+  // own and this is posted for four.
+  //
+  // So it now reads the rosters, which is the set the argument is actually about, and
+  // it is a STRICTER test than it was: adding a heavy barrel to a claim now fails here
+  // where before it could be hidden by the average of the whole bestiary. The bestiary
+  // number is kept in the detail, because "the heaviest gun in the game" is worth
+  // printing next to it.
   const ehp = stageEhp('finished');
   const barrel = k => (ALIENS[k].attrs.damage ?? 0) * (ALIENS[k].attrs.fireRate ?? 0);
-  const worst = WILD.filter(k => barrel(k) > 0)
+  const postable = [...new Set(ARENA_MODULES.flatMap(k => rosterOf(k).map(([kind]) => kind)))];
+  const worst = postable.filter(k => barrel(k) > 0)
     .map(k => [k, ehp / barrel(k)]).sort((a, b) => a[1] - b[1])[0];
-  check('every gun in the bestiary is harmless to the pilot a claim assumes',
+  const heaviest = WILD.filter(k => barrel(k) > 0)
+    .map(k => [k, ehp / barrel(k)]).sort((a, b) => a[1] - b[1])[0];
+  check('every gun a claim can post is harmless to the pilot it assumes',
     worst[1] > 20,
-    `the heaviest barrel in the game needs ${worst[1].toFixed(0)}s to kill a finished pilot `
+    `the heaviest barrel in a roster needs ${worst[1].toFixed(0)}s to kill a finished pilot `
     + `standing still (${worst[0]}, ${barrel(worst[0]).toFixed(0)} dps into ${n(ehp)} ehp) — `
-    + 'damage x fireRate was only ever true at the anchor stage');
+    + 'damage x fireRate was only ever true at the anchor stage. The heaviest in the whole '
+    + `bestiary is ${heaviest[0]}'s ${barrel(heaviest[0]).toFixed(0)} at ${heaviest[1].toFixed(0)}s, `
+    + 'and it is deliberately not postable in a claim');
   // REWRITTEN. This asked that the field take more than a quarter of the ship a
   // second "if it all engages", which was a WORST CASE while a claim had an aggro
   // radius — most of the field was idle most of the fight, so a big nominal number

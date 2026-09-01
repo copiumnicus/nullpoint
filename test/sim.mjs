@@ -17,7 +17,8 @@ const bfs = (a, b) => { const q = [[a, [a]]], seen = new Set([a]);
 
 console.log('\nthe testing ground');
 {
-  const { DEV_ID, PROPS, PEN, PEN_SLOTS, BENCH_SLOTS, DEV_BASE, LABELS, propFit, REACH } = await import('../shared/devmap.js');
+  const { DEV_ID, PROPS, PEN, PEN_SLOTS, BENCH_SLOTS, DEV_BASE, LABELS, propFit, REACH,
+          PEN_ROOM, roomFull } = await import('../shared/devmap.js');
   const { WILD } = await import('../shared/aliens.js');
   const { ALIENS } = await import('../shared/aliens.js');
   const { HULLS, slotsOf } = await import('../shared/ships.js');
@@ -69,7 +70,19 @@ check('every hostile type is posted somewhere you can walk to',
   console.log(`     furthest thing ${Math.round(REACH)}px from the ring — ` +
               `${(REACH / walk).toFixed(1)}s in a starter hull, radar reaches ${eye}px`);
   check('the whole room is inside a starter hull\'s radar', REACH < eye,
-    'nothing has to be gone looking for');
+    `furthest slot ${Math.round(REACH)}px against ${eye}px of radar — nothing has to be gone looking for`);
+  // And the room OBEYS that bound rather than happening to fit inside it, which is the
+  // difference this pass made. The firing line used to be a fixed two-column grid with
+  // a row count of ceil(kinds / 2), so it grew straight out of the room one hostile at
+  // a time: at thirteen the far corner was 2,220px against a starter hull's 2,200 and
+  // the only tell was the line above going red. Each column is now as tall as the room
+  // allows at its own distance out — seven slots at 700px, six at 1,300 — so the
+  // layout cannot place a slot it could not see, and `roomFull` says so if the roster
+  // ever asks for more than the seventeen that fit.
+  check('and the firing line could not have posted one outside it',
+    !roomFull && PEN_SLOTS.length === WILD.length && PEN_ROOM > WILD.length,
+    `${PEN_SLOTS.length} hostiles posted of ${PEN_ROOM} the room holds — ` +
+    'it was a fixed grid that grew past the bound and told nobody');
   // REWRITTEN, not deleted, per rule five. The bound was a flat 6 seconds and the
   // roster has outgrown it: PEN_GAP is the widest aggro radius in the game, and twelve
   // slots that must each be that far from their neighbours do not fold into 1,800px of

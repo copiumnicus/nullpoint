@@ -11,6 +11,8 @@ import { burnOf, burnR, stepBurn, goadBurn, burnBite, burnBurst,
          pyreFor, inPyre, poolOf, inBurn } from './burn.js';
 import { fixOf } from './kedge.js';
 import { sowOf, HOLD, WARN } from './ground.js';
+import { platesOf, newRing, stepRing, storeBearing, softAt, hottest, dischargeOf,
+         plateFill, plateHalf, plateCount, answer as ringAnswer } from './plates.js';
 
 // What a kill pays, per point of work. Hoisted above the bestiary because the deeps
 // derive their bounty from their rung inside the table below, and a const cannot be
@@ -18,6 +20,19 @@ import { sowOf, HOLD, WARN } from './ground.js';
 // is, which is where they used to sit.
 export const XP_RATE = 140 / 650;                  // the Drifter is the anchor: 140 xp for 650 ehp
 export const BOUNTY_RATE = 0.70;
+
+// The sharpest gun the CLIMB sells, in points per second: stageDps('finished'),
+// written down rather than imported because balance.js imports THIS file. Two things
+// are anchored to it and neither may ever throw what the game does not sell — a
+// Thresher's chamber and an Antiphon's ring — and test/aliens.mjs pins it equal to
+// balance.js's own number to the penny.
+//
+// It is hoisted here, above the bestiary, for XP_RATE's reason and not for tidiness:
+// the ring reads its ceiling from this constant INSIDE the table below, and a const
+// cannot be read before it is initialised. The whole derivation — why this number,
+// why `finished` rather than the deep shelf, what it costs to move it and what the
+// brute-force sweep found above it — is on MIRROR, which is where it was argued.
+const SHOP_DPS = 11306.59;
 
 // --- the one number in this file that was argued rather than derived ------------
 //
@@ -52,6 +67,33 @@ const deepSplit = shieldShare => {
   return { hull: DEEP_HP - shield, shield };
 };
 const deepPay = { bounty: Math.round(DEEP_HP * BOUNTY_RATE), xp: Math.round(DEEP_HP * XP_RATE) };
+
+// --- and the rung above, which is the one DEEP_HP declined -----------------------
+//
+// The note above names 6_500_000 as "the other rung, if it is wanted". It is wanted,
+// and this is it: a full decade over a Corsair Hive's 650,000 and x3.16 the deep
+// pair, which is the next whole step on a ladder that has only ever gone 650, 6500,
+// 65000, 650000. Nothing was chosen here — the ladder was already built and this is
+// the next rung of it.
+//
+// It is a multiple of ten, so `bounty = ehp x 0.70` is whole credits (4,550,000) and
+// so is the experience (1,400,000) — the identity test/balance.mjs asserts to 1e-6
+// across every hostile, and the one that caught the Harrier at 2,055.
+//
+// Same one-edit arrangement as DEEP_HP: change this line and the hull split, the
+// shield, the bounty, the experience, the ore rung, the posting AND what fills a
+// plate all move with it, because the plate's fill is a share of this number rather
+// than an amount. That is the whole reason it is a share.
+export const CORE_HP = 6_500_000;
+// 85/15, the Thresher's split and the Crucible's: a thing that is mostly armour is
+// mostly hull. Rounded to a ten on the shield with the hull taking the remainder, so
+// the sum stays exact whatever share is asked for — deepSplit's rule, restated at the
+// rung above rather than shared, because deepSplit closes over DEEP_HP.
+const coreSplit = shieldShare => {
+  const shield = Math.round(CORE_HP * shieldShare / 10) * 10;
+  return { hull: CORE_HP - shield, shield };
+};
+const corePay = { bounty: Math.round(CORE_HP * BOUNTY_RATE), xp: Math.round(CORE_HP * XP_RATE) };
 
 export const ALIENS = {
   drifter: {
@@ -803,6 +845,166 @@ export const ALIENS = {
     tell: 'Its stills stop you dead for two and a half seconds — you keep your guns, you just cannot be anywhere else. Its Crucible pours into the same spot.',
   },
 
+  // --- THE ANTIPHON, and it lives in Nullpoint ------------------------------------
+  //
+  // An antiphon is a call and a response sung back at each other, one voice at a
+  // time. That is the whole hostile and it is also the whole answer to it.
+  //
+  // WHAT IT IS FOR. Every fight in this game so far is answered by one of six verbs:
+  // do not be seen (a Bandit), do not be hurt (a Kedge), shoot faster (Drumfire),
+  // stop shooting (a Thresher), pick your line (a Doldrum), do not stand in it (a
+  // Crucible, a Censer). This one asks for a seventh and nothing else in the game
+  // asks it: DO NOT STAND STILL RELATIVE TO WHAT YOU ARE SHOOTING. Not "keep
+  // moving" — backing off and closing in along the same line will not save you —
+  // but keep changing your BEARING, because the bearing is what the ring stores and
+  // the bearing is what it answers along.
+  //
+  // HOW. Eight armour plates around an exposed core. Damage into one bearing hardens
+  // the plate on it; a hard plate turns some of what hits it, and the ring answers
+  // its hottest plate once a cycle with a bolt back down the exact line that plate
+  // was struck from. The plate goes dark as the bolt leaves. Stand still and the
+  // answer arrives where you are; walk your fire around the ring and it goes past
+  // you, into the dark, which is the best tell in the fight.
+  //
+  // AND WHY IT IS BUILT THIS WAY RATHER THAN AS MORE GROUND. shared/balance.js's
+  // POSTING says out loud that the deeps are not completable at any party size, and
+  // names the reason: ground does not divide. A pool burns everybody standing in it,
+  // so time-to-die is FLAT in party size while time-to-clear only falls as 1/n, and
+  // no amount of friends closes that. A ring is the exact inverse — one voice,
+  // answering one bearing per cycle — so the answers are shared out and the plates
+  // COOL while they wait their turn. Measured through the real loop, four pilots each
+  // holding a bearing at the deep shelf — damage taken per second by each of them, and
+  // how long each of them lasts under it:
+  //
+  //      1 pilot   3,372 a second   1.00      time-to-die   1.00
+  //      2         1,686            0.50                    2.00
+  //      3         1,124            0.33                    3.00
+  //      4           560            0.17                    6.02
+  //
+  // Time-to-die RISES with party size, which is the property the deeps do not have
+  // and the reason this exists. test/plates.mjs re-measures all four rather than
+  // trusting this table.
+  antiphon: {
+    name: 'Antiphon', cls: 'Respondent', r: 90, colour: '#b8a06a', shape: 'slab',
+    // 85/15, the Thresher's split and the Crucible's — a thing that is mostly armour
+    // is mostly hull. Derived from CORE_HP so the rung is one edit, not five.
+    //
+    // AND IT HAS AN ORDINARY GUN, on model to the decimal: 711 x 1.0 is
+    // ANCHORS.pressure x stageEhp('deep'), which is balance.js's own definition of a
+    // hostile that can threaten the pilot it is posted for. That closes the damage
+    // axis the way the deeps' guns did, and the ring is what sits above it. Without
+    // one, a pilot who never pulled the trigger could not be touched — which is a
+    // lovely sentence and a hostile the balance model would file as harmless.
+    //
+    // Reach 900 is the Leviathan's, the Thresher's and the deeps' — past every hull
+    // in the shop, so out-ranging the barrel is not on the table. The RING reaches
+    // 1,800, which is the other half of that decision: Collimated Cells double a
+    // Bulwark's 820 to 1,640, so a pilot at the longest reach money can buy is still
+    // inside the answer. A boss you can shoot from somewhere it cannot answer is a
+    // boss with no mechanic.
+    attrs: { ...coreSplit(0.15), shieldRegen: 0.005, shieldDelay: 8,
+             // 80 — under a Doldrum's 90, so it takes the title of the slowest thing
+             // in the game. It does not chase; it is a slab, and the fight is one you
+             // choose to have. Leaving always works.
+             speed: 80, accel: 130, signature: 10,
+             damage: 711, fireRate: 1.0, weaponRange: 900 },
+    // --- THE RING ------------------------------------------------------------------
+    //
+    // shared/plates.js holds the machinery and argues the shape. These are the five
+    // numbers, and every one of them is derived from something already written down.
+    plates: {
+      // EIGHT, and the count is a measurement rather than the pitch's number taken on
+      // trust. What it has to survive is a pilot walking their fire around the ring at
+      // real speeds and real reaches, and there are two effects pulling opposite ways:
+      //
+      //   the dodge     the answer goes back to the PLACE you last hit it from, so
+      //                 what you buy by turning is your own tangential speed times the
+      //                 round trip — your bolt out and the answer back. Measured at the
+      //                 630px the hostile chooses to stand at, that is 1.26s: a deep
+      //                 shelf hull with its reactor on the gun is 94px off the line by
+      //                 then against an 88px answer, and past it. In close it is not —
+      //                 at 260px the round trip is 0.5s and the same pilot is 39px off,
+      //                 so brawling is where this bites and a pilot pinned in cannot
+      //                 turn their way out of it.
+      //   the cooling   a plate you have left cools on its half-life. Measured, this
+      //                 is the WEAK half and it is stated rather than claimed: a
+      //                 Bulwark orbiting at 820px covers one eighth of the ring in
+      //                 3.3s, which is three half-lives, so the plate it is standing
+      //                 on reaches 90% of what standing still would give. Sixteen
+      //                 plates would halve the dwell and still not fix it; you would
+      //                 need about ninety to make the ring cool by walking it.
+      //
+      // So eight is not chosen for the cooling — nothing reachable is — it is chosen
+      // for the DODGE and for the party, and both want a plate wide enough that one
+      // pilot owns one bearing. Eight wedges of 45 degrees is two per pilot at the
+      // party size this is posted for, and it is the widest the wire carries:
+      // shared/net.js prices eight columns at 0.150 KiB/s and says why.
+      n: 8,
+      // ONE PERCENT OF ITSELF, dealt into one bearing inside the decay window, fills
+      // that plate — 65,000 points. A SHARE and not an amount, which is MIRROR's own
+      // second reason: the wire sends an integer per plate, so a charge measured in
+      // points would need the client to be told a normalising constant, and a rule
+      // kept in two places is the thing this codebase has learned always disagrees.
+      //
+      // The one percent is derived from the fight it has to make, the way MIRROR.soak
+      // was: a pilot who stands still must be visibly punished inside a handful of
+      // seconds, and a pilot who turns must not. The chain, all of it off numbers
+      // already in this file:
+      //
+      //   a plate halves in one answering cycle          h  = 1/fireRate = 1.0s
+      //   its resting level under fire D                 D h / (fill x ln2)
+      //   what it holds when its turn comes round        half of that, at one pilot
+      //   what that answers with                         charge x SHOP_DPS
+      //
+      // At the deep shelf's 20,526 dps and a fill of 65,000 that is a plate sitting
+      // at 0.228 when its turn comes round, answering about 2,600 a second on top of
+      // the 711 the barrel throws. Measured through the real loop rather than left as
+      // arithmetic: 3,376 a second into a deep-shelf hull, dead in 4.6 seconds if you
+      // never change bearing — the number this was set from, and the same order as the
+      // Thresher's 3.7 one rung down. The same pilot circling at the same range takes
+      // 684, which is the barrel and nothing else. test/plates.mjs prints both.
+      soak: 0.01,
+      // WHAT A FULL PLATE THROWS, per second of its own cadence — and it is MIRROR's
+      // constant, not a copy of it. THE RING CAN NEVER THROW ANYTHING THE GAME DOES
+      // NOT ALREADY SELL: at fireRate 1.0 a full plate carries 11,307, which is one
+      // second of the sharpest gun the climb sells and 72% of the deep-shelf ship it
+      // is posted against. Dangerous, and not a one-shot.
+      //
+      // The Thresher's history is the whole argument for having a ceiling at all —
+      // uncapped and one-for-one it put 9,011 into a 7,050 ship — and the argument
+      // for THIS ceiling rather than the deep shelf's 20,526 is on MIRROR: past the
+      // point where the slope reaches 1.0, every build that does not saturate is
+      // punished for firing and the punishment lands hardest on the smallest gun.
+      dps: SHOP_DPS,
+      // A PLATE MAY NEVER TURN MORE THAN IT LETS THROUGH. Past a half the armour is
+      // doing more work than the core and the plate has stopped being armour and
+      // started being immunity — a wall rather than a fight, and berth.js already
+      // wrote what this codebase thinks of walls. plates.js clamps to it as well as
+      // reading it, so a definition cannot quietly ask for one.
+      //
+      // It is deliberately the smaller half of the mechanic, and measured it is smaller
+      // than it looks: a plate under a deep-shelf gun sits around 14%, so 94% of what
+      // a pilot fires reaches the core either way and the half is a ceiling nobody
+      // meets alone. What it buys is a TELL in the place a pilot is already looking —
+      // your own floating damage numbers shrink on a plate you have been leaning on,
+      // before the answer arrives — and a real cost on a party that all shoots one
+      // bearing, which is the thing the ring exists to punish.
+      deflect: 0.5,
+      // How far the answer carries. 1,800, which is past the longest reach money can
+      // buy: Collimated Cells double a Bulwark's 820 to 1,640. See the note on
+      // weaponRange above — a boss you can shoot from outside its answer is a boss
+      // with no mechanic, and the ring rather than the barrel is what closes that.
+      reach: 1800,
+    },
+    aggro: 540,       // the Hive's, inside SIGHT_R, so it is on screen before it decides
+    leash: 2600,
+    patience: 5.0,
+    flee: 0,          // it does not run. It is the middle of the map
+    respawn: 300,     // a boss's five minutes, the Hive's and the deeps'
+    ...corePay,       // CORE_HP at BOUNTY_RATE and XP_RATE — nothing typed
+    tell: 'Eight plates. Hit one and it hardens, then answers down the exact line you shot from. Keep turning.',
+  },
+
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
   // flee, and carries enough hull that a finished ship cannot delete it before you
   // have read a number off it. Never seeded outside the testing ground.
@@ -875,6 +1077,15 @@ export const threatDps = (kind, ehp, hull = ehp) => {
        // damage axis BY DESIGN and by a wide margin, and it is the only hostile in
        // the game whose off-model number is a number the pilot chose.
        + (a.returns ?? 0) * MIRROR.dps
+       // And a ring's answer is not its barrel either, for the same reason and by a
+       // wider margin. An Antiphon's gun reads 711 x 1.0 and the thing that kills you
+       // is the discharge: a full plate throws `plates.dps / fireRate` and it may go
+       // once a cycle, so the worst the ring can ever be is `plates.dps` flat — 11,307,
+       // sixteen times the barrel. Deliberately the worst rather than the typical,
+       // exactly as the mirror's term is: report(), pressureOf() and bestiaryReport()
+       // ask "how bad can this get". What a pilot who keeps turning actually takes is
+       // a fifth of it, and that difference is the hostile.
+       + (a.plates ? (a.plates.dps ?? 0) : 0)
        // And a mothership's gun is not its fight either. A Hive read as 110 dps
        // here while twelve Bandits sat around it throwing 2,340, which made the
        // top of the ladder the SAFEST thing in the bestiary report. One term, and
@@ -895,6 +1106,18 @@ export const SHAPES = {
   // The arrowhead everything used to be. Still the Drifter's: it is the baseline
   // and should stay the thing the others are read against.
   kite: R => [[R * 1.35, 0], [0, R], [-R * 0.8, 0], [0, -R]],
+  // NO FRONT AT ALL, which is the one thing this outline has to get right.
+  // Everything else in the bestiary is pointed at something; an Antiphon's plates are
+  // a COMPASS rather than a nose — fixed in world bearings, because a ring bolted to
+  // the hull would turn with it and the plate in front of you would be the same plate
+  // however you flew. So the body underneath has to have no orientation either, or it
+  // would visibly slide under its own ring every time it turned to face somebody.
+  // Twenty-four points of very nearly a disc: a slab seen from above, and the eight
+  // wedges the client draws around it are the part with a direction.
+  slab: R => Array.from({ length: 24 }, (_, i) => {
+    const a = i / 24 * Math.PI * 2;
+    return [Math.cos(a) * R, Math.sin(a) * R];
+  }),
   // Six flats. Armour plate rather than a nose — it is not pointed at anything,
   // because it does not need to be.
   hex: R => Array.from({ length: 6 }, (_, i) => {
@@ -1147,6 +1370,11 @@ export function newAlien(kind, id, map, seed, post = null) {
   return Object.assign(a, {
     id, kind, def, rand, isAlien: true, post,
     target: null, provoked: new Set(), lost: 0, dead: 0, way: post ?? roamPoint(map, rand),
+    // An answering ring, if this one has plates. Seeded here rather than lazily on the
+    // first hit so that every reader — the packer, the client, the AI — sees an array
+    // of the right length from the first tick, and a boss that has never been shot
+    // still has a ring to draw.
+    ...(platesOf(def) ? newRing(def) : {}),
     dealt: new Map(),                 // playerId -> damage, since it last spawned
     crowd: null, crowdT: 0,           // who has been closing on it, and for how long
     threat: null, threatT: 0,         // and who has been out-damaging its target
@@ -1303,7 +1531,10 @@ export const hiveDps = () => {
 // those two give each other's back — not a statement about what the shop is for,
 // and anchoring the bestiary to it would bake it in. Named here so the next person
 // measuring this does not think the sweep and the anchor disagree by accident.
-const SHOP_DPS = 11306.59;
+// SHOP_DPS is declared above the bestiary — see the note there, and the reason is
+// XP_RATE's: the Antiphon's ring takes its ceiling from this number INSIDE the table,
+// and a const cannot be read before it is initialised. Only the line moved; every
+// word of the argument for it is above.
 
 export const MIRROR = Object.freeze({
   // How much of itself, dealt inside the decay window, fills the chamber.
@@ -1415,8 +1646,24 @@ export const payloadOf = (def, load = 0) =>
   (def?.attrs?.damage ?? 0)
   + Math.max(0, Math.min(1, load || 0)) * (def?.returns ?? 0) * MIRROR.dps / (def?.attrs?.fireRate || 1);
 
-export function storeHit(a, amount) {
-  if (!a?.def?.returns || !(amount > 0)) return;
+// What a hostile does with a hit it has just taken, which is one call because the
+// caller has exactly one fact: this much landed, from over there. WHICH of the two
+// chambers in the game it goes into is the definition's business and not the tick's
+// — a chamber that fills over time, or a ring that fills per bearing.
+//
+// It is routed off the DEFINITION rather than off which live field happens to exist,
+// and that is the same lesson dialOf() was rewritten for: reading live fields in a
+// fixed order silently keeps the first one a hostile happens to have, so the second
+// mechanic never runs and nothing throws. Here it would be worse than a missing
+// dial — the ring simply would not charge, and the hostile would be a slab with a
+// gun on it.
+//
+// `from` is a world bearing FROM the hostile TOWARD whatever hit it. A mirror does
+// not care and ignores it; a ring is nothing but that number.
+export function storeHit(a, amount, from) {
+  if (!(amount > 0)) return;
+  if (platesOf(a?.def)) return storeBearing(a, amount, from);
+  if (!a?.def?.returns) return;
   const soak = soakOf(a.def);
   if (!(soak > 0)) return;
   a.load = Math.min(1, (a.load ?? 0) + amount / soak);
@@ -1448,6 +1695,11 @@ export function respawnAlien(a, map, away = []) {
   const at = a.post ?? roamPoint(map, a.rand, away);
   a.x = at.x; a.y = at.y; a.vx = a.vy = 0;
   a.hp = a.stats.hull; a.shield = a.stats.shield;
+  // A fresh ring, cold. It would bleed to nothing in a second anyway, but a boss that
+  // came back five minutes later still holding the bearing that killed its last
+  // attacker would answer whoever was standing there on the tick it arrived — an
+  // answer to a call nobody made.
+  if (platesOf(a.def)) Object.assign(a, newRing(a.def));
   a.sinceHit = 1e9; a.shieldHit = 0; a.cool = 0; a.shotFlash = 0;
   a.target = null; a.provoked.clear(); a.lost = 0; a.dead = 0;
   a.crowd = null; a.crowdT = 0; a.threat = null; a.threatT = 0;   // no grudges carried over

@@ -1053,8 +1053,12 @@ console.log('\nthe mirror');
 // pilot has earned the right to expect it not to.
 {
   const src = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  // `x` is Nullpoint, and it is in this table for the reason the whole block exists:
+  // the loop variable is what names the sector in server.js, so a rung this map does
+  // not know about is a rung the ladder claim below silently stops covering. It was
+  // missing for exactly as long as the middle was empty.
   const where = { "co + '2'": 'm2', "co + '3'": 'm3', "co + '4'": 'm4',
-                  h: 'm1', g: 'gate', d: 'deep' };
+                  h: 'm1', g: 'gate', d: 'deep', x: 'core' };
   const posted = {};
   for (const m of src.matchAll(/seed\(([^,]+), '([a-z]+)',/g)) {
     const k = where[m[1].trim()];
@@ -1069,8 +1073,9 @@ console.log('\nthe mirror');
   }
   const gate = Object.keys(MAPS).find(k => MAPS[k].gate);
   const deep = Object.keys(MAPS).find(k => MAPS[k].deep);
+  const core = Object.keys(MAPS).find(k => MAPS[k].core);
   const hops = { m1: 0, m2: dist.m2, m3: dist.m3, m4: dist.m4,
-                 gate: dist[gate], deep: dist[deep] };
+                 gate: dist[gate], deep: dist[deep], core: dist[core] };
   const ceiling = k => Math.max(0, ...(posted[k] ?? []).map(farmHp));
 
   const rungs = Object.entries(hops).sort((a, b) => a[1] - b[1]);
@@ -1083,20 +1088,37 @@ console.log('\nthe mirror');
     ceiling('m2') === ceiling('m3'),
     `co2 ${Math.round(ceiling('m2')).toLocaleString()} against co3 ${Math.round(ceiling('m3')).toLocaleString()} — ` +
     'it was 6,500 against 65,000, so which sibling you flew into decided the curve');
-  // REWRITTEN, not deleted. It used to say the deeps end the ladder because the Hive
-  // was posted there; the Hive is at the gates now and the claim is the same claim
-  // with a stronger right-hand side — the deeps hold the hardest thing in the WHOLE
-  // bestiary, whatever that turns out to be, rather than one named hostile.
-  check('the deeps are the end of the ladder, not one map short of it',
-    ceiling('deep') > ceiling('gate') &&
-    ceiling('deep') === Math.max(...WILD.map(farmHp)),
-    `${Math.round(ceiling('gate')).toLocaleString()} at the gates and ` +
-    `${Math.round(ceiling('deep')).toLocaleString()} past them — it was 205,550 behind 650,000, ` +
-    'which is the curve running backwards at the one place a pilot has earned it not to');
+  // REWRITTEN TWICE, and both times the claim survived and its right-hand side got
+  // stronger. It first said the deeps end the ladder because the Hive was posted
+  // there; then it said the deeps hold the hardest thing in the whole bestiary,
+  // whatever that turned out to be. Nullpoint is one hop past the deeps and it was
+  // empty for the whole of both readings, so "the last sector" and "the deeps"
+  // happened to be the same sentence.
+  //
+  // They are not any more, and the claim is the one that was always meant: THE LADDER
+  // RUNS ALL THE WAY OUT. Every rung still beats the one before it — the check above
+  // this one walks all of them — and the FURTHEST sector from home holds the hardest
+  // thing in the bestiary. That is a claim about the shape of the galaxy rather than
+  // about which map happens to be last, so it cannot go quietly out of date again the
+  // way the previous two did.
+  check('the ladder runs all the way out, and the last sector holds the top of it',
+    ceiling('deep') > ceiling('gate') && ceiling('core') > ceiling('deep') &&
+    ceiling('core') === Math.max(...WILD.map(farmHp)) &&
+    hops.core === Math.max(...Object.values(hops)),
+    `${Math.round(ceiling('gate')).toLocaleString()} at the gates, ` +
+    `${Math.round(ceiling('deep')).toLocaleString()} past them and ` +
+    `${Math.round(ceiling('core')).toLocaleString()} in Nullpoint at ${hops.core} hops — ` +
+    'it was 205,550 behind 650,000, which is the curve running backwards at the one place a ' +
+    'pilot has earned it not to');
   // And the gates GAINED the Hive rather than merely losing their ceiling to the
   // deeps. A sector whose hardest posting is a mirror nobody can farm is a corridor.
+  // Still true with Nullpoint on the end of it, and worth keeping that way round: a
+  // gate is x5.7 and the step into the middle is x3.2, so the widest rung anybody
+  // crosses is still the one where three companies first meet rather than the one at
+  // the bottom of the map.
   check('a gate is still the biggest step in the galaxy',
-    ceiling('gate') === farmHp('hive') && ceiling('gate') / ceiling('m4') > 5,
+    ceiling('gate') === farmHp('hive') && ceiling('gate') / ceiling('m4') > 5 &&
+    ceiling('gate') / ceiling('m4') > ceiling('core') / ceiling('deep'),
     `${Math.round(ceiling('m4')).toLocaleString()} at the frontier to ` +
     `${Math.round(ceiling('gate')).toLocaleString()} at the gate — ` +
     `x${(ceiling('gate') / ceiling('m4')).toFixed(1)}, the widest rung anybody crosses`);

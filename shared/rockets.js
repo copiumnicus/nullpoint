@@ -32,6 +32,10 @@ import { EQUIPMENT, MAX_LAUNCHERS } from './gear.js';
 import { slotsOf } from './ships.js';
 import { hardpoints } from './combat.js';
 import { aspectOf, alphaAt, dutyAt, shownAt } from './stealth.js';
+// An answering ring turns part of what lands on a hardened plate — see stepBolts in
+// combat.js, which does the same thing for the same reason. Returns 1 for everything
+// without plates.
+import { softAt } from './plates.js';
 
 export { MAX_LAUNCHERS };
 
@@ -265,8 +269,19 @@ export function stepRockets(list, dt) {
 
     if (Math.hypot(tg.x - r.x, tg.y - r.y) <= ROCKET_R + tg.r) {
       list.splice(i, 1);
-      const split = applyDamage(tg, r.dmg);
-      hits.push({ rocket: r, target: tg, dead: tg.hp <= 0, split });
+      // Same two uses as a bolt's — the plate that turns part of it, and the same
+      // plate hardening from it — but the geometry is not a bolt's. See stepBolts.
+      //
+      // A rocket is a body rather than a line, and at the moment it goes off it is
+      // sitting on top of what it hit — so the place it "came from" has to be walked
+      // back along its own heading by how far it has flown. Taking the impact point
+      // instead gives an Antiphon's ring a lever arm of 100px, and a ray that short
+      // swings across the whole sector every time the hostile drifts.
+      const back = Math.max(1, (r.age ?? 0) * ROCKET_SPEED);
+      const fx = r.x - Math.cos(r.heading) * back, fy = r.y - Math.sin(r.heading) * back;
+      const from = { a: Math.atan2(fy - tg.y, fx - tg.x), x: fx, y: fy };
+      const split = applyDamage(tg, r.dmg * softAt(tg, from.a));
+      hits.push({ rocket: r, target: tg, dead: tg.hp <= 0, split, from, raw: r.dmg });
     }
   }
   return hits;
