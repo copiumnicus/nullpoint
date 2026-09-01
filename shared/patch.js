@@ -8,14 +8,31 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.90';
+export const VERSION = '0.93';
 
 export const PATCHES = [
-  { v: '0.90', notes: [
+  { v: '0.93', notes: [
     "Lean on ONE of the Antiphon's plates long enough and it BREAKS. The core is open there",
     'A broken wedge stops deflecting and stops answering, and lets through double',
     'The rim of each plate shows how close it is to going — circling never breaks one',
     'So it is a choice: circle and stay safe, or commit and take a third off the fight',
+  ] },
+  { v: '0.92', notes: [
+    'Ping the chart: hit PING on the minimap, then click a spot — or shift-click it',
+    'Everyone in the sector sees it for eight seconds, with your callsign on it',
+    'One ping every ten seconds. The button counts the wait down and says so if you are early',
+  ] },
+  { v: '0.91', notes: [
+    'Ironhusks stopped firing lasers. They throw a shotgun of big slow orbs instead',
+    'Get off the line and it costs you nothing. Hold it and the whole fan goes through you',
+    'A Leviathan walks three volleys of them across your course. Breaking once is not enough',
+    'Both still hit for exactly what they always did — you can just be somewhere else now',
+  ] },
+  { v: '0.90', notes: [
+    'CRITICAL DAMAGE: the screen goes red when your hull will not last another four seconds',
+    'It reads the rate you are losing hull, so it fires at 5% on a Bulwark and 44% on a Kestrel',
+    'It gets louder as you get closer, and it is silent when nothing is shooting you',
+    'Dying in the margin says so once, not twice — the hull warning takes the shear one over',
   ] },
   { v: '0.89', notes: [
     'A wounded hostile with its back to the edge of the map runs along it, not into it',

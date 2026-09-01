@@ -312,8 +312,14 @@ console.log('\nwhat is deliberately not deltaed');
   // is at most one per hostile, and the one field that matters — how far through the
   // fuse it is — changes every single tick, so a keyed diff would pay an id and a
   // mask to re-send the only thing that moved.
-  check('bolts, rockets, blasts, hits, pyres and fixes go whole, and the list says so',
-    same(EPHEMERAL, ['bolts', 'rockets', 'blasts', 'hits', 'pyres', 'fixes']),
+  // Orbs joined them, and they are the ordinary case rather than an edge of it: an orb
+  // has no id, lives its weapon's reach — 1.25s for an Ironhusk's, 2.25s for a
+  // Leviathan's — and the two fields that decide where it is on the screen change
+  // every single tick, so a keyed diff would pay an id and a mask to re-send exactly
+  // what moved. Priced against a real server with a Kestrel standing in front of three
+  // Ironhusks, fifteen orbs in the air at peak: 2.9 KiB/s of an 11.1 KiB/s stream.
+  check('bolts, rockets, orbs, blasts, hits, pyres and fixes go whole, and the list says so',
+    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost
@@ -333,8 +339,16 @@ console.log('\nwhat is deliberately not deltaed');
   // keyed. shared/net.js carries the full table, including the shape that was cheaper
   // still and did not ship, which was one packed integer on the ship row: it costs
   // 0.036 and spends the LAST field in SHIP_FIELDS on one hostile in one sector.
-  check('ships, pods, stations, sown ground and an answering ring are the ones worth diffing',
-    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown', 'plates']),
+  // REWRITTEN A THIRD TIME, and this row makes the argument from the other end. A
+  // ping lives eight seconds and has an id, so it clears the first two tests the
+  // same way ground and plates do — but the field that decides its cost is the one
+  // that CANNOT change: a sixteen-character callsign. Priced through the real codec
+  // at four pilots each pinging the instant their cooldown clears, 3.2 live on
+  // average: 3.820 KiB/s sent whole every tick against 0.567 keyed, and 1.502 of
+  // that 3.820 is the name being re-transmitted thirty times a second. Keyed, it
+  // rides the add and then goes quiet, exactly the way `name` does on a ship row.
+  check('ships, pods, stations, sown ground, an answering ring and a ping are the ones worth diffing',
+    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown', 'plates', 'pings']),
     'long-lived, keyed, and 82% of the traffic in a crowded sector');
   check('and nothing is in both lists',
     !Object.keys(STREAMS).some(k => EPHEMERAL.includes(k)),

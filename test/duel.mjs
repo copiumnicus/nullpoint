@@ -484,7 +484,19 @@ await wait(1600);
   let open = await arenas(A);
   check('the server reports it as one sector with two seats, both occupied',
     open.open === 1 && open.list[0].duel === true && open.list[0].seats === 2
-    && open.list[0].here === 2 && open.list[0].lists === 8,
+    // TEN, and the literal stays on purpose: every one of these lists is pushed to
+    // somewhere without a `?? []` guard, so a sector that got nine of them throws on
+    // the tick somebody uses the tenth, and hard-coding it means adding a list fails
+    // HERE, with a count, instead of in a duel three weeks later. It was 8 until orbs
+    // got a list of their own, and 9 until pings did.
+    //
+    // What the literal ALONE could not say is which of the two things went wrong: on
+    // the tick a tenth list arrived it read "9, not 10" about a sector that was in
+    // fact complete. So the server now reports how many lists there ARE beside how
+    // many this sector got, and both are asserted — `of` is the tripwire, and
+    // `lists === of` is the claim the tripwire was standing in for.
+    && open.list[0].here === 2 && open.list[0].of === 10
+    && open.list[0].lists === open.list[0].of,
     JSON.stringify(open.list[0]));
 
   let bagA = await snap(A);

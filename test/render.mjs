@@ -17,7 +17,8 @@ import { joinLayout } from '../shared/join.js';
 import { ROSTER_KEY, TOKEN_KEY as TOK } from '../shared/brand.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packSown, packPlates, PLATE_STEPS } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, PLATE_STEPS } from '../shared/net.js';
+import { pingChip, pingLayout, PING_MAX } from '../shared/ping.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
 import { ALIENS, WILD } from '../shared/aliens.js';
@@ -277,9 +278,24 @@ const keep = (m, k, v) => {
   if (!m.has(k)) m.set(k, { v, n: 0, sizes: new Set() });
   const f = m.get(k); f.n++; f.sizes.add(SIZE);
 };
+// The longest handle the join form allows, and the name the rich sweep flies and
+// pings under. Up here rather than inside the sweep because the counter below has
+// to know it — see PINGED.
+const SWEPT_NAME = 'W'.repeat(NAME_MAX);
+// How many frames actually carried a ping callsign on the chart.
+//
+// The same claim the panel coverage in the sweep makes, and for the same reason: a
+// fixture that quietly stopped reaching the screen passes every rule in this file,
+// because an empty plot cannot print anything through anything. Counted here
+// rather than by drawing an extra frame somewhere, because the latency heartbeat
+// fires once every 1,000ms of FRAME time and the sign-out block asserts a
+// signed-out client sends nothing — so adding two frames anywhere moves that
+// heartbeat into its window and fails a test about something else entirely.
+let PINGED = 0;
 const analyse = () => {
   SEEN++;
   const els = T.els;
+  if (els.some(e => e.kind === 'text' && !e.world && e.size === 9 && e.text === SWEPT_NAME)) PINGED++;
   for (const c of collisions(els, innerWidth, innerHeight)) keep(FOUND, key(c), c);
   for (const c of crossings(els, innerWidth, innerHeight))
     keep(CROSS, `${same(c.a.text)}|${Math.round(c.r.w)}x${Math.round(c.r.h)}`, c);
@@ -311,7 +327,19 @@ for (const id of Object.keys(MAPS)) {
     packRocket({ x: 6350, y: 3900, heading: -2.1, foe: 0, w: 750 }),
     packRocket({ x: 5900, y: 4300, heading: 3.1,  foe: 1, w: 150 }),
     packRocket({ x: 6100, y: 4250, heading: 1.7,  foe: 1, w: 0 }),
-  ], bolts: [
+  ],
+  // A whole Ironhusk fan and a cluster of a Leviathan's barrage, drawn every frame.
+  // The far one is a heading of pi to the third decimal and the near one is on top of
+  // the pilot, because the two things that can go wrong in a radial gradient are a
+  // zero radius and a colour built out of a rounded alpha.
+  orbs: [
+    packOrb({ x: 6180, y: 4090, heading: 0.42,   r: 44, foe: true }),
+    packOrb({ x: 6220, y: 4150, heading: 0.42,   r: 44, foe: true }),
+    packOrb({ x: 6260, y: 4210, heading: 0.42,   r: 44, foe: true }),
+    packOrb({ x: 6000, y: 4000, heading: -3.1415, r: 60, foe: true }),   // right on the hull
+    packOrb({ x: 5400, y: 3300, heading: 1.9,    r: 60, foe: false }),   // and one of ours
+  ],
+  bolts: [
     packBolt({ sx: 6000, sy: 4000, ax: 6400, ay: 4300, t: 0.10, ttl: 0.21, foe: false }),
     packBolt({ sx: 6400, sy: 4300, ax: 6000, ay: 4000, t: 0.02, ttl: 0.21, foe: true }),
     packBolt({ sx: 5200, sy: 3400, ax: 2200, ay: 6600, t: 0.20, ttl: 0.21, foe: false }),
@@ -593,7 +621,7 @@ const dismiss = () => {
   feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0, co: 'm',
           hull: 'vanguard', hp: 100, sh: 100, flash: 0, guns: 3, lvl: 14, drones: 0, form: 0,
           dmask: 0, vis: 2 })],
-    rockets: [], bolts: [], hits: [], blasts: [], pods: [],
+    rockets: [], bolts: [], orbs: [], hits: [], blasts: [], pods: [],
     hold: {}, cap: 60, credits: 4820, docked: false,
     gear: {}, hulls: ['vanguard'], drones: [], formation: 'wedge', formations: ['wedge'],
     xp: 5200, rank: { level: 14, into: 300, need: 900 },
@@ -622,6 +650,161 @@ const dismiss = () => {
     else console.log(`a plotted course lands under the cursor: at ${innerWidth}x${innerHeight} the `
       + `view zooms to ${z.toFixed(3)}, so clicks ${B.x - A.x}px apart plot ${wantX.toFixed(1)} apart`);
   }
+}
+
+// Pinging the chart, driven the way a player drives it.
+//
+// The plot already carries a gesture: a click on it is a course order, and it is
+// how people fly. Everything here is about the two surviving each other — that
+// arming, pinging and the cooldown all work, AND that a plain click on the plot
+// still plots a course afterwards. A ping that broke click-to-move would be worse
+// than no ping.
+{
+  dismiss();
+  frame(t += 16); frames++;
+  const mmW = Math.min(260, innerWidth * 0.22), mmH = mmW * (8000 / 12000);
+  const MM = { x: innerWidth - mmW - 16, y: innerHeight - mmH - 16, w: mmW, h: mmH };
+  const CH = pingChip(MM);
+  const mid = { clientX: MM.x + MM.w * 0.5, clientY: MM.y + MM.h * 0.3 };
+  const hit = r => evt('pointerdown', { clientX: r.x + r.w / 2, clientY: r.y + r.h / 2 });
+
+  sent.length = 0;
+  hit(CH);                                       // arm
+  frame(t += 16); frames++;
+  evt('pointerdown', mid);                       // and pick a spot
+  evt('pointerup', {});
+  const marks = sent.filter(m => m.t === 'mark');
+  const strays = sent.filter(m => m.t === 'intent' && m.mode === 'pt');
+  if (marks.length !== 1) errs.push(`arming the chip and clicking the plot sent ${marks.length} pings, not 1`);
+  else if (strays.length) errs.push('a ping also plotted a course — the chart cannot mean both at once');
+  else {
+    const S = { w: 12000, h: 8000 };
+    const wantX = (mid.clientX - MM.x) / MM.w * S.w, wantY = (mid.clientY - MM.y) / MM.h * S.h;
+    if (Math.abs(marks[0].x - wantX) > 1 || Math.abs(marks[0].y - wantY) > 1)
+      errs.push(`a ping landed at ${marks[0].x.toFixed(0)},${marks[0].y.toFixed(0)} and was clicked at ` +
+                `${wantX.toFixed(0)},${wantY.toFixed(0)}`);
+    else console.log('ping: the chip arms the chart and the next click drops a ping where it was clicked, ' +
+                     `${wantX.toFixed(0)},${wantY.toFixed(0)} in a 12,000x8,000 sector`);
+  }
+
+  // Shift-click is the same thing without arming first — one gesture for a hand
+  // already on the keyboard, and the reason the chip is not the only way in.
+  sent.length = 0;
+  evt('pointerdown', { ...mid, shiftKey: true });
+  evt('pointerup', {});
+  if (sent.filter(m => m.t === 'mark').length !== 1)
+    errs.push('shift-clicking the plot did not ping it');
+  else console.log('ping: shift-clicking the plot pings it without arming anything first');
+
+  // AND THE COURSE ORDER STILL WORKS. This is the assertion the whole feature is
+  // on trial for: the plot is how people fly, and a click on it with nothing armed
+  // and nothing held has to still be a destination.
+  sent.length = 0;
+  evt('pointerdown', mid);
+  evt('pointerup', {});
+  const course = sent.filter(m => m.t === 'intent' && m.mode === 'pt');
+  if (course.length !== 1 || sent.some(m => m.t === 'mark'))
+    errs.push(`a plain click on the plot sent ${course.length} course orders and ` +
+              `${sent.filter(m => m.t === 'mark').length} pings — it must be exactly 1 and 0`);
+  else console.log('ping: click-to-move survives it — an unarmed, unshifted click on the plot is still a course');
+
+  // Arming is a MODE, and a mode that outlives the click you changed your mind
+  // about is a trap: arm it, decide to fly across the sector instead, and the next
+  // course order you plot on the chart is a ping.
+  sent.length = 0;
+  hit(CH);                                       // arm
+  evt('pointerdown', { clientX: 300, clientY: 300 });   // then think better of it
+  evt('pointerup', {});
+  evt('pointerdown', mid);                       // and plot a course on the chart
+  evt('pointerup', {});
+  if (sent.some(m => m.t === 'mark')) errs.push('an armed ping survived a click somewhere else');
+  else console.log('ping: arming is cancelled by a click anywhere else, so it cannot ambush a later course');
+
+  // A ping on cooldown says so rather than doing nothing. The countdown is the
+  // SERVER's, out of the bag, so this feeds one and checks both the readout on the
+  // chip and what a click on it says. Four silent refusals is what this is for.
+  feed({ t: 's', ships: [], ping: 7 });
+  frame(t += 16); frames++;
+  const said = T.els.some(e => e.kind === 'text' && String(e.text).includes('PING 7s'));
+  if (!said) errs.push('a ping on cooldown drew no wait on the chip');
+  sent.length = 0;
+  // TWO CLOCKS, and this block owns one of them, exactly the way the quest banner
+  // above does: say() stamps the refusal with performance.now() and the draw
+  // measures its age against the timestamp the FRAME was handed, which in here is a
+  // counter thousands of milliseconds ahead of the real one. The CLICK has to be
+  // inside the anchor too, not only the frame — stamping with the real clock and
+  // reading against the fake one leaves the sentence four seconds stale before it
+  // is written, so it clears itself on the frame that should have drawn it. Which
+  // reads, exactly, as the silent refusal this assertion exists to catch.
+  const realPerf = performance.now;
+  performance.now = () => t;
+  let spoke = false;
+  try {
+    hit(CH);
+    frame(t += 16); frames++;
+    spoke = T.els.some(e => e.kind === 'text' && /recharging/i.test(String(e.text)));
+  } finally { performance.now = realPerf; }
+  if (sent.some(m => m.t === 'mark')) errs.push('a chip on cooldown still sent a ping');
+  if (!spoke) errs.push('clicking a cooling ping chip refused in silence');
+  if (said && spoke) console.log('ping: on cooldown the chip reads PING 7s, and clicking it says why in words');
+
+  // And the wait clears the moment the bag stops mentioning it — absence is the
+  // readout, the same contract `arena` and `duel` have.
+  feed({ t: 's', ships: [] });
+  frame(t += 16); frames++;
+  if (T.els.some(e => e.kind === 'text' && /PING \d+s/.test(String(e.text))))
+    errs.push('the cooldown stayed on the chip after the server stopped sending one');
+  sent.length = 0;
+  hit(CH);
+  evt('pointerdown', mid);
+  evt('pointerup', {});
+  if (!sent.some(m => m.t === 'mark')) errs.push('the ping never came back after its cooldown lapsed');
+  else console.log('ping: the wait clears when the server stops sending one, and the next ping goes');
+  dismiss();
+  frame(t += 16); frames++;
+}
+
+// Where a name lands on a plot 180px wide, which is the whole reason the layout
+// is in shared/ping.js rather than in the client.
+//
+// Three pings in the same corner is the case a player will actually produce — a
+// fight happens somewhere and everyone points at it — and two callsigns printed on
+// one line is the one outcome a reader cannot recover from. Asserted here against
+// the real layout at every window size the sweep covers, because the frame rules
+// can only catch what the sweep happens to draw and this is a claim about all of
+// them.
+{
+  const NAME = 'W'.repeat(NAME_MAX);
+  const near = [0, 1, 2].map(i => ({ id: i, x: 6000 + i * 40, y: 4000 + i * 30, p: i * 0.2, name: NAME }));
+  let worst = Infinity, tightest = '';
+  for (const [w, h] of SIZES) {
+    const mmW = Math.min(260, w * 0.22), mmH = mmW * (8000 / 12000);
+    const MM = { x: w - mmW - 16, y: h - mmH - 16, w: mmW, h: mmH };
+    const rows = pingLayout(near, MM, { w: 12000, h: 8000 });
+    if (rows.length !== 3) { errs.push(`three pings laid out ${rows.length} rows at ${w}x${h}`); continue; }
+    for (const r of rows) {
+      if (r.x < MM.x - 0.01 || r.x + r.w > MM.x + MM.w + 0.01 ||
+          r.y < MM.y - 0.01 || r.y + r.h > MM.y + MM.h + 0.01)
+        errs.push(`a ping label runs outside the ${Math.round(mmW)}px plot at ${w}x${h}`);
+      if (r.y + r.h > pingChip(MM).y)
+        errs.push(`a ping label lands on the PING button at ${w}x${h}`);
+    }
+    // Measured on the INK and not on the chips, because ink is what uilint's
+    // crowding rule measures: a 9px line is 0.72em of cap over the baseline and
+    // 0.2em of descender under it, and two labels closer than that descender are
+    // one label as far as a reader is concerned.
+    const ink = r => ({ top: r.ty - 0.72 * 9, bot: r.ty + 0.2 * 9 });
+    for (let i = 1; i < rows.length; i++) {
+      const gap = ink(rows[i]).top - ink(rows[i - 1]).bot;
+      if (gap < 0) errs.push(`two ping labels share a line at ${w}x${h}`);
+      if (gap < worst) { worst = gap; tightest = `${w}x${h}`; }
+    }
+  }
+  if (worst >= 0.2 * 9)
+    console.log(`ping: three pings 50px apart get three lines, never two names on one — ` +
+                `${worst.toFixed(1)}px of clear ink at the tightest window (${tightest}), ` +
+                `against the 1.8px a 9px descender needs`);
+  else errs.push(`two ping labels are ${worst.toFixed(1)}px apart at ${tightest}, under a descender`);
 }
 
 // The changelog. An icon that does nothing when clicked is worse than no icon,
@@ -3221,8 +3404,24 @@ const dismiss = () => {
       applyResearch(resolve(h, fitFor(h), ESCORT, 'wedge'), ALL_MODS)[k])).length));
     // Whichever hull prints the longest number is the one worth sweeping in.
     const RICH = Object.keys(HULLS).sort((a, b) => digits(b) - digits(a))[0];
-    const LONG_NAME = 'W'.repeat(NAME_MAX);        // the longest handle the form allows
+    const LONG_NAME = SWEPT_NAME;                  // the longest handle the form allows
     const ALL_GEAR = Object.fromEntries(Object.keys(EQUIPMENT).map(k => [k, 99]));
+    // A full chart of pings, in the state that has the longest of everything else.
+    // PING_MAX of them, three within fifty pixels of each other so the layout has to
+    // pull them onto separate rows, one in each far corner so a label has to be
+    // flipped to the other side of its dot and clamped inside the plot, and every
+    // one of them under the longest handle the join form allows. The whole point is
+    // that the sweep's rules — nothing printed through anything, nothing written
+    // across a control — see them at all seven window sizes, because a name on a
+    // 180px plot is exactly where that goes wrong.
+    const PINGS = [
+      packPing({ id: 91, x: 6000,  y: 4000, p: 0,    name: LONG_NAME }),
+      packPing({ id: 92, x: 6050,  y: 4030, p: 0.15, name: LONG_NAME }),
+      packPing({ id: 93, x: 6100,  y: 4060, p: 0.3,  name: LONG_NAME }),
+      packPing({ id: 94, x: 0,     y: 0,    p: 0.5,  name: LONG_NAME }),
+      packPing({ id: 95, x: 12000, y: 8000, p: 0.7,  name: LONG_NAME }),
+      packPing({ id: 96, x: 12000, y: 40,   p: 0.95, name: 'A' }),
+    ].slice(0, PING_MAX);
 
     const ship = (hull, name, extra = {}) => packShip({ id: 1, x: MAPS.m1.base.x, y: MAPS.m1.base.y,
       heading: 0, charge: 0, co: 'm', hull, hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0,
@@ -3254,7 +3453,7 @@ const dismiss = () => {
                using: { laser: AMMO_KEYS[0], rocket: AMMO_KEYS.at(-1) },
                armed: { laser: true, rocket: true } });
         feed({ t: 'map', map: 'm1' });
-        feed({ t: 's', ships: [ship(RICH, LONG_NAME)],
+        feed({ t: 's', ships: [ship(RICH, LONG_NAME)], pings: PINGS, ping: 7,
                hold: Object.fromEntries(Object.keys(MATERIALS).map(k => [k, 9999])),
                cap: 99_999, credits: 9_999_999, docked: true,
                vault: Object.fromEntries(Object.keys(MATERIALS).map(k => [k, 999_999])),
@@ -3338,9 +3537,168 @@ const dismiss = () => {
     if (missing.length) errs.push(`the sweep never drew ${missing.length} panel(s): ${missing.join(', ')}`);
     else console.log(`  ok   every panel is swept in every state  — ${PANELS.length} panels x ` +
                      `${STATES.length} states x ${SIZES.length} window sizes, each one seen drawing itself`);
+    if (PINGED < SIZES.length)
+      errs.push(`the chart carried a ping callsign on ${PINGED} frames — the sweep is asserting about an empty plot`);
+    else console.log(`  ok   the swept chart is actually carrying pings  — ${PINGED} frames drew ` +
+                     `${PINGS.length} of them under a ${NAME_MAX}-character handle, at ${SIZES.length} window sizes`);
 
     globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
     evt('resize'); SIZE = '1600x900';
+    frame(t += 16); frames++;
+  }
+
+  // --- the low-hull warning ----------------------------------------------------
+  //
+  // CRITICAL DAMAGE is a centred bold 30px banner, which is precisely the shape
+  // that lands on the other centred strings in this game — the shear warning, the
+  // notice, the mission bar, the SPACE prompt — so it is driven at every window
+  // size with the three overlap rules watching, and this block is also the first
+  // time the harness has ever drawn the shear warning it shares a slot with.
+  //
+  // The threshold is a claim about NUMBERS rather than about pixels, so it is
+  // measured rather than asserted from a constant: the same hull is burned down
+  // at two rates ten times apart, and what is checked is that the warning arrives
+  // at two very different SHARES of the hull. A flat percentage cannot do that,
+  // and a flat percentage is the thing this replaces.
+  {
+    const { HORIZON } = await import('../shared/alarm.js');
+    dismiss();
+    const saw = s => T.els.some(e => e.kind === 'text' && String(e.text).includes(s));
+    const CRIT = 'CRITICAL DAMAGE', SHEAR = 'BEACON LATTICE LOST', OUT = 'OUTSIDE CHARTED SPACE';
+    // 100ms a frame, which is the longest step drawFrame will believe — it clamps
+    // its own dt there — so a thirty-second fight is three hundred frames rather
+    // than two thousand.
+    const STEP = 100;
+    // Hull arrives as a whole percent, exactly as the server packs it, so the
+    // burn is quoted in percent a second and the arithmetic never needs the hull
+    // points at all. INSIDE is the middle of m1; OUT_X is 900px past its western
+    // edge, which is half of DRIFT_MARGIN and takes shear at a real rate.
+    const INSIDE = 6000, OUT_X = -900;
+    const put = (hp, x = INSIDE) => feed({ t: 's',
+      ships: [packShip({ id: 1, x, y: 4000, heading: .5, charge: 0, co: 'm', hull: 'vanguard',
+                         hp, sh: 0, flash: 0, guns: 3, lvl: 14, drones: 0, form: 0, dmask: 0, vis: 2 })],
+      rockets: [], bolts: [], hits: [], blasts: [], pods: [],
+      hold: {}, cap: 60, credits: 4820, docked: false,
+      gear: {}, hulls: ['vanguard'], drones: [], formation: 'wedge', formations: ['wedge'],
+      xp: 5200, rank: { level: 14, into: 300, need: 900 },
+      power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
+      shieldNow: 0, shieldMax: 1170, vault: {} });
+    // A ship that is not there at all resets the history — the client cannot tell
+    // a fresh pilot's hull from the last one's without it.
+    const forget = () => { feed({ t: 's', ships: [], rockets: [], bolts: [], hits: [], blasts: [],
+                                  pods: [], hold: {}, cap: 60, credits: 0, docked: false, vault: {} });
+                           frame(t += STEP); frames++; };
+
+    feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard', fit: [],
+           gear: {}, hulls: ['vanguard'], drones: [], formation: 'wedge', formations: ['wedge'],
+           credits: 4820, ammo: {}, using: {}, armed: {} });
+    feed({ t: 'map', map: 'm1' });
+
+    // Burn a full hull down at `pcs` percent a second and report the percentage
+    // it first shouted at, and how many seconds of life were left at that moment.
+    const burn = (pcs, x = INSIDE) => {
+      forget();
+      let hp = 100, at = null;
+      for (let i = 0; hp > 0 && i < 900; i++) {
+        put(Math.round(hp), x);
+        frame(t += STEP); frames++;
+        if (at === null && saw(CRIT)) at = hp;
+        hp -= pcs * (STEP / 1000);
+      }
+      return at === null ? null : { pct: at, secs: at / pcs };
+    };
+    const SLOW = 100 / 30, FAST = 100 / 3;         // dead in 30s, and dead in 3s
+    const slow = burn(SLOW), fast = burn(FAST);
+    if (!slow || !fast)
+      errs.push(`a hull burning to nothing never said ${CRIT} ` +
+                `(slow ${slow ? 'ok' : 'silent'}, fast ${fast ? 'ok' : 'silent'})`);
+    else if (fast.pct < slow.pct * 2)
+      errs.push(`the warning is a flat share after all: it fired at ${slow.pct.toFixed(1)}% of the hull ` +
+                `against ${SLOW.toFixed(1)}%/s and ${fast.pct.toFixed(1)}% against ${FAST.toFixed(1)}%/s`);
+    else if (Math.abs(slow.secs - HORIZON) > 0.6)
+      errs.push(`a steady fight should be warned one exchange out: ${HORIZON.toFixed(2)}s wanted, ` +
+                `${slow.secs.toFixed(2)}s got`);
+    else
+      console.log(`  ok   the hull warning is about seconds, not about a share of the hull  — ` +
+        `one Vanguard fires at ${slow.pct.toFixed(1)}% of its hull against ${SLOW.toFixed(1)}%/s ` +
+        `(${slow.secs.toFixed(1)}s left, one exchange) and at ${fast.pct.toFixed(1)}% against ` +
+        `${FAST.toFixed(1)}%/s, ten times the fire`);
+
+    // Wallpaper is the failure mode. A ship that has stopped being shot is
+    // damaged, not dying, and the hull bar going red under a third is already
+    // saying so — thirty seconds of a pulsing red screen is how a pilot learns to
+    // stop seeing the one warning that matters.
+    {
+      forget();
+      for (let i = 0; i < 54; i++) { put(100 - i * 1.5); frame(t += STEP); frames++; }
+      const lit = saw(CRIT);                       // 15%/s got it down to 19%
+      let quiet = 0;
+      for (let i = 0; i < 120; i++) {              // 12s of nobody shooting at all
+        put(19); frame(t += STEP); frames++;
+        if (saw(CRIT)) quiet = (i + 1) * STEP / 1000;
+      }
+      if (!lit) errs.push('the warning never lit while the hull was going');
+      else if (saw(CRIT)) errs.push('the warning was still up 12s after the last hit landed');
+      else if (quiet > HORIZON + 0.5)
+        errs.push(`the warning hung on ${quiet.toFixed(1)}s after the last hit, ` +
+                  `one exchange is ${HORIZON.toFixed(2)}s`);
+      else console.log('  ok   nothing shooting you, nothing shouting at you  — ' +
+                       `gone ${quiet.toFixed(1)}s after the last hit, one exchange, ` +
+                       'and it stays gone while the ship sits on 19% hull');
+    }
+
+    // Two warnings, one slot. Dying in the margin is both things at once, and the
+    // hull takes it — but the shear line is still on screen, because COME ABOUT is
+    // the cause AND the cure and losing it would be losing the instruction.
+    {
+      forget();
+      for (let i = 0; i < 60; i++) { put(100 - i * 1.5, OUT_X); frame(t += STEP); frames++; }
+      const both = { crit: saw(CRIT), shear: saw(SHEAR), out: saw(OUT) };
+      forget();
+      for (let i = 0; i < 12; i++) { put(100, OUT_X); frame(t += STEP); frames++; }
+      const alone = saw(SHEAR);
+      if (!both.crit || !both.out || both.shear || !alone)
+        errs.push(`the two warnings do not share one slot: dying in the margin drew ` +
+                  `${both.crit ? CRIT : 'nothing'}${both.shear ? ` AND ${SHEAR}` : ''}` +
+                  `${both.out ? ', distance kept' : ', distance LOST'}; whole in the margin drew ` +
+                  `${alone ? SHEAR : 'nothing'}`);
+      else console.log('  ok   dying outside charted space says one thing, not two  — ' +
+                       `${CRIT} takes the slot and keeps the shear distance in it; ` +
+                       `a whole ship out there still gets ${SHEAR}`);
+    }
+
+    // And it ends with the ship. The wreck screen is its own picture and a red
+    // banner left beating over it would be the warning outliving what it warned
+    // about.
+    {
+      forget();
+      for (let i = 0; i < 60; i++) { put(100 - i * 1.5); frame(t += STEP); frames++; }
+      const lit = saw(CRIT);
+      feed({ t: 'dead', lost: { iron: 4 }, toll: 120 });
+      frame(t += STEP); frames++;
+      if (!lit) errs.push('the warning never lit on the way to the wreck');
+      else if (saw(CRIT)) errs.push('the warning was still beating over the wreck screen');
+      else console.log('  ok   the warning ends with the ship  — nothing red left over the wreck screen');
+      feed({ t: 'map', map: 'm1', respawned: true });
+    }
+
+    // Every window, both warnings. A centred banner is the one thing that collides
+    // with other centred text, and the overlap rules only see what is drawn.
+    for (const [w, h] of SIZES) {
+      globalThis.innerWidth = w; globalThis.innerHeight = h;
+      evt('resize'); SIZE = `${w}x${h}`;
+      for (const x of [INSIDE, OUT_X]) {
+        forget();
+        for (let i = 0; i < 60; i++) { put(100 - i * 1.5, x); frame(t += STEP); frames++; }
+      }
+      forget();
+      for (let i = 0; i < 8; i++) { put(100, OUT_X); frame(t += STEP); frames++; }
+    }
+    console.log(`alarm: the hull warning and the shear warning drawn at ${SIZES.length} window sizes, ` +
+                'inside and outside charted space');
+    globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
+    evt('resize'); SIZE = '1600x900';
+    forget();
     frame(t += 16); frames++;
   }
 

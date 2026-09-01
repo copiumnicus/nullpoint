@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { newShip, step, stepVitals, stepDrift, applyDamage, drainHull, havenKind } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget } from '../shared/combat.js';
+import { throwOrbs, stepOrbs } from '../shared/orbs.js';
 import { launch, stepRockets } from '../shared/rockets.js';
 import { newAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading, mayHarm,
          effectiveHp, threatDps, ALIENS, WILD, storeHit, stepMirror,
@@ -98,7 +99,7 @@ function makeRoster(key, map, phase = 0) {
 // the fix is planted BEFORE the hull is stepped, because a plant written after
 // step() is a plant that never happens.
 function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
-  let t = 0, bolts = [], rockets = [], pyres = [], dealt = 0, taken = 0;
+  let t = 0, bolts = [], rockets = [], orbs = [], pyres = [], dealt = 0, taken = 0;
   const pool = poolOf(ship);
   const marks = curve ? Object.keys(curve).map(Number).sort((a, b) => a - b) : [];
   let markAt = 0;
@@ -156,6 +157,11 @@ function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
                   a.hp = Math.min(a.stats.hull, a.hp + bite.mend); taken += got.hull; }
       for (const s of fire(a, seen?.ship ?? null, DT)) bolts.push(s);
       for (const r of launch(a, seen?.ship ?? null, DT)) rockets.push(r);
+      // The two that throw a pattern instead of a bolt. fire() above returns nothing
+      // at all for those, so this is not extra damage — it is the same trigger with a
+      // different weapon on the end of it, and leaving it out would have twelve
+      // Ironhusks in a claim doing nothing at all.
+      for (const ob of throwOrbs(a, seen?.ship ?? null, DT)) orbs.push(ob);
       if (burnOf(a.def)) {
         const scorched = here.filter(c => c.ship.hp > 0 && mayHarm(a, c) && inBurn(a, c.ship));
         stepBurn(a, a.target !== null, scorched.length > 0, DT);
@@ -164,6 +170,10 @@ function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
       }
     }
 
+    // Orbs hit whatever they pass through, so they are settled against the pilot as a
+    // candidate rather than as a target. There is one ship on this bench and no
+    // sanctuary in a claim, so the predicate is the constant it is.
+    for (const h of stepOrbs(orbs, [{ id: 1, ship }], DT)) taken += h.split.shield + h.split.hull;
     for (const h of [...stepRockets(rockets, DT), ...stepBolts(bolts, DT)]) {
       storeHit(h.target, h.split.shield + h.split.hull);
       goadBurn(h.target, h.split.shield + h.split.hull, h.target.isAlien ? effectiveHp(h.target.kind) : 0);

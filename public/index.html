@@ -51,7 +51,9 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, PLATE_STEPS } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, unpackPing, PLATE_STEPS } from '/shared/net.js';
+import { pingLayout, pingChip, chipLine, onChip, whyNotPing, pingAlpha,
+         PING_TINT, PING_FONT } from '/shared/ping.js';
 import { burnOf, burnR } from '/shared/burn.js';
 import { sowOf, HOLD } from '/shared/ground.js';
 // An answering ring. `arcOf` is the whole reason the wedge that glows and the wedge
@@ -73,6 +75,8 @@ import { settingsLayout, valueAt, MAX_PILOTS } from '/shared/settings.js';
 import { readActive, setActive, readRoster, writeRoster, entry,
          remember, forget, parked } from '/shared/roster.js';
 import { vitalsPanel, shieldCountdown, WAIT_PX } from '/shared/vitals.js';
+import { newTrack, trackHull, critical, banner as alarmBanner, slot as alarmSlot,
+         wash as alarmWash, beatAt } from '/shared/alarm.js';
 import { sampler, push as pushSample, frameLine, pingLine, GRADE } from '/shared/perf.js';
 import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
@@ -85,6 +89,7 @@ import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
          whyNotBuySays } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
+import { ORB_SPEED } from '/shared/orbs.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -108,6 +113,10 @@ function resize() {
 addEventListener('resize', resize); resize();
 const btn    = () => ({ x: VIEW_W / 2 - 115, y: VIEW_H - 104, w: 230, h: 48 });
 const sysBtn = () => ({ x: MM_X - 146, y: MM_Y + MM_H - 30, w: 136, h: 30 });
+// The plot as a rectangle, so the ping layout in shared/ping.js and the hit test
+// for its chip are handed the same four numbers the plot is drawn from. Rebuilt
+// per call because resize() reassigns all four.
+const mmRect = () => ({ x: MM_X, y: MM_Y, w: MM_W, h: MM_H });
 // The bottom line of the window, as the separate hints it is made of — the strip
 // is laid out around everything else down there and has to know where it may
 // break.
@@ -182,6 +191,12 @@ let myBerths = [];                // outposts you rent a bay at
 let myFoldTo = null;              // and which hangar a beacon takes you to
 let labs = new Map();             // every research station in this sector
 let rings = new Map();            // hostile id -> its plate charges, for anything carrying a ring
+// Pings standing on the chart, and the two pieces of state around dropping one.
+// `pingCool` is the SERVER's countdown out of the bag, never a clock of our own —
+// see shared/ping.js. `pingArmed` is local because it is a pointer mode and
+// nothing else: the server never hears about it.
+let pings = [];
+let pingArmed = false, pingCool = 0;
 let myLab = null;                 // { mods, income } if you have one
 let myClaims = [];                // mining rocks already freed
 let mySalvage = [];               // ancient wrecks already stripped
@@ -261,7 +276,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [];   // rebuilt every snapshot
 let mySnare = 0;                                  // s of engines-out left, from the bag
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
@@ -270,6 +285,11 @@ const prevShot = new Map();       // for spotting the frame a gun goes off
 const prevRocket = new Map();     // and the frame a rack empties
 let thrust = 0, lastFrameAt = 0, prevSelf = null;
 let dead = null;                  // { lost, at } while you are a wreck
+// How fast your own hull is going, in points a second. The low-hull warning is
+// measured rather than modelled — see shared/alarm.js for why every model this
+// codebase already has blows up at the top of the climb — so the client keeps
+// one running average of its own hit points and asks that how long it has.
+let hullTrack = newTrack();
 // Chat, with a console inside it. While it is open every keystroke belongs to the
 // line being typed — otherwise 'h' would open the hangar mid-sentence.
 let chatOpen = false, chatLine = '', amAdmin = false;
@@ -1431,6 +1451,10 @@ ws.onmessage = e => {
                            return; }
   if (m.t === 'map') {
     mapId = m.map; ships.clear(); prevShot.clear(); marker = null; prevSelf = null;
+    // Pings belong to the sector you left, and an armed cursor belongs to the click
+    // you did not make. The stream would be replaced by the keyframe anyway; this is
+    // so nothing from the old sector is drawn on the two frames before it lands.
+    pings = []; pingArmed = false;
     // The sector changed, so everything the baseline holds is about somewhere
     // else. The server sends a keyframe on the first tick after a jump for the
     // same reason; this is the client refusing to apply anything until it lands.
@@ -1441,6 +1465,7 @@ ws.onmessage = e => {
   if (m.t !== 's') return;
   bolts = (m.bolts ?? []).map(unpackBolt);
   rockets = (m.rockets ?? []).map(unpackRocket);
+  orbs = (m.orbs ?? []).map(unpackOrb);
   snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
   pyres  = (m.pyres ?? []).map(unpackPyre);
@@ -1471,6 +1496,17 @@ ws.onmessage = e => {
   // set the ship rows came from, so a boss you have not detected has no row here to
   // find — this file does no filtering of its own, which is the point.
   rings = new Map((m.plates ?? []).map(unpackPlates).map(r => [r.id, r]));
+  // Pings on the chart. A keyed stream like the labs and the ground, so a name that
+  // never changes rides the add and then goes quiet — see PING_FIELDS in net.js for
+  // the measurement. Nothing is filtered here: the server sends every ping in the
+  // sector on purpose, and this file doing any of its own would be a second copy of
+  // the rule.
+  pings = (m.pings ?? []).map(unpackPing);
+  // Read UNCONDITIONALLY, exactly like `arena` and `duel` below: a bag field that
+  // goes away is reported in the delta's `gone` list, so absence is what says the
+  // cooldown has cleared. Guarding it with `'ping' in m` would leave a countdown
+  // frozen on the chip for the rest of the session.
+  pingCool = typeof m.ping === 'number' ? m.ping : 0;
   if ('snare' in m) mySnare = m.snare ?? 0;
   if ('lab' in m) myLab = m.lab;
   if (m.claims) myClaims = m.claims;
@@ -1794,6 +1830,51 @@ c.addEventListener('pointerdown', e => {
   if (barClick(v)) return;                        // the ammunition bar sits over the world
   const sb = sysBtn();
   if (v.x > sb.x && v.x < sb.x + sb.w && v.y > sb.y && v.y < sb.y + sb.h) { sysOpen = true; return; }
+  // --- pinging the chart, claimed BEFORE anything that reads a click as a place
+  // in the world.
+  //
+  // The plot already carries a gesture — a click on it is a course order, and it
+  // is how people fly — so a ping cannot simply be "clicking the minimap". It is
+  // a MODE you enter and one modifier that skips entering it:
+  //
+  //   click the PING chip in the plot's corner, then click a spot
+  //   or shift-click the plot, which is the same thing without the first click
+  //
+  // Arming rather than a bare modifier because the modifier alone is invisible and
+  // unreachable on a touch screen, and because the chip is where the cooldown has
+  // to live anyway — the wait belongs on the control that is refusing, not in a
+  // sentence somewhere else. Disarmed and unshifted, every byte of the course
+  // order below is the one that was always there: click-to-move cannot break,
+  // because nothing on its path changed.
+  //
+  // Both branches sit above hostileAt/podAt on purpose. The plot is drawn over the
+  // bottom-right of the world, so a hostile that happens to be under it would eat
+  // the click and fire off a target order instead — which is a bug the course
+  // order has always had and one a ping must not inherit.
+  if (onChip(v, mmRect())) {
+    const why = whyNotPing({ cool: pingCool });
+    // A control that refuses in silence has been the complaint four times over.
+    // The chip already reads PING 7s; clicking it says the same thing in words.
+    if (why) { pingArmed = false; return say(why, '#e0a53f'); }
+    pingArmed = !pingArmed;
+    if (pingArmed) say('Click the chart to ping it — everyone here sees it, with your name on it', '#ffd479');
+    return;
+  }
+  if ((pingArmed || e.shiftKey) && v.x > MM_X && v.y > MM_Y) {
+    pingArmed = false;
+    const why = whyNotPing({ cool: pingCool });
+    if (why) return say(why, '#e0a53f');
+    // Against the SECTOR's own size, the same sizeOf() the plot is drawn with and
+    // the server clamps against — see the course order below for the duel arena
+    // that made that necessary.
+    const S = sizeOf(mapOf(mapId));
+    return send({ t: 'mark', x: clamp((v.x - MM_X) / MM_W * S.w, 0, S.w),
+                             y: clamp((v.y - MM_Y) / MM_H * S.h, 0, S.h) });
+  }
+  // Anything else cancels the mode. An armed cursor that survives a click somewhere
+  // else is a trap: you arm it, decide to fly across the sector instead, and the
+  // next course order you plot on the chart three minutes later is a ping.
+  pingArmed = false;
   const b = btn();
   if (v.x > b.x && v.x < b.x + b.w && v.y > b.y && v.y < b.y + b.h) return send({ t: 'jump' });
   const w = toWorld(v);
@@ -4075,6 +4156,15 @@ function drawFrame(now) {
   } else thrust *= 0.9;
   setThrust(thrust);
 
+  // Hull history, fed on every FRAME rather than on every snapshot. The average
+  // decays with time, so a fight that has stopped being a fight has to empty
+  // itself even while nothing new is arriving on the wire — feeding it only on a
+  // snapshot would leave the last measured rate frozen the moment the sector went
+  // quiet, and the alarm with it. A wreck, a hull swap or a pilot switch starts it
+  // over: hull points that arrive from a different ship are not damage.
+  if (me && !dead) trackHull(hullTrack, st.hull * (me.hp ?? 100) / 100, st.hull, frameDt);
+  else hullTrack = newTrack();
+
   for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
   // The camera is held inside THIS SECTOR's bounds, which is the galaxy's rectangle
   // plus the drift margin everywhere except a duel arena — a quarter the size, with
@@ -4492,6 +4582,45 @@ function drawFrame(now) {
       g.closePath(); g.fill();
       g.fillStyle = '#0a0f16'; g.fillRect(-len * 0.3, -1, len * 0.5, 2);
       g.restore();
+    }
+  }
+
+  // Orbs. Slow, big and the only thing in the game you beat by not being somewhere,
+  // so they are drawn to be read at a glance rather than to look like ordnance: a
+  // wide soft halo that says where you must not be, and a hard core inside it.
+  //
+  // THE HALO IS THE HIT DISC. `o.r` comes off the wire and it is the exact radius
+  // stepOrbs collides with — the outer stop of the gradient is at `o.r` and not at
+  // some flattering fraction of it, because a ball drawn smaller than it hits is the
+  // "a row you can see and cannot click" bug moved out of a panel and into a fight.
+  // The core is drawn at 0.42 of it purely so the middle reads as solid.
+  if (orbs.length) {
+    // Flown forward from the last snapshot, exactly as rockets are. At 400px/s the
+    // server's 30Hz step is 13px, which is half a hull and visibly steppy under a
+    // shape this big.
+    const ahead = Math.min(0.12, (now - snapAt) / 1000) * ORB_SPEED;
+    for (const o of orbs) {
+      const R = Math.max(2, o.r);
+      const x = o.x + Math.cos(o.h) * ahead, y = o.y + Math.sin(o.h) * ahead;
+      // A slow pulse, so a wall of them shimmers rather than sitting there as flat
+      // discs. Bounded well inside 1 so no alpha can ever leave the legal range.
+      const beat = 0.82 + Math.sin(now / 190 + o.x * 0.05) * 0.12;
+      const hot = o.foe ? '255,140,90' : '150,225,255';
+      const grd = g.createRadialGradient(x, y, 0, x, y, R);
+      grd.addColorStop(0, `rgba(${hot},${(0.85 * beat).toFixed(3)})`);
+      grd.addColorStop(0.55, `rgba(${hot},${(0.34 * beat).toFixed(3)})`);
+      grd.addColorStop(1, `rgba(${hot},0)`);
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(x, y, R, 0, 7); g.fill();
+      g.fillStyle = o.foe ? '#ffd9c4' : '#e8fbff';
+      g.globalAlpha = beat;
+      g.beginPath(); g.arc(x, y, R * 0.42, 0, 7); g.fill();
+      g.globalAlpha = 1;
+      // The rim, so the edge of the thing is a line you can judge against your own
+      // hull rather than a gradient that fades out somewhere around there.
+      g.strokeStyle = o.foe ? 'rgba(255,120,70,0.55)' : 'rgba(120,210,255,0.55)';
+      g.lineWidth = 1.5;
+      g.beginPath(); g.arc(x, y, R, 0, 7); g.stroke();
     }
   }
 
@@ -5606,6 +5735,48 @@ function drawFrame(now) {
     }
   }
 
+  // A ping, out the window as well as on the chart.
+  //
+  // The minimap is what was asked for and the minimap is where a ping is FOUND —
+  // this is where it is flown to. A marker that exists only on a 180px plot means
+  // reading a course off a thumbnail and then looking up again, and the whole point
+  // of the thing is to put two pilots in the same place quickly. Drawn in world
+  // space, so it grows and shrinks with the sector the way everything else out here
+  // does, and so the layout rules leave it alone: they are about the HUD, and this
+  // is not one.
+  //
+  // Deliberately NOT built: an arrow at the edge of the screen for a ping behind
+  // you. That is the next thing and it is a different thing — off-screen indicators
+  // need a rule about what else earns one, and rule seven says leave the seam
+  // rather than fill it. The plot already answers "which way", which is why the
+  // chart is where a ping lives.
+  for (const pg of pings) {
+    const a = pingAlpha(pg.p);
+    if (!(a > 0.02)) continue;
+    const ph = (now / 1300) % 1;
+    g.strokeStyle = PING_TINT;
+    g.globalAlpha = a * (1 - ph) * 0.7; g.lineWidth = 2.5;
+    g.beginPath(); g.arc(pg.x, pg.y, 24 + ph * 190, 0, 7); g.stroke();
+    g.globalAlpha = a * 0.55; g.lineWidth = 2;
+    g.beginPath(); g.arc(pg.x, pg.y, 24, 0, 7); g.stroke();
+    g.globalAlpha = a * 0.8;
+    g.beginPath();                                 // a cross through it, so it reads at any zoom
+    g.moveTo(pg.x - 34, pg.y); g.lineTo(pg.x - 12, pg.y);
+    g.moveTo(pg.x + 12, pg.y); g.lineTo(pg.x + 34, pg.y);
+    g.moveTo(pg.x, pg.y - 34); g.lineTo(pg.x, pg.y - 12);
+    g.moveTo(pg.x, pg.y + 12); g.lineTo(pg.x, pg.y + 34); g.stroke();
+    if (pg.name) {
+      // The same dark stroke the handles over the hull bars use, and for the same
+      // reason: a name over a nebula is unreadable exactly when the sector is busiest.
+      g.font = 'bold 12px ui-monospace, monospace'; g.textAlign = 'center';
+      g.lineWidth = 3; g.strokeStyle = 'rgba(4,7,12,0.9)';
+      g.strokeText(pg.name, pg.x, pg.y - 40);
+      g.fillStyle = PING_TINT; g.fillText(pg.name, pg.x, pg.y - 40);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
+    g.globalAlpha = 1;
+  }
+
   for (const b of blasts) {                        // kill flash, over everything in world space
     const rr = b.r * (1.3 + b.p * 6.5);
     g.strokeStyle = b.foe ? '#ff9a6a' : '#9ad7ff';
@@ -5754,6 +5925,50 @@ function drawFrame(now) {
     g.fillStyle = '#ff5c6b'; g.fillRect(mx - 1.5, my - 1.5, 3, 3);
     g.globalAlpha = 1;
   }
+
+  // --- pings: somebody pointing at a place, with their callsign on it ---
+  //
+  // Last inside the clip, over every dot, because a ping is the one thing on this
+  // plot that is being SAID to you rather than observed. The rings run off `now` —
+  // the timestamp this frame was handed — and the opacity runs off `p`, which is
+  // the server's own countdown; a fade on performance.now() would never advance
+  // under the render harness, and a life measured here would be a second copy of
+  // how long a ping lasts.
+  //
+  // WHERE EACH NAME GOES IS shared/ping.js's ANSWER AND NOT THIS FILE'S. The
+  // harness asserts that nothing is written across the minimap, and the only thing
+  // that makes a label part of the plot instead of a string thrown over it is one
+  // place deciding where it lands. Every name gets a row of its own there, so three
+  // pings in one corner are three lines and never two strings on one.
+  //
+  // The dark chip behind each name is not decoration either: on a plot this small a
+  // callsign lands on ore dots, portals and hostiles, and this is the difference
+  // between a name you can read over them and one you cannot.
+  {
+    const rows = pingLayout(pings, mmRect(), MMS);
+    for (const r of rows) {
+      g.strokeStyle = PING_TINT; g.lineWidth = 1.4;
+      for (const off of [0, 0.5]) {                // two rings going out, phase-offset
+        const ph = ((now / 1300) + off) % 1;
+        g.globalAlpha = r.alpha * (1 - ph) * 0.8;
+        g.beginPath(); g.arc(r.mx, r.my, 2 + ph * 9, 0, 7); g.stroke();
+      }
+      g.globalAlpha = r.alpha; g.fillStyle = PING_TINT;
+      g.beginPath(); g.moveTo(r.mx, r.my - 4); g.lineTo(r.mx + 4, r.my);
+      g.lineTo(r.mx, r.my + 4); g.lineTo(r.mx - 4, r.my); g.closePath(); g.fill();
+    }
+    // Names after every marker, so a chip can never be drawn under a dot it is
+    // meant to be legible over.
+    g.font = `bold ${PING_FONT}px ui-monospace, monospace`;
+    for (const r of rows) {
+      if (!r.name) continue;
+      g.globalAlpha = r.alpha;
+      g.fillStyle = 'rgba(6,10,16,0.9)'; g.fillRect(r.x, r.y, r.w, r.h);
+      g.fillStyle = PING_TINT; g.fillText(r.name, r.tx, r.ty);
+    }
+    g.globalAlpha = 1;
+    g.font = '12px ui-monospace, monospace';
+  }
   g.restore();
   // The viewport can hang off charted space now, so draw only the part of it that
   // the plot actually covers — clipped to the frame, half a pixel in for the stroke.
@@ -5763,6 +5978,34 @@ function drawFrame(now) {
     const L = Math.max(MM_X + .5, MM_X + vx0 * sx), T = Math.max(MM_Y + .5, MM_Y + vy0 * sy);
     const R = Math.min(MM_X + MM_W - .5, MM_X + vx1 * sx), B = Math.min(MM_Y + MM_H - .5, MM_Y + vy1 * sy);
     if (R > L && B > T) { g.strokeStyle = '#ff3b47'; g.lineWidth = 1; g.strokeRect(L, T, R - L, B - T); }
+  }
+
+  // The PING button, in the plot's own corner, and drawn last so nothing on the
+  // chart is over it.
+  //
+  // The hotkey strip was moved OFF this plot because a sentence about the H key has
+  // nothing to do with the chart it was lying across. This is the deliberate
+  // opposite: it is the chart's own control, for a gesture made on the chart, and
+  // its label is inside its own frame — which is the containment that tells "a
+  // label on its button" from "a sentence over a control", and the whole basis of
+  // the harness's rule.
+  //
+  // It is also the cooldown readout, and that is the reason it is a button at all
+  // rather than a bare modifier: a refusal has to be visible on the control that is
+  // refusing, before the click, not only as a sentence afterwards.
+  {
+    const ch = pingChip(mmRect());
+    if (ch.w > 8) {
+      const cool = pingCool > 0;
+      g.fillStyle = cool ? 'rgba(6,10,16,0.92)' : pingArmed ? 'rgba(62,46,12,0.94)' : 'rgba(6,10,16,0.9)';
+      g.beginPath(); g.roundRect(ch.x, ch.y, ch.w, ch.h, 3); g.fill();
+      g.strokeStyle = cool ? '#4a5568' : PING_TINT; g.lineWidth = 1;
+      g.beginPath(); g.roundRect(ch.x + .5, ch.y + .5, ch.w - 1, ch.h - 1, 3); g.stroke();
+      g.fillStyle = cool ? '#7f8a9c' : PING_TINT;
+      g.font = `bold ${PING_FONT}px ui-monospace, monospace`; g.textAlign = 'center';
+      g.fillText(chipLine({ cool: pingCool, armed: pingArmed }), ch.x + ch.w / 2, ch.y + ch.h - 4.5);
+      g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+    }
   }
 
   // --- reactor, bottom left ---
@@ -6070,27 +6313,52 @@ function drawFrame(now) {
     }
   }
 
-  // Compensated, the margin is somewhere you are meant to be, so it must stop
+  // THE WARNING SLOT. One rectangle in the middle of the screen and one occupant,
+  // because two centred bold 30px banners in the same place is the collision
+  // test/render.mjs exists to catch. shared/alarm.js picks the occupant and owns
+  // the three baselines; this only draws what it is handed.
+  //
+  // Compensated, the margin is somewhere you are meant to be, so shear must stop
   // screaming at you — a permanent red vignette over ground you bought the right
   // to fly on reads as a bug, and the pilot learns to ignore the one warning that
-  // still matters. It comes straight back the moment the grace runs short.
-  if (driftDps(depth, shearHeld()) > 0 && !sysOpen && !bayOpen) {
-    const t = Math.min(1, depth / DRIFT_MARGIN);
-    const vig = g.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.28,
-                                       VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.78);
+  // still matters. It comes straight back the moment the grace runs short. The
+  // hull alarm answers to the same rule from the other direction: it is measured
+  // against how fast your hull is actually going, so it cannot be on unless
+  // something is genuinely killing you.
+  //
+  // critical() is asked on every frame, panel open or not, because it keeps the
+  // hold that stops the warning flickering between two shots. Only the DRAWING is
+  // gated on the panels.
+  const shearNow = driftDps(depth, shearHeld());
+  const crit = me && !dead
+    ? critical(hullTrack, { hull: st.hull * (me.hp ?? 100) / 100, max: st.hull, now, dead: !!dead })
+    : null;
+  const warn = !sysOpen && !bayOpen
+    ? alarmBanner({ crit,
+                    shear: shearNow > 0 ? { dps: shearNow, depth, t: Math.min(1, depth / DRIFT_MARGIN) } : null })
+    : null;
+  if (warn) {
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    const beat = beatAt(now, warn.urgency, warn.kind);
+    const W = alarmWash(warn.kind, warn.urgency, beat);
+    const vig = g.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * W.inner,
+                                       VIEW_W / 2, VIEW_H / 2, VIEW_H * W.outer);
     vig.addColorStop(0, 'transparent');
-    vig.addColorStop(1, `rgba(150,12,24,${0.20 + t * 0.5})`);
+    vig.addColorStop(1, `rgba(150,12,24,${al(W.alpha)})`);
     g.fillStyle = vig; g.fillRect(0, 0, VIEW_W, VIEW_H);
 
-    const pulse = 0.5 + 0.5 * Math.abs(Math.sin(now / (150 - t * 80)));
-    g.textAlign = 'center'; g.globalAlpha = pulse;
-    g.fillStyle = '#ff2f42'; g.font = 'bold 30px ui-monospace, SFMono-Regular, monospace';
-    g.fillText('⚠  BEACON LATTICE LOST  ⚠', VIEW_W / 2, VIEW_H * 0.22);
-    g.globalAlpha = 0.6 + pulse * 0.4;
-    g.font = '15px ui-monospace, monospace'; g.fillStyle = '#ff8a95';
-    g.fillText(`UNCOMPENSATED HULL SHEAR — ${driftDps(depth, shearHeld()) | 0}/s`, VIEW_W / 2, VIEW_H * 0.22 + 28);
-    g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffc4ca';
-    g.fillText(`${depth | 0}m OUTSIDE CHARTED SPACE — COME ABOUT`, VIEW_W / 2, VIEW_H * 0.22 + 52);
+    const S = alarmSlot(VIEW_W, VIEW_H);
+    g.textAlign = 'center';
+    // The onset flare rides on top of the beat for one shot interval, so arriving
+    // in the state is a thing you see happen rather than a thing you notice later.
+    g.globalAlpha = clamp(beat + warn.onset * 0.3, 0, 1);
+    g.fillStyle = '#ff2f42'; g.font = `bold ${S.head.size}px ui-monospace, SFMono-Regular, monospace`;
+    g.fillText(warn.head, S.cx, S.head.y);
+    g.globalAlpha = clamp(0.6 + beat * 0.4, 0, 1);
+    g.font = `${S.sub.size}px ui-monospace, monospace`; g.fillStyle = '#ff8a95';
+    g.fillText(warn.sub, S.cx, S.sub.y);
+    g.font = `${S.foot.size}px ui-monospace, monospace`; g.fillStyle = '#ffc4ca';
+    g.fillText(warn.foot, S.cx, S.foot.y);
     g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 

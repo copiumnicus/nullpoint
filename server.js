@@ -1,9 +1,10 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { WebSocketServer } from 'ws';
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, shieldWait, WORLD, boundsOf, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, shieldWait, WORLD, boundsOf, sizeOf, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
+import { throwOrbs, stepOrbs, ORB_SPEED, orbsOf } from './shared/orbs.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf, roamPoint,
@@ -32,8 +33,9 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix,
-         packSown, groundK, packPlates } from './shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packLab, packPyre, packFix,
+         packSown, groundK, packPlates, packPing } from './shared/net.js';
+import { PING_COOLDOWN, PING_LIFE, PING_MAX, whyNotPing } from './shared/ping.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror } from './shared/aliens.js';
 // The answering ring, and the one thing it needs handed to it: bolt speed, because
@@ -177,6 +179,14 @@ const isAdmin = acct => DEV_ADMIN || acct.admin === true || ADMIN_TOKENS.has(acc
 const waitField = V => {
   const w = shieldWait(V.ship, !!V.docked);
   return w === null ? undefined : Math.round(w * 10) / 10;
+};
+// Seconds until this pilot may ping again, or undefined when they may ping now.
+// The same shape and the same reason as waitField above: absence is the readout, so
+// the field leaves the bag entirely the moment the wait is over and the chip on the
+// plot goes back to saying PING.
+const pingWait = V => {
+  const s = Math.ceil(PING_COOLDOWN - (Date.now() - (V.markAt ?? 0)) / 1000);
+  return s > 0 ? s : undefined;
 };
 
 const players = new Map();   // id -> live session
@@ -534,7 +544,7 @@ for (const x of GALAXY.filter(id => MAPS[id].core)) seed(x, 'antiphon', 2);
 // snapshots, radar — works on an arena without knowing it is one, because all of
 // it is keyed on a map id string and nothing else. The only two things that had
 // to change are the ones that read the SECTOR rather than its id: `mapOf` instead
-// of `MAPS[...]`, and the seven per-sector lists created together.
+// of `MAPS[...]`, and the nine per-sector lists created together.
 // A SEAT, NOT AN OWNER. `owner` was one token, because every arena had exactly one
 // occupant; a duel has two, and the honest generalisation of "is the owner still
 // standing in this sector" is "is ANY seat still standing in it". `seats` is the
@@ -578,7 +588,7 @@ function openArena(p, key, replay = false) {
 // The same sector, with two seats and nothing in it.
 //
 // It is the same function shape as openArena on purpose: the same id scheme, the
-// same eight per-sector lists, the same registry, and therefore the same sweep. The
+// same nine per-sector lists, the same registry, and therefore the same sweep. The
 // only things that differ are the roster (there isn't one) and the countdown, which
 // is a number on the record because the SERVER owns it — see the tick.
 //
@@ -799,7 +809,7 @@ function arriveHome(p, to) {
 // ordering is the whole reason this is a separate function.
 //
 // It used to run openArena() first and change the map on the same line. With a fold
-// in front of it that would register a sector — eight per-sector lists, fifteen
+// in front of it that would register a sector — nine per-sector lists, fifteen
 // hostiles, its own alien id block — five seconds before anybody was in it, and
 // leave it standing if the fold broke. The sweep would collect it on the next tick
 // because nobody is sitting in it, so nothing would visibly break; it would simply
@@ -946,6 +956,10 @@ const PROP_ROWS = PROPS.map(p2 => {
 
 const bolts  = new Map();    // mapId -> bolts in flight
 const rockets = new Map();   // mapId -> rockets in flight
+// mapId -> slow orbs in flight. Its own list and not part of `bolts`, because the
+// two settle completely differently: a bolt resolves once against the one ship it
+// was aimed at, and an orb is tested every tick against everything it could touch.
+const orbs = new Map();
 
 // A rocket flies for four and a half seconds, which is long enough for its
 // target to jump out or die under it. Bolts land inside a third of a second and
@@ -970,6 +984,13 @@ const hits = new Map();      // mapId -> damage numbers still climbing
 // most — the one where you finally killed the thing and flew into what it left.
 const sown = new Map();      // mapId -> patches of White Heat and Slack Water
 let groundId = 1;
+// Pings somebody dropped on the chart and that have not yet lapsed. Per SECTOR
+// and not per player, because that IS the mechanic: a ping outlives the moment
+// its pilot clicked, and everybody standing in the sector is looking at the same
+// one. Ids are their own counter rather than the pilot's, so two pings from the
+// same pilot are two rows the delta can tell apart.
+const marks = new Map();     // mapId -> live pings
+let markId = 1;
 
 // Every per-sector list, named once.
 //
@@ -984,7 +1005,13 @@ let groundId = 1;
 // on `here.length = 0`. `sown` is the eighth and it arrived the same way — the
 // deeps' ground pass reads it per sector with no guard, and a claim arena missing
 // from it would throw on the first frame anybody sowed anything in one.
-const SECTOR_LISTS = [bolts, rockets, blasts, pyres, pods, hits, fixes, sown];
+// `orbs` is the ninth, and it is pushed to without a `?? []` guard exactly like the
+// six the comment above names — a claim arena missing from it would throw on the
+// first tick an Ironhusk pulled its trigger, which is every claim arena there is.
+// `marks` is the tenth and it arrived the same way again — the ping handler does
+// `marks.get(P.mapId).push(...)` with no guard, so a duel arena missing from this
+// list would take the tick down the first time either pilot clicked the chart.
+const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, fixes, sown, marks];
 const openLists  = id => { for (const L of SECTOR_LISTS) L.set(id, []); };
 const closeLists = id => { for (const L of SECTOR_LISTS) L.delete(id); };
 for (const id of Object.keys(MAPS)) openLists(id);
@@ -1551,7 +1578,12 @@ wss.on('connection', (ws, req) => {
             ({ id: k, key: a.key, left: leftIn(k), cleared: a.cleared, replay: a.replay,
                duel: !!a.duel, seats: a.seats.length,
                here: sittingIn(k, a).length, count: +(a.count ?? 0).toFixed(1),
-               lists: SECTOR_LISTS.filter(L => L.has(k)).length })) }));
+               // How many of the per-sector lists this instanced sector actually
+               // got, AND how many there are. Both, because the only thing worth
+               // asserting is that they are equal — a test pinned to the literal 8
+               // fails the day a ninth list is added, which is the day it is least
+               // useful, and says "8, not 9" rather than "this sector is missing one".
+               lists: SECTOR_LISTS.filter(L => L.has(k)).length, of: SECTOR_LISTS.length })) }));
         // What windows this game is actually played in, biggest constituency first.
         // The whole reason the client reports its size at all: test/render.mjs
         // sweeps window sizes hunting for panels that print through each other,
@@ -1941,6 +1973,46 @@ wss.on('connection', (ws, req) => {
     // have to agree on what time it is, only on how long the trip took.
     if (m.t === 'ping') return void (ws.readyState === 1 &&
       ws.send(JSON.stringify({ t: 'pong', at: m.at })));
+
+    // Dropping a ping on the chart. It is `mark` and not `ping` on the wire for one
+    // reason: the line directly above already claims `ping` for the latency echo,
+    // and two meanings for one word on one socket is exactly the transposition
+    // shared/net.js exists to stop. Everything a pilot ever sees calls it a ping.
+    //
+    // A PLACE, NOT A POSITION — the client sends where it clicked on its own chart
+    // and nothing about where the ship is, so this is an intent like any other. It
+    // is clamped into the CHARTED rectangle of THIS sector (sizeOf, the same
+    // function the client's plot is drawn against), so a client sending 9e9 marks
+    // the corner rather than a point four sectors away that nobody can draw.
+    //
+    // THE COOLDOWN IS HERE AND NOWHERE ELSE. The client draws the wait and refuses
+    // early off the countdown this server put in its bag, but it decides nothing:
+    // a client that ignores its own chip and sends every tick gets this sentence
+    // back thirty times a second and not one extra ping. `whyNotPing` is shared so
+    // the refusal the client speaks and the one the server sends are one string.
+    if (m.t === 'mark') {
+      const left = PING_COOLDOWN - (Date.now() - (P.markAt ?? 0)) / 1000;
+      const why = whyNotPing({ cool: left });
+      if (why) return tell(why);
+      const S = sizeOf(mapOf(P.mapId));
+      const x = Math.max(0, Math.min(S.w, +m.x || 0)), y = Math.max(0, Math.min(S.h, +m.y || 0));
+      P.markAt = Date.now();
+      const here = marks.get(P.mapId);
+      if (!here) return;
+      here.push({ id: markId++, x, y, name: acct.name ?? '', t: PING_LIFE, ttl: PING_LIFE });
+      // AND THE CAP IS ON THE SECTOR, NOT ON THE PILOT, which is what actually
+      // bounds the harm. The cooldown lives on the live session, so it is a RATE
+      // LIMIT FOR AN HONEST CLIENT and nothing more: reconnecting starts a new
+      // session with a clean `markAt`, and no per-pilot counter that a socket can
+      // throw away is worth writing. What cannot be got around is this line — a
+      // sector holds PING_MAX pings whoever sent them, and shared/ping.js draws
+      // fewer still on a short window. So the worst a determined client can do is
+      // keep six names on a chart that was going to hold six names anyway.
+      // Oldest out: the freshest news is the news anybody in the sector wants, and
+      // the layout drops from the same end for the same reason.
+      while (here.length > PING_MAX) here.shift();
+      return;
+    }
     if (m.t === 'scoop') {                        // an order: go get that, however far it is
       const target = (pods.get(P.mapId) ?? []).find(c => c.id === +m.id);
       if (target && !mayScoop(target, id))
@@ -2532,6 +2604,15 @@ setInterval(() => {
                        y: b.sy + (b.ay - b.sy) * (1 - b.t / b.ttl),
                        vx: (b.ax - b.sx) / b.ttl, vy: (b.ay - b.sy) / b.ttl })),
       ];
+      // ORBS ARE DELIBERATELY NOT IN THIS LIST, and the reason is what an orb is.
+      // Everything above has this hostile's NAME on it — `r.target === a` — and
+      // threatBreak() reads the nearest of them and turns perpendicular. An orb has
+      // no target: it is a thing at a place going somewhere, and it can only ever be
+      // aimed at a pilot, because nothing a pilot owns throws one. Filtering by
+      // target would put an empty list here; NOT filtering would have a Bandit
+      // jinking away from a wall a Leviathan threw at somebody else, three sectors
+      // of raiders dancing around ordnance that cannot touch them. THE SEAM IS HERE:
+      // the day a pilot's weapon throws orbs, this is one spread of the same list.
       const breaking = stepEvade(a, incoming, map, dt);
       // The fix, and it runs BEFORE the hull is stepped rather than after it. That is
       // not tidiness: planting a Kedge means clearing the course stepAlienAI has just
@@ -2632,6 +2713,11 @@ setInterval(() => {
       const spat = fire(a, victim?.ship ?? null, dt);
       for (const shot of spat) bolts.get(mapId).push(shot);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
+      // And the ones that throw a pattern instead of a bolt. fire() above returns
+      // nothing at all for these — the gate is inside it rather than here, because
+      // the arena bench calls fire() too and a husk that fired both would be at twice
+      // its book dps in one of the two places.
+      for (const ob of throwOrbs(a, victim?.ship ?? null, dt)) orbs.get(mapId).push(ob);
       // The ring. It winds up while it has somebody and settles when it does not, and
       // it burns whoever is standing in it — everyone, not just its target, because a
       // field does not aim. Sanctuary is checked with mayHarm(), the same predicate
@@ -2839,6 +2925,37 @@ setInterval(() => {
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.rocket.owner ?? null);
     }
   }
+  // Orbs, and this pass is the one thing in the tick that is not "a projectile and
+  // the ship it was aimed at". An orb has no target — it hits whatever it passes
+  // through — so the candidates are everybody in the sector, and sanctuary is asked
+  // per orb rather than once at the trigger: a wall is in the air for two seconds and
+  // the hostile that threw it may already be dead, but who it was allowed to harm
+  // when it left is still the right answer. `by` is that provoked set, carried by
+  // reference, exactly the way a sown patch carries its sower's.
+  //
+  // It runs AFTER every hull in the sector has moved, in the same place the ground
+  // pass does and for the same reason: "is this ship inside this thing" has to be
+  // asked of where the ship actually IS, not of where it was at the top of the tick.
+  for (const [mapId, list] of orbs) {
+    if (!list.length) continue;
+    const map = mapOf(mapId);
+    const here = [];
+    for (const [id, p] of players)
+      if (p.mapId === mapId && !p.dead && !p.lobby && p.ship.hp > 0)
+        here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
+    // Three lines where the bolt pass below has six, and the missing three are missing
+    // for one reason: `here` is PILOTS, so an orb can only ever land on a player. So
+    // there is no `tally` (nothing to credit — a hostile's shot has no owner), no
+    // `goadBurn` (nothing to goad) and no `killAlien` (nothing of ours dies to it).
+    // `storeHit` stays, because a pilot can be carrying plates one day and the bearing
+    // is what a plate is made of.
+    for (const h of stepOrbs(list, here, dt, (o, c) => mayHarm({ provoked: o.by }, c))) {
+      hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
+                             n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
+                             by: null, t: HIT_TIME, ttl: HIT_TIME });
+      storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
+    }
+  }
   for (const [mapId, list] of bolts) {
     for (const h of stepBolts(list, dt)) {        // the bolt remembers who fired it
       hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
@@ -2945,6 +3062,12 @@ setInterval(() => {
   for (const [, list] of blasts)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
   for (const [, list] of hits)
+    for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
+  // Pings lapse on the same clock everything else does. Eight seconds, and then the
+  // row is removed — which is one `remove` in the delta and nothing more, because
+  // the client fades it out of the last third of that life rather than off a timer
+  // of its own.
+  for (const [, list] of marks)
     for (let i = list.length - 1; i >= 0; i--) if ((list[i].t -= dt) <= 0) list.splice(i, 1);
 
   // --- claims ---------------------------------------------------------------
@@ -3160,6 +3283,13 @@ setInterval(() => {
       Math.hypot(b.ax - V.ship.x, b.ay - V.ship.y) <= reach);
     const missiles = (rockets.get(V.mapId) ?? []).filter(r =>
       Math.hypot(r.x - V.ship.x, r.y - V.ship.y) <= reach);
+    // An orb is drawn from OUTSIDE its own radius, the way a pyre and a patch of
+    // ground are and for the same reason: the whole mechanic is seeing the thing you
+    // are deciding not to be in front of, and a 34px ball that popped into existence
+    // once its edge crossed your radar would be the one hazard in the game with no
+    // tell at all.
+    const balls = (orbs.get(V.mapId) ?? []).filter(o =>
+      Math.hypot(o.x - V.ship.x, o.y - V.ship.y) <= reach + o.r);
     // You see a kill you could have seen — and always your own, even though you
     // are already back at your home base by the time it plays.
     const flashes = (blasts.get(V.mapId) ?? []).filter(b =>
@@ -3179,6 +3309,7 @@ setInterval(() => {
     const sights = (fixes.get(V.mapId) ?? []).filter(fx =>
       fx.who === V.id || Math.hypot(fx.x - V.ship.x, fx.y - V.ship.y) <= reach);
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
+                    orbs: balls.map(packOrb),
                     blasts: flashes.map(packBlast), pyres: alight.map(packPyre),
                     fixes: sights.map(fx => packFix(fx, fx.who === V.id)),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };
@@ -3217,7 +3348,19 @@ setInterval(() => {
                       sown: new Map(field
                         .filter(g => Math.hypot(g.x - V.ship.x, g.y - V.ship.y) <= reach + g.r)
                         .map(g => [g.id, packSown(g)])),
-                      plates: new Map(rings.map(a => [a.id, packPlates(a)])) };
+                      plates: new Map(rings.map(a => [a.id, packPlates(a)])),
+                      // Every ping standing in this sector, NOT radar-filtered, and
+                      // that is the one deliberate hole in "an enemy you have not
+                      // detected never reaches the wire". It is not a hole in the
+                      // rule so much as the other side of it: the rule protects a
+                      // contact you have not earned, and a ping is a broadcast its
+                      // own pilot chose to make with their callsign on it. Filtering
+                      // it by radar would make a ping useful only to somebody who
+                      // could already see you, which is nobody who needs one. See
+                      // shared/ping.js for what that gives away and why it is the
+                      // price of the mechanic.
+                      pings: new Map((marks.get(V.mapId) ?? []).map(k =>
+                        [k.id, packPing({ ...k, p: 1 - k.t / k.ttl })])) };
     const bag = { hold: V.hold, cap: V.ship.stats.cargo,
       // Seconds of engines-out left, for the pilot it is happening to. It rides the
       // bag rather than the ship row because the bag is a set difference — anything
@@ -3315,6 +3458,19 @@ setInterval(() => {
       // actually climbing — one change each, then silence. The HUD draws nothing
       // for either, because at zero the moving bar is the better readout.
       shieldWait: waitField(V),
+      // How long until this pilot may ping again, in WHOLE seconds, or absent when
+      // they may ping now. Absence is the readout: the delta reports the key gone
+      // and the chip on the plot goes back to saying PING.
+      //
+      // Whole seconds and not tenths, and that is the same measurement `shieldWait`
+      // states one field down. The bag is a set difference, so any value that moves
+      // re-sends the field: at tenths a ten-second cooldown puts a number on the
+      // wire ten times a second for the whole ten seconds, and at whole seconds it
+      // moves ten times in total. What it costs is that the chip can read `PING 1s`
+      // for up to a second after the server would already have taken one — a
+      // refusal that is late rather than wrong, which is the safe direction for a
+      // client-side check whose whole job is to be conservative.
+      ping: pingWait(V),
       // Whether the plating is still there to catch a death. Nobody else can see
       // it, so it rides in the viewer's own bag rather than on the ship row —
       // and it has to be visible at all, or you find out you already spent it by
