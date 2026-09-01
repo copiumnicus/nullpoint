@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import { newShip, refit, step, stepVitals, stepDrift, applyDamage, drainHull, stepJump, beginJump, arrivalFor, inBase, canDock, inHaven, inOutpost, shieldMax, shieldWait, WORLD, boundsOf, SHIELD_FLASH, SHOT_FLASH } from './shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
+import { throwOrbs, stepOrbs, ORB_SPEED, orbsOf } from './shared/orbs.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
          broodReady, BROOD_R, shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf, roamPoint } from './shared/aliens.js';
@@ -31,7 +32,7 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packLab, packPyre, packFix,
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packLab, packPyre, packFix,
          packSown, groundK, packPlates } from './shared/net.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror } from './shared/aliens.js';
@@ -528,7 +529,7 @@ for (const x of GALAXY.filter(id => MAPS[id].core)) seed(x, 'antiphon', 2);
 // snapshots, radar — works on an arena without knowing it is one, because all of
 // it is keyed on a map id string and nothing else. The only two things that had
 // to change are the ones that read the SECTOR rather than its id: `mapOf` instead
-// of `MAPS[...]`, and the seven per-sector lists created together.
+// of `MAPS[...]`, and the nine per-sector lists created together.
 // A SEAT, NOT AN OWNER. `owner` was one token, because every arena had exactly one
 // occupant; a duel has two, and the honest generalisation of "is the owner still
 // standing in this sector" is "is ANY seat still standing in it". `seats` is the
@@ -572,7 +573,7 @@ function openArena(p, key, replay = false) {
 // The same sector, with two seats and nothing in it.
 //
 // It is the same function shape as openArena on purpose: the same id scheme, the
-// same eight per-sector lists, the same registry, and therefore the same sweep. The
+// same nine per-sector lists, the same registry, and therefore the same sweep. The
 // only things that differ are the roster (there isn't one) and the countdown, which
 // is a number on the record because the SERVER owns it — see the tick.
 //
@@ -793,7 +794,7 @@ function arriveHome(p, to) {
 // ordering is the whole reason this is a separate function.
 //
 // It used to run openArena() first and change the map on the same line. With a fold
-// in front of it that would register a sector — eight per-sector lists, fifteen
+// in front of it that would register a sector — nine per-sector lists, fifteen
 // hostiles, its own alien id block — five seconds before anybody was in it, and
 // leave it standing if the fold broke. The sweep would collect it on the next tick
 // because nobody is sitting in it, so nothing would visibly break; it would simply
@@ -940,6 +941,10 @@ const PROP_ROWS = PROPS.map(p2 => {
 
 const bolts  = new Map();    // mapId -> bolts in flight
 const rockets = new Map();   // mapId -> rockets in flight
+// mapId -> slow orbs in flight. Its own list and not part of `bolts`, because the
+// two settle completely differently: a bolt resolves once against the one ship it
+// was aimed at, and an orb is tested every tick against everything it could touch.
+const orbs = new Map();
 
 // A rocket flies for four and a half seconds, which is long enough for its
 // target to jump out or die under it. Bolts land inside a third of a second and
@@ -978,7 +983,10 @@ let groundId = 1;
 // on `here.length = 0`. `sown` is the eighth and it arrived the same way — the
 // deeps' ground pass reads it per sector with no guard, and a claim arena missing
 // from it would throw on the first frame anybody sowed anything in one.
-const SECTOR_LISTS = [bolts, rockets, blasts, pyres, pods, hits, fixes, sown];
+// `orbs` is the ninth, and it is pushed to without a `?? []` guard exactly like the
+// six the comment above names — a claim arena missing from it would throw on the
+// first tick an Ironhusk pulled its trigger, which is every claim arena there is.
+const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, fixes, sown];
 const openLists  = id => { for (const L of SECTOR_LISTS) L.set(id, []); };
 const closeLists = id => { for (const L of SECTOR_LISTS) L.delete(id); };
 for (const id of Object.keys(MAPS)) openLists(id);
@@ -2505,6 +2513,15 @@ setInterval(() => {
                        y: b.sy + (b.ay - b.sy) * (1 - b.t / b.ttl),
                        vx: (b.ax - b.sx) / b.ttl, vy: (b.ay - b.sy) / b.ttl })),
       ];
+      // ORBS ARE DELIBERATELY NOT IN THIS LIST, and the reason is what an orb is.
+      // Everything above has this hostile's NAME on it — `r.target === a` — and
+      // threatBreak() reads the nearest of them and turns perpendicular. An orb has
+      // no target: it is a thing at a place going somewhere, and it can only ever be
+      // aimed at a pilot, because nothing a pilot owns throws one. Filtering by
+      // target would put an empty list here; NOT filtering would have a Bandit
+      // jinking away from a wall a Leviathan threw at somebody else, three sectors
+      // of raiders dancing around ordnance that cannot touch them. THE SEAM IS HERE:
+      // the day a pilot's weapon throws orbs, this is one spread of the same list.
       const breaking = stepEvade(a, incoming, map, dt);
       // The fix, and it runs BEFORE the hull is stepped rather than after it. That is
       // not tidiness: planting a Kedge means clearing the course stepAlienAI has just
@@ -2605,6 +2622,11 @@ setInterval(() => {
       const spat = fire(a, victim?.ship ?? null, dt);
       for (const shot of spat) bolts.get(mapId).push(shot);
       for (const rk of launch(a, victim?.ship ?? null, dt)) rockets.get(mapId).push(rk);
+      // And the ones that throw a pattern instead of a bolt. fire() above returns
+      // nothing at all for these — the gate is inside it rather than here, because
+      // the arena bench calls fire() too and a husk that fired both would be at twice
+      // its book dps in one of the two places.
+      for (const ob of throwOrbs(a, victim?.ship ?? null, dt)) orbs.get(mapId).push(ob);
       // The ring. It winds up while it has somebody and settles when it does not, and
       // it burns whoever is standing in it — everyone, not just its target, because a
       // field does not aim. Sanctuary is checked with mayHarm(), the same predicate
@@ -2810,6 +2832,37 @@ setInterval(() => {
       storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
       goadBurn(h.target, h.split.shield + h.split.hull, alienEhp(h.target));
       if (h.dead && h.target.isAlien) killAlien(mapId, h.target, h.rocket.owner ?? null);
+    }
+  }
+  // Orbs, and this pass is the one thing in the tick that is not "a projectile and
+  // the ship it was aimed at". An orb has no target — it hits whatever it passes
+  // through — so the candidates are everybody in the sector, and sanctuary is asked
+  // per orb rather than once at the trigger: a wall is in the air for two seconds and
+  // the hostile that threw it may already be dead, but who it was allowed to harm
+  // when it left is still the right answer. `by` is that provoked set, carried by
+  // reference, exactly the way a sown patch carries its sower's.
+  //
+  // It runs AFTER every hull in the sector has moved, in the same place the ground
+  // pass does and for the same reason: "is this ship inside this thing" has to be
+  // asked of where the ship actually IS, not of where it was at the top of the tick.
+  for (const [mapId, list] of orbs) {
+    if (!list.length) continue;
+    const map = mapOf(mapId);
+    const here = [];
+    for (const [id, p] of players)
+      if (p.mapId === mapId && !p.dead && !p.lobby && p.ship.hp > 0)
+        here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
+    // Three lines where the bolt pass below has six, and the missing three are missing
+    // for one reason: `here` is PILOTS, so an orb can only ever land on a player. So
+    // there is no `tally` (nothing to credit — a hostile's shot has no owner), no
+    // `goadBurn` (nothing to goad) and no `killAlien` (nothing of ours dies to it).
+    // `storeHit` stays, because a pilot can be carrying plates one day and the bearing
+    // is what a plate is made of.
+    for (const h of stepOrbs(list, here, dt, (o, c) => mayHarm({ provoked: o.by }, c))) {
+      hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
+                             n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
+                             by: null, t: HIT_TIME, ttl: HIT_TIME });
+      storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
     }
   }
   for (const [mapId, list] of bolts) {
@@ -3133,6 +3186,13 @@ setInterval(() => {
       Math.hypot(b.ax - V.ship.x, b.ay - V.ship.y) <= reach);
     const missiles = (rockets.get(V.mapId) ?? []).filter(r =>
       Math.hypot(r.x - V.ship.x, r.y - V.ship.y) <= reach);
+    // An orb is drawn from OUTSIDE its own radius, the way a pyre and a patch of
+    // ground are and for the same reason: the whole mechanic is seeing the thing you
+    // are deciding not to be in front of, and a 34px ball that popped into existence
+    // once its edge crossed your radar would be the one hazard in the game with no
+    // tell at all.
+    const balls = (orbs.get(V.mapId) ?? []).filter(o =>
+      Math.hypot(o.x - V.ship.x, o.y - V.ship.y) <= reach + o.r);
     // You see a kill you could have seen — and always your own, even though you
     // are already back at your home base by the time it plays.
     const flashes = (blasts.get(V.mapId) ?? []).filter(b =>
@@ -3152,6 +3212,7 @@ setInterval(() => {
     const sights = (fixes.get(V.mapId) ?? []).filter(fx =>
       fx.who === V.id || Math.hypot(fx.x - V.ship.x, fx.y - V.ship.y) <= reach);
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
+                    orbs: balls.map(packOrb),
                     blasts: flashes.map(packBlast), pyres: alight.map(packPyre),
                     fixes: sights.map(fx => packFix(fx, fx.who === V.id)),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };

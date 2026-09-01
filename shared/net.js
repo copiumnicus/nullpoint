@@ -61,6 +61,23 @@ export const packRocket   = o   => [Math.round(o.x), Math.round(o.y), +o.heading
                                     o.foe ? 1 : 0, o.w ?? 100, o.gr ?? 0];
 export const unpackRocket = arr => { const o = {}; for (let i = 0; i < ROCKET_FIELDS.length; i++) o[ROCKET_FIELDS[i]] = arr[i]; return o; };
 
+// An orb in flight: a slow ball of light that hits whatever it passes through. Like
+// a rocket this is a body rather than a line, so the client draws where it IS.
+//
+// `r` is on the wire and it is the SAME number stepOrbs collides with. It has to be:
+// the whole mechanic is reading a pattern off the screen and flying between it, and a
+// ball drawn at one radius and hit at another is the "a row you can see and cannot
+// click" bug moved out of the panel and into the world, where it decides fights.
+//
+// `h` and not `vx, vy`, because every orb in the game travels at ORB_SPEED and one
+// heading is one field where a velocity is two. The client flies it forward from the
+// last snapshot exactly as it does a rocket — at 300px/s a tick is 10px, which is
+// under half a hull and visibly steppy without it.
+export const ORB_FIELDS = ['x', 'y', 'h', 'r', 'foe'];
+export const packOrb   = o   => [Math.round(o.x), Math.round(o.y), +o.heading.toFixed(2),
+                                 Math.round(o.r), o.foe ? 1 : 0];
+export const unpackOrb = arr => { const o = {}; for (let i = 0; i < ORB_FIELDS.length; i++) o[ORB_FIELDS[i]] = arr[i]; return o; };
+
 // A kill flash: where it happened, how big the thing was, how far along the
 // animation is, and whether it was a hostile that died.
 export const BLAST_FIELDS = ['x', 'y', 'r', 'p', 'foe'];
@@ -252,7 +269,7 @@ export const STREAMS = {
 // single tick, so a keyed diff would be paying an id and a mask to save a
 // handful of numbers that were already stale. They go whole, and are simply
 // omitted when empty, which is 44 bytes a tick back for nothing.
-export const EPHEMERAL = ['bolts', 'rockets', 'blasts', 'hits', 'pyres', 'fixes'];
+export const EPHEMERAL = ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes'];
 
 // Everything else in a snapshot is the viewer's own state — credits, loadout,
 // power, rank. Named keys, so this is a set difference rather than a list anyone

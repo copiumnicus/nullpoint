@@ -497,9 +497,37 @@ export const ALIENS = {
     respawn: 30,
     bounty: 4550,     // 6500 ehp at BOUNTY_RATE, which is 10 x the Drifter's 455
     xp: 1400,         // likewise 10 x 140
+    // A SHOTGUN OF SLOW ORBS, instead of a laser, and it is the FIRST thing in this
+    // game you beat by not standing somewhere. The bolt it replaces landed 99% of what
+    // it fired on a pilot holding station and 94% on a laden Bulwark weaving hard
+    // enough to reverse three times a second — a lead plus 50px of slack cannot be
+    // beaten in the half second a bolt takes to cross 500px, so there was no dodging
+    // here to be good at.
+    //
+    // Five orbs of 44px over 0.20rad. The width is a MEASUREMENT and not a look: at the
+    // 350px it fights from the fan is 70px of centres inside 88px balls, so it is one
+    // overlapping wall you have to be off the line of rather than five things to slip
+    // between — and it opens with distance, so at its full 500 the outer pair is past
+    // the hull and only the middle of it lands. That gradient is the Ironhusk's
+    // existing lesson (its reach is 500; hold your own range) drawn on the screen.
+    //
+    // A WIDER FAN WAS TRIED AND COSTS THE HOSTILE ITS GUN, which is the arithmetic
+    // this number came out of: a point target intercepts a fixed 2 x (orb r + hull r)
+    // of whatever is thrown at it, so the share of a volley that lands is that width
+    // over the fan's, and nothing else. At 0.32rad the same five orbs put 59% of the
+    // volley on a pilot who never moved and the claim arenas went from costing 89% of
+    // the ship to 36%. At 0.20 they put 99% on them and the claims read 17% / 14% / 6%
+    // of the ship left against 11% / 11% / 0% before any of this.
+    //
+    // So the volley is `damage` split five ways and the cadence is untouched, and
+    // threatDps still reads 72 and still means what it says: what the whole fan does
+    // if the whole fan lands, which is what happens to anybody who holds a course.
+    // Bounty, experience, the bestiary report and three claim rosters are all the
+    // numbers they already were.
+    orbs: { n: 5, arc: 0.20, r: 44 },
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'Armour and a short gun. It only reaches 500, so holding your own range costs it everything.',
+    tell: 'Throws a shotgun of slow orbs. Get off the line and it costs you nothing; hold it and it costs you everything.',
   },
 
   // Ten Ironhusks, by the same arithmetic that made an Ironhusk ten Drifters:
@@ -525,9 +553,18 @@ export const ALIENS = {
   // Bulwark at 250, so leaving always works — you just cannot leave and win.
   leviathan: {
     name: 'Leviathan', cls: 'Colossus', r: 40, colour: '#8fe04a', shape: 'crown',
+    // 300 x 0.4 and NOT 150 x 0.8, which is the same 120 dps to the decimal — every
+    // reader of this table takes the PRODUCT (threatDps, the balance model's armed
+    // span, the bestiary report, the claim rosters), so nothing downstream moves. What
+    // it buys is the cadence the barrage below needs: one salvo of nine every two and
+    // a half seconds instead of a dribble, and half as many orbs in the air for it.
+    // That second half is a wire measurement rather than a preference — at 0.8 it
+    // would hold eighteen up at once, against a rocket rework that cut 35 projectiles
+    // to 5 this morning and took the stream from 17.70 KiB/s to 4.73 for exactly this
+    // reason. Measured live, the nine cost 2.9 KiB/s of an 11 KiB/s stream.
     attrs: { hull: 45000, shield: 20000, shieldRegen: 0.045, shieldDelay: 3,
              speed: 230, accel: 380, signature: 8,
-             damage: 150, fireRate: 0.8, weaponRange: 900 },
+             damage: 300, fireRate: 0.4, weaponRange: 900 },
     aggro: 520,
     leash: 2200,
     patience: 4.0,
@@ -535,9 +572,33 @@ export const ALIENS = {
     respawn: 90,
     bounty: 45500,    // 65000 ehp at BOUNTY_RATE, and 10 x the Ironhusk's 4550
     xp: 14000,        // likewise 10 x 1400
+    // A ROLLING BARRAGE, and it is deliberately the opposite read from the Ironhusk's
+    // cone. One trigger throws three clusters of three 60px orbs, four tenths of a
+    // second apart, each one aimed afresh at where you will be when it gets there. A
+    // cone is answered by being off the line ONCE. This covers where you are going for
+    // the next second and a half, so breaking once puts you under the second cluster
+    // and the answer is to keep changing your mind — which is exactly the lesson a
+    // 900-reach sponge you cannot out-range should be teaching.
+    //
+    // IT WAS GOING TO BE A WALL WITH A HOLE IN IT and the measurement said no. See
+    // orbSlots() in shared/orbs.js for the arithmetic: a hole a Bulwark actually fits
+    // through needs the slots further apart than a hit disc, and a volley that LANDS
+    // needs them closer, and at this hostile's 630px standoff there is no spacing that
+    // is both. Measured across the whole family against the pilot the claim bench
+    // flies, the best wall with a flyable hole delivered 23 dps of a 118 dps hostile —
+    // 19% — and paying that back would need five times the damage against a balance
+    // model with 5% of headroom (shared/balance.js reads it at 0.85 of the dps its
+    // stage asks for; test/balance.mjs caps it at 0.9). The burst delivers 99%.
+    //
+    // 300 x 0.4 rather than 150 x 0.8 — the same 120 dps to the decimal, because every
+    // reader of this table takes the product — buys the cadence the pattern needs: one
+    // heavy salvo every two and a half seconds instead of a dribble, and half as many
+    // orbs in the air. That second half is a wire measurement rather than a
+    // preference; see the attrs above.
+    orbs: { n: 3, arc: 0.12, r: 60, burst: 3, beat: 0.40 },
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'Out-ranges you and out-lasts you. The first thing you cannot beat alone.',
+    tell: 'Walks three volleys of slow orbs across your course from outside your reach. Breaking once is not enough.',
   },
 
   // Ten Leviathans, and the reason there is anything at Nullpoint.

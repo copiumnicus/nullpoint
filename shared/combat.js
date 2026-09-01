@@ -13,6 +13,11 @@ import { EQUIPMENT } from './gear.js';
 // one place that knows where a bolt came from. softAt() returns 1 for everything
 // without plates, which is everything but one hostile.
 import { softAt } from './plates.js';
+// A hostile that throws orbs does not also shoot bolts — see the gate at the top of
+// fire(). It is imported rather than tested against `def.orbs` inline so that the
+// one predicate lives with the mechanic; orbs.js imports sim, power and plates and
+// nothing from here, so there is no cycle.
+import { orbsOf } from './orbs.js';
 
 // Bolt speed is a balance dial, not a cosmetic one. A shot has to be slow enough
 // that a ship can accelerate clear of where it was aimed: displacement goes with
@@ -62,6 +67,13 @@ export function hardpoints(a) {
 // `mag` is the magazine feeding this rack, or null for anything that does not
 // carry ammunition — aliens shoot forever, which is their whole advantage.
 export function fire(a, b, dt, mag = null) {
+  // Orbs are INSTEAD of a barrel, not as well as it, and the gate is here rather
+  // than at either call site because there are two of them — server.js and the
+  // arena bench — and a husk that fired both would be a hostile at twice its book
+  // dps in one of them and not the other. Rule one, on a trigger. `a.cool` is left
+  // alone on purpose: throwOrbs owns that clock, and decrementing it here as well
+  // would run the volley at 60Hz.
+  if (orbsOf(a.def)) return [];
   a.cool = Math.max(0, a.cool - dt);
   a.shotFlash = Math.max(0, a.shotFlash - dt);
 

@@ -17,7 +17,7 @@ import { joinLayout } from '../shared/join.js';
 import { ROSTER_KEY, TOKEN_KEY as TOK } from '../shared/brand.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packSown, packPlates, PLATE_STEPS } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, PLATE_STEPS } from '../shared/net.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
 import { ALIENS, WILD } from '../shared/aliens.js';
@@ -311,7 +311,19 @@ for (const id of Object.keys(MAPS)) {
     packRocket({ x: 6350, y: 3900, heading: -2.1, foe: 0, w: 750 }),
     packRocket({ x: 5900, y: 4300, heading: 3.1,  foe: 1, w: 150 }),
     packRocket({ x: 6100, y: 4250, heading: 1.7,  foe: 1, w: 0 }),
-  ], bolts: [
+  ],
+  // A whole Ironhusk fan and a cluster of a Leviathan's barrage, drawn every frame.
+  // The far one is a heading of pi to the third decimal and the near one is on top of
+  // the pilot, because the two things that can go wrong in a radial gradient are a
+  // zero radius and a colour built out of a rounded alpha.
+  orbs: [
+    packOrb({ x: 6180, y: 4090, heading: 0.42,   r: 44, foe: true }),
+    packOrb({ x: 6220, y: 4150, heading: 0.42,   r: 44, foe: true }),
+    packOrb({ x: 6260, y: 4210, heading: 0.42,   r: 44, foe: true }),
+    packOrb({ x: 6000, y: 4000, heading: -3.1415, r: 60, foe: true }),   // right on the hull
+    packOrb({ x: 5400, y: 3300, heading: 1.9,    r: 60, foe: false }),   // and one of ours
+  ],
+  bolts: [
     packBolt({ sx: 6000, sy: 4000, ax: 6400, ay: 4300, t: 0.10, ttl: 0.21, foe: false }),
     packBolt({ sx: 6400, sy: 4300, ax: 6000, ay: 4000, t: 0.02, ttl: 0.21, foe: true }),
     packBolt({ sx: 5200, sy: 3400, ax: 2200, ay: 6600, t: 0.20, ttl: 0.21, foe: false }),
@@ -593,7 +605,7 @@ const dismiss = () => {
   feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: .5, charge: 0, co: 'm',
           hull: 'vanguard', hp: 100, sh: 100, flash: 0, guns: 3, lvl: 14, drones: 0, form: 0,
           dmask: 0, vis: 2 })],
-    rockets: [], bolts: [], hits: [], blasts: [], pods: [],
+    rockets: [], bolts: [], orbs: [], hits: [], blasts: [], pods: [],
     hold: {}, cap: 60, credits: 4820, docked: false,
     gear: {}, hulls: ['vanguard'], drones: [], formation: 'wedge', formations: ['wedge'],
     xp: 5200, rank: { level: 14, into: 300, need: 900 },

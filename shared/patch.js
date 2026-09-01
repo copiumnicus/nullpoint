@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.87';
+export const VERSION = '0.88';
 
 export const PATCHES = [
+  { v: '0.88', notes: [
+    'Ironhusks stopped firing lasers. They throw a shotgun of big slow orbs instead',
+    'Get off the line and it costs you nothing. Hold it and the whole fan goes through you',
+    'A Leviathan walks three volleys of them across your course. Breaking once is not enough',
+    'Both still hit for exactly what they always did — you can just be somewhere else now',
+  ] },
   { v: '0.87', notes: [
     'One browser, up to four pilots. The menu lists them; pick one and you fly it',
     'NEW PILOT starts a second character from nothing — a starter ship among friends',
