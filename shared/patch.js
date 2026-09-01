@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.78';
+export const VERSION = '0.79';
 
 export const PATCHES = [
+  { v: '0.79', notes: [
+    'The reactor refills your shields a third faster now, not just into a bigger pool',
+    'Ten seconds after a fight a Vanguard sits at 31% shield instead of 18%',
+    'Your guns are at 77% while it is there, so being caught is what it costs you',
+  ] },
   { v: '0.78', notes: [
     'The deep outposts sell a sixth emitter, a fourth rack and a sixth generator',
     'An MK-VI is 700 damage and 1.5M credits — and heavy, so a ship of them crawls',

@@ -322,6 +322,57 @@ export const DOCK_INTERRUPT   = 4.0;  // s of quiet before the dock will work on
 // and the delay, which is why it is one function rather than two expressions.
 const poolMult = s => boostOf(s.power, 'shields', s.stats) * swellOf(hullOf(s), s.power, s.stats);
 
+// What share of the pool comes back each second: the printed stat, times whatever
+// the reactor is putting into shields. Not poolMult — see the Anchor below.
+//
+// THE REACTOR DIVIDES THE WHOLE WAIT, and until this line it only divided half of
+// it. shieldWait already takes the delay down by the pool multiplier — measured,
+// 6.000s to 4.615s on a Hauler, Vanguard and Bulwark and 4.000s to 3.077s on a
+// Kestrel, so "about a second sooner" was already shipped and is not touched here.
+// The refill was not: regeneration is a SHARE of the pool and `max` carries the
+// boost, so a powered Vanguard put back proportionally more points and still took
+// exactly the 22.5s it always took. Half the wait listened to the reactor and half
+// of it flatly ignored it, which is why routing to shields read as a bigger tank
+// rather than a quicker one.
+//
+// So the rate takes the same factor the other half was already using — nothing is
+// picked here. From empty to full, delay and refill together: a Hauler 21.0s cold
+// and 16.2s at full shields, a Kestrel 12.3s and 9.5s, a Vanguard 28.5s and 21.9s,
+// a Bulwark 36.0s and 27.7s. Every one of them is the cold total over 1.30.
+//
+// boostOf and NOT poolMult, and the difference is the Anchor. swellOf already buys
+// a Bulwark four times the pool and a 1.5s delay, for 80% of its speed; letting it
+// buy the rate as well is one purchase paid three times — four times the pool at
+// four times the share per second is SIXTEEN times a cold Bulwark's points, 746/s
+// against 46.6/s, which out-heals most of what the hull exists to stand in front
+// of. The Anchor is the wall. The reactor is the pump.
+//
+// IT IS OPTIONAL, AND IT IS MEANT TO BE WORTH DOING. Nothing was taken away to make
+// room for it — a pilot who never touches the reactor regenerates exactly what they
+// always did. What they give up is an edge, and the edge is large where it counts:
+// measured from an empty pool, the SHARE you arrive at the next fight with after a
+// ten second lull is x1.75 on a Hauler, a Vanguard and a Bulwark alike — a Vanguard
+// at 31% instead of 18% — x1.50 at fifteen seconds, x1.43 at twenty, and x1.00 by
+// thirty, where both pilots are simply full. The share is the honest measure rather
+// than the points, because the swelled pool scales back down the moment you route to
+// your guns. So it pays hardest exactly when the gap between fights is short and
+// stops mattering when you had all the time in the world. Switching treads, and no
+// more mandatory than that.
+//
+// There is deliberately NO ramp, cooldown or switching tax on it. The reactor is one
+// dial and that is already the right cost: while it is on your shields your guns are
+// at 77% of what routing to weapons would give them, and you are at 77% of the speed
+// routing to thrusters would. You pay by being caught with the reactor in the wrong
+// place, which is a thing a pilot gets better at rather than a toll. The capacitor
+// says the same — it only refills while you route NOTHING, so a Vanguard that boosts
+// its way to full shields is there 6.60s sooner and has shields AND a full reactor
+// 4.27s later.
+//
+// WHERE IT PAYS is the open world and the deep sectors, between engagements. Not
+// inside a duel: `dry` is on in there and nothing comes back at all, so a duellist
+// routing to shields is buying the bigger pool and nothing this line does.
+export const shieldRate = s => s.stats.shieldRegen * boostOf(s.power, 'shields', s.stats);
+
 // How long until these shields start coming back, in seconds — 0 when they are
 // coming back right now, and null when there is nothing to wait for at all
 // (already full, a hull with no regeneration, or a sector where shields do not
@@ -380,7 +431,7 @@ export function stepVitals(s, dt, docked = false, dry = false) {
   if (s.shield > max) s.shield = max;
 
   if (docked && s.sinceHit >= DOCK_INTERRUPT) {
-    s.shield = Math.min(max, s.shield + max * s.stats.shieldRegen * DOCK_SHIELD_MULT * dt);
+    s.shield = Math.min(max, s.shield + max * shieldRate(s) * DOCK_SHIELD_MULT * dt);
     s.hp     = Math.min(s.stats.hull, s.hp + s.stats.hull * DOCK_HULL_RATE * dt);
     return;
   }
@@ -390,8 +441,9 @@ export function stepVitals(s, dt, docked = false, dry = false) {
   // A SHARE of the pool, so the seconds to full do not change when the pool does.
   // `max` already carries the power boost and the hull ability, so a bigger shield
   // refills proportionally faster and an Anchored Bulwark is not punished for the
-  // four times shield it just switched on.
-  s.shield = Math.min(max, s.shield + max * s.stats.shieldRegen * dt);
+  // four times shield it just switched on. `shieldRate` is the share itself, and
+  // it is the reactor's — see the comment on it for why that is not poolMult.
+  s.shield = Math.min(max, s.shield + max * shieldRate(s) * dt);
 }
 
 export function applyDamage(s, amount) {

@@ -4,11 +4,13 @@ import { EQUIPMENT, SLOTS, emptyFit, fitCount, reseat, topTier, MAX_DRONES } fro
 import { SPENDS } from '../shared/tech.js';
 const fit = (o = {}) => ({ weapon: [], generator: [], tech: [], ...o });
 
-import { newShip, refit, step, stepVitals, stepDrift, applyDamage, shieldWait, inBase, driftDepth, driftDps, SHIELD_FLASH,
+import { newShip, refit, step, stepVitals, stepDrift, applyDamage, shieldWait, shieldRate, shieldMax, speedOf,
+         inBase, driftDepth, driftDps, SHIELD_FLASH,
          DOCK_HULL_RATE, DOCK_INTERRUPT, DRIFT_MARGIN, DRIFT_MIN, DRIFT_MAX, WORLD } from '../shared/sim.js';
 import { vitalsPanel, shieldCountdown, WAIT_PX } from '../shared/vitals.js';
 import { MAPS, GALAXY, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
-import { BOOST } from '../shared/power.js';
+import { BOOST, routeTo, stepPower, boostOf } from '../shared/power.js';
+import { ANCHOR_SWELL } from '../shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, DEFAULT_FORMATION, slots as formSlots, droneAt,
          DRONE_R, HULL_R } from '../shared/formation.js';
 import { hardpoints } from '../shared/combat.js';
@@ -405,6 +407,90 @@ console.log('\nshields, and the countdown to them');
   check('a claim counts down like any other sector, because shields come back in one too',
     shieldWait(shot(), false) > 0,
     `${shieldWait(shot(), false).toFixed(1)}s — the rest button a claim takes away is the CHASE, not regeneration`);
+
+  // WHAT ROUTING TO SHIELDS IS ACTUALLY WORTH, both halves of it.
+  //
+  // Half was already shipped and nobody had written it down: shieldWait divides the
+  // delay by the pool multiplier, so a wired hull was always coming back sooner. The
+  // other half was not — regeneration is a share of the pool, and the share ignored
+  // the reactor completely, so a Vanguard with everything in its shields still took
+  // the same 22.5s to refill that it takes cold. These are the claims that the two
+  // halves now take the SAME factor, per hull, with the numbers in the detail.
+  const wire = s => { s.power = { ...s.power, to: 'shields', shields: 1, charge: s.stats.capacitor }; return s; };
+  const emptied = (h, routed) => {
+    const q = newShip(0, 0, h, []);
+    if (routed) wire(q);
+    applyDamage(q, q.stats.shield * 5 + 1);       // through any pool the boost can build
+    return q;
+  };
+  const wholeWait = (h, routed) => {             // delay AND refill, empty to full
+    const q = emptied(h, routed);
+    let t = 0;
+    while (t < 200 && q.shield < shieldMax(q) - 1e-6) { stepVitals(q, dt); t += dt; }
+    return t;
+  };
+  const HULL_KEYS = Object.keys(HULLS);
+  const delaySaving = h => shieldWait(emptied(h, false)) - shieldWait(emptied(h, true));
+  console.log('     ' + HULL_KEYS.map(h =>
+    `${h} ${(HULLS[h].attrs.shieldRegen * 100).toFixed(2)}->${(shieldRate(wire(newShip(0, 0, h, []))) * 100).toFixed(2)}%/s ` +
+    `${wholeWait(h, false).toFixed(1)}->${wholeWait(h, true).toFixed(1)}s`).join('   '));
+
+  check('power on shields takes about a second off the pause before they start',
+    HULL_KEYS.every(h => delaySaving(h) > 0.9 && delaySaving(h) < 1.5),
+    HULL_KEYS.map(h => `${h} ${delaySaving(h).toFixed(2)}s`).join(', ') +
+    ' — already true before the rate followed it, and unchanged by it');
+
+  check('and it raises the RATE too, by the same factor the pool and the pause use',
+    HULL_KEYS.every(h => {
+      const hot = shieldRate(wire(newShip(0, 0, h, [])));
+      return Math.abs(hot / HULLS[h].attrs.shieldRegen - (1 + BOOST)) < 1e-9;
+    }),
+    `a Vanguard's ${(HULLS.vanguard.attrs.shieldRegen * 100).toFixed(2)}%/s becomes ` +
+    `${(shieldRate(wire(newShip(0, 0, 'vanguard', []))) * 100).toFixed(2)}%/s — before this the share never moved, ` +
+    'only the pool it was a share of');
+
+  check('so the WHOLE wait divides by one number, the pause and the refill together',
+    HULL_KEYS.every(h => Math.abs(wholeWait(h, false) / wholeWait(h, true) - (1 + BOOST)) < 0.02),
+    HULL_KEYS.map(h => `${h} ${wholeWait(h, false).toFixed(1)}s -> ${wholeWait(h, true).toFixed(1)}s`).join(', '));
+
+  // The Anchor is the corner where every shield multiplier in the game stacks, and
+  // the rate deliberately does NOT join in. swellOf already sells a Bulwark four
+  // times the pool and a 1.5s pause for four fifths of its speed; selling it the
+  // share per second as well is one purchase paid three times.
+  const anchored = () => { const q = newShip(0, 0, 'bulwark', []);
+                           q.power = { ...q.power, to: 'special', special: 1, charge: q.stats.capacitor };
+                           stepVitals(q, dt); return q; };
+  const cold = newShip(0, 0, 'bulwark', []);
+  check('the Anchor buys the wall, not the pump',
+    Math.abs(shieldRate(anchored()) - cold.stats.shieldRegen) < 1e-9 &&
+    shieldMax(anchored()) > cold.stats.shield * (1 + ANCHOR_SWELL) - 1,
+    `x${1 + ANCHOR_SWELL} the pool at the printed ${(cold.stats.shieldRegen * 100).toFixed(2)}%/s is ` +
+    `${(shieldRate(anchored()) * shieldMax(anchored())).toFixed(0)}/s against a cold ` +
+    `${(cold.stats.shieldRegen * cold.stats.shield).toFixed(0)}/s; the share as well would be ` +
+    `${(shieldRate(anchored()) * shieldMax(anchored()) * (1 + ANCHOR_SWELL)).toFixed(0)}/s, sixteen times over`);
+
+  // The countdown has to keep agreeing while the reactor is MOVING, which is the
+  // only moment either number is interesting: the pool is being rescaled tick by
+  // tick and the target the countdown is racing is falling underneath it.
+  const spooling = (() => {
+    const q = emptied('vanguard', false);
+    routeTo(q.power, 'shields');
+    let t = 0, moved = -1, zeroAt = -1, rose = false, last = q.stats.shieldDelay;
+    while (t < 20 && moved < 0) {
+      const before = q.shield;
+      stepPower(q.power, dt, q.stats); stepVitals(q, dt); t += dt;
+      const w = shieldWait(q);
+      if (w > last + 1e-9) rose = true;            // a countdown that goes backwards is a lie
+      last = w;
+      if (zeroAt < 0 && w === 0) zeroAt = t;
+      if (q.shield > before) moved = t;
+    }
+    return { moved, zeroAt, rose };
+  })();
+  check('the countdown still lands on the tick the bar moves while the reactor is spooling up',
+    spooling.moved > 0 && Math.abs(spooling.zeroAt - spooling.moved) < 1e-9 && !spooling.rose,
+    `${spooling.moved.toFixed(2)}s with the reactor ramping, against ${(m1.moved / 30).toFixed(2)}s cold — ` +
+    'falling every tick, never once counting back up');
 
   console.log('\nthe countdown on the shield bar');
   const P = vitalsPanel();
