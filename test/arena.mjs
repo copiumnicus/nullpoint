@@ -37,12 +37,14 @@ import { burnOf, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn }
 import { holdShear, loudOf } from '../shared/tech.js';
 import { buildFor, stageDps, stageEhp, earnRate } from '../shared/balance.js';
 import { MAP_W, MAP_H, MAPS, GALAXY, mapOf, arenaId, parseArena, isArena,
-         ARENA_KEYS, CLAIM_KEYS, ARENA_PREFIX } from '../shared/maps.js';
-import { MODULES, tiersOf, addMod, incomeOf, whyNotBuild, rowState, labPanel,
-         LAB_TAB_KEYS } from '../shared/research.js';
-import { ARENAS, ARENA_MODULES, rosterOf, countOf, fieldEhp, fieldBounty, fieldDps,
-         postsFor, arrivalAt, assumedFor, whyNotClaim, whyNotReplay, claimState,
+         ARENA_KEYS, CLAIM_KEYS, SALVAGE_KEYS, ARENA_PREFIX } from '../shared/maps.js';
+import { MODULES, MODULE_KEYS, tiersOf, addMod, hasMod, incomeOf, whyNotBuild, rowState,
+         labPanel, missionOf, MISSION_KINDS, LAB_TAB_KEYS, TREE } from '../shared/research.js';
+import { ARENAS, ARENA_MODULES, SALVAGE_MODULES, rosterOf, countOf,
+         fieldEhp, fieldBounty, fieldDps, postsFor, arrivalAt, assumedFor, kindOf,
+         whyNotClaim, whyNotSalvage, whyNotRun, whyNotReplay, claimState, salvageState,
          missionText, mission, PAYS, RING_R, ARRIVE_R, LINGER, LIMIT, weightOf,
+         LADDER_PRICE, budgetFor,
          BAR_TOP, BAR_LOW, BAR_H, HUD_LEFT, HUD_RIGHT } from '../shared/arena.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
 import { FOLD_SECS } from '../shared/fold.js';
@@ -67,6 +69,9 @@ const pilots = {};
 // ============================================================================
 const DT = 1 / 30;
 const arenaFor = key => mapOf(arenaId('probe', key));
+// The ladder walk in the gate block below re-derives what assumedFor does, so it
+// needs nextOn without adding a ninth name to that import list.
+const R2 = await import('../shared/research.js');
 
 const makePilot = (stage, mask, at = -Math.PI / 2, R = ARRIVE_R) => {
   const b = buildFor(stage);
@@ -258,7 +263,8 @@ const stream = rock => {
 };
 
 // ============================================================================
-for (const key of ARENA_MODULES) {
+const EVERY_ARENA = [...ARENA_MODULES, ...SALVAGE_MODULES];
+for (const key of EVERY_ARENA) {
   const b = buildFor('finished');
   const sh = newShip(0, 0, b.hull, b.fit, b.drones, 'line', null, assumedFor(key).mask);
   pilots[key] = { ehp: sh.stats.hull + sh.stats.shield, hull: sh.stats.hull };
@@ -307,6 +313,43 @@ console.log('\nthe sector, which is a pure function of its id');
   check('and the claim list IS the mining ladder, read off research rather than written twice',
     ARENA_MODULES.join() === tiersOf('mine').join(),
     'a fourth mining tier with no field would be a rung nobody could buy');
+
+  // The salvage run is the same generalisation one step on: a second KIND of
+  // instanced sector, sharing every mechanism a claim has and differing in what is
+  // standing in the middle of it.
+  const sid = arenaId('abc123', SALVAGE_MODULES[0]);
+  const sm = mapOf(sid);
+  check('a salvage run is the claim sector with a hulk in it instead of a rock',
+    sm.arena && sm.hunt && sm.portals.length === 0 && !sm.base && !sm.rock && !!sm.wreck
+    && havenKind(sm, { x: MAP_W / 2, y: MAP_H / 2 }) === null,
+    `${sm.name} — no portals, no sanctuary, everything sees you, and one landmark: ` +
+    `a wreck r ${sm.wreck.r} where a claim has a rock r ${mapOf(id).rock.r}`);
+  check('and never both, so the client draws one picture and never has to ask which',
+    ARENA_KEYS.map(k => mapOf(arenaId('t', k))).every(x => !(x.rock && x.wreck)),
+    'two names for two objects, rather than one name covering both');
+  // BOTH DIRECTIONS. A module naming a mission nobody built is a row that can never
+  // be finished; an arena for a module that never asks for one is a sector nobody
+  // can reach. Either would be silent.
+  // THREE tables have to agree: MODULES names a mission, ARENAS gives it a roster,
+  // and the sector table in maps.js gives it somewhere to stand. A key in any two of
+  // them and not the third is a row that can never be finished, a sector nobody can
+  // reach, or a fold into a map that does not exist — and none of the three would
+  // say a word about it.
+  check('every mission a module names has a roster and a sector, and none of the three has a spare',
+    MODULE_KEYS.filter(k => missionOf(k)).every(k => !!ARENAS[k] && kindOf(k) === missionOf(k))
+    && Object.keys(ARENAS).every(k => missionOf(k) === kindOf(k))
+    && SALVAGE_KEYS.join() === SALVAGE_MODULES.join()
+    && CLAIM_KEYS.join() === ARENA_MODULES.join()
+    && MODULE_KEYS.every(k => missionOf(k) === null || MISSION_KINDS.includes(missionOf(k))),
+    MODULE_KEYS.filter(k => missionOf(k)).map(k => `${k}:${missionOf(k)}`).join(' ') +
+    ` — maps.js posts ${CLAIM_KEYS.length} claim sectors and ${SALVAGE_KEYS.length} salvage`);
+  check('a salvage prize is a tech tree row rather than a rung of a ladder',
+    SALVAGE_MODULES.every(k => TREE.includes(MODULES[k].line) && tiersOf(MODULES[k].line).length === 1),
+    SALVAGE_MODULES.map(k => `${k} on line "${MODULES[k].line}"`).join(', ') +
+    ` — the tree is ${TREE.join(', ')}`);
+  check('and it is the first thing in the game that has no price at all',
+    SALVAGE_MODULES.every(k => MODULES[k].price === 0),
+    'zero is not a discount — `mission` is what gates it, and no amount of credits opens that');
 }
 
 console.log('\nthe field');
@@ -317,13 +360,33 @@ console.log('\nthe field');
       kinds.every(k => ALIENS[k]) && postsFor(key).length === countOf(key),
       rosterOf(key).map(([k, c]) => `${c} ${k}`).join(' + '));
   }
+  for (const key of SALVAGE_MODULES) {
+    const kinds = rosterOf(key).map(([k]) => k);
+    check(`${key} posts ${countOf(key)} hostiles in depth, all of them real`,
+      kinds.every(k => ALIENS[k]) && postsFor(key).length === countOf(key),
+      rosterOf(key).map(([k, c, r = RING_R]) => `${c} ${k} @${r}`).join(' + '));
+  }
+  // THE RING IS WHAT CAPS A FIELD, not the hit points, and this is the assertion
+  // that keeps the reason. Twenty-five bodies on one 1,200px ring are 300px apart
+  // and arrive as a wall (measured: 12 in weapons range at 5s, 0 of 4 cleared at
+  // every weight tried). The depth is the whole of why the roster could grow.
+  check('a claim stands on one ring and a salvage run stands in depth',
+    ARENA_MODULES.every(k => new Set(rosterOf(k).map(e => e[2] ?? RING_R)).size === 1)
+    && SALVAGE_MODULES.every(k => new Set(rosterOf(k).map(e => e[2] ?? RING_R)).size > 3),
+    `the claims are all at ${RING_R}px; ` + SALVAGE_MODULES.map(k =>
+      `${k} is at ${[...new Set(rosterOf(k).map(e => e[2] ?? RING_R))].sort((a, b) => a - b).join(' / ')}`).join(', '));
+  check('and the claims are posted exactly where they always were, so their measurements still hold',
+    ARENA_MODULES.every(k => postsFor(k).every(p2 =>
+      Math.abs(Math.hypot(p2.x - MAP_W / 2, p2.y - MAP_H / 2) - RING_R) < 1e-6)),
+    'an entry with no radius keeps RING_R — the depth is opt-in, per entry');
+
   // The one rule here that came out of a live socket rather than out of the model.
   // A Harrier runs at 8% of its hull and moves at 380 against a laden Bulwark's
   // 152, so the last of them simply left, healed at 4% a second, and there was no
   // way to finish the fight and no way out of the sector to abandon it.
-  const runners = ARENA_MODULES.flatMap(k => rosterOf(k).map(([kind]) => kind))
+  const runners = EVERY_ARENA.flatMap(k => rosterOf(k).map(([kind]) => kind))
     .filter(k => (ALIENS[k].flee ?? 0) > 0);
-  check('nothing in a claim can run away from you',
+  check('nothing in ANY instanced fight can run away from you',
     runners.length === 0,
     'a hostile that breaks off in a sector with no exit is a stalemate, not an escape'
     + ` — ${WILD.filter(k => (ALIENS[k].flee ?? 0) > 0).join(', ')} are therefore barred`);
@@ -427,6 +490,30 @@ console.log('\nwhat a claim pays, and why it is nothing');
     ARENA_MODULES.every(k => whyNotReplay(k, { near: true, claims: ARENA_MODULES }) === null),
     'the only place a fit can be measured against an identical field, and the rehearsal '
     + 'for the next tier — mine2 is mine1 plus the Lamprey');
+
+  // A SALVAGE RUN PAYS THE SAME NOTHING, and the argument is the same arithmetic
+  // rather than "the same rule applies". The field is worth five times mine1's and
+  // takes two and a half times as long to clear, so paying it would beat active
+  // play by more than a claim would — and a replay is still unbounded.
+  {
+    const key = SALVAGE_MODULES[0];
+    const worth = fieldBounty(key), rate = worth / 228;
+    check('a salvage run pays nothing either, and it is refusing twice a claim\'s rate to do it',
+      !PAYS.bounty && !PAYS.xp && !PAYS.ore && !PAYS.file,
+      `${n(worth)} cr of bounty in 228s is ${n(rate)} cr/s against an actively-played ` +
+      `${earnRate().toFixed(0)} — ${(rate / earnRate()).toFixed(0)}x, and ${(worth / bounty).toFixed(1)}x ` +
+      `mine1's whole field for ${(rate / (bounty / 90)).toFixed(1)}x its rate`);
+    check('and it is replayable on exactly the claims\' terms, for exactly their reason',
+      whyNotReplay(key, { near: true, salvage: [key] }) === null,
+      'the prize is a module and a module can only be granted once, so a second run is a ' +
+      'proving ground — a known, identical field where dying costs nothing at all');
+    // The one thing that IS different, and it is what makes the run worth flying at
+    // all: the prize is not a permission slip, it is the module.
+    check('what it pays instead is the module itself, which is the whole difference from a claim',
+      MODULES[key].price === 0 && missionOf(key) === 'salvage',
+      'a claim ends with the right to spend eight million credits; a salvage run ends with ' +
+      'a row that no amount of credits could ever have opened');
+  }
 }
 
 console.log('\nthe ship a claim assumes, derived rather than written down');
@@ -440,6 +527,21 @@ console.log('\nthe ship a claim assumes, derived rather than written down');
   const spends = ARENA_MODULES.map(k => assumedFor(k).spent);
   check('and it climbs with the ladder rather than standing still',
     spends[2] > spends[1] && spends[1] >= spends[0], spends.map(n).join(' -> '));
+
+  // A MISSION HAS NO PRICE TO DERIVE FROM, so its budget is written down — and the
+  // one written down is the whole ladder, because a salvage run is what a pilot
+  // flies when there are no rungs left to climb. Derived off MODULES rather than
+  // typed, so moving a rung moves the pilot this field assumes.
+  const ladder = ['hull', 'shld'].flatMap(tiersOf).reduce((t, k) => t + MODULES[k].price, 0);
+  check('a salvage run is calibrated to the top of the ladder rather than to a price',
+    LADDER_PRICE === ladder && SALVAGE_MODULES.every(k => budgetFor(k) === LADDER_PRICE)
+    && SALVAGE_MODULES.every(k => MODULES[k].price === 0),
+    `${n(LADDER_PRICE)} of hull and shield rungs against a price of 0 — ` +
+    `it assumes ${n(pilots[SALVAGE_MODULES[0]].ehp)} ehp where the deepest claim assumes ` +
+    `${n(pilots.mine3.ehp)}`);
+  check('and it is the only arena that assumes a pilot the whole shop cannot build',
+    SALVAGE_MODULES.every(k => assumedFor(k).spent > Math.max(...spends)),
+    `${n(assumedFor(SALVAGE_MODULES[0]).spent)} spent against ${n(Math.max(...spends))} at the deepest claim`);
 }
 
 console.log('\nthe fight, twelve spawn rotations per claim');
@@ -531,6 +633,89 @@ console.log('\nthe fight, twelve spawn rotations per claim');
     + `${LIMIT / 60}-minute wall, so nothing that is actually a fight is ever cut short`);
 }
 
+// THE SALVAGE RUN, and its own block because it is a longer fight and a different
+// claim. Six rotations rather than twelve: one run is 228 simulated seconds against
+// a claim's 61, so twelve of them would be most of a minute of wall clock for a
+// number six already answers.
+console.log('\nthe salvage run, six spawn rotations, and the ladder it is the gate for');
+{
+  const ROT = 6;
+  for (const key of SALVAGE_MODULES) {
+    const map = arenaFor(key), mask = assumedFor(key).mask;
+    let died = 0, cleared = 0, over = 0, secs = 0, inDied = 0;
+    const curve = { 5: 0, 15: 0, 30: 0, 60: 0 };
+    for (let i = 0; i < ROT; i++) {
+      const phase = (i / ROT) * Math.PI * 2;
+      const ship = makePilot('finished', mask, -Math.PI / 2 + phase);
+      const r = run(map, ship, makeRoster(key, map, phase), stream(map.wreck), { limit: 900, curve });
+      if (r.cleared) { cleared++; over += r.over; secs += r.secs; }
+      if (r.died) died++;
+      const s2 = makePilot('finished', mask, -Math.PI / 2 + phase);
+      if (run(map, s2, makeRoster(key, map, phase), allIn(map.wreck), { limit: 900 }).died) inDied++;
+    }
+    for (const t2 of Object.keys(curve)) curve[t2] = +(curve[t2] / ROT).toFixed(1);
+    const left = cleared ? over / cleared : 0, took = cleared ? secs / cleared : 0;
+    check(`${key} is clearable by the pilot it assumes, and only just`,
+      cleared >= ROT - 2 && left < 0.4,
+      `${cleared} of ${ROT} cleared with ${(left * 100).toFixed(0)}% of the ship left in ` +
+      `${took.toFixed(0)}s — the same band the claims read (7% / 11%), and the floor policy carries ` +
+      'no repair kit, no ability, no power routing and no ammunition above cell1');
+    check(`${key} arrives as a stream, not as a wall`,
+      curve[15] > curve[5] && curve[5] < countOf(key) * 0.5,
+      `${curve[5]} / ${curve[15]} / ${curve[30]} / ${curve[60]} in weapons range at 5 / 15 / 30 / 60s, ` +
+      `of ${countOf(key)} — flat on one ring it read 12 at five seconds and cleared nothing`);
+    check(`flying straight at ${key}'s hulk still kills you`,
+      inDied >= ROT - 1,
+      `${inDied} of ${ROT} dead running at the wreck with the trigger held, against ${died} working the stream`);
+    // REWRITTEN FOR THIS ARENA rather than borrowed. "A fight, not a siege" is a
+    // claim about a claim: 61 seconds against a 15-minute wall. A salvage run is
+    // four times that and is deliberately the longest fight in the game, so the
+    // claim that survives is the one about the WALL — it is never cut short.
+    check('a salvage run is four minutes and still nowhere near the wall',
+      took > 120 && took < LIMIT / 3,
+      `${took.toFixed(0)}s against a ${LIMIT / 60}-minute wall — ${(796100 / 11307).toFixed(0)}s of that ` +
+      'is pure shooting and the rest is the field coming to you, which is what the depth bought');
+  }
+}
+
+// AND THE FIELD IS THE GATE, which is the thing nothing else in the game does. No
+// function refuses an underpowered pilot; the roster does, and it does it at every
+// rung of the ladder below the top. Measured rather than asserted from the design.
+console.log('\nwhat the salvage field does to a pilot who is not ready for it');
+{
+  const key = SALVAGE_MODULES[0], map = arenaFor(key);
+  const rungs = [10_000_000, 22_000_000, 30_000_000, 46_000_000, LADDER_PRICE];
+  const rows = [];
+  for (const budget of rungs) {
+    // The same climb assumedFor does, against a budget of our choosing.
+    let mask = 0, spent = 0;
+    for (;;) {
+      const next = ['hull', 'shld'].map(l => R2.nextOn(mask, l)).filter(Boolean)
+        .sort((a, b) => MODULES[a].price - MODULES[b].price)[0];
+      if (!next || spent + MODULES[next].price > budget) break;
+      spent += MODULES[next].price; mask = addMod(mask, next);
+    }
+    let cleared = 0;
+    const ROT = 3;
+    for (let i = 0; i < ROT; i++) {
+      const phase = (i / ROT) * Math.PI * 2;
+      const ship = makePilot('finished', mask, -Math.PI / 2 + phase);
+      const r = run(map, ship, makeRoster(key, map, phase), stream(map.wreck), { limit: 900 });
+      if (r.cleared) cleared++;
+    }
+    const probe = makePilot('finished', mask);
+    rows.push({ budget, ehp: probe.stats.hull + probe.stats.shield, cleared, of: ROT });
+  }
+  console.log('     ' + rows.map(r => `${n(r.budget)} ${n(r.ehp)}ehp ${r.cleared}/${r.of}`).join('   '));
+  check('nothing refuses an unready pilot, and the field does it instead',
+    rows.slice(0, -1).every(r => r.cleared === 0) && rows.at(-1).cleared > 0,
+    rows.map(r => `${n(r.budget)}: ${r.cleared} of ${r.of}`).join(', ') +
+    ' — which is why the row prints what it wants BEFORE you launch rather than after');
+  check('and the row says so, so the gate is never silent',
+    !!ARENAS[key].wants && salvageState(key, {}).wants === ARENAS[key].wants,
+    `"${ARENAS[key].wants}" — printed on the TECH TREE row beside the hostile count`);
+}
+
 console.log('\ngetting in, and the one row that says so');
 {
   const near = { near: true, mask: 0, claims: [], hold: {} };
@@ -575,6 +760,56 @@ console.log('\ngetting in, and the one row that says so');
   check('and a freed one offers the flight again rather than the purchase',
     claimState('mine1', { claims: ['mine1'] }).verb === 'RUN IT AGAIN',
     'a replay is not a rung: it costs nothing and buys nothing, so it is its own page');
+  // A WRECK, and every clause of it differs from a rock's, which is why it is a
+  // second function rather than a flag.
+  {
+    const key = SALVAGE_MODULES[0];
+    check('you cannot launch a salvage run from anywhere but your own station',
+      whyNotSalvage(key, { near: false }) === 'fly to your station to launch a salvage run',
+      whyNotSalvage(key, { near: false }));
+    check('you go to a wreck with an empty hold, for the claim\'s reason exactly',
+      /empty the hold/.test(whyNotSalvage(key, { near: true, hold: { iron: 1 } }) ?? ''),
+      'a wreck costs nothing, so a laden pilot would use a deliberate death as a free flight home');
+    check('and there is nothing else in the way — no price, no rank, no ladder order',
+      whyNotSalvage(key, { near: true }) === null,
+      'the FIELD is the gate; a second quieter copy of that rule here would be the silent refusal');
+    check('a wreck you have stripped is not a wreck you can strip again',
+      whyNotSalvage(key, { near: true, salvage: [key] }) === 'this wreck is already stripped',
+      'it is a replay from then on, and a replay cannot be re-won');
+    check('and a wreck you have not stripped is not one you can replay',
+      whyNotReplay(key, { near: true }) === 'you have not stripped this wreck yet',
+      whyNotReplay(key, { near: true }));
+    // The bug this line exists for: bypass1 is tier 1, and `want` is never under 1,
+    // so a salvage key walked the whole of whyNotClaim and came out returning null.
+    check('and a claim cannot be launched at a wreck by naming it, however the key is spelled',
+      whyNotClaim(key, { near: true }) === 'no claim on this'
+      && whyNotSalvage('mine1', { near: true }) === 'nothing to salvage here',
+      'each refuses the other kind by name — whyNotRun is the one door that dispatches');
+    check('whyNotRun sends each key to its own refusal, so the panel and the server cannot disagree',
+      whyNotRun(key, { near: false }) === whyNotSalvage(key, { near: false })
+      && whyNotRun('mine1', { near: false }) === whyNotClaim('mine1', { near: false }),
+      'one call site for both kinds, which is what the workshop dock refusing to sell for a day cost');
+    check('the tech tree row knows it is a flight rather than a purchase',
+      rowState(0, MODULES[key].line, 1e12, [], []).claim === true
+      && rowState(0, MODULES[key].line, 1e12, [], []).mission === 'salvage'
+      && rowState(0, MODULES[key].line, 0, [], [key]).claim === false,
+      'STRIP THE WRECK until it is yours, and then it is simply RESEARCHED');
+    check('and no amount of money builds it before the wreck is stripped',
+      whyNotBuild(key, { credits: 1e12, mask: 0, near: true, salvage: [] })
+        === 'the wreck is still held — strip it first'
+      && whyNotBuild(key, { credits: 0, mask: 0, near: true, salvage: [key] }) === null,
+      'a zero price that still refuses has to SAY why — a free row that silently does nothing ' +
+      'is the complaint this codebase keeps earning');
+    const sv = salvageState(key, { salvage: [], mask: 0 });
+    check('the TECH TREE row says what the wreck is right now',
+      sv.verb === 'STRIP THE WRECK' && sv.count === countOf(key) && !sv.stripped && !sv.built,
+      `${sv.name}: ${sv.count} hostiles, "${sv.asks}"`);
+    check('and a stripped one offers the flight again rather than a button that does nothing',
+      salvageState(key, { salvage: [key], mask: addMod(0, key) }).verb === 'RUN IT AGAIN'
+      && salvageState(key, { salvage: [key], mask: addMod(0, key) }).built,
+      'stripped and installed are the same moment — the sweep writes both on the tick the field clears');
+  }
+
   check('a rock two tiers up reads as held rather than as available',
     claimState('mine3', { claims: [] }).locked, 'free the claim below it first');
 }
@@ -592,6 +827,12 @@ console.log('\nthe mission bar');
   check('a pilot can always see how many are still standing',
     mission(1600, { key: 'mine1', left: 7, total: 15 }).text.includes('7'),
     'a pilot who cannot see that cannot tell whether they are winning');
+  check('a won salvage run says the module is already aboard, not that a purchase may commence',
+    /IS ON YOUR SHIP/.test(missionText({ key: SALVAGE_MODULES[0], cleared: true }).forms[0])
+    && /MAY COMMENCE/.test(missionText({ key: 'mine1', cleared: true }).forms[0]),
+    `"${missionText({ key: SALVAGE_MODULES[0], cleared: true }).forms[0]}" — a claim ends with ` +
+    'permission to spend eight million credits and a wreck ends with the module fitted, so ' +
+    'MAY COMMENCE would send a pilot to a counter with nothing on it');
   check('a won claim says the rig may commence; a won replay says nothing was paid',
     /MAY COMMENCE/.test(missionText({ key: 'mine1', cleared: true }).forms[0])
     && /NOTHING PAID/.test(missionText({ key: 'mine1', cleared: true, replay: true }).forms[0]),
@@ -629,6 +870,25 @@ console.log('\nwhat survives a restart');
   const dirty = sanitiseAccount({ ...acct, claims: ['mine1', 'mine1', 'mine9', 42, null] }, 0, now);
   check('a save can only claim rocks that exist, once each',
     dirty.claims.join() === 'mine1', JSON.stringify(dirty.claims));
+  check('a new pilot has stripped nothing either',
+    Array.isArray(acct.salvage) && acct.salvage.length === 0, 'salvage: []');
+  const key = SALVAGE_MODULES[0];
+  const dirtySv = sanitiseAccount({ ...acct, salvage: [key, key, 'wreck9', 7, null] }, 0, now);
+  check('and it can only have stripped wrecks that exist, once each',
+    dirtySv.salvage.join() === key, JSON.stringify(dirtySv.salvage));
+  // THE RE-GRANT, in one direction only. A salvage prize lives on the account as a
+  // list AND in the lab mask; sanitiseLab returns null for a lab it cannot parse and
+  // sanitiseMods trims bits it does not know, so without this a save that lost its
+  // station would come back with the wreck still listed and the reactor back on its
+  // three second spool, saying nothing.
+  const lost = sanitiseAccount({ ...acct, salvage: [key], lab: { slot: 3, mods: 0, since: now } }, 0, now);
+  check('a flown mission is never confiscated by a mask that lost the bit',
+    hasMod(lost.lab.mods, key),
+    'the list can put the bit back; the bit can never put itself on the list — two records that ' +
+    'could each write the other is the drift rule one names');
+  check('and a pilot with no station keeps the record until they have one to put it in',
+    sanitiseAccount({ ...acct, salvage: [key], lab: null }, 0, now).salvage.join() === key,
+    'the fight was still won; there is simply nowhere to hang the module yet');
 
   // A SERVER RESTART. An arena stops existing with the process that made it, so a
   // save that names one has to land somewhere real — WITH its coordinates. Keeping
@@ -657,6 +917,9 @@ console.log('\nwhat survives a restart');
     `${out.mapId} at ${out.x},${out.y}, not ${live.mapId} at 4321,1234`);
   check('and it does write down the rock you freed while you were in there',
     out.claims.join() === 'mine1', JSON.stringify(out.claims));
+  check('and the wreck you stripped, by the same list and the same line',
+    capture({ ...acct }, { ...live, salvage: [key] }, now).salvage.join() === key,
+    'test/account.mjs fails BY NAME if capture() ever writes a field carried() does not hand back');
   live.mapId = 'm2'; live.ship.x = 500; live.ship.y = 600;
   const moved = capture({ ...acct }, live, now);
   check('a real sector is still written down exactly as it always was',
@@ -965,6 +1228,97 @@ await wait(1600);
   check('a pilot who was inside a claim when the process died signs back in at their dock',
     !!wasIn && !isArena(back.map) && MAPS[back.map],
     `${wasIn} is gone; back in ${back.map}`);
+
+  // --- 12. A SALVAGE RUN, END TO END --------------------------------------
+  //
+  // The whole of the second feature over one socket: fly it, clear it, take the
+  // prize, watch the sector close, and come back after a restart still holding it.
+  // Everything here is the CLAIM machinery — the same intent, the same fold, the
+  // same sweep, the same linger — so what is being checked is the two things that
+  // are not: the prize is a module rather than a permission, and it is on the ship.
+  {
+    const key = SALVAGE_MODULES[0];
+    const sv = await join('Salvager');
+    sv.chat('/money 900000000');
+    await wait(150);
+    sv.send({ t: 'stake' });
+    await wait(250);
+    sv.chat('/admin');
+    await wait(150);
+    sv.chat('/tolab');
+    await wait(200);
+    sv.chat('/arenas');
+    await wait(250);
+    const before = sv.said.at(-1) ?? '';
+
+    await foldOut(sv, { t: 'claim', key }, 100);
+    let bag = await snap(sv);
+    check('a salvage run opens the same kind of sector a claim does, from the same intent',
+      isArena(sv.map) && parseArena(sv.map).key === key && bag.arena?.total === countOf(key)
+      && mapOf(sv.map).wreck && !mapOf(sv.map).rock,
+      `${sv.map} — ${bag.arena?.left} of ${bag.arena?.total} standing around a hulk`);
+    sv.chat('/arenas');
+    await wait(250);
+    check('and /arenas sees exactly one open where a moment ago there were none',
+      /"open":0/.test(before) && /"open":1/.test(sv.said.at(-1) ?? ''),
+      `${before.trim()} -> ${(sv.said.at(-1) ?? '').trim()}`);
+
+    sv.chat('/clear');
+    await wait(500);
+    bag = await snap(sv);
+    check('clearing it strips the wreck AND fits the module, on the same tick',
+      sv.freed.length === 1 && sv.freed[0].key === key && sv.freed[0].salvage === 1
+      && (bag.salvage ?? []).includes(key) && hasMod(bag.lab?.mods ?? 0, key),
+      `"${sv.freed[0]?.what}" — the list says it was won and the mask says it is fitted, ` +
+      'and there is no button anywhere in between');
+    check('so the tech tree row is finished rather than offering a free purchase',
+      whyNotBuild(key, { credits: 0, mask: bag.lab?.mods ?? 0, near: true, salvage: bag.salvage })
+        === 'already built',
+      'a claim ends with a rig to pay for; this ends with nothing left to press');
+
+    // THE THING THE MODULE ACTUALLY DOES, over the wire, because a flag on a stat
+    // block that never reaches the reactor would pass every test above.
+    sv.send({ t: 'power', sys: 'weapons' });
+    await wait(120);
+    bag = await snap(sv);
+    check('and the reactor is at full power one tick after the keypress, not three seconds',
+      (bag.power?.lv?.weapons ?? 0) === 100 && (bag.power?.cap ?? 100) < 100,
+      `weapons ${bag.power?.lv?.weapons}% and the capacitor already down to ${bag.power?.cap}% — ` +
+      'a spooled reactor reads 3% at half a second');
+
+    await wait((LINGER + 1.5) * 1000);
+    check('the station pulls you back out of a won salvage run exactly as it does a claim',
+      !isArena(sv.map) && MAPS[sv.map], `${sv.map} after ${LINGER}s`);
+    sv.chat('/arenas');
+    await wait(250);
+    check('and the sector closes behind you, by the same sweep and no new exit',
+      /"open":0/.test(sv.said.at(-1) ?? ''), sv.said.at(-1));
+
+    // AND IT SURVIVES THE PROCESS. `salvage` is on the account and the mask is in
+    // the lab, so a restart has to bring both back — this is the assertion that
+    // would have caught a prize that only ever lived in memory.
+    const svTok = sv.token;
+    sv.close();
+    await wait(300);
+    kill();
+    await wait(400);
+    boot();
+    await wait(1600);
+    const again = await join('Salvager', svTok);
+    await wait(500);
+    const bag2 = await snap(again);
+    check('and a stripped wreck survives a server restart, module and all',
+      (bag2.salvage ?? []).includes(key) && hasMod(bag2.lab?.mods ?? 0, key),
+      `salvage ${JSON.stringify(bag2.salvage)}, lab mask ${bag2.lab?.mods} — the list is the durable ` +
+      'record and sanitiseAccount re-grants the bit from it');
+    again.send({ t: 'power', sys: 'thrusters' });
+    await wait(120);
+    const bag3 = await snap(again);
+    check('and the reactor still re-routes instantly on the far side of it',
+      (bag3.power?.lv?.thrusters ?? 0) === 100,
+      `thrusters ${bag3.power?.lv?.thrusters}% on the tick after signing back in`);
+    again.close();
+  }
   back.close(); q.close();
 }
 
@@ -975,6 +1329,7 @@ done();
 // a Recall Beacon takes: real clocks the server owns, not slack.
 const liveSecs = (Date.now() - began) / 1000 - simSecs;
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`
-  : `PASS — ${ARENA_MODULES.length} claims, ${ARENA_MODULES.map(countOf).join('/')} hostiles, `
+  : `PASS — ${ARENA_MODULES.length} claims at ${ARENA_MODULES.map(countOf).join('/')} hostiles and `
+    + `${SALVAGE_MODULES.length} salvage run at ${SALVAGE_MODULES.map(countOf).join('/')}, `
     + `paying nothing — ${simSecs.toFixed(1)}s simulating, ${liveSecs.toFixed(1)}s over the wire`}\n`);
 process.exit(fails.length ? 1 : 0);

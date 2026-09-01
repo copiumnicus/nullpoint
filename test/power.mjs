@@ -285,6 +285,149 @@ console.log('\nregenerating on the reactor: what it buys and what it costs');
     `${Math.round(duel.max)} — this is a between-engagements mechanic, not a duelling one`);
 }
 
+// THE GOVERNOR BYPASS, which is the only thing in the game that touches the spool.
+//
+// The pitch was "remove the spool", so the first claim here is that there IS one and
+// what it costs — measured before anything was designed, because a delay invented in
+// order to be removed is not a mechanic.
+console.log('\nthe Governor Bypass: what the spool costs, and what buying it out costs');
+{
+  const { hasBypass, addMod, applyResearch } = await import('../shared/research.js');
+  const { BYPASS_BROWNOUT, bypassed } = await import('../shared/power.js');
+  const bypass = st => applyResearch(st, addMod(0, 'bypass1'));
+
+  // The ramp is squared, so SPOOL_UP understates it badly: three seconds is the time
+  // to FULL, and the halfway point of the delivered boost is at 2.1s, not 1.5.
+  const cold = () => {
+    const s = newShip(0, 0, 'vanguard');
+    routeTo(s.power, 'weapons');
+    const at = [];
+    let t = 0;
+    for (const m of [0.5, 1, 1.5, 2, 2.5, 3]) { hold(s, m - t); t = m; at.push([m, levelOf(s.power, 'weapons', s.stats)]); }
+    return at;
+  };
+  const ramp = cold();
+  console.log('     spooled  ' + ramp.map(([t, l]) => `${t}s ${(l * 100).toFixed(0)}%`).join('  '));
+  check('the reactor really does spool, and it is worse than the constant reads',
+    ramp[2][1] < 0.3 && ramp[5][1] === 1,
+    `${SPOOL_UP}s to full, and the ramp is squared — ${(ramp[2][1] * 100).toFixed(0)}% of the boost ` +
+    `delivered at the halfway mark, not 50%`);
+
+  // The exact size of the tax, and the exact size of the bill, in the same unit.
+  // Integrating a squared ramp over its own length gives T/3, so the spool withholds
+  // 2T/3 boost-seconds every time you touch the dial.
+  const withheld = (() => {
+    let d = 0; const n = 4000;
+    for (let i = 0; i < n; i++) d += Math.min(1, ((i + 0.5) / n)) ** 2 * SPOOL_UP / n;
+    return SPOOL_UP - d;
+  })();
+  check('the brown-out is exactly the boost-seconds the spool was withholding',
+    Math.abs(BYPASS_BROWNOUT - withheld) < 0.01,
+    `the ramp delivers ${(SPOOL_UP - withheld).toFixed(3)}s of boost over its own ${SPOOL_UP}s where ` +
+    `instant delivers ${SPOOL_UP} — so it withholds ${withheld.toFixed(3)}, and the bypass bills ` +
+    `${BYPASS_BROWNOUT.toFixed(3)}s of tank. One point of charge is one second of full boost, so it ` +
+    'is the same quantity handed back and taken away');
+
+  const wired = newShip(0, 0, 'vanguard');
+  wired.stats = bypass(wired.stats);
+  check('a mask without it changes nothing about the reactor', !bypassed(newShip(0, 0, 'vanguard').stats),
+    'and no bar on the ship moves either way — see test/research.mjs');
+  routeTo(wired.power, 'weapons', wired.stats);
+  check('with it, full power is there on the keypress rather than three seconds later',
+    levelOf(wired.power, 'weapons', wired.stats) === 1 && boostOf(wired.power, 'weapons', wired.stats) === 1 + BOOST,
+    `100% on the tick the key went down, against ${(ramp[0][1] * 100).toFixed(0)}% half a second in without it`);
+  const afterOne = wired.power.charge;
+  check('and the tank paid for it up front',
+    Math.abs(wired.stats.capacitor - afterOne - BYPASS_BROWNOUT) < 1e-9,
+    `${wired.stats.capacitor}s -> ${afterOne.toFixed(1)}s the instant you press it`);
+
+  // The old system stops drawing on the same tick rather than bleeding for SPOOL_DN,
+  // which is the other half of "instantly" and the half that is easy to forget.
+  routeTo(wired.power, 'shields', wired.stats);
+  check('the system you left stops on the same tick, rather than bleeding for a second and a half',
+    levelOf(wired.power, 'weapons', wired.stats) === 0 && levelOf(wired.power, 'shields', wired.stats) === 1,
+    `SPOOL_DN is ${SPOOL_DN}s and a bypassed reactor spends none of it`);
+
+  // Standing down is FREE. A pilot billed for putting the reactor away would simply
+  // leave it where it is, which is the opposite of what the row is for.
+  const before = wired.power.charge;
+  routeTo(wired.power, 'shields', wired.stats);          // toggles to null
+  check('putting the reactor away costs nothing, so the row never punishes standing down',
+    wired.power.to === null && wired.power.charge === before,
+    'the brown-out is on ARRIVING somewhere, which is also why standing down first cannot dodge it');
+  routeTo(wired.power, 'thrusters', wired.stats);
+  check('and the next route pays again, so there is no free switch to be had',
+    Math.abs(before - wired.power.charge - BYPASS_BROWNOUT) < 1e-9,
+    `two keypresses, one bill of ${BYPASS_BROWNOUT.toFixed(1)}s — the same bill one keypress would have paid`);
+
+  // WHERE IT PAYS, and the measurement moved the answer.
+  //
+  // The pitch was that the spool is the tax on the between-fights shield loop. It is
+  // NOT, and this is the finding: `shieldWait` is shieldDelay/poolMult, which on a
+  // Vanguard routed to shields is 6.2 seconds — longer than the 3 second spool — so
+  // the reactor is already at full by the time a single point of shield comes back.
+  // Measured over a ten second lull the spooled pilot and the bypassed one arrive at
+  // exactly the same share, to the decimal.
+  const arrive = (hull, lull, mode) => {
+    const s = newShip(0, 0, hull);
+    if (mode === 'bypass') s.stats = bypass(s.stats);
+    applyDamage(s, s.stats.shield * 5 + 1);
+    if (mode !== 'cold') routeTo(s.power, 'shields', s.stats);
+    hold(s, lull);
+    return s.shield / shieldMax(s);
+  };
+  check('it buys nothing at all on the way INTO a lull, because the shield delay already hid the spool',
+    ['hauler', 'vanguard', 'bulwark'].every(h => Math.abs(arrive(h, 10, 'bypass') - arrive(h, 10, 'spool')) < 0.005),
+    ['hauler', 'vanguard', 'bulwark'].map(h =>
+      `${h} ${(100 * arrive(h, 10, 'spool')).toFixed(1)}% vs ${(100 * arrive(h, 10, 'bypass')).toFixed(1)}%`).join(', ') +
+    ' after ten seconds — a Vanguard waits 6.2s before the shield moves and the spool is 3s, ' +
+    'so the ramp finishes inside the delay and costs nothing');
+
+  // It pays on the way OUT of one, which is the same keypress seen from the other
+  // side: the fight starts, you take the reactor off your shields and put it on your
+  // guns, and today that is three seconds of a fight fought at a quarter power.
+  const opening = (secs, mode) => {
+    const s = newShip(0, 0, 'vanguard', { weapon: ['emitter1'], generator: [], tech: [] });
+    if (mode === 'bypass') s.stats = bypass(s.stats);
+    routeTo(s.power, 'shields', s.stats);              // where a pilot is between fights
+    hold(s, SPOOL_UP);
+    routeTo(s.power, 'weapons', s.stats);              // and the fight starts
+    const mark = newShip(400, 0, 'kestrel');
+    let dmg = 0;
+    for (let i = 0; i < Math.round(secs / dt); i++) {
+      for (const b of fire(s, mark, dt)) dmg += b.dmg;
+      step(s, dt); stepVitals(s, dt);
+    }
+    return dmg;
+  };
+  for (const secs of [3, 5, 10])
+    console.log(`     first ${String(secs).padStart(2)}s of the fight: ` +
+      `${Math.round(opening(secs, 'spool'))} damage spooled, ${Math.round(opening(secs, 'bypass'))} bypassed ` +
+      `(x${(opening(secs, 'bypass') / opening(secs, 'spool')).toFixed(2)})`);
+  check('what it buys is the OPENING of the next fight — three seconds fought at full instead of a quarter',
+    opening(3, 'bypass') > opening(3, 'spool') * 1.15 && opening(10, 'bypass') < opening(10, 'spool') * 1.12,
+    `x${(opening(3, 'bypass') / opening(3, 'spool')).toFixed(2)} over the first three seconds and ` +
+    `x${(opening(10, 'bypass') / opening(10, 'spool')).toFixed(2)} over ten — it is worth most exactly ` +
+    'where it is bought, at the front, and washes out over a long one');
+
+  // AND IT IS NOT FREE, which is the whole of the trade. Mashed, it empties the tank
+  // in a fixed number of keypresses whatever else you do with it.
+  const swaps = st => Math.floor(st.capacitor / BYPASS_BROWNOUT);
+  const rows = ['hauler', 'vanguard', 'bulwark'].map(h => [h, swaps(resolve(h))]);
+  check('and mashing the dial is what it bills for: a tank is a fixed number of switches',
+    rows.every(([, n]) => n >= 15 && n <= 30),
+    rows.map(([h, n]) => `${h} ${n}`).join(', ') + ' switches to a full capacitor, before a single ' +
+    'second of holding one — once a lull is nothing and once a second is the whole reactor');
+  check('a flat reactor still switches, at the free trickle and nothing more', (() => {
+    const s = newShip(0, 0, 'vanguard');
+    s.stats = bypass(s.stats);
+    s.power.charge = 0;
+    routeTo(s.power, 'weapons', s.stats);
+    return s.power.charge === 0 && levelOf(s.power, 'weapons', s.stats) === s.stats.sustain;
+  })(), 'you cannot be billed below empty, and what you get for it is `sustain` — which is exactly ' +
+        'the "fastest when you can least afford it" the row is sold on');
+}
+
 console.log('\nships and technology');
 {
   const caps = Object.keys(HULLS).map(h => [h, resolve(h).capacitor]);

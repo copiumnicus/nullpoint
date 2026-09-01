@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.84';
+export const VERSION = '0.85';
 
 export const PATCHES = [
+  { v: '0.85', notes: [
+    'A salvage run at the research station: an ancient wreck with a crew already on it',
+    'Twenty-five hostiles hold it, they all come at once, and four of them outrun you',
+    'Strip it and the Governor Bypass is yours — a tech tree row no amount of money buys',
+    'Your reactor then re-routes the instant you press the key, instead of spooling 3s',
+    'Each switch browns out 2s of capacitor, so it is dearest in the middle of a fight',
+  ] },
   { v: '0.84', notes: [
     'A full drone rack says so instead of the BUY button doing nothing when you click it',
     'A Hauler and a Kestrel berth 12, a Vanguard 11, a Bulwark 10 — the hull decides',

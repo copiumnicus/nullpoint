@@ -8,7 +8,8 @@
 <canvas id="c"></canvas>
 <script type="module">
 import { MAP_W, MAP_H, PORTAL_R, MAPS, COMPANIES, mapOf, isArena } from '/shared/maps.js';
-import { mission, bar as missionBar, BAR_TONE, whyNotClaim, whyNotReplay, claimState } from '/shared/arena.js';
+import { mission, bar as missionBar, BAR_TONE, whyNotRun, whyNotReplay,
+         claimState, salvageState } from '/shared/arena.js';
 import { duelText, mayAim } from '/shared/duel.js';
 import { FOLD_SECS } from '/shared/fold.js';
 import { LAYER_NAME, STAT_STEP, fmt as statFmt, improves, VALUE_AT, LABEL_PX } from '/shared/breakdown.js';
@@ -161,6 +162,7 @@ let myFoldTo = null;              // and which hangar a beacon takes you to
 let labs = new Map();             // every research station in this sector
 let myLab = null;                 // { mods, income } if you have one
 let myClaims = [];                // mining rocks already freed
+let mySalvage = [];               // ancient wrecks already stripped
 let arena = null;                 // { key, left, total, cleared, replay } while standing on a claim
 // The duel you are standing in, as the server sees it: { count, foe, id, left, over,
 // draw, won }. `count` is a READOUT and not a clock of our own — the server refuses
@@ -435,8 +437,8 @@ function fileClick(v) {
 // two functions.
 const claimWhy = (key, freed) => {
   const where = { mask: myLab?.mods ?? 0, near: atMyLab(), claims: myClaims,
-                  hold, inArena: isArena(mapId) };
-  return freed ? whyNotReplay(key, where) : whyNotClaim(key, where);
+                  salvage: mySalvage, hold, inArena: isArena(mapId) };
+  return freed ? whyNotReplay(key, where) : whyNotRun(key, where);
 };
 
 // The CLAIMS page. Three rocks, and what each of them is right now.
@@ -501,15 +503,24 @@ function drawClaims(L) {
 function drawTree(L, near) {
   const mask = myLab?.mods ?? 0;
   for (const row of L.rows) {
-    const st = rowState(mask, row.line, credits, myClaims);
-    const why = st.next ? whyNotBuild(st.next, { credits, mask, near, claims: myClaims }) : null;
+    const st = rowState(mask, row.line, credits, myClaims, mySalvage);
+    // A row whose upgrade is EARNED rather than bought: the button on it is a
+    // flight, and everything on the right hand end of it says so instead of quoting
+    // a price of zero. Same shape the ladder page already uses for a mining rung
+    // whose rock is still held — one row, two buttons at different times.
+    const run = st.claim && st.mission === 'salvage' ? st.next : null;
+    const why = st.next
+      ? (run ? claimWhy(run, false)
+             : whyNotBuild(st.next, { credits, mask, near, claims: myClaims, salvage: mySalvage }))
+      : null;
     const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
                       && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
     g.fillStyle = st.done ? 'rgba(125,224,138,0.10)'
-                : !why ? (hot ? 'rgba(125,224,138,0.16)' : 'rgba(255,255,255,0.03)')
+                : !why ? (hot ? (run ? 'rgba(255,143,107,0.16)' : 'rgba(125,224,138,0.16)')
+                              : 'rgba(255,255,255,0.03)')
                 : 'rgba(255,255,255,0.02)';
     g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
-    g.strokeStyle = st.done ? '#3d5876' : why ? '#243448' : '#4a6785'; g.lineWidth = 1;
+    g.strokeStyle = st.done ? '#3d5876' : why ? '#243448' : run ? '#7a4a3a' : '#4a6785'; g.lineWidth = 1;
     g.strokeRect(row.r.x + .5, row.r.y + .5, row.r.w - 1, row.r.h - 1);
 
     // The name is the UPGRADE, not the line, because on this page they are the
@@ -518,14 +529,30 @@ function drawTree(L, near) {
     g.font = '12px ui-monospace, monospace';
     g.fillStyle = st.done ? '#7de08a' : why ? '#66748c' : '#cfe4ff';
     g.fillText(m?.name ?? LINE_NAME[row.line] ?? row.line, row.r.x + 12, row.r.y + 20);
-    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
-    g.fillText(m?.blurb ?? '', row.r.x + 12, row.r.y + 34);
+    // A FLIGHT ROW DROPS THE BLURB and says what the fight is instead — the count
+    // and what it takes to survive it. Flavour is what you read once; what a pilot
+    // needs before pressing this is how big the field is and that the field IS the
+    // gate. It sits at y+38 rather than y+34 because the only thing on the right
+    // of this row is at y+24, and the render harness measured 1.5px of clearance
+    // between two lines 10px apart where 1.8 is needed: 18px is the gap the CLAIMS
+    // page uses for exactly the same arrangement, and it is the one that holds.
+    if (run) {
+      const sv0 = salvageState(run, { salvage: mySalvage, mask });
+      g.font = '10px ui-monospace, monospace'; g.fillStyle = why ? '#66748c' : '#a8785a';
+      g.fillText(`${sv0.count} hostiles · ${sv0.wants}`, row.r.x + 12, row.r.y + 38);
+    } else {
+      g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+      g.fillText(m?.blurb ?? '', row.r.x + 12, row.r.y + 34);
+    }
 
     // What it is worth in the hold you are carrying right now. Same argument as the
     // ladder's: a multiplier is a fact about the module, a number is a fact about
     // you, and only the second decides whether ten million is worth it.
-    const gain = treeGain(st.next ?? tiersOf(row.line)[0], hold);
-    const gap = shortOf(mask, row.line, credits), poor = gap > 0;
+    // `myStats()` because a Governor Bypass is quoted in YOUR capacitor — how many
+    // switches a tank holds is a fact about the generators you fitted, not about
+    // the module. The Pocket Dimension ignores it and is quoted in your hold.
+    const gain = treeGain(st.next ?? tiersOf(row.line)[0], hold, myStats());
+    const gap = run ? 0 : shortOf(mask, row.line, credits), poor = gap > 0;
     if (gain) {
       g.font = '11px ui-monospace, monospace';
       g.fillStyle = st.done ? '#7de08a' : poor ? '#4e8a5c' : '#7de08a';
@@ -543,6 +570,21 @@ function drawTree(L, near) {
       g.fillText('RESEARCHED', row.r.x + row.r.w - 12, row.r.y + 24);
     } else {
       g.font = '12px ui-monospace, monospace';
+      if (run) {
+        // NOT A PRICE, and ONE line rather than two. A salvage row costs nothing and
+        // cannot be bought at any number, so "0 cr" would be the panel offering a
+        // purchase that does not exist — and the refusal takes the button's place
+        // rather than sitting under it, which is the arrangement the CLAIMS page
+        // already proved: a second right-hand line at y+44 lands 10px under the
+        // left-hand sentence and prints straight through it on a narrow window.
+        const sv = salvageState(run, { salvage: mySalvage, mask });
+        g.font = '11px ui-monospace, monospace';
+        g.fillStyle = why ? '#66748c' : '#ff8f6b';
+        g.fillText(why ? (why.length > 34 ? why.slice(0, 33) + '…' : why) : sv.verb,
+                   row.r.x + row.r.w - 12, row.r.y + 24);
+        g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+        continue;
+      }
       g.fillStyle = poor ? '#8a7038' : '#ffd479';
       g.fillText(`${fmtCredits(st.price)} ${CURRENCY.short}`, row.r.x + row.r.w - 12, row.r.y + 24);
       // The distance, not the refusal — the same rule the ladder page follows,
@@ -651,9 +693,10 @@ function drawLab() {
 
   const tips = [];
   for (const row of L.rows) {
-    const st = rowState(mask, row.line, credits, myClaims);
+    const st = rowState(mask, row.line, credits, myClaims, mySalvage);
     const why = st.next
-      ? (st.claim ? claimWhy(st.next, false) : whyNotBuild(st.next, { credits, mask, near, claims: myClaims }))
+      ? (st.claim ? claimWhy(st.next, false)
+                  : whyNotBuild(st.next, { credits, mask, near, claims: myClaims, salvage: mySalvage }))
       : null;
     const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
                       && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
@@ -802,10 +845,17 @@ function labClick(v) {
   if (L.tab === 'tree') {
     for (const row of L.rows) {
       if (!inside(row.r)) continue;
-      const st = rowState(mask, row.line, credits, myClaims);
+      const st = rowState(mask, row.line, credits, myClaims, mySalvage);
       if (!st.next) { say('Already researched — it is permanent', '#7de08a'); return true; }
-      const why = whyNotBuild(st.next, { credits, mask, near, claims: myClaims });
+      // A row that is EARNED rather than bought sends you flying instead of
+      // spending. It is the CLAIMS page's button on the tech tree's page, and it
+      // refuses through the same claimWhy the CLAIMS rows use, so the panel cannot
+      // offer a launch the server then declines.
+      const run = st.claim && st.mission === 'salvage' ? st.next : null;
+      const why = run ? claimWhy(run, false)
+                      : whyNotBuild(st.next, { credits, mask, near, claims: myClaims, salvage: mySalvage });
       if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+      if (run) { send({ t: 'claim', key: run }); labOpen = false; return true; }
       send({ t: 'build', key: st.next });
       return true;
     }
@@ -813,14 +863,14 @@ function labClick(v) {
   }
   for (const row of L.rows) {
     if (!inside(row.r)) continue;
-    const st = rowState(mask, row.line, credits, myClaims);
+    const st = rowState(mask, row.line, credits, myClaims, mySalvage);
     if (!st.next) { say('That ladder is finished', '#7de08a'); return true; }
     // A mining rung whose rock is still held is a fight before it is a purchase.
     // One row, two buttons at different times — the refusal comes from the same
     // function the server will use, so the panel can never offer something the
     // server then declines.
     const why = st.claim ? claimWhy(st.next, false)
-                         : whyNotBuild(st.next, { credits, mask, near, claims: myClaims });
+                         : whyNotBuild(st.next, { credits, mask, near, claims: myClaims, salvage: mySalvage });
     if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
     if (st.claim) { send({ t: 'claim', key: st.next }); labOpen = false; return true; }
     send({ t: 'build', key: st.next });
@@ -873,6 +923,22 @@ function drawLabs() {
     g.fillStyle = l.own ? 'rgba(125,224,138,0.14)' : 'rgba(74,103,133,0.12)';
     g.fill();
     g.strokeStyle = col; g.lineWidth = 1 + plates * 0.6; g.stroke();
+
+    // An arc across the core: the governor is gone and the coils are shorting to
+    // each other. Two chords rather than a ring or a boom, because it is the one
+    // thing in the yard that was FLOWN for rather than paid for and it should not
+    // read as another purchase.
+    for (const part of parts.filter(q => q.part === 'arc')) {
+      g.strokeStyle = col; g.lineWidth = 1.4; g.globalAlpha = 0.5 + part.at * 0.4;
+      for (const turn of [0.6, 2.7]) {
+        g.beginPath();
+        g.moveTo(p.x + Math.cos(turn) * R * 0.9, p.y + Math.sin(turn) * R * 0.9);
+        g.lineTo(p.x + Math.cos(turn + 1.9) * R * 0.45, p.y + Math.sin(turn + 1.9) * R * 0.45);
+        g.lineTo(p.x + Math.cos(turn + 3.1) * R * 0.9, p.y + Math.sin(turn + 3.1) * R * 0.9);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
 
     // A rift, drawn INSIDE the core rather than around it: the tech tree is not
     // more armour or a longer boom, so it should not read as either. A hole in the
@@ -1273,8 +1339,12 @@ ws.onmessage = e => {
   // something different on a replay because a replay buys nothing. Telling a pilot
   // CLAIM FREED for the fourth time would be promising a purchase already made.
   if (m.t === 'freed') {
+    // Three sentences, not two. A won claim hands you permission to spend money; a
+    // won salvage run hands you the module itself, already fitted, so "MAY COMMENCE"
+    // would send a pilot to a counter with nothing on it.
     say(m.replay ? `FIELD CLEAR — ${String(m.what).toUpperCase()} · NOTHING PAID, NOTHING LOST`
-                 : `THE CLAIM IS YOURS — ${String(m.what).toUpperCase()} MAY COMMENCE`, '#7de08a');
+      : m.salvage ? `THE WRECK IS STRIPPED — ${String(m.what).toUpperCase()} IS ON YOUR SHIP`
+                  : `THE CLAIM IS YOURS — ${String(m.what).toUpperCase()} MAY COMMENCE`, '#7de08a');
     return;
   }
   // Somebody wants a fight. The line is a `say()` rather than a modal because a
@@ -1362,6 +1432,7 @@ ws.onmessage = e => {
   if ('snare' in m) mySnare = m.snare ?? 0;
   if ('lab' in m) myLab = m.lab;
   if (m.claims) myClaims = m.claims;
+  if (m.salvage) mySalvage = m.salvage;
   // Read UNCONDITIONALLY, like `scoop` and `want` beside it, and this is the one
   // line here that a live socket had to teach. A bag field that goes away is
   // reported in the delta's `gone` list and deleted from the baseline, and
@@ -4015,6 +4086,40 @@ function drawFrame(now) {
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
+  // The hulk a salvage run is about. Its own picture rather than a recoloured rock,
+  // because the two are different objects and reading one as the other is the whole
+  // point of not calling them both `rock` — see the CLAIM/SALVAGE branch in
+  // arenaMap(). A spine with ribs off it, listing, dark until the field is clear.
+  if (map.wreck) {
+    const k = map.wreck, won = !!arena?.cleared;
+    const grd = g.createRadialGradient(k.x, k.y, 0, k.x, k.y, k.r * 2.2);
+    grd.addColorStop(0, (won ? '#7de08a' : map.tint) + '2a');
+    grd.addColorStop(1, 'transparent');
+    g.fillStyle = grd; g.fillRect(k.x - k.r * 2.2, k.y - k.r * 2.2, k.r * 4.4, k.r * 4.4);
+    g.save(); g.translate(k.x, k.y); g.rotate(0.42 + now / 90000);   // adrift, barely
+    g.lineWidth = 4; g.strokeStyle = won ? '#7de08a' : '#7a6f8a';
+    g.beginPath(); g.moveTo(-k.r, 0); g.lineTo(k.r * 0.82, 0); g.stroke();
+    g.lineWidth = 2;
+    for (let i = 0; i < 7; i++) {                    // ribs, shorter toward the broken end
+      const px = -k.r + (i / 6) * k.r * 1.7, h = k.r * 0.34 * (1 - i / 9);
+      g.beginPath(); g.moveTo(px, -h); g.lineTo(px, h); g.stroke();
+    }
+    g.lineWidth = 3;                                 // the bow, still whole
+    g.beginPath(); g.moveTo(-k.r, -k.r * 0.3); g.lineTo(-k.r * 1.28, 0);
+    g.lineTo(-k.r, k.r * 0.3); g.stroke();
+    g.restore();
+    g.strokeStyle = won ? 'rgba(125,224,138,0.75)' : 'rgba(157,134,201,0.55)';
+    g.lineWidth = 1.5; g.setLineDash(won ? [26, 18] : [6, 10]);
+    g.lineDashOffset = won ? -now / 60 : now / 300;
+    g.beginPath(); g.arc(k.x, k.y, k.r * 1.5, 0, 7); g.stroke();
+    g.setLineDash([]); g.lineDashOffset = 0;
+    g.textAlign = 'center'; g.font = '11px ui-monospace, monospace';
+    g.fillStyle = won ? '#7de08a' : '#9d86c9';
+    g.fillText(won ? (arena?.replay ? 'THE FIELD IS CLEAR' : 'THE WRECK IS STRIPPED') : 'ANCIENT WRECK',
+               k.x, k.y - k.r * 1.5 - 14);
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+
   if (map.base) {
     const b = map.base, col = COMPANIES[map.owner ?? myCo].color, mine = (map.owner ?? myCo) === myCo;
     const grd = g.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
@@ -5256,9 +5361,13 @@ function drawFrame(now) {
     g.beginPath(); g.arc(MM_X + o.x * sx, MM_Y + o.y * sy, Math.max(3, o.r * sx), 0, 7); g.stroke();
     g.setLineDash([]);
   }
-  if (map.rock) {                                  // the only landmark a claim has
-    const k = map.rock;
-    g.strokeStyle = arena?.cleared ? '#7de08a' : '#a8785a'; g.lineWidth = 1;
+  // The one landmark an instanced sector has: a rock in a claim, a hulk in a salvage
+  // run, never both. Read as `?? ` rather than two blocks — on the plot they are the
+  // same ring, and only the colour says which.
+  const objective = map.rock ?? map.wreck ?? null;
+  if (objective) {
+    const k = objective;
+    g.strokeStyle = arena?.cleared ? '#7de08a' : map.wreck ? '#9d86c9' : '#a8785a'; g.lineWidth = 1;
     g.beginPath(); g.arc(MM_X + k.x * sx, MM_Y + k.y * sy, Math.max(3, k.r * sx), 0, 7); g.stroke();
   }
   if (map.base) {

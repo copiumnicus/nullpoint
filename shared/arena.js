@@ -131,7 +131,8 @@
 // row of data rather than a mechanic.
 
 import { ARENA_KEYS, MAP_W, MAP_H } from './maps.js';
-import { MODULES, nextOn, addMod, tiersOf, hasMod } from './research.js';
+import { MODULES, MODULE_KEYS, nextOn, addMod, tiersOf, hasMod,
+         missionOf, flownFor } from './research.js';
 import { farmHp, effectiveHp, threatDps, bountyFor } from './aliens.js';
 
 // --- the fields ---------------------------------------------------------------
@@ -158,7 +159,94 @@ export const ARENAS = {
            asks: 'a ring you cannot be somewhere else for, because being somewhere else is over' },
   mine3: { roster: [['leviathan', 1], ['lamprey', 1], ['censer', 2], ['kedge', 1], ['ironhusk', 12]],
            asks: 'two rings, and something that hauls you back into them' },
+
+  // A SALVAGE RUN IS THE SAME QUEUE WITH A DIFFERENT PRIZE, and everything above
+  // applies to it unchanged — the hunt, the leash, the share-billing, the arrival
+  // curve. Three things about it are new and each one is written down here rather
+  // than left to be discovered.
+  //
+  // 1. IT IS CALIBRATED TO THE TOP OF THE LADDER, NOT TO A PRICE.
+  //
+  //    `assumedFor` derives a claim's pilot from that mining tier's own price —
+  //    "the hull and shield tiers in the same price range". A mission has no price
+  //    to derive from, so the budget is written down, and the honest one is the
+  //    WHOLE LADDER: LADDER_PRICE, every hull and shield rung added up, which is
+  //    62,000,000 today. A salvage run is what a pilot flies when there are no
+  //    rungs left to climb, which is the exact gap research.js opens with — "the
+  //    equipment ladder has an end... and nothing left to want".
+  //
+  //    That gate needs nobody to enforce it, and it is measured. The same field,
+  //    the same floor policy, against the pilot each budget buys:
+  //
+  //      10,000,000   55,460 ehp    0 of 4 cleared, dead
+  //      22,000,000  110,920        0 of 4, dead
+  //      30,000,000  155,720        0 of 4, dead
+  //      46,000,000  221,840        0 of 4, dead
+  //      62,000,000  311,440        6 of 6 cleared, 8% of the ship left, 228s
+  //
+  //    The FIELD is the gate. Nothing refuses you — it can be flown the day the
+  //    plot is staked — and it kills you until the ladder is finished, which is
+  //    exactly why `wants` exists and the row prints it. A door that is shut and
+  //    silent about it is the complaint this codebase keeps earning.
+  //
+  // 2. THE FIELD STANDS IN DEPTH, and that is what let it be twenty-five bodies.
+  //
+  //    A claim's roster is one 1,200px ring, and the ring is what caps the body
+  //    count: twenty-five posts on it are 300px apart, so arriving at 1,900px puts
+  //    a third of them inside weapons range in the first second. Measured, the flat
+  //    version reads 12 in range at 5s and 0 of 4 cleared at every weight tried.
+  //    The same twenty-five laid out at 700 / 1,000 / 1,200 / 1,400 / 2,000 / 2,500
+  //    read 7 / 17 / 11 / 5 — a stream — and clear.
+  //
+  //    So an entry may carry its own radius. `['bandit', 4, 2000]` is four Bandits
+  //    on a ring of their own, turned by the golden angle so rings interleave
+  //    rather than forming spokes. An entry with no radius keeps RING_R, so the
+  //    three claims stand today exactly where they always did.
+  //
+  // 3. THE NEW QUESTION IS SPEED, which is the axis the note above says is unfilled.
+  //
+  //    mine1 asks for the stream, mine2 for the ring, mine3 for no way out. This
+  //    one asks what you do about something you cannot break contact with: four
+  //    Bandits at 400 against a laden Bulwark's 128, ten seconds of fire each
+  //    because they evade, and 570,000 of the field's 796,100 farm hit points —
+  //    65% of all the shooting in the sector. A claim may afford one of them; a
+  //    pilot at the top of the ladder can be asked for four.
+  //
+  // Read the roster outward and it is the picture as well as the numbers: two
+  // Censers burning inside the hulk, two Lampreys feeding on it, the tug that has
+  // been dragging it, fourteen of the crew working it over, and outside all of it
+  // the four raiders who got here first and the pair of heavies standing off.
+  bypass1: {
+    kind: 'salvage',
+    roster: [['censer', 2, 700], ['lamprey', 2, 1000], ['kedge', 1, 1200],
+             ['ironhusk', 14, 1400], ['bandit', 4, 2000], ['leviathan', 2, 2500]],
+    asks: 'four Bandits at 400, and nothing in this game outruns one',
+    // What the panel says BEFORE you launch. The field is the only gate, and a
+    // field is a bad way to find out what the gate was.
+    // Short on purpose, and the length is a measurement: it is drawn beside the
+    // hostile count on ONE 10px line, and a row is 344px wide at a 420px window —
+    // about 57 characters for the pair of them. The first draft ran to 74 and the
+    // render harness reported it printing through the button beside it.
+    wants: 'the whole research ladder, or you die',
+  },
 };
+
+// Which kind of mission an arena is. On the arena rather than inferred from the
+// key, so a second salvage run is a row of data and nothing else. There is
+// deliberately no SALVAGE_ARENAS beside SALVAGE_MODULES: the two would be the same
+// list by construction, and a second export that is always equal to the first is a
+// thing that can only ever be wrong. test/arena.mjs pins ARENAS, MODULES and the
+// sector table in maps.js to each other in both directions instead.
+export const kindOf = key => ARENAS[key]?.kind ?? 'claim';
+
+// The calibration budget. A claim's is its own price; a mission has none, so it
+// takes the whole hull-and-shield ladder — derived off MODULES rather than typed,
+// so moving a rung's price moves the pilot this field assumes and test/arena.mjs
+// re-reads it instead of trusting a number written down twice.
+export const LADDER_PRICE = ['hull', 'shld'].flatMap(tiersOf)
+  .reduce((n, k) => n + (MODULES[k].price ?? 0), 0);
+export const budgetFor = key =>
+  kindOf(key) === 'salvage' ? LADDER_PRICE : (MODULES[key]?.price ?? 0);
 
 // NOTHING IN A CLAIM MAY BE ABLE TO RUN AWAY FROM YOU, and this is the one rule
 // here that came out of a live socket rather than out of the model.
@@ -181,6 +269,12 @@ export const MAY_NOT_FLEE = true;
 // rather than written twice, because a fourth mining tier added there with no
 // entry here would be a rung nobody could ever buy and nothing would say so.
 export const ARENA_MODULES = tiersOf('mine');
+// And what the OTHER list on the account may hold. Read off `mission` in
+// research.js rather than written out here, for the same reason ARENA_MODULES is
+// read off the mining ladder: a tree row that names a salvage run with no arena
+// behind it would be a row nobody could ever finish, and nothing would say so.
+// test/arena.mjs checks it in both directions.
+export const SALVAGE_MODULES = MODULE_KEYS.filter(k => missionOf(k) === 'salvage');
 export const rosterOf = key => ARENAS[key]?.roster ?? [];
 export const countOf   = key => rosterOf(key).reduce((n, [, c]) => n + c, 0);
 export const fieldEhp  = key => rosterOf(key).reduce((n, [k, c]) => n + effectiveHp(k) * c, 0);
@@ -251,12 +345,39 @@ export const PAYS = Object.freeze({ bounty: false, xp: false, ore: false, file: 
 export const RING_R = 1200;
 export const ARRIVE_R = 1900;      // you come in outside the ring, not on top of it
 
+// The golden angle, for the same job it does in research.js's plot lattice: turn
+// each ring by it and the rings interleave instead of lining up into spokes, which
+// would leave a lane straight through the field and a wall everywhere else.
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+
+// WHY THIS TAKES A RADIUS PER ENTRY, and it is the one geometric change a salvage
+// run needed. See the note on ARENAS.bypass1: the ring, not the roster, is what
+// caps a field. Twenty-five bodies on one 1,200px ring are 300px apart and read as
+// a wall (12 in weapons range at 5 seconds, 0 of 4 cleared); the same twenty-five
+// on six rings read as a stream (7 / 17 / 11 / 5) and clear.
+//
+// An entry with no radius keeps RING_R, so the three claims are posted today
+// exactly where they were posted yesterday and their measurements still hold. The
+// single-ring case is kept as its own branch rather than folded in, because
+// spreading one 14-entry roster per KIND would not put fourteen Ironhusks evenly
+// around a circle — it would put twelve of them in one arc and one each elsewhere.
 export function postsFor(key) {
-  const kinds = rosterOf(key).flatMap(([k, n]) => Array(n).fill(k));
-  return kinds.map((kind, i) => {
-    const a = (i / kinds.length) * Math.PI * 2;
-    return { kind, x: MAP_W / 2 + Math.cos(a) * RING_R, y: MAP_H / 2 + Math.sin(a) * RING_R };
+  const roster = rosterOf(key);
+  if (roster.every(e => e.length < 3)) {
+    const kinds = roster.flatMap(([k, n]) => Array(n).fill(k));
+    return kinds.map((kind, i) => {
+      const a = (i / kinds.length) * Math.PI * 2;
+      return { kind, x: MAP_W / 2 + Math.cos(a) * RING_R, y: MAP_H / 2 + Math.sin(a) * RING_R };
+    });
+  }
+  const out = [];
+  roster.forEach(([kind, n, r = RING_R], ring) => {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + ring * GOLDEN;
+      out.push({ kind, x: MAP_W / 2 + Math.cos(a) * r, y: MAP_H / 2 + Math.sin(a) * r });
+    }
   });
+  return out;
 }
 
 // Where the pilot drops in. Off one edge of the ring rather than in the middle of
@@ -269,8 +390,11 @@ export const arrivalAt = () => ({ x: MAP_W / 2, y: MAP_H / 2 - ARRIVE_R });
 // algorithm: climb both ladders together, cheapest rung first, while the running
 // total still fits inside the tier's price. Derived rather than written down, so
 // moving a module price moves the calibration with it and the test notices.
+// A salvage run has no price to climb toward, so budgetFor() hands it the whole
+// ladder instead — see the note on ARENAS.bypass1. Everything below is unchanged:
+// one algorithm, two ways of saying what it may spend.
 export function assumedFor(key) {
-  const budget = MODULES[key]?.price ?? 0;
+  const budget = budgetFor(key);
   let mask = 0, spent = 0;
   for (;;) {
     const next = ['hull', 'shld'].map(l => nextOn(mask, l)).filter(Boolean)
@@ -288,7 +412,11 @@ export function assumedFor(key) {
 // anything for a day because that was two functions.
 export function whyNotClaim(key, { mask = 0, near = false, claims = [], hold = {}, inArena = false } = {}) {
   const m = MODULES[key];
-  if (!m || !ARENAS[key]) return 'no claim on this';
+  // `kindOf` as well as `ARENAS[key]`, because a wreck IS an arena and every clause
+  // below it is about rocks. Without this a salvage key walked straight through the
+  // ladder-order check — bypass1 is tier 1 and `want` is never under 1 — and came
+  // out the far end returning null, which is the panel offering the wrong flight.
+  if (!m || !ARENAS[key] || kindOf(key) !== 'claim') return 'no claim on this';
   if (inArena) return 'you are already standing on a claim';
   if (!near) return 'fly to your station to launch a claim';
   if (claims.includes(key)) return 'this claim is already yours';
@@ -313,14 +441,43 @@ export function whyNotClaim(key, { mask = 0, near = false, claims = [], hold = {
 // The hold rule survives, and for a sharper reason than on a first claim: a replay
 // is the cheapest death in the game, so a laden pilot could use one as a free
 // courier back to their own hangar every single time.
-export function whyNotReplay(key, { near = false, claims = [], hold = {}, inArena = false } = {}) {
+export function whyNotReplay(key, { near = false, claims = [], salvage = [],
+                                    hold = {}, inArena = false } = {}) {
   if (!ARENAS[key]) return 'no claim on this';
   if (inArena) return 'you are already standing on a claim';
   if (!near) return 'fly to your station to go back out';
-  if (!claims.includes(key)) return 'you have not freed this rock yet';
+  if (!flownFor(key, { claims, salvage }))
+    return kindOf(key) === 'salvage' ? 'you have not stripped this wreck yet'
+                                     : 'you have not freed this rock yet';
   if (Object.values(hold).some(n => n > 0)) return 'empty the hold first — you go to a claim with nothing';
   return null;
 }
+
+// A FIRST run at a wreck. Its own function rather than a flag on whyNotClaim,
+// exactly as whyNotReplay is, and for the same reason: every clause differs. There
+// is no ladder order to keep — a salvage run is not a rung of anything — and the
+// rock rule ("free the one below it first") has nothing to say about a hulk.
+//
+// What it deliberately does NOT refuse is an underpowered ship. The field is the
+// gate (see ARENAS.bypass1), and the row says so; a hard requirement here would be
+// a second, quieter copy of a rule the sector already enforces honestly.
+export function whyNotSalvage(key, { near = false, salvage = [], hold = {}, inArena = false } = {}) {
+  if (!ARENAS[key] || kindOf(key) !== 'salvage') return 'nothing to salvage here';
+  if (inArena) return 'you are already standing on a claim';
+  if (!near) return 'fly to your station to launch a salvage run';
+  if (salvage.includes(key)) return 'this wreck is already stripped';
+  // Same rule, same reason as a claim's: a wreck costs you nothing, so a full hold
+  // plus a deliberate death would be the free flight home a Recall Beacon charges
+  // 3,400 credits for.
+  if (Object.values(hold).some(n => n > 0)) return 'empty the hold first — you go to a wreck with nothing';
+  return null;
+}
+
+// THE ONE DOOR. Whatever kind of arena it is, this is what the panel asks and what
+// the server asks, and they cannot disagree because it is one call. A claim keeps
+// its own function because its clauses are its own; this is the dispatch.
+export const whyNotRun = (key, where = {}) =>
+  kindOf(key) === 'salvage' ? whyNotSalvage(key, where) : whyNotClaim(key, where);
 
 // What one row on the CLAIMS page says. Three states and they are not the same
 // question: a rock you cannot reach yet, a rock to go and take, and a rock to go
@@ -338,6 +495,32 @@ export function claimState(key, { claims = [], mask = 0 } = {}) {
     built: hasMod(mask, key),
     locked: !freed && (m?.tier ?? 0) > want,
     verb: freed ? 'RUN IT AGAIN' : 'CLAIM THE ROCK',
+  };
+}
+
+// The same three states for a wreck, on the TECH TREE page rather than a page of
+// its own. It is a second function rather than a flag because only ONE of the five
+// fields survives the translation — a wreck has no tier, no price, no ladder order
+// and no bill left over once it is stripped, so a shared shape would be four fields
+// that are always zero and a `locked` that is always false.
+//
+// `wants` is the field a claim has no need of: a claim's difficulty is derived from
+// what the row costs, and a mission's is not derivable from anything the panel can
+// see, so it has to be said.
+export function salvageState(key, { salvage = [], mask = 0 } = {}) {
+  const m = MODULES[key] ?? null;
+  const stripped = salvage.includes(key);
+  return {
+    key, name: m?.name ?? key,
+    asks: ARENAS[key]?.asks ?? '', wants: ARENAS[key]?.wants ?? '',
+    count: countOf(key), stripped,
+    // Stripped and installed are the same moment for a salvage run — the sweep
+    // writes the row into the lab on the tick it writes the wreck down, because a
+    // free row with a BUILD button on it is a button that exists to do nothing.
+    // Kept as its own field anyway: it is what the panel prints, and it is the
+    // thing sanitiseAccount re-grants from if a lab ever loses the bit.
+    built: hasMod(mask, key),
+    verb: stripped ? 'RUN IT AGAIN' : 'STRIP THE WRECK',
   };
 }
 
@@ -377,9 +560,16 @@ export function missionText({ key, left = 0, total = 0, cleared = false, replay 
   if (!cleared)
     return { tone: 'task', forms: [`ELIMINATE ALL HOSTILES · ${left} OF ${total} LEFT`,
                                    `${left} OF ${total} HOSTILES LEFT`, `${left} LEFT`] };
-  return replay
-    ? { tone: 'won', forms: [`FIELD CLEAR · ${what} · NOTHING PAID, NOTHING LOST`,
-                             `FIELD CLEAR · ${what}`, 'FIELD CLEAR'] }
+  if (replay)
+    return { tone: 'won', forms: [`FIELD CLEAR · ${what} · NOTHING PAID, NOTHING LOST`,
+                                  `FIELD CLEAR · ${what}`, 'FIELD CLEAR'] };
+  // A won salvage run says something a won claim cannot: the prize is ALREADY ON
+  // the ship. A claim ends with permission to spend money and a wreck ends with a
+  // module fitted, so "MAY COMMENCE" would be the bar sending a pilot to a counter
+  // that has nothing to sell them.
+  return kindOf(key) === 'salvage'
+    ? { tone: 'won', forms: [`WRECK STRIPPED · ${what} IS ON YOUR SHIP`,
+                             `WRECK STRIPPED · ${what}`, 'WRECK STRIPPED'] }
     : { tone: 'won', forms: [`CLAIM FREED · ${what} MAY COMMENCE`, `CLAIM FREED · ${what}`, 'CLAIM FREED'] };
 }
 
