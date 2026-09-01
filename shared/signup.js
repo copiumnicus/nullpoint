@@ -20,13 +20,25 @@ const SHAPE = /^[A-Za-z0-9][A-Za-z0-9 ._'-]*$/;
 export const cleanName = raw =>
   String(raw ?? '').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
 
+const has = (list, n) => list.some(t => String(t).toLowerCase() === n.toLowerCase());
+
 // Why this name will not do, or null if it will.
-export function nameProblem(raw, taken = []) {
+//
+// `mine` is the other pilots in THIS browser, which only the client knows — the
+// server has no idea two accounts belong to one person and must not. It is a
+// separate argument rather than more entries in `taken` because the refusal has
+// to be different: "someone already flies under that name" is true and useless
+// when the someone is you, two rows up the menu you just came from, and a pilot
+// naming their second character after their first is the collision they are most
+// likely to hit. Checked BEFORE `taken` for that reason — your own pilot is in
+// both lists, and the message that names them is the one worth printing.
+export function nameProblem(raw, taken = [], mine = []) {
   const n = cleanName(raw);
   if (n.length < NAME_MIN) return `at least ${NAME_MIN} characters`;
   if (!SHAPE.test(n)) return 'letters and digits, and . _ - \' between them';
-  if (taken.some(t => t.toLowerCase() === n.toLowerCase())) return 'someone already flies under that name';
+  if (has(mine, n)) return 'that is your other pilot — each one needs its own name';
+  if (has(taken, n)) return 'someone already flies under that name';
   return null;
 }
 
-export const nameOk = (raw, taken = []) => nameProblem(raw, taken) === null;
+export const nameOk = (raw, taken = [], mine = []) => nameProblem(raw, taken, mine) === null;

@@ -1,7 +1,7 @@
 // Runs the real client render path against a stub 2D context, over every map,
 // with the chart open and closed. Any undefined field or bad colour throws.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { MAPS } from '../shared/maps.js';
+import { MAPS, COMPANIES } from '../shared/maps.js';
 import { EQUIPMENT, SLOTS, MAX_DRONES } from '../shared/gear.js';
 import { HULLS, slotsOf, resolve } from '../shared/ships.js';
 import { applyResearch } from '../shared/research.js';
@@ -12,7 +12,9 @@ import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, STAT_KEYS } from '../shar
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
 import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu, forWeapon,
          promptRect, TIP_H, TIP_UP, buyRow, BUY_STEPS, MAX_BUY } from '../shared/ammo.js';
-import { settingsLayout } from '../shared/settings.js';
+import { settingsLayout, MAX_PILOTS } from '../shared/settings.js';
+import { joinLayout } from '../shared/join.js';
+import { ROSTER_KEY, TOKEN_KEY as TOK } from '../shared/brand.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
 import { packShip, packBolt, packRocket, packBlast, packPod, packHit, packSown, packPlates, PLATE_STEPS } from '../shared/net.js';
@@ -20,6 +22,7 @@ import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
 import { ALIENS, WILD } from '../shared/aliens.js';
 import { SIGHT_R } from '../shared/sim.js';
+import { FOLD_SECS } from '../shared/fold.js';
 import { VERSION, PATCHES, patchIcon, patchPanel } from '../shared/patch.js';
 import { NAME_MAX } from '../shared/signup.js';
 import { havenBadge, HAVEN_COPY, HAVEN_BROKEN } from '../shared/haven.js';
@@ -152,6 +155,14 @@ globalThis.localStorage = {
   setItem: (k, v) => store.set(k, String(v)),
   removeItem: k => store.delete(k),
 };
+// What this browser is holding, read out of the same stub the client writes to,
+// and the menu that follows from it. The panel RESIZES with the roster, so a
+// layout built from a different pilot list is a chip you can see and cannot
+// click — which is the bug shared/settings.js exists to prevent.
+const rosterNow = () => { try { return JSON.parse(store.get(ROSTER_KEY) ?? '[]'); } catch { return []; } };
+const menuNow = () => settingsLayout(innerWidth, innerHeight,
+                                     rosterNow().filter(p => p.token !== store.get(TOK)));
+
 globalThis.document = { getElementById: () => canvas, title: '' };
 globalThis.addEventListener = on;
 // The client's one setInterval is the flush that turns a held mouse or a held
@@ -222,16 +233,13 @@ globalThis.fetch = url => Promise.resolve({
 const errs = [];
 console.error = (...a) => errs.push(a.join(' '));
 
-// The join form's geometry, kept in step with the client by hand — it is drawn
-// before there is any session, so it cannot come from a shared layout the way
-// the station's does without shipping the lobby to everyone.
-const joinLayoutFor = (W, H, n) => {
-  const w = Math.min(560, W - 40), h = 380;
-  const x = Math.round((W - w) / 2), y = Math.round((H - h) / 2);
-  const cw = (w - 40 - (n - 1) * 12) / n;
-  return { cards: Array.from({ length: n }, (_, i) => ({ x: x + 20 + i * (cw + 12), y: y + 168, w: cw, h: 104 })),
-           go: { x: x + 20, y: y + h - 66, w: w - 40, h: 44 } };
-};
+// The join form's geometry. This was a hand-maintained copy of the client's, on
+// the argument that the lobby is drawn before there is any session — and it
+// drifted the first time the panel's height moved, so LAUNCH was clicked where
+// it used to be and the failure read "a valid callsign and a side still would
+// not launch". shared/join.js now, like every other panel in the game.
+const joinLayoutFor = (W, H, n, back = null) =>
+  joinLayout(W, H, Array.from({ length: n }, (_, i) => ({ key: 'mhk'[i] })), back);
 
 await import('./.client.mjs');
 
@@ -448,6 +456,11 @@ for (const id of Object.keys(MAPS)) {
 
 // A first visit chooses a name and a side, and can do nothing else until it has.
 {
+  // Who the form offers to go back to: the most recent pilot in the roster that
+  // is NOT the token this connection arrived with. Not simply the top of the
+  // list — the token an abandoned join used is in the roster too, and offering
+  // to go back to it lands on this same form again.
+  const backPilot = () => rosterNow().filter(p => p.token !== store.get(TOK))[0] ?? null;
   const welcomeAgain = () => feed({ t: 'welcome', id: 1, token: 'test-token', name: 'Tester',
     map: 'm1', co: 'm', hull: 'vanguard', fit: { weapon: ['emitter1'], generator: [], tech: [] },
     gear: {}, hulls: ['hauler', 'vanguard'], credits: 90000, drones: [], xp: 0, admin: true,
@@ -474,14 +487,14 @@ for (const id of Object.keys(MAPS)) {
   for (let i = 0; i < 4; i++) evt('keydown', { key: 'Backspace' });
   for (const ch of 'Vy') evt('keydown', { key: ch });
   frame(t += 16); frames++;
-  const L = joinLayoutFor(innerWidth, innerHeight, 3);
+  const L = joinLayoutFor(innerWidth, innerHeight, 3, backPilot());
   sent.length = 0;
   evt('pointerdown', { clientX: L.go.x + L.go.w / 2, clientY: L.go.y + L.go.h / 2 });
   frame(t += 16); frames++;
   if (sent.some(m => m.t === 'join')) errs.push('the form launched on a callsign that is too short');
 
   for (const ch of 'per') evt('keydown', { key: ch });
-  evt('pointerdown', { clientX: L.cards[2].x + 20, clientY: L.cards[2].y + 40 });   // pick a side
+  evt('pointerdown', { clientX: L.cards[2].r.x + 20, clientY: L.cards[2].r.y + 40 });   // pick a side
   frame(t += 16); frames++;
   sent.length = 0;
   evt('pointerdown', { clientX: L.go.x + L.go.w / 2, clientY: L.go.y + L.go.h / 2 });
@@ -490,6 +503,28 @@ for (const id of Object.keys(MAPS)) {
   if (!join) errs.push('a valid callsign and a side still would not launch');
   else if (join.name !== 'Vyper' || !join.co) errs.push(`the form sent ${JSON.stringify(join)}`);
   else console.log(`join: a first visit picks a callsign and a side, and flies nothing until it has`);
+
+  // Picking NEW PILOT in the menu lands here with a blank token, and without a
+  // way out it is a one-way door: the only route back to the ship you were
+  // flying a second ago would be finishing a form you did not want. The form
+  // offers the pilot you left, by name, and Escape does the same thing.
+  {
+    const parkedOne = backPilot();
+    if (!parkedOne) errs.push('the roster was empty on the join form, so there was nothing to go back to');
+    else {
+      const B = joinLayoutFor(innerWidth, innerHeight, 3, parkedOne).back;
+      if (!B) errs.push('a browser holding a parked pilot got no way back off the join form');
+      else {
+        store.set(TOK, 'somebody-else');
+        evt('pointerdown', { clientX: B.r.x + B.r.w / 2, clientY: B.r.y + B.r.h / 2 });
+        frame(t += 16); frames++;
+        if (store.get(TOK) !== parkedOne.token)
+          errs.push(`BACK TO ${parkedOne.name} left the browser flying ${store.get(TOK)}`);
+        else console.log('join: a browser with a parked pilot is offered ' +
+          `"BACK TO ${parkedOne.name || 'YOUR PILOT'}", and taking it re-points the token`);
+      }
+    }
+  }
 
   welcomeAgain();                                  // and the rest of the file is a pilot again
   frame(t += 16); frames++;
@@ -2338,7 +2373,7 @@ const dismiss = () => {
                  hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 }),
       packShip({ id: 1e6, x: 6200, y: 4100, heading: 0, charge: 0, co: 'x', hull: 'drifter',
                  hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1 })] });
-    const S = () => settingsLayout(innerWidth, innerHeight);
+    const S = menuNow;
     const hitSignOut = () => {
       evt('keydown', { key: 'Escape' }); tick(20);           // nothing open: opens the menu
       const a = S().actions.find(x => x.key === 'signout');
@@ -2368,6 +2403,189 @@ const dismiss = () => {
       dismiss(); frame(t += 16); frames++;
       dismiss(); frame(t += 16); frames++;
       performance.now = realNow3;
+    }
+  }
+
+  // Several pilots in one browser, switched from the menu.
+  //
+  // AND A SWITCH IS AN EXIT. Signing out is a five-second stand-down cancelled by
+  // anything shooting at you, and every other way out of a sector was brought into
+  // line with it — the Recall Beacon, entering a claim, entering a duel. A switch
+  // that took effect on the click would be the widest hole of the lot: you are
+  // being shot, you press Escape, you pick another pilot, and your ship is off the
+  // board with its hold intact. So it is the SAME timer, not a second one, and
+  // making a new pilot is the same act with a blank token at the end of it.
+  {
+    dismiss();
+    const realNow4 = performance.now;
+    let c4 = realNow4.call(performance);
+    performance.now = () => c4;
+    const tick = ms => { c4 += ms; frame(t += ms); frames++; };
+    const alone = () => feed({ t: 's', ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0,
+      charge: 0, co: 'm', hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 })] });
+    const hunted = () => feed({ t: 's', ships: [
+      packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+                 hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2 }),
+      packShip({ id: 1e6, x: 6200, y: 4100, heading: 0, charge: 0, co: 'x', hull: 'drifter',
+                 hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1 })] });
+    // A pilot arrives the only way one ever does: the server welcomes a token.
+    // Four different tokens is four pilots in the roster, which is how a browser
+    // gets a list at all — there is no other way in, and that is the point.
+    const asPilot = (token, name, co, hull) => feed({ t: 'welcome', id: 1, token, name, co,
+      map: 'm1', hull, fit: { weapon: ['emitter1'], generator: [], tech: [] }, gear: {},
+      hulls: ['hauler', hull], credits: 0, drones: [], xp: 0, formation: 'line',
+      formations: ['line'], ammo: {}, using: {}, armed: {} });
+    // Open the menu the way a player does — from nothing, with Escape. A click on
+    // bare space first, because Escape on an open panel CLOSES it and this block
+    // must not depend on which way that coin landed.
+    const hitBerth = pick => {
+      dismiss(); tick(20);
+      evt('keydown', { key: 'Escape' }); tick(20);
+      const b = pick(menuNow().berths);
+      if (b) { click(b.r); evt('pointerup', {}); tick(20); }
+      return b;
+    };
+    const LONG = 'W'.repeat(NAME_MAX);
+    // Signed in one at a time until the roster is as full as this step wants. The
+    // harness has welcomed pilots before now and the roster is exactly the browser
+    // remembering that, so the count is read back rather than assumed.
+    const SPARE = [['pilot-a', LONG, 'm', 'bulwark'], ['pilot-b', 'Beta', 'h', 'kestrel'],
+                   ['pilot-c', 'Gamma', 'k', 'hauler'], ['pilot-d', 'Delta', 'm', 'vanguard']];
+    let nextSpare = 0;
+    const fillTo = n => { while (rosterNow().length < n && nextSpare < SPARE.length)
+                            { asPilot(...SPARE[nextSpare++]); tick(20); } };
+    // A real `/reset all` reloads the page, and the reload is what makes the
+    // fallback pilot the one being flown. location.reload is a no-op in here, so
+    // stand in for it: welcome the token the client just switched itself to.
+    const relogin = () => { const p = rosterNow()[0];
+                            if (p) { asPilot(p.token, p.name, p.co || 'm', p.hull || 'hauler'); tick(20); } };
+    try {
+      // `/reset all` deletes ONE account, and this empties the browser out with
+      // it — which is both the setup for the counts below and a claim of its own.
+      // Before pilots were a list the client answered a wipe by dropping its
+      // token outright; with a roster that would have signed you out of
+      // characters you still own and left the menu offering berths the server has
+      // never heard of.
+      let guard = 0;
+      while (rosterNow().length && guard++ < 2 * MAX_PILOTS) {
+        const was = rosterNow().length, mine = store.get(TOK);
+        feed({ t: 'reset' }); tick(20);
+        const left = rosterNow();
+        if (left.some(p => p.token === mine)) errs.push('a wiped account was still offered in the menu');
+        if (left.length !== was - 1) errs.push(`wiping one of ${was} pilots left ${left.length}`);
+        if (left.length && store.get(TOK) !== left[0].token)
+          errs.push('wiping an account did not fall back to the pilot flown most recently');
+        if (!left.length && store.get(TOK) !== undefined)
+          errs.push('wiping the last account kept a token instead of going to the join form');
+        relogin();
+      }
+      if (rosterNow().length) errs.push(`the browser would not empty: ${rosterNow().length} pilots left`);
+      else console.log('reset: /reset all forgets one pilot and falls back to the last one flown');
+
+      fillTo(MAX_PILOTS - 1);
+      if (rosterNow().length !== MAX_PILOTS - 1)
+        errs.push(`signing in reached ${rosterNow().length} pilots, not ${MAX_PILOTS - 1}`);
+
+      // One berth short of the cap: the spare one offers a new pilot, and taking
+      // it stands the ship down exactly as signing out does.
+      dismiss(); tick(20); evt('keydown', { key: 'Escape' }); tick(20);
+      for (const b of menuNow().berths) { hoverAt(b.r); tick(16); }
+      hoverAt({ x: 4, y: 4, w: 2, h: 2 });                    // and off them again
+      trace = []; tick(20);
+      const menu = trace; trace = null;
+      const L3 = menuNow(), held = rosterNow().length;
+      if (L3.berths.length !== held)
+        errs.push(`${held} pilots laid out ${L3.berths.length} berths, not ${held}`);
+      if (L3.berths.at(-1).kind !== 'new') errs.push('room for another pilot and no way to make one');
+      if (L3.berths.some(b => b.token === store.get(TOK)))
+        errs.push('the menu offered to switch to the pilot already being flown');
+      // Every parked pilot is drawn by NAME and by what they fly. A row of bare
+      // tokens is not a menu, and a name that fits at 1600x900 and not at 820x560
+      // is the reason the chip is measured at the longest handle the form allows.
+      for (const b of L3.berths.filter(x => x.kind === 'pilot')) {
+        if (!menu.some(c => c.startsWith(`fillText ${b.name} `)))
+          errs.push(`a parked pilot (${b.name}) was not named in the menu`);
+        if (!menu.some(c => c.startsWith(`fillText ${COMPANIES[b.co].tag} \u00b7 L${b.level} \u00b7 ${HULLS[b.hull].name} `)))
+          errs.push(`the menu row for ${b.name} did not say their side, rank and hull`);
+      }
+      if (!menu.some(c => c.startsWith('fillText + NEW PILOT ')))
+        errs.push('the empty berth did not offer a new pilot');
+
+      alone(); tick(20_000);                                  // let the mood hold lapse
+      hitBerth(bs => bs.find(x => x.kind === 'new'));
+      trace = []; tick(1000);
+      const making = trace; trace = null;
+      if (!making.some(c => /^fillText NEW PILOT /.test(c)))
+        errs.push('making a new pilot skipped the stand-down and went straight to the form');
+      dismiss(); tick(12_000);
+      if (socks[0].readyState !== 1) errs.push('a click during a new-pilot stand-down did not cancel it');
+
+      // One more fills the roster, and a full roster says so and says how to free
+      // a berth — a button that had simply vanished would be the silent refusal.
+      fillTo(MAX_PILOTS);
+      dismiss(); tick(20); evt('keydown', { key: 'Escape' }); tick(20);
+      trace = []; tick(20);
+      const full = trace; trace = null;
+      const L4 = menuNow();
+      if (rosterNow().length !== MAX_PILOTS)
+        errs.push(`${MAX_PILOTS} pilots signed in and the browser held ${rosterNow().length}`);
+      if (L4.berths.at(-1).kind !== 'full') errs.push('a full roster still offered a NEW PILOT berth');
+      if (!full.some(c => /^fillText ROSTER FULL /.test(c)))
+        errs.push('a full roster did not say so');
+      if (!full.some(c => c.startsWith('fillText /reset all frees a berth ')))
+        errs.push('a full roster did not say how to free a berth');
+      click(L4.berths.at(-1).r); evt('pointerup', {});
+      trace = []; tick(1000);
+      const after = trace; trace = null;
+      if (after.some(c => /^fillText (SWITCHING TO|NEW PILOT) /.test(c)))
+        errs.push('clicking a full roster started a switch anyway');
+
+      // Under fire it refuses outright, exactly as signing out does.
+      const flying = store.get(TOK);
+      hunted(); tick(20);
+      hitBerth(bs => bs.find(x => x.kind === 'pilot'));
+      tick(11_000);
+      if (socks[0].readyState !== 1) errs.push('switching pilots under fire put the ship down anyway');
+      if (store.get(TOK) !== flying)
+        errs.push(`switching under fire changed the browser to ${store.get(TOK)} anyway`);
+
+      // Alone it counts down under its own name, and a click changes your mind.
+      alone(); tick(20_000);
+      const picked = hitBerth(bs => bs.find(x => x.kind === 'pilot'));
+      trace = []; tick(1000);
+      const cd = trace; trace = null;
+      if (!cd.some(c => c.startsWith(`fillText SWITCHING TO ${picked.name.toUpperCase()} `)))
+        errs.push('picking another pilot did not stand the ship down first, by name');
+      if (store.get(TOK) !== flying)
+        errs.push('the switch took effect before the stand-down had finished');
+      dismiss(); tick(12_000);
+      if (socks[0].readyState !== 1) errs.push('a click during a switch did not cancel it');
+      if (store.get(TOK) !== flying) errs.push('a cancelled switch changed pilot anyway');
+
+      // And the panel it all lives in fits every window the game ships for. The
+      // cap is derived from the shortest of them for exactly this reason.
+      for (const [w, h] of SIZES) {
+        const P = settingsLayout(w, h, rosterNow().slice(1));
+        if (P.panel.y < 0 || P.panel.y + P.panel.h > h)
+          errs.push(`the menu holding ${MAX_PILOTS} pilots runs off a ${w}x${h} window`);
+        if (P.dropped) errs.push(`${P.dropped} berths did not fit at ${w}x${h}`);
+      }
+      // Shorter than anything shipped, the rows go rather than the panel running
+      // off the screen — and the heading says how many went, the way the hotkey
+      // strip drops the hints it cannot fit.
+      const cramped = settingsLayout(820, 524, rosterNow().slice(1));
+      if (!cramped.dropped) errs.push('a 524px window drew every berth and overflowed');
+      if (cramped.panel.y < 0) errs.push('a 524px window pushed the menu off the top of the screen');
+      if (!cramped.sections.some(x => x.note))
+        errs.push('berths were dropped and the panel said nothing about it');
+
+      console.log(`pilots: ${MAX_PILOTS} berths — the most the menu holds at ${SIZES.at(-1).join('x')} — ` +
+        `switching to ${picked?.name ?? '?'} takes the same ${FOLD_SECS}s stand-down as signing out, ` +
+        'is refused under fire, and a full roster says how to free a berth');
+    } finally {
+      dismiss(); frame(t += 16); frames++;
+      dismiss(); frame(t += 16); frames++;
+      performance.now = realNow4;
     }
   }
 
@@ -3110,13 +3328,23 @@ const dismiss = () => {
     let reloaded = false;
     globalThis.location.reload = () => { reloaded = true; };
     sent.length = 0;
+    const held = JSON.stringify(rosterNow()), flying = store.get(TOK);
     performance.now = () => perf.call(performance) + 31 * 60 * 1000;   // half an hour later
     frame(t += 16); frames++;
     evt('pointerdown', { clientX: 400, clientY: 400 });
     performance.now = perf;
     if (!reloaded) errs.push('a click after signing out did not bring the player back');
     else if (sent.length) errs.push(`a signed-out client still sent ${sent.map(m => m.t)}`);
-    else console.log('idle: signs itself out after 30 minutes, and a click reconnects');
+    // The half hour is a session ending, not a pilot being given away. It has
+    // never touched the token and it must not touch the roster either: the click
+    // that brings you back has to bring back the pilot you left, with the other
+    // three still parked behind them.
+    else if (store.get(TOK) !== flying)
+      errs.push(`idling out changed the browser from ${flying} to ${store.get(TOK)}`);
+    else if (JSON.stringify(rosterNow()) !== held)
+      errs.push('idling out rewrote the roster');
+    else console.log(`idle: signs itself out after 30 minutes with all ${rosterNow().length} pilots ` +
+                     'still parked, and a click reconnects the one you left');
     evt('keydown', { key: 'q' });                 // any input resets the clock
     frame(t += 16); frames++;
   }

@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.86';
+export const VERSION = '0.87';
 
 export const PATCHES = [
+  { v: '0.87', notes: [
+    'One browser, up to four pilots. The menu lists them; pick one and you fly it',
+    'NEW PILOT starts a second character from nothing — a starter ship among friends',
+    'Switching is the same five-second stand-down as signing out, and gunfire stops it',
+    'A parked pilot keeps everything: ship, cargo, credits, rank, and their sector',
+  ] },
   { v: '0.86', notes: [
     'Nullpoint is no longer empty. THE ANTIPHON holds the middle of the map',
     'Eight armour plates: hit one and it hardens, then answers down the line you shot from',

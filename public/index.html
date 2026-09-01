@@ -41,7 +41,7 @@ import { chartLayout } from '/shared/chart.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, sellsAt,
          statStrip, STAT_KEYS } from '/shared/hangar.js';
 import { tipFor, modSummary } from '/shared/tooltip.js';
-import { GAME, TOKEN_KEY, OLD_TOKEN_KEYS } from '/shared/brand.js';
+import { GAME, TOKEN_KEY } from '/shared/brand.js';
 import { outlineFor, accentFor, canopyFor } from '/shared/silhouette.js';
 import { VERSION, PATCHES, patchIcon, patchPanel, wrapNote,
          PAD as PATCH_PAD, HEAD_H as PATCH_HEAD } from '/shared/patch.js';
@@ -69,11 +69,14 @@ import { techSet, has as hasTech, seesClear, SPENDS, SHEAR_GRACE } from '/shared
 import { boltWidth } from '/shared/combat.js';
 import { poolOf, moodFor, drawNext, resolveMood, levelStep,
          CALM, CHASE, COMBAT, QUIET } from '/shared/music.js';
-import { settingsLayout, valueAt } from '/shared/settings.js';
+import { settingsLayout, valueAt, MAX_PILOTS } from '/shared/settings.js';
+import { readActive, setActive, readRoster, writeRoster, entry,
+         remember, forget, parked } from '/shared/roster.js';
 import { vitalsPanel, shieldCountdown, WAIT_PX } from '/shared/vitals.js';
 import { sampler, push as pushSample, frameLine, pingLine, GRADE } from '/shared/perf.js';
 import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
+import { joinLayout as joinPanel } from '/shared/join.js';
 import { KITS, KIT_KEYS, DEFAULT_KIT, whyNotRepair, KIT_QUIET } from '/shared/repair.js';
 import { DEVICES, DEVICE_KEYS, DEFAULT_DEVICE, devicePrice, whyNotDevice } from '/shared/devices.js';
 import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
@@ -130,17 +133,31 @@ let berthOpen = false;                    // the pirates' offer of a bay
 
 let myId = null, myCo = 'm', myName = '', mapId = 'm1', status = 'connecting…';
 document.title = GAME;
-// Carry a pilot across a rename rather than orphaning them under the old key.
-const readToken = () => {
-  try {
-    const cur = localStorage.getItem(TOKEN_KEY);
-    if (cur) return cur;
-    for (const k of OLD_TOKEN_KEYS) {
-      const old = localStorage.getItem(k);
-      if (old) { localStorage.setItem(TOKEN_KEY, old); localStorage.removeItem(k); return old; }
-    }
-  } catch {}
-  return '';
+// Who is flying, and who else this browser holds. The rules — and every one of
+// the try/catch wrappers, because local storage throws in a private window — are
+// in shared/roster.js so they can be tested without a browser.
+//
+// `myToken` is not read again after this line: the server hands the authoritative
+// one back on welcome, and for a pilot who has never joined it is the empty
+// string, which is exactly what asks the server for the join form.
+let myToken = readActive(localStorage);
+let roster = readRoster(localStorage);
+// The pilots you are not, which is what the menu draws as berths. Recomputed
+// rather than kept, because `myToken` changes on welcome and a stale copy would
+// list you as somebody you could switch to.
+const others = () => parked(roster, myToken);
+// Snapshot the pilot being flown into the roster. Called on welcome, on a refit
+// (the hull is on the row) and once more on the way out, so a parked pilot's row
+// says what they were actually flying rather than what they flew the first time
+// this browser saw them.
+const notePilot = () => {
+  if (!myToken) return;
+  // levelFor(myXp) rather than myRank: `welcome` sets myXp and myRank does not
+  // arrive until the next snapshot, so a row written on welcome would have been
+  // stamped with the rank of the pilot you just put down.
+  roster = remember(roster, entry(myToken, { name: myName, co: myCo, hull: myHull,
+                                             level: levelFor(myXp).level }));
+  writeRoster(localStorage, roster);
 };
 let myHull = 'hauler', myFit = emptyFit(), myGear = {}, myHulls = ['hauler'];
 let power = { to: null, cap: 100, lv: { thrusters: 0, weapons: 0, shields: 0 } };
@@ -1225,7 +1242,7 @@ const cam = { x: 0, y: 0 };
 // resolve the account before the first frame, with no handshake round trip.
 // wss when the page came over https, or the browser refuses it as mixed content.
 const WS_PROTO = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(`${WS_PROTO}//${location.host}/?t=${encodeURIComponent(readToken())}`);
+const ws = new WebSocket(`${WS_PROTO}//${location.host}/?t=${encodeURIComponent(myToken)}`);
 const send = o => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
 ws.onopen  = () => status = 'online';
 ws.onclose = () => status = 'disconnected';
@@ -1284,11 +1301,16 @@ ws.onmessage = e => {
     // Written and then read back. A storage write that silently fails loses the
     // pilot on the next reload, and the only moment we can tell is this one.
     if (m.token) {
+      myToken = m.token;
       let kept = null;
       try { localStorage.setItem(TOKEN_KEY, m.token); kept = localStorage.getItem(TOKEN_KEY); } catch {}
       if (kept !== m.token)
         say('This browser will not remember you — private window, or storage is blocked', '#e0a53f');
     }
+    // And into the roster, so this pilot is somewhere to come back to once you
+    // are flying another one. A browser that has only ever had one pilot gets a
+    // one-row roster here and never notices the difference.
+    notePilot();
     return;
   }
   if (m.t === 'bumped') { status = 'signed in from another tab'; return; }
@@ -1310,10 +1332,20 @@ ws.onmessage = e => {
     myBerths = m.berths ?? myBerths; if ('foldTo' in m) myFoldTo = m.foldTo;
     if (typeof m.credits === 'number') credits = m.credits;
     refreshTech();
+    notePilot();                                  // the hull on your menu row just changed
     return;
   }
   if (m.t === 'reset') {                          // the account is gone; become a stranger
-    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    // `/reset all` deletes ONE account, not the browser. Before this the client
+    // dropped its token and reloaded, which with a roster would have signed the
+    // pilot out of a character they still own — the token is gone, the row would
+    // have stayed, and the menu would have offered a berth the server has never
+    // heard of. Forget the row with the account, and fall back to the pilot you
+    // flew most recently; with nobody left that is the empty token, which is the
+    // join form, which is what this always did.
+    roster = forget(roster, myToken);
+    writeRoster(localStorage, roster);
+    setActive(localStorage, roster[0]?.token ?? '');
     location.reload();
     return;
   }
@@ -3067,28 +3099,45 @@ function drawInventory() {
 // name is what everyone else sees on your hull, so it is worth asking for.
 let signup = null, joinName = '', joinCo = null, joinSaid = '';
 
-function joinLayout() {
-  const w = Math.min(560, VIEW_W - 40), h = 380;
-  const x = Math.round((VIEW_W - w) / 2), y = Math.round((VIEW_H - h) / 2);
-  const cards = (signup?.companies ?? []);
-  const cw = (w - 40 - (cards.length - 1) * 12) / Math.max(1, cards.length);
-  return {
-    panel: { x, y, w, h },
-    field: { x: x + 20, y: y + 74, w: w - 40, h: 42 },
-    cards: cards.map((c, i) => ({ ...c, r: { x: x + 20 + i * (cw + 12), y: y + 168, w: cw, h: 104 } })),
-    go: { x: x + 20, y: y + h - 66, w: w - 40, h: 44 },
-  };
-}
+// A pilot who came here to make a SECOND character has a way back out. Without
+// it, picking NEW PILOT was a one-way door: the token is blank, so the only
+// route back to the ship you were flying a second ago is a form you have to
+// finish first. The panel grows by the button rather than the button being
+// squeezed in, and a browser with an empty roster gets exactly the form it
+// always had.
+//
+// `others()` and not the top of the roster: the token this connection arrived
+// with is in the list too when an account has been deleted out from under a
+// browser, and offering to go back to it lands on this same form again — a loop
+// with a button on it.
+const backTo = () => (signup ? others()[0] ?? null : null);
+
+const joinLayout = () => joinPanel(VIEW_W, VIEW_H, signup?.companies ?? [], backTo());
 
 function joinClick(v) {
   const L = joinLayout();
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
   for (const c of L.cards) if (inside(c.r)) { joinCo = c.key; joinSaid = ''; return; }
+  if (L.back && inside(L.back.r)) return backOut();
   if (inside(L.go)) return tryJoin();
 }
 
+// Back to the pilot you left. No stand-down: you are in the lobby, there is no
+// ship of yours in any sector and nothing to escape from — the five seconds were
+// paid on the way in here.
+function backOut() {
+  const b = backTo();
+  if (!b) return;
+  setActive(localStorage, b.token);
+  location.reload();
+}
+
 function tryJoin() {
-  const why = nameProblem(joinName);
+  // Your own other pilots go in as `mine`, which the server cannot know and this
+  // form can: names are unique across every account, so the collision a second
+  // character is most likely to hit is with the first one, and "someone already
+  // flies under that name" is a maddening thing to read about yourself.
+  const why = nameProblem(joinName, [], others().map(p => p.name));
   if (why) { joinSaid = why; return; }
   if (!joinCo) { joinSaid = 'pick a side'; return; }
   send({ t: 'join', name: cleanName(joinName), co: joinCo });
@@ -3097,6 +3146,7 @@ function tryJoin() {
 // The name field takes keys directly — there is no DOM input on this canvas.
 function joinKey(e) {
   if (e.key === 'Enter') { e.preventDefault(); return tryJoin(); }
+  if (e.key === 'Escape' && backTo()) { e.preventDefault(); return backOut(); }
   if (e.key === 'Backspace') { e.preventDefault(); joinName = joinName.slice(0, -1); joinSaid = ''; return; }
   if (e.key === 'Tab') {
     e.preventDefault();                            // Tab walks the companies
@@ -3159,7 +3209,7 @@ function drawJoin(now) {
     g.textAlign = 'left';
   }
 
-  const b = L.go, ready = !nameProblem(joinName) && joinCo;
+  const b = L.go, ready = !nameProblem(joinName, [], others().map(p => p.name)) && joinCo;
   g.fillStyle = ready ? 'rgba(125,224,138,0.16)' : 'rgba(255,255,255,0.03)';
   g.fillRect(b.x, b.y, b.w, b.h);
   g.strokeStyle = ready ? '#7de08a' : '#2c3d55'; g.lineWidth = ready ? 1.8 : 1;
@@ -3170,6 +3220,15 @@ function drawJoin(now) {
   if (joinSaid) {
     g.font = '11px ui-monospace, monospace'; g.fillStyle = '#e05a5a';
     g.fillText(joinSaid, P.x + P.w / 2, b.y - 12);
+  }
+  if (L.back) {
+    const r = L.back.r, hot = over(r);
+    g.fillStyle = hot ? 'rgba(122,180,240,0.14)' : 'rgba(255,255,255,0.03)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = hot ? '#8ab4e6' : '#2c3d55'; g.lineWidth = 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    g.font = '11px ui-monospace, monospace'; g.fillStyle = '#8ab4e6';
+    g.fillText(`ESC  BACK TO ${L.back.pilot.name || 'YOUR PILOT'}`, r.x + r.w / 2, r.y + 21);
   }
   g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
 }
@@ -3200,13 +3259,19 @@ function stirMusic(now) {
   setMood(resolveMood(moodHeld.mood, hasMood));   // a mood with no folder borrows one
 }
 
+// ONE call site for the menu's geometry. The panel resizes with the roster, so a
+// draw pass and a hit-test pass built from different pilot lists would be a chip
+// you can see and cannot click — the bug shared/settings.js exists to prevent,
+// one argument further along than it used to be.
+const menuLayout = () => settingsLayout(VIEW_W, VIEW_H, others());
+
 const busOn = key => key === 'master' ? audioOn() : key === 'sfx' ? sfxOnly() : musicOnly();
 const busVol = key => key === 'sfx' ? sfxVolume() : musicVolume();
 const setVol = (key, v) => key === 'sfx' ? setSfxVolume(v) : setMusicVolume(v);
 const flipBus = key => key === 'master' ? toggleAudio() : key === 'sfx' ? toggleSfx() : toggleMusic();
 
 function settingsClick(v) {
-  const L = settingsLayout(VIEW_W, VIEW_H);
+  const L = menuLayout();
   const inside = r => v.x > r.x && v.x < r.x + r.w && v.y > r.y && v.y < r.y + r.h;
   if (!inside(L.panel)) { setOpen = false; return; }
   if (inside(L.skip)) return nextTrack();
@@ -3221,47 +3286,102 @@ function settingsClick(v) {
       return;
     }
   }
+  for (const b of L.berths) if (inside(b.r)) {
+    // A full roster refuses, and says which four and how to free one. The chip
+    // already reads ROSTER FULL, so this is the sentence rather than the news.
+    // Closed first, then said: the notice is drawn UNDER the menu's own wash, so
+    // a refusal spoken over an open panel is a refusal nobody reads. Signing out
+    // under fire already works this way and this is the same gesture.
+    if (b.kind === 'full') {
+      setOpen = false;
+      return say(`${MAX_PILOTS} pilots is all this browser holds — /reset all frees a berth`, '#e0a53f');
+    }
+    setOpen = false;
+    return askToLeave(b.kind === 'new' ? { kind: 'new' }
+                                       : { kind: 'pilot', token: b.token, name: b.name });
+  }
   for (const a of L.actions) if (inside(a.r)) {
-    if (a.key === 'signout') { setOpen = false; askToSignOut(); }
+    if (a.key === 'signout') { setOpen = false; askToLeave(null); }
     return;
   }
 }
 
-// Signing out is a stand-down, not a switch. Something shooting at you cancels
-// it, and so does changing your mind — otherwise a misclick puts your ship on
-// the floor of a sector with a drifter on it.
+// Leaving is a stand-down, not a switch. Something shooting at you cancels it,
+// and so does changing your mind — otherwise a misclick puts your ship on the
+// floor of a sector with a drifter on it.
 //
 // FOLD_SECS rather than a ten of its own, because leaving is leaving: a Recall
 // Beacon, a claim, a duel and this are all "five seconds, and anything that
 // lands on you calls it off". It was ten, which made signing out the slowest
 // way out of a sector by twice, for no reason anybody could have stated.
+//
+// AND SWITCHING PILOTS IS LEAVING. This is the one timer, and every exit in the
+// game goes through it deliberately: a switch that took effect the instant you
+// clicked it would be the widest free escape in the game — you are being shot,
+// you press Escape, you pick another pilot, and your ship is off the board with
+// its hold intact. Claim entry was exactly that hole and it was closed this
+// morning; this is not going to open a second one. Making a NEW pilot is the
+// same act with a blank token at the end of it, and gets the same five seconds
+// for the same reason.
 const SIGNOUT_WAIT = FOLD_SECS * 1000;
 let leavingAt = 0;
+// Who to become once the clock runs out. null puts the ship down and stays put —
+// which is what SIGN OUT has always meant. { kind: 'pilot', token } picks another
+// one up; { kind: 'new' } goes to the join form as a stranger.
+let leavingTo = null;
 
 const leaving = () => leavingAt > 0;
 const cancelLeaving = why => {
   if (!leaving()) return;
-  leavingAt = 0;
+  leavingAt = 0; leavingTo = null;
   if (why) say(why, '#e0a53f');
 };
 
-function askToSignOut() {
+// What the countdown is FOR, in the two places that have to agree about it: the
+// panel that draws it and the line that says it was called off.
+const LEAVE_WORDS = {
+  out:   { title: () => 'SIGNING OUT', said: 'Sign-out' },
+  // Named, because the berths are chips two to a line and the one you meant is
+  // next to one you did not — a countdown that only said SWITCHING PILOT would
+  // leave you cancelling to find out which.
+  pilot: { title: to => `SWITCHING TO ${(to.name || 'YOUR OTHER PILOT').toUpperCase()}`,
+           said: 'Switch' },
+  new:   { title: () => 'NEW PILOT', said: 'New pilot' },
+};
+const leaveWords = () => LEAVE_WORDS[leavingTo?.kind ?? 'out'] ?? LEAVE_WORDS.out;
+
+function askToLeave(to) {
   if (signedOff || leaving()) return;
   const st = fightState();
-  if (st.fighting || st.hunted) return say('Not while something is shooting at you', '#e0a53f');
+  if (st.fighting || st.hunted)
+    return say(to ? 'Not while something is shooting at you — finish the fight first'
+                  : 'Not while something is shooting at you', '#e0a53f');
+  leavingTo = to;
   leavingAt = performance.now() + SIGNOUT_WAIT;
 }
 
-// Releases the sector and the socket. The token stays in local storage, so this
-// is putting the ship down rather than giving it away — a click brings you back
-// to the same pilot, which is what the idle timeout already did quietly.
+// Releases the sector and the socket. The token stays in local storage, so a
+// plain sign-out is putting the ship down rather than giving it away — a click
+// brings you back to the same pilot, which is what the idle timeout already did
+// quietly.
+//
+// A switch is the same teardown and then a PAGE LOAD. Re-pointing the socket in
+// place would mean hand-resetting sixty module-level variables — ships, gear,
+// credits, the escort, the open panels, the mood hold — and every one missed is
+// a frame of somebody else's ship drawn with your name on it. The reload path
+// already exists and is already trusted: it is what `/reset all` does.
 function signOut() {
   if (signedOff) return;
   signedOff = true;
-  leavingAt = 0;
+  const to = leavingTo;
+  leavingAt = 0; leavingTo = null;
+  notePilot();                                  // the row you are parking, as it is now
   stopMusic();                                  // silence, not a score over a dead screen
   try { ws.close(4002, 'signed out'); } catch {}
-  status = 'signed out';
+  status = to ? 'switching pilot' : 'signed out';
+  if (!to) return;
+  setActive(localStorage, to.kind === 'new' ? '' : to.token);
+  location.reload();
 }
 
 // Counts down, and gives up the moment a fight starts. Deliberately on
@@ -3270,7 +3390,8 @@ function signOut() {
 function stepSignOut() {
   if (!leaving()) return;
   const st = fightState();
-  if (st.fighting || st.hunted) return cancelLeaving('Sign-out cancelled — you are under fire');
+  if (st.fighting || st.hunted)
+    return cancelLeaving(`${leaveWords().said} cancelled — you are under fire`);
   if (performance.now() >= leavingAt) signOut();
 }
 
@@ -3283,7 +3404,7 @@ function drawLeaving() {
   g.strokeStyle = '#e0a53f'; g.lineWidth = 1.4; g.strokeRect(x + .5, y + .5, w - 1, h - 1);
   g.textAlign = 'center';
   g.font = '12px ui-monospace, monospace'; g.fillStyle = '#8ea3bd';
-  g.fillText('SIGNING OUT', x + w / 2, y + 26);
+  g.fillText(leaveWords().title(leavingTo ?? {}), x + w / 2, y + 26);
   g.font = '34px ui-monospace, monospace'; g.fillStyle = '#e0a53f';
   g.fillText(String(left), x + w / 2, y + 62);
   g.font = '11px ui-monospace, monospace'; g.fillStyle = '#5b6b85';
@@ -3296,12 +3417,12 @@ function drawLeaving() {
 // A fader you can only click once is a fader you fight. Held, it tracks.
 function settingsDrag(v) {
   if (!dragging) return;
-  const row = settingsLayout(VIEW_W, VIEW_H).rows.find(r => r.key === dragging);
+  const row = menuLayout().rows.find(r => r.key === dragging);
   if (row?.track) setVol(dragging, valueAt(row.track, v.x));
 }
 
 function drawSettings() {
-  const L = settingsLayout(VIEW_W, VIEW_H), P = L.panel;
+  const L = menuLayout(), P = L.panel;
   const over = r => hover && hover.x > r.x && hover.x < r.x + r.w && hover.y > r.y && hover.y < r.y + r.h;
 
   g.fillStyle = 'rgba(3,5,9,0.86)'; g.fillRect(0, 0, VIEW_W, VIEW_H);
@@ -3320,8 +3441,19 @@ function drawSettings() {
     g.font = '10px ui-monospace, monospace'; g.fillStyle = '#3d4757';
     g.fillText(sec.label, P.x + 20, sec.y);
     const tw = g.measureText(sec.label).width;
+    // A heading can carry a note on its right, and one does: the roster says how
+    // many berths this window was too short to draw. Rows that quietly go
+    // missing are the silent refusal; a count is not. The rule between them
+    // stops short of the note rather than running under it.
+    let right = P.x + P.w - 20;
+    if (sec.note) {
+      g.fillStyle = '#e0a53f'; g.textAlign = 'right';
+      g.fillText(sec.note, right, sec.y);
+      right -= g.measureText(sec.note).width + 8;
+      g.textAlign = 'left'; g.fillStyle = '#3d4757';
+    }
     g.strokeStyle = 'rgba(61,71,87,0.45)'; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(P.x + 28 + tw, sec.y - 4); g.lineTo(P.x + P.w - 20, sec.y - 4); g.stroke();
+    g.beginPath(); g.moveTo(P.x + 28 + tw, sec.y - 4); g.lineTo(right, sec.y - 4); g.stroke();
   }
 
   // Frame time and ping. Two lines because they are two questions: one is whether
@@ -3384,6 +3516,29 @@ function drawSettings() {
     g.fillStyle = '#8ab4e6'; g.textAlign = 'center';
     g.fillText('SKIP  N', b.x + b.w / 2, b.y + 17);
     g.textAlign = 'left';
+  }
+
+  // The roster. One chip a pilot, two to a line — see shared/settings.js for why
+  // the shape is chips and not rows, and where the cap of four comes from.
+  for (const b of L.berths) {
+    const r = b.r, hot = over(r), full = b.kind === 'full';
+    const edge = full ? '#3d4757' : b.kind === 'new' ? '#7de08a' : (COMPANIES[b.co]?.color ?? '#8ab4e6');
+    g.fillStyle = hot && !full ? 'rgba(122,180,240,0.14)' : 'rgba(255,255,255,0.03)';
+    g.fillRect(r.x, r.y, r.w, r.h);
+    g.strokeStyle = full ? '#3d4757' : edge; g.lineWidth = hot && !full ? 1.6 : 1;
+    g.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1);
+    // Two lines: who, and what they are. A row of bare tokens is not a menu.
+    const top = b.kind === 'pilot' ? (b.name || 'unnamed')
+              : b.kind === 'new' ? '+ NEW PILOT' : 'ROSTER FULL';
+    const sub = b.kind === 'pilot'
+      ? `${COMPANIES[b.co]?.tag ?? '???'} · L${b.level} · ${HULLS[b.hull]?.name ?? 'Hauler'}`
+      : b.kind === 'new' ? 'start again from nothing' : '/reset all frees a berth';
+    g.font = '11px ui-monospace, monospace';
+    g.fillStyle = full ? '#4a5568' : b.kind === 'new' ? '#7de08a' : '#cfe4ff';
+    g.fillText(top, r.x + 8, r.y + 11);
+    g.font = '9px ui-monospace, monospace';
+    g.fillStyle = full ? '#4a5568' : b.kind === 'new' ? '#4d7a55' : edge;
+    g.fillText(sub, r.x + 8, r.y + 22);
   }
 
   for (const a of L.actions) {
