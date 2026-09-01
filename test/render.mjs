@@ -27,7 +27,8 @@ import { filePanel, filedIn, dossierOf } from '../shared/threats.js';
 import { QUESTS, QUEST_KEYS, needFor, questLine } from '../shared/quests.js';
 import { labPanel, LAB_PRICE, MODULES } from '../shared/research.js';
 import { arenaId, mapOf } from '../shared/maps.js';
-import { countOf, mission, bar as missionBar, ARENA_MODULES } from '../shared/arena.js';
+import { countOf, mission, bar as missionBar, ARENA_MODULES,
+         SALVAGE_MODULES, salvageState } from '../shared/arena.js';
 import { DUEL_KEY, startsAt, duelText } from '../shared/duel.js';
 import { packLab } from '../shared/net.js';
 import { havenKind, HAVEN_R } from '../shared/sim.js';
@@ -1501,6 +1502,59 @@ const dismiss = () => {
       errs.push(`four seconds after a sale the HUD was still showing the receipt: "${later}"`);
     else console.log('research: a sale flashes the figure and then counts down to the next one');
   }
+
+  // THE SECOND TREE ROW, which is the first one in the game that is not for sale.
+  //
+  // Driven rather than drawn for the reason the block above is: a row that says
+  // STRIP THE WRECK and then sends a `build` is a purchase the server will refuse,
+  // and it would look identical on screen. The panel is reopened with a bare-space
+  // dismiss first because R is a TOGGLE and this file has been caught by that.
+  dismiss();
+  const svKey = SALVAGE_MODULES[0];
+  // An EMPTY hold, because you go to a wreck with nothing — the same rule a claim
+  // keeps, and with the platinum still aboard the row correctly refuses and this
+  // block would be testing the refusal instead of the offer.
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 20_000_000, docked: false,
+         labs: [bare], lab: { mods: 0, income: 0 }, claims: [], salvage: [], hold: {}, cap: 300 });
+  evt('keydown', { key: 'r' }); frame(t += 16); frames++;
+  click(strip.tabs.find(x => x.key === 'tree').r);
+  trace = []; frame(t += 16); frames++;
+  const svPage = trace; trace = null;
+  const svRow = L3.rows[labPanel(innerWidth, innerHeight, 'tree').rows.length - 1];
+  const verb = salvageState(svKey, { salvage: [] }).verb;
+  if (!svPage.some(c => c.includes(MODULES[svKey].name)))
+    errs.push('the TECH TREE never named the row you have to fly for');
+  else if (!svPage.some(c => c.startsWith(`fillText ${verb} `)))
+    errs.push(`a row that is earned rather than bought did not say "${verb}"`);
+  else if (svPage.some(c => /^fillText 0 (cr|CR)/.test(c)))
+    errs.push('a row with no price quoted one anyway — "0 cr" is a purchase that does not exist');
+  else if (!svPage.some(c => /^fillText \d+ hostiles · /.test(c)))
+    errs.push('the TECH TREE offered a fight without saying how big it is or what it wants');
+  else if (!svPage.some(c => /^fillText full power on the keypress/.test(c)))
+    errs.push('the TECH TREE described the Governor Bypass without saying what it does to MY reactor');
+  else console.log('research: the TECH TREE row that is EARNED says "' + verb + '" — ' +
+    svPage.find(c => /^fillText \d+ hostiles · /.test(c)).replace(/^fillText /, '')
+      .replace(/ [\d.]+ [\d.]+$/, ''));
+
+  sent.length = 0;
+  click(svRow.r); frame(t += 16); frames++;
+  if (sent.find(m => m.t === 'claim')?.key !== svKey)
+    errs.push(`the earned row sent ${JSON.stringify(sent.at(-1))} rather than launching the salvage run`);
+  else console.log('research: and clicking it launches the run instead of spending credits');
+
+  // Stripped: the row is finished, and the station in the ring has grown the part
+  // that says a pilot went and flew for it.
+  const flown = 1 << Object.keys(MODULES).indexOf(svKey);
+  feed({ t: 's', ships: [me(at.x, at.y)], credits: 20_000_000, docked: false,
+         labs: [packLab({ id: 2_000_001, x: at.x, y: at.y, mods: flown, name: 'Vy' }, true)],
+         lab: { mods: flown, income: 0 }, claims: [], salvage: [svKey], hold: load2, cap: 300 });
+  evt('keydown', { key: 'r' }); frame(t += 16); frames++;
+  click(strip.tabs.find(x => x.key === 'tree').r);
+  trace = []; frame(t += 16); frames++;
+  const svDone = trace; trace = null;
+  if (!svDone.some(c => /^fillText RESEARCHED /.test(c)))
+    errs.push('a wreck already stripped still offered the flight');
+  else console.log('research: a stripped wreck reads RESEARCHED — there is nothing left to press');
   dismiss();
 }
 
@@ -1572,6 +1626,59 @@ const dismiss = () => {
   if (a.some(c => /HOSTILES LEFT|CLAIM FREED|FIELD CLEAR/.test(c)))
     errs.push('the mission bar stayed on screen after the station pulled the pilot home');
   else console.log('claim: the bar goes away with the sector — absence is information');
+}
+
+// A SALVAGE RUN, which is the same sector with a different thing in the middle.
+//
+// The claim block above is where the black-screen risk lives and it is unchanged.
+// What is new here is one branch: `map.wreck` instead of `map.rock`. A sector that
+// has neither would draw an empty field with a bar over it and look almost right,
+// which is exactly the kind of bug that only a drawn frame catches.
+{
+  dismiss();
+  const svKey = SALVAGE_MODULES[0];
+  const svId = arenaId('rendertoken', svKey);
+  const hulk = mapOf(svId).wreck;
+  const me = (x, y) => packShip({ id: 1, x, y, heading: 0, charge: 0, co: 'm', hull: 'vanguard',
+    hp: 60, sh: 40, flash: 0, tgt: 0, shot: 0, rk: 0, vis: 2, name: 'Vy' });
+  const foe = (i, x, y) => packShip({ id: 2e6 + i, x, y, heading: 1, charge: 0, co: 'x',
+    hull: i % 2 ? 'bandit' : 'ironhusk', hp: 90, sh: 50, flash: 0, tgt: 1, shot: 60, abl: 70, vis: 1 });
+  feed({ t: 'map', map: svId });
+  const field = { key: svKey, left: 18, total: countOf(svKey), cleared: 0, replay: 0 };
+  feed({ t: 's', ships: [me(hulk.x, hulk.y - 1900), foe(1, hulk.x + 900, hulk.y)],
+         credits: 250_000, docked: false, labs: [], lab: { mods: 0, income: 0 },
+         claims: [], salvage: [], arena: field });
+  trace = []; frame(t += 16); frames++;
+  let a = trace; trace = null;
+  const bar = mission(innerWidth, field);
+  if (!a.some(c => c.startsWith(`fillText ${bar.text} `)))
+    errs.push(`inside a salvage run the mission bar never said "${bar.text}"`);
+  else if (!a.some(c => /^fillText ANCIENT WRECK /.test(c)))
+    errs.push('the hulk the whole fight is about was never drawn');
+  else console.log(`salvage: the sector, the hulk and the bar — "${bar.text}"`);
+
+  // Every panel and every pointer, in a sector with no portals and no rock, because
+  // a branch that reads map.rock without a guard is a black canvas and nothing else.
+  for (const k of ['m', 'm', 'h', 'h', 'i', 'i', 'r', 'r', 'l', 'l', 'Tab', 'x', ' ']) {
+    evt('keydown', { key: k }); frame(t += 16); frames++;
+  }
+  dismiss();
+
+  // Won. A salvage run says something a claim cannot: the module is already fitted.
+  const won = { ...field, left: 0, cleared: 1 };
+  feed({ t: 's', ships: [me(hulk.x, hulk.y - 600)], credits: 250_000, docked: false,
+         labs: [], lab: { mods: 1 << Object.keys(MODULES).indexOf(svKey), income: 0 },
+         claims: [], salvage: [svKey], arena: won });
+  trace = []; frame(t += 16); frames++;
+  a = trace; trace = null;
+  const b3 = mission(innerWidth, won);
+  if (!a.some(c => c.startsWith(`fillText ${b3.text} `)))
+    errs.push(`a stripped wreck never said "${b3.text}"`);
+  else if (!a.some(c => /^fillText THE WRECK IS STRIPPED /.test(c)))
+    errs.push('a stripped wreck was still drawn as an ancient one');
+  else console.log(`salvage: won says the module is aboard — "${b3.text}"`);
+  feed({ t: 'map', map: 'm1' });
+  dismiss();
 }
 
 // A DUEL, which is the first instanced sector that has a portal in it.

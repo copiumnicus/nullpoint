@@ -16,6 +16,10 @@
 
 import { MAPS } from './maps.js';
 import { POCKET_RATE, PIRATE_RATE, pocketValue, holdValue, fmtCredits } from './cargo.js';
+// power.js imports NOTHING, which is what makes this safe: sim.js already pulls in
+// both this file and that one, and an import that went the other way would be the
+// TDZ blow-up shared/aliens.js spends a paragraph warning about.
+import { SPOOL_UP, BYPASS_BROWNOUT } from './power.js';
 
 // --- staking a plot -----------------------------------------------------------
 //
@@ -199,13 +203,13 @@ export const POCKET_PRICE = 10_000_000;
 
 export const MODULES = {
   // --- the mine, which pays for the rest ---
-  mine1: { line: 'mine', tier: 1, name: 'Deep Space Mining Operation', price:    500_000, rate: MINE_RATE,
+  mine1: { line: 'mine', tier: 1, name: 'Deep Space Mining Operation', price:    500_000, rate: MINE_RATE, mission: 'claim',
            blurb: 'Ore shipped from nowhere you have to fly to.',
            does: 'pays while you are away, logged in or not' },
-  mine2: { line: 'mine', tier: 2, name: 'Asteroid Belt Claim',         price:  2_000_000, rate: MINE_RATE * 5,
+  mine2: { line: 'mine', tier: 2, name: 'Asteroid Belt Claim',         price:  2_000_000, rate: MINE_RATE * 5, mission: 'claim',
            blurb: 'A whole belt with your name on the paperwork.',
            does: 'five times the first rig, for four times the money' },
-  mine3: { line: 'mine', tier: 3, name: 'Cometary Harvest Array',      price:  8_000_000, rate: MINE_RATE * 25,
+  mine3: { line: 'mine', tier: 3, name: 'Cometary Harvest Array',      price:  8_000_000, rate: MINE_RATE * 25, mission: 'claim',
            blurb: 'Volatiles cracked out of ice on the long orbits.',
            does: 'five times the belt again — the last rig you will need' },
 
@@ -260,7 +264,32 @@ export const MODULES = {
   pocket1: { line: 'pocket', tier: 1, name: 'Pocket Dimension', price: POCKET_PRICE,
              blurb: 'A hold with the far end somewhere else entirely.',
              does: `sells your ore every ${POCKET_EVERY}s, wherever you are` },
+
+  // THE FIRST ROW THAT IS NOT FOR SALE. `price: 0` is not a discount: `mission`
+  // is what gates it, and a mission is an arena you have to fly and win — see
+  // shared/arena.js. A pilot with ten million credits and a mission unflown gets
+  // the same refusal a pilot with none does, in the same words.
+  //
+  // It is on the tree rather than in the shops because it is permanent, bought
+  // once, and is not more of anything — the same three properties every tree row
+  // has. What differs is the currency, and the currency is an afternoon.
+  bypass1: { line: 'bypass', tier: 1, name: 'Governor Bypass', price: 0, mission: 'salvage',
+             blurb: 'The coils arc where the governor was.',
+             does: 'the reactor re-routes the instant you press the key' },
 };
+
+// THE MISSION SEAM. A module may name a kind of arena instead of a price, and the
+// kind is the only thing that differs between "free the rock" and "strip the
+// wreck": which list on the account remembers it, and which refusal it gives.
+//
+// It is data on the MODULE rather than a lookup into shared/arena.js because
+// arena.js imports this file — the arrow only goes one way, and a rule that needs
+// to be read from both ends has to live at the end that is already upstream.
+// test/arena.mjs asserts the two tables agree in both directions, so a module that
+// names a mission nobody built, or an arena for a module that never asks for one,
+// fails by name rather than becoming a row nobody can ever finish.
+export const MISSION_KINDS = ['claim', 'salvage'];
+export const missionOf = key => MODULES[key]?.mission ?? null;
 
 // The bit order, frozen. Anything new is appended.
 export const MODULE_KEYS = Object.keys(MODULES);
@@ -270,10 +299,10 @@ export const LINES = ['mine', 'hull', 'shld'];
 // this array growing by one string, MODULES growing by one entry with its own
 // line, LINE_NAME growing by one and LOOKS growing by one. No function changes,
 // because the tree is the ladder machinery pointed at different lines.
-export const TREE = ['pocket'];
+export const TREE = ['pocket', 'bypass'];
 
 export const LINE_NAME = { mine: 'Mining', hull: 'Hull', shld: 'Shields',
-                           pocket: 'Pocket Dimension' };
+                           pocket: 'Pocket Dimension', bypass: 'Governor Bypass' };
 export const modulePrice = key => MODULES[key]?.price ?? Infinity;
 export const tiersOf = line => MODULE_KEYS.filter(k => MODULES[k].line === line);
 
@@ -292,6 +321,11 @@ export const sanitiseMods = mask =>
 // string 'pocket1' written into the server tick and the client HUD, because a rule
 // that exists twice will disagree — and this one decides whether ore becomes money.
 export const hasPocket = mask => hasMod(mask, 'pocket1');
+
+// And whether the reactor re-routes instantly. Same shape and same reason: it is
+// read by applyResearch on both sides and by nothing else, so the string
+// 'bypass1' appears in exactly one place in the game.
+export const hasBypass = mask => hasMod(mask, 'bypass1');
 
 // The highest tier built on a line, and the next one you could buy.
 export const tierOn = (mask, line) =>
@@ -341,9 +375,16 @@ export const mulOn = (mask, line) => {
 // changing what they sell — no hull dominates another because of it.
 export function applyResearch(stats, mask) {
   if (!mask || !stats) return stats;
-  const h = mulOn(mask, 'hull'), s = mulOn(mask, 'shld');
-  if (h === 1 && s === 1) return stats;
-  return { ...stats, hull: stats.hull * h, shield: stats.shield * s };
+  const h = mulOn(mask, 'hull'), s = mulOn(mask, 'shld'), by = hasBypass(mask);
+  if (h === 1 && s === 1 && !by) return stats;
+  // A FLAG, not a number, and that is the whole reason a mission may pay it. The
+  // ladder above multiplies two pools and is bought with credits; this one changes
+  // nothing on any bar and cannot be bought at all. Nobody is harder to kill for
+  // owning it — they are simply faster on the dial — so it does not enter a single
+  // anti-domination comparison. See BYPASS_BROWNOUT in shared/power.js for the
+  // trade it does carry.
+  return { ...stats, hull: stats.hull * h, shield: stats.shield * s,
+           ...(by ? { bypass: true } : {}) };
 }
 
 // --- why you cannot -----------------------------------------------------------
@@ -362,9 +403,25 @@ export function whyNotStake({ credits = 0, docked = false, has = false, room = t
 // A row that only offers the claim once you can already afford the module would
 // hide the whole fight from every pilot who has not saved up yet, and the fight is
 // the thing you are meant to go and do while you save.
-export const needsClaim = key => MODULES[key]?.line === 'mine';
+// Read off `mission` rather than off `line === 'mine'`, which is what it used to
+// say. The two agreed for as long as a claim was the only mission there was; the
+// day a tech-tree row was earned by flying instead of bought, "is this a mining
+// rung" stopped being the same question as "is there a fight in front of this".
+export const needsClaim   = key => missionOf(key) === 'claim';
+export const needsSalvage = key => missionOf(key) === 'salvage';
 
-export function whyNotBuild(key, { credits = 0, mask = 0, near = false, claims = [] } = {}) {
+// Whether this pilot has flown the mission in front of a row, and which list
+// remembers it. ONE function for the whole game — the refusal here, the row's
+// button, whyNotReplay in shared/arena.js and the sweep in server.js all ask it and
+// none of them may answer it themselves. It lived twice for about an hour and that
+// is precisely the shape the workshop dock's silent refusal had.
+export const flownFor = (key, { claims = [], salvage = [] } = {}) =>
+  missionOf(key) === 'salvage' ? salvage.includes(key)
+  : missionOf(key) === 'claim' ? claims.includes(key)
+  : true;
+
+export function whyNotBuild(key, { credits = 0, mask = 0, near = false,
+                                   claims = [], salvage = [] } = {}) {
   const m = MODULES[key];
   if (!m) return 'no such module';
   if (!near) return 'fly to your station to build on it';
@@ -372,7 +429,12 @@ export function whyNotBuild(key, { credits = 0, mask = 0, near = false, claims =
   const want = tierOn(mask, m.line) + 1;
   if (m.tier > want) return `build the tier below it first`;
   if (m.tier < want) return 'you are already past this one';
-  if (needsClaim(key) && !claims.includes(key)) return 'the claim is contested — free the rock first';
+  // Said out loud rather than left to the price line below it. A row that costs
+  // nothing and still will not build is the silent refusal this codebase keeps
+  // shipping — the button has to name the fight it is waiting on.
+  if (!flownFor(key, { claims, salvage }))
+    return needsSalvage(key) ? 'the wreck is still held — strip it first'
+                             : 'the claim is contested — free the rock first';
   if (credits < m.price) return `costs ${m.price} cr — you cannot pay yet`;
   return null;
 }
@@ -407,6 +469,11 @@ export const LOOKS = {
   // million credit module that changed nothing about the picture would be the one
   // purchase in the yard nobody can tell you made.
   pocket1: { part: 'rift', at: 0.50 },
+  // Its own part again, and for a sharper reason than the rift's: this one is not
+  // bought at all. It is the only thing in the yard that says a pilot went and
+  // FLEW for it, so a station carrying one has to look different from a station
+  // that has simply been paid for.
+  bypass1: { part: 'arc',  at: 0.25 },
 };
 export const partsOf = mask => modsOf(mask).map(k => LOOKS[k]).filter(Boolean);
 
@@ -538,7 +605,29 @@ export function shortOf(mask, line, credits) {
 // about the purchase. A key with no entry gets null and the row falls back to
 // `does`, which is rule seven's seam: a second tree upgrade draws correctly
 // before anybody writes it a gain line.
-export function treeGain(key, hold = {}) {
+export function treeGain(key, hold = {}, stats = null) {
+  // Same argument as the Pocket Dimension's, one deck over: "the reactor re-routes
+  // instantly" is a fact about the module, and "3.0s to full becomes none, and your
+  // 45 second tank holds 22 switches" is a fact about the ship you are flying. The
+  // capacitor differs by hull and by every generator on it, so the second number is
+  // only true of you.
+  //
+  // `stats` is optional and the row still says something without it — the panel has
+  // one, a test that only wants the words does not, and rule seven says a missing
+  // input is a shorter sentence rather than a throw.
+  if (key === 'bypass1') {
+    const cap = Number.isFinite(stats?.capacitor) ? stats.capacitor : 0;
+    const swaps = cap > 0 ? Math.floor(cap / BYPASS_BROWNOUT) : 0;
+    return {
+      kind: 'bypass', spool: SPOOL_UP, brownout: BYPASS_BROWNOUT, swaps,
+      // Both kept inside a row's narrowest width, which is 344px at a 420px window —
+      // about 52 characters at 11px and 63 at 9px. The render harness measures it.
+      label: `full power on the keypress, not ${SPOOL_UP}s later`,
+      sub: swaps
+        ? `each switch spends ${BYPASS_BROWNOUT.toFixed(1)}s of your ${cap}s reactor — ${swaps} to a tank`
+        : `each switch spends ${BYPASS_BROWNOUT.toFixed(1)}s of capacitor — dearest mid-fight`,
+    };
+  }
   if (key !== 'pocket1') return null;
   const worth = holdValue(hold ?? {}), paid = pocketValue(hold ?? {});
   return {
@@ -555,18 +644,22 @@ export function treeGain(key, hold = {}) {
   };
 }
 
-export function rowState(mask, line, credits, claims = []) {
+export function rowState(mask, line, credits, claims = [], salvage = []) {
   const at = tierOn(mask, line), next = nextOn(mask, line);
   const m = next ? MODULES[next] : null;
+  const flown = !m || flownFor(next, { claims, salvage });
   return {
     line, name: LINE_NAME[line], tier: at, max: tiersOf(line).length,
     built: at ? MODULES[tiersOf(line).find(k => MODULES[k].tier === at)].name : null,
     next, nextName: m?.name ?? null, price: m?.price ?? 0, does: m?.does ?? null,
     afford: !!m && credits >= m.price,
-    // What the row's one button does. A mining rung whose rock is still held is a
-    // CLAIM before it is a purchase, and the panel needs to know which without
-    // working it out a second time.
-    claim: !!m && needsClaim(next) && !claims.includes(next),
+    // What the row's one button does. A rung with a fight in front of it is a
+    // FLIGHT before it is a purchase, and the panel needs to know which without
+    // working it out a second time. `claim` is kept as the name the ladder page
+    // already speaks; `mission` says which kind of flight, so the tech tree can
+    // send a salvage run rather than a claim off the same field.
+    claim: !!m && !!missionOf(next) && !flown,
+    mission: m ? missionOf(next) : null,
     done: !m,
   };
 }

@@ -12,8 +12,8 @@ import { sanitiseAmmo, sanitiseUsing, sanitiseArmed, ARMED_ALL,
          DEFAULT_AMMO, STARTING_AMMO } from './ammo.js';
 import { sanitiseKits, sanitiseKit, DEFAULT_KIT } from './repair.js';
 import { sanitiseDevices, sanitiseDevice, DEFAULT_DEVICE } from './devices.js';
-import { sanitiseMods, HOME_PLOTS } from './research.js';
-import { ARENA_MODULES } from './arena.js';
+import { sanitiseMods, addMod, HOME_PLOTS } from './research.js';
+import { ARENA_MODULES, SALVAGE_MODULES } from './arena.js';
 import { sanitiseKills } from './threats.js';
 import { sanitiseUnlocked, bonusBays } from './quests.js';
 import { MAPS, COMPANIES, isArena } from './maps.js';
@@ -45,6 +45,7 @@ export function newAccount(token, seq, now) {
     devices: {}, device: DEFAULT_DEVICE, foldTo: null, lab: null, kills: {},
     unlocked: [],                                 // the quests you have finished — see shared/quests.js
     claims: [],                                   // the mining rocks you have freed
+    salvage: [],                                  // the ancient wrecks you have stripped
     berths: [],                                   // outposts you rent a bay at
     lastDock: null,                               // the hangar a wreck comes back to
     credits: 0, xp: 0, drones: [], rig: null, vault: {}, hold: {}, admin: false,
@@ -118,6 +119,25 @@ export function sanitiseAccount(a, seq, now) {
   // berths exactly MAX_DRONES, and the Brood Frame takes it to fourteen. Exactly the
   // bug the reseat() note above this line is about, one field over.
   const earned = sanitiseUnlocked(a?.unlocked);
+  const flown = [...new Set((Array.isArray(a?.salvage) ? a.salvage : [])
+    .filter(k => SALVAGE_MODULES.includes(k)))];
+  // A FLOWN MISSION MUST NEVER BE CONFISCATED BY A LOST LAB, and this line is the
+  // only place the two records are allowed to talk.
+  //
+  // A salvage prize lives in two places on purpose: `salvage` is the durable record
+  // that the fight was won, and the module bit in `lab.mods` is what the ship reads
+  // through applyResearch. sanitiseLab returns NULL for a lab it cannot make sense
+  // of, and sanitiseMods masks off bits it does not recognise — so without this, a
+  // save that lost its station or had its mask trimmed would come back with the
+  // wreck still listed and the reactor back on its three-second spool, and nothing
+  // anywhere would say why.
+  //
+  // It re-grants in ONE direction only. The list can put a bit back; a bit can never
+  // put itself on the list. Two records that could each write the other is exactly
+  // the drift rule one names, and it is why /reset — which hands back an empty
+  // `salvage` through carried() — still takes the module with it.
+  const lab = sanitiseLab(a?.lab, now);
+  if (lab) for (const k of flown) lab.mods = addMod(lab.mods, k);
   return {
     token: a.token, seq, co, name: typeof a?.name === 'string' ? a.name : callsign(seq),
     hull: flying, fit: seated.fit, gear, hulls,
@@ -136,7 +156,7 @@ export function sanitiseAccount(a, seq, now) {
     // can stop having an outpost, so it is re-checked against homePorts at the
     // moment of use rather than trusted from disk.
     foldTo: typeof a?.foldTo === 'string' ? a.foldTo : null,
-    lab: sanitiseLab(a?.lab, now),
+    lab,
     // What this pilot has killed, and therefore what their threat file holds.
     kills: sanitiseKills(a?.kills),
     // And what those kills have already bought. Deliberately NOT re-derived from
@@ -149,6 +169,13 @@ export function sanitiseAccount(a, seq, now) {
     // hand-edited save cannot name a rock that does not exist, and a retired
     // mining tier drops out cleanly rather than leaving a claim on nothing.
     claims: [...new Set((Array.isArray(a?.claims) ? a.claims : []).filter(k => ARENA_MODULES.includes(k)))],
+    // And which wrecks they have stripped. The same shape and the same argument,
+    // one list over: a hand-edited save cannot name a hulk that does not exist, and
+    // a retired salvage run drops out cleanly rather than leaving a mission on
+    // nothing. Kept separate from `claims` because the two are different things —
+    // a rock somebody is sitting on and a wreck somebody is stripping — and one
+    // word meaning both is the drift rule one exists to prevent.
+    salvage: flown,
     lastDock: MAPS[a?.lastDock] ? a.lastDock : null,
     credits: Number.isFinite(a?.credits) ? Math.max(0, Math.floor(a.credits)) : 0,
     played: Number.isFinite(a?.played) ? Math.max(0, Math.floor(a.played)) : 0,
@@ -196,7 +223,7 @@ export function carried(a) {
     kills: { ...(a.kills ?? {}) },
     unlocked: [...(a.unlocked ?? [])],
     berths: [...(a.berths ?? [])], lastDock: a.lastDock ?? null,
-    claims: [...(a.claims ?? [])],
+    claims: [...(a.claims ?? [])], salvage: [...(a.salvage ?? [])],
     vault: { ...a.vault }, hold: { ...a.hold },
     // The window they play in, which /reset deliberately hands straight back —
     // it is a fact about their hardware, not about their progress. The reset path
@@ -231,6 +258,7 @@ export function capture(account, p, now) {
   account.unlocked = [...(p.unlocked ?? [])];   // a player built before quests existed has none
   account.berths = [...(p.berths ?? [])];   // a player built before berths existed has none
   account.claims = [...(p.claims ?? [])];
+  account.salvage = [...(p.salvage ?? [])];   // a player built before salvage runs existed has none
   account.lastDock = p.lastDock ?? null;
   account.xp = p.xp;
   account.credits = p.credits;

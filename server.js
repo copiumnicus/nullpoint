@@ -11,7 +11,7 @@ import { DEV_ID, PROPS, PEN_SLOTS, BENCH_SLOTS, propFit } from './shared/devmap.
 import { respawnDelay } from './shared/spawn.js';
 import { sanitiseKills } from './shared/threats.js';
 import { LAB_PRICE, MODULES, claimPlot, plotAt, plotsFor, incomeOf, earnedOver,
-         cappedSecs, addMod, whyNotStake, whyNotBuild, nearLab, applyResearch,
+         cappedSecs, addMod, whyNotStake, whyNotBuild, flownFor, nearLab, applyResearch,
          hasPocket, POCKET_EVERY } from './shared/research.js';
 import { AMMO, FEEDS, magazine, sanitiseUsing, sanitiseArmed, whyNotBuy,
          whyNotLoad, loadable, buyCrates } from './shared/ammo.js';
@@ -64,8 +64,8 @@ import { MATERIALS, rollDrop, stow, unload, load, holdVol, beginScoop, stepScoop
          tollOn, DEATH_TOLL, BOND } from './shared/cargo.js';
 import { MAPS, HOMES, GALAXY, COMPANIES, MAP_W, MAP_H, JUMP_CD,
          mapOf, arenaId, isArena } from './shared/maps.js';
-import { ARENAS, countOf, postsFor, arrivalAt,
-         whyNotClaim, whyNotReplay, LINGER, LIMIT } from './shared/arena.js';
+import { ARENAS, countOf, postsFor, arrivalAt, kindOf,
+         whyNotRun, whyNotReplay, LINGER, LIMIT } from './shared/arena.js';
 import { FOLD_SECS, FOLD_PORT, FOLD_CLAIM, FOLD_DUEL, newFold, foldBroken,
          brokenText } from './shared/fold.js';
 import { DUEL_KEY, startsAt, HOME_TO, COUNT as DUEL_COUNT,
@@ -1337,7 +1337,9 @@ wss.on('connection', (ws, req) => {
     });
     const atStation = () => canDock(mapOf(P.mapId), P.co, ship) || atBerth();
 
-    if (m.t === 'power') { routeTo(ship.power, m.sys); return; }   // anywhere, any time
+    // `ship.stats` because a Governor Bypass changes what this keypress DOES — it
+    // lands the route instantly and bills the capacitor for it. See routeTo.
+    if (m.t === 'power') { routeTo(ship.power, m.sys, ship.stats); return; }   // anywhere, any time
 
     if (m.t === 'chat') {
       const line = parse(m.text);
@@ -1989,7 +1991,8 @@ wss.on('connection', (ws, req) => {
       const mod = MODULES[m.key];
       if (!mod || !P.lab) return tell('no station — stake a plot in your own ring first');
       const at = plotAt(MAPS[P.co + '1']?.base, P.lab.slot);
-      const why = whyNotBuild(m.key, { credits: P.credits, mask: P.lab.mods, claims: P.claims,
+      const why = whyNotBuild(m.key, { credits: P.credits, mask: P.lab.mods,
+                                       claims: P.claims, salvage: P.salvage,
                                        near: P.mapId === P.co + '1' && nearLab(at, ship) });
       if (why) return tell(why);
       P.credits -= mod.price;
@@ -2019,10 +2022,13 @@ wss.on('connection', (ws, req) => {
       if (!P.lab) return tell('no station — stake a plot in your own ring first');
       const back = m.t === 'replay';
       const at2 = plotAt(MAPS[P.co + '1']?.base, P.lab.slot);
-      const where = { mask: P.lab.mods, claims: P.claims, hold: P.hold,
+      const where = { mask: P.lab.mods, claims: P.claims, salvage: P.salvage, hold: P.hold,
                       inArena: isArena(P.mapId),
                       near: P.mapId === P.co + '1' && nearLab(at2, ship) };
-      const why = back ? whyNotReplay(m.key, where) : whyNotClaim(m.key, where);
+      // ONE door for both kinds of first run. whyNotRun dispatches on the arena's
+      // own `kind`, so the panel and this line refuse in the same words without
+      // either of them knowing whether it is a rock or a hulk.
+      const why = back ? whyNotReplay(m.key, where) : whyNotRun(m.key, where);
       if (why) return tell(why);
       if (P.folding) return tell('a fold is already running');
       // A FIVE SECOND FOLD, NOT A TELEPORT, and it is cancelled by anything that
@@ -2967,14 +2973,45 @@ setInterval(() => {
       ar.cleared = true;
       ar.leaveIn = LINGER;
       // A replay writes nothing down. The rock is already theirs, and a claim that
-      // could be re-won would be a claim that could be re-lost.
-      if (!ar.replay && !who.claims.includes(ar.key)) {
-        who.claims = [...who.claims, ar.key];
+      // could be re-won would be a claim that could be re-lost. Same for a wreck:
+      // you cannot un-strip one, so a second run pays exactly what the first one
+      // paid, which is nothing at all.
+      const salvage = kindOf(ar.key) === 'salvage';
+      if (!ar.replay && !flownFor(ar.key, who)) {
+        if (salvage) {
+          who.salvage = [...who.salvage, ar.key];
+          // AND THE ROW IS ON THE SHIP, on this tick. A claim ends with permission
+          // to spend eight million credits; a salvage run ends with the module,
+          // because its price is zero and a free row with a BUY button is a button
+          // whose only job is to be pressed once for nothing. `salvage` on the
+          // account is the durable record — sanitiseAccount re-grants from it, so a
+          // lab that is later lost or a mask that is trimmed cannot confiscate a
+          // fight somebody won.
+          //
+          // The lab is guaranteed here: whyNotRun refuses without one and the sector
+          // is only ever opened through it. The guard is for the pilot whose station
+          // stopped existing between launching and landing, which nothing does today
+          // and something will.
+          //
+          // No `fit` message goes out with it. `lab` is already a BAG field, so the
+          // new mask reaches the client on the next tick's set difference — sending
+          // a fit as well would be a second copy of the same fact, and the fit
+          // payload has nothing in it that this changed.
+          if (who.lab) {
+            who.lab = { ...who.lab, mods: addMod(who.lab.mods, ar.key) };
+            who.ship.research = who.lab.mods;
+            refit(who.ship, who.ship.hull, who.ship.fit, who.ship.drones,
+                  who.ship.formation, who.ship.rig);
+            reyard();
+          }
+        } else {
+          who.claims = [...who.claims, ar.key];
+        }
         touch(who);
       }
       if (who.ws.readyState === 1) who.ws.send(JSON.stringify(
         { t: 'freed', key: ar.key, what: MODULES[ar.key].name, secs: LINGER,
-          replay: ar.replay ? 1 : 0 }));
+          salvage: salvage ? 1 : 0, replay: ar.replay ? 1 : 0 }));
     }
     if (ar.cleared) {
       // No portals, so there is nothing to fly to: an automatic return is the only
@@ -2982,7 +3019,9 @@ setInterval(() => {
       // watched coming apart rather than snatched away on the last kill.
       if ((ar.leaveIn -= dt) <= 0) leaveArena(who, ar.replay
         ? `${MODULES[ar.key].name} — cleared again. Nothing paid, nothing lost.`
-        : `${MODULES[ar.key].name} is yours — build it at your station`);
+        : kindOf(ar.key) === 'salvage'
+          ? `${MODULES[ar.key].name} is fitted — it came off the wreck with you`
+          : `${MODULES[ar.key].name} is yours — build it at your station`);
       continue;
     }
     // The wall. A pilot parked in a corner of a claim is not stuck — nothing in
@@ -3179,6 +3218,10 @@ setInterval(() => {
       // mining row's button says CLAIM or BUY without asking a second question —
       // and so the CLAIMS page knows which ones can be flown again.
       claims: V.claims,
+      // And which wrecks are already stripped, so the TECH TREE page knows whether
+      // its row is a flight or a thing already on the ship. Same reason and same
+      // shape as `claims` above: a bag field, diffed for free, quiet until it moves.
+      salvage: V.salvage,
       // The claim they are standing on, or nothing at all. A bag field rather than
       // a stream because it is one small object about the viewer: `bagKeys` is a
       // set difference over the snapshot's own keys, so it is diffed for free and

@@ -8,14 +8,21 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.85';
+export const VERSION = '0.86';
 
 export const PATCHES = [
-  { v: '0.85', notes: [
+  { v: '0.86', notes: [
     'Nullpoint is no longer empty. THE ANTIPHON holds the middle of the map',
     'Eight armour plates: hit one and it hardens, then answers down the line you shot from',
     'Keep turning. A plate you walked away from goes cold, and the answer goes past you',
     'It answers one bearing a second, so four pilots on four bearings each take a quarter',
+  ] },
+  { v: '0.85', notes: [
+    'A salvage run at the research station: an ancient wreck with a crew already on it',
+    'Twenty-five hostiles hold it, they all come at once, and four of them outrun you',
+    'Strip it and the Governor Bypass is yours — a tech tree row no amount of money buys',
+    'Your reactor then re-routes the instant you press the key, instead of spooling 3s',
+    'Each switch browns out 2s of capacitor, so it is dearest in the middle of a fight',
   ] },
   { v: '0.84', notes: [
     'A full drone rack says so instead of the BUY button doing nothing when you click it',
