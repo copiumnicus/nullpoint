@@ -20,7 +20,7 @@ import { nameProblem, cleanName } from './shared/signup.js';
 import { MUSIC_DIRS, pickDir } from './config.js';
 import { KITS, kitPrice, sanitiseKit, whyNotRepair, KIT_QUIET } from './shared/repair.js';
 import { DEVICES, devicePrice, sanitiseDevice, whyNotDevice } from './shared/devices.js';
-import { HULLS, sanitiseFit, slotsOf, baysOf, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
+import { HULLS, sanitiseFit, slotsOf, baysOf, berthed, resolve, hullPrice, DEFAULT_HULL } from './shared/ships.js';
 import { QUESTS, bonusBays, newlyEarned, needFor } from './shared/quests.js';
 import { EQUIPMENT, SLOTS, priceOf, reseat, emptyFit,
          MAX_DRONES, dronePrice, sanitiseDrones, sanitiseRig, isCollector, topTier, collectorReach,
@@ -1152,7 +1152,20 @@ wss.on('connection', (ws, req) => {
   };
   // What a grade is allowed to be loaded into, right now. Rebuilt on every refit
   // rather than remembered, because the answer changes when the ship does.
-  const feeding = () => ({ fit: ship.fit, drones: ship.drones, EQUIPMENT });
+  //
+  // THE ESCORT THAT FLIES, not the bays the pilot owns. `ship.drones` is the full
+  // owned list on purpose — capture() writes every bay back to the account — and
+  // resolve() has always run it through berthed() before counting anything. This
+  // did not, so a pilot with a Kestrel's twelve bays on a Vanguard that berths
+  // eleven was refused Collimated Cells because of the twelfth, which does not
+  // resolve, does not draw and does not shoot. Measured: lowestGun reported an
+  // MK-V "your escort flies", of a drone the escort is not flying.
+  //
+  // Same funnel as sim.js's refit — one berthed(), several callers — rather than a
+  // second copy of "which bays are seated".
+  const feeding = () => ({ fit: ship.fit,
+                           drones: berthed(ship.hull, ship.drones, bonusBays(players.get(id)?.unlocked ?? [])),
+                           EQUIPMENT });
   // Every refit funnels through outfit(), so this is where an illegal load is
   // caught: sell the one emitter that was holding your Fusion Cells legal and the
   // guns must drop to something they can fire, not go quietly silent.

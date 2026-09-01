@@ -5,7 +5,7 @@ import { newShip } from '../shared/sim.js';
 import { fire } from '../shared/combat.js';
 import { launch, ROCKET_RATE } from '../shared/rockets.js';
 import { sanitiseFit, EQUIPMENT } from '../shared/gear.js';
-import { slotsOf, resolve, gunsOf, FIRE_RATE } from '../shared/ships.js';
+import { slotsOf, resolve, gunsOf, berthed, FIRE_RATE } from '../shared/ships.js';
 import { newAccount, sanitiseAccount, capture } from '../shared/account.js';
 import { KITS, KIT_KEYS, whyNotRepair, KIT_QUIET, sanitiseKits } from '../shared/repair.js';
 import { ALIENS, WILD, effectiveHp, bountyFor, BOUNTY_RATE } from '../shared/aliens.js';
@@ -818,9 +818,17 @@ console.log('\nthe playlist');
   check('the standard grade is never gated, whatever you fly',
     !whyNotLoad('cell1', ctx([])) && !whyNotLoad('cell1', ctx([lo], [lo])) && !whyNotLoad('head1', ctx([])),
     'running dry with no way back is a walk home, not a mechanic');
-  check('a pilot with no gun of that sort at all is not blocked',
-    !whyNotLoad('head3', ctx([hi], [hi])),
-    'there is nothing to underfeed and nothing will fire');
+  // REVERSED, and the reversal is the point rather than a threshold moving. This
+  // read "a pilot with no gun of that sort at all is not blocked — there is nothing
+  // to underfeed and nothing will fire", and it was the full-spec rule failing open:
+  // measured over a real socket, a starter Hauler with one MK-I and no drones was
+  // handed head4 and the server stored it. Nothing fires, so nothing breaks today;
+  // `using` outlives the fit, so something breaks the day a rack is seated. The
+  // claim underneath — that nobody is ever left unable to shoot — is kept below it
+  // and is what the plain grade being ungated has always been for.
+  check('a pilot with no gun of that sort at all is refused, and told which weapon they do not have',
+    /no launcher/.test(whyNotLoad('head3', ctx([hi], [hi])) ?? ''),
+    whyNotLoad('head3', ctx([hi], [hi])));
   check('lowestGun finds the weakest of the right kind and says where it is',
     lowestGun('laser', { weapon: [hi, mid] }, [lo], EQUIPMENT).where === 'escort' &&
     lowestGun('laser', { weapon: [hi, mid] }, [], EQUIPMENT).where === 'rack' &&
@@ -838,6 +846,66 @@ console.log('\nthe playlist');
     loadable('laser', ctx([mid], [mid]))[0] === 'cell2' &&
     loadable('laser', ctx([mid], [mid])).every(k => !whyNotLoad(k, ctx([mid], [mid]))),
     loadable('laser', ctx([mid], [mid])).join(' > '));
+
+  // --- THE THREE WAYS A LEGAL SHIP WAS TOLD NO ---------------------------------
+  //
+  // A designer flew the deep shelf and reported: "I have eleven drones with level
+  // six emitters and five Cyclone Racks on the Vanguard, and I cannot select the
+  // laser cells for the tier six emitters. I can select the ammo for the Cyclone
+  // Racks." Built for real over a socket, that ship is legal by this file — so the
+  // no was coming from somewhere else, and there turned out to be three of them.
+  const designer = ctx(Array(5).fill('pod4'), Array(11).fill('emitter6'));
+  check('the ship the designer flew may load the purple cells, and this file always said so',
+    !whyNotLoad('cell4', designer) && !whyNotBuy('cell4', designer) &&
+    loadable('laser', designer)[0] === 'cell4',
+    'five Cyclone Racks and eleven MK-VI drones — the refusal was never here, which is why ' +
+    'reproducing it needed a real socket rather than a constructed fit');
+
+  // ONE: the menu listed what you HOLD, so a grade you may load and have not
+  // bought was not on it at all. A new account is issued 4,000 Standard Cells and
+  // 400 Standard Warheads, so that pilot's laser menu had exactly one row in it.
+  // The client fix is gradeRows(); this is the claim that says why it must exist.
+  check('a grade you may load but have not bought is still a row, because a missing row reads as a refusal',
+    forWeapon('laser').length === 4 &&
+    forWeapon('laser').filter(k => !whyNotLoad(k, designer)).length === 4,
+    'every laser grade is loadable on that ship and the pilot held one of them — a chooser built ' +
+    'from stock alone shows a single row and looks exactly like being told no');
+
+  // TWO: the rule failed OPEN for a feed with no weapon. Verified over a real
+  // socket before the fix: a starter Hauler with one MK-I and no drones accepted
+  // { t:'ammo', key:'head4' } and stored it.
+  const noRack = ctx(['emitter1'], []);
+  check('a ship with no launcher at all is refused the deep warhead, not waved through',
+    !!whyNotLoad('head4', noRack) && /no launcher/.test(whyNotLoad('head4', noRack)),
+    whyNotLoad('head4', noRack));
+  check('and the plain grade is still never gated, so nobody is ever left unable to shoot',
+    !whyNotLoad('head1', noRack) && !whyNotLoad('cell1', ctx([], [])),
+    'running dry with no way back is a walk home, not a mechanic');
+  check('and sanitiseUsing agrees, so the rule fires on the login path too',
+    sanitiseUsing({ laser: 'cell1', rocket: 'head4' }, {}, noRack).rocket === 'head1',
+    'it calls whyNotLoad to decide whether to drop you a rung — a rule that fails open here ' +
+    'is a rule that never runs when a save is loaded');
+  // Why refused rather than vacuously allowed, stated so it is not re-opened:
+  // `using` outlives the fit. Seat one Sparrow Pod tomorrow and a ship that was
+  // "harmlessly" holding head4 is firing a Cyclone Rack's warhead out of a tier 1
+  // pod, and the only thing standing in the way is regrade() happening to run.
+  check('because a selection outlives the fit that was allowed to make it',
+    (() => {
+      const after = sanitiseUsing({ rocket: 'head4' }, {}, ctx(['pod1'], []));
+      return after.rocket === 'head1';
+    })(),
+    'a pilot who seats one Sparrow Pod tomorrow must not find the deepest warhead in the game ' +
+    'already on the rail — buying was always refused here, and loading now matches it');
+
+  // THREE: the load rule judged bays the hull is not flying. resolve() has always
+  // run the escort through berthed(); the two feeding() funnels did not.
+  const owned = [...Array(11).fill('emitter6'), 'emitter5'];
+  check('a bay the hull cannot berth does not get a vote on what you may load',
+    !!whyNotLoad('cell4', ctx(Array(5).fill('pod4'), owned)) &&
+    !whyNotLoad('cell4', ctx(Array(5).fill('pod4'), berthed('vanguard', owned))),
+    'twelve bays owned on a Vanguard that berths eleven: judged raw it reports "your escort flies ' +
+    'an MK-V Emitter" of a drone that does not resolve, does not draw and does not shoot. ' +
+    'Both feeding() funnels seat the escort now, the same berthed() resolve() uses');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`

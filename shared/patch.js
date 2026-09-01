@@ -8,14 +8,25 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.79';
+export const VERSION = '0.81';
 
 export const PATCHES = [
-  { v: '0.79', notes: [
+  { v: '0.81', notes: [
     'The research station has a third page: a TECH TREE of permanent upgrades',
     'The first is a Pocket Dimension, ten million — it sells your ore every 30s',
     'Wherever you are, at 56% of dock value. A quarter to fly nowhere at all',
     'So a full hold never stops you scooping, and dying costs 30s of ore at most',
+  ] },
+  { v: '0.80', notes: [
+    'The ammunition chooser lists every grade your weapon takes, not just the ones you hold',
+    'A crate you have not bought shows a 0 instead of vanishing — it was reading as a refusal',
+    'A bay your hull cannot berth no longer decides what you are allowed to load',
+    'And a ship with no launcher at all can no longer load warheads for one',
+  ] },
+  { v: '0.79', notes: [
+    'The reactor refills your shields a third faster now, not just into a bigger pool',
+    'Ten seconds after a fight a Vanguard sits at 31% shield instead of 18%',
+    'Your guns are at 77% while it is there, so being caught is what it costs you',
   ] },
   { v: '0.78', notes: [
     'The deep outposts sell a sixth emitter, a fourth rack and a sixth generator',

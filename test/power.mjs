@@ -1,6 +1,6 @@
 import { SYSTEMS, BOOST, SPOOL_UP, SPOOL_DN, newPower, routeTo, stepPower, levelOf, boostOf, chargePct, ceilingOf }
   from '../shared/power.js';
-import { newShip, step, stepVitals, applyDamage, shieldMax } from '../shared/sim.js';
+import { newShip, step, stepVitals, applyDamage, shieldMax, shieldRate, speedOf } from '../shared/sim.js';
 import { resolve, HULLS, slotsOf } from '../shared/ships.js';
 import { boltWidth, fire, salvoOf, stepsOf, MAX_VOLLEY_STEPS } from '../shared/combat.js';
 
@@ -172,6 +172,117 @@ console.log('\nshields scale the pool, charge included');
   routeTo(s.power, null); hold(s, SPOOL_DN + 0.5);
   check('standing down scales both back down', Math.abs(shieldMax(s) - lowMax) < 1e-6 && s.shield < up);
   check('it never leaves you over the cap', s.shield <= shieldMax(s) + 1e-9);
+}
+
+// REGENERATING ON THE REACTOR: WORTH DOING, AND NOT MANDATORY.
+//
+// The design target is switching treads in Dota — optional, and the pilot who does
+// it is simply better off. So there are two things to keep, and they pull opposite
+// ways. It has to be WORTH the keypress, or nobody bothers and the mechanic is dead
+// weight; and it has to be POSSIBLE TO SKIP, or it is a chore performed between
+// every pair of fights.
+//
+// Nothing here is a tax. There is no ramp, no cooldown, no switching penalty, and
+// deliberately so: the cost is already the reactor being one dial, so the price of
+// having it on your shields is being caught with it there. These are the claims for
+// both halves, with the numbers in the detail.
+console.log('\nregenerating on the reactor: what it buys and what it costs');
+{
+  // Fly it properly: real spool, real capacitor, and stand down the moment the
+  // shields are whole — which is what a pilot who understood the mechanic would do.
+  const ready = routed => {
+    const s = newShip(0, 0, 'vanguard');
+    applyDamage(s, s.stats.shield * 3 + 1);
+    if (routed) routeTo(s.power, 'shields');
+    let t = 0, full = -1;
+    while (t < 300) {
+      hold(s, dt); t += dt;
+      if (full < 0 && s.shield >= shieldMax(s) - 1e-6) { full = t; routeTo(s.power, null); }
+      if (full >= 0 && s.power.charge >= s.stats.capacitor - 1e-9) break;
+    }
+    return { full, both: t };
+  };
+  const cold = ready(false), wired = ready(true);
+  console.log(`     cold  shields ${cold.full.toFixed(2)}s, everything ${cold.both.toFixed(2)}s` +
+              `   wired  shields ${wired.full.toFixed(2)}s, everything ${wired.both.toFixed(2)}s`);
+  check('the capacitor is what it is spent out of: shields sooner, a full reactor later',
+    wired.full < cold.full - 3 && wired.both > cold.both + 2,
+    `shields whole ${(cold.full - wired.full).toFixed(2)}s sooner, but shields AND a full capacitor ` +
+    `${(wired.both - cold.both).toFixed(2)}s later — you cannot arrive at the next fight with both`);
+
+  // The other half of the bill, and the one a pilot feels first. Between fights the
+  // reactor is not idle by default; it is on the engines.
+  const travel = secs => {
+    const go = to => {
+      const s = newShip(0, 0, 'vanguard');
+      s.dx = 1; s.dy = 0;                    // hold a heading, full throttle
+      if (to) routeTo(s.power, to);
+      for (let i = 0; i < Math.round(secs / dt); i++) { step(s, dt); stepVitals(s, dt); }
+      return s.x;
+    };
+    return { slow: go('shields'), fast: go('thrusters') };
+  };
+  const WINDOW = 21.9;                       // the Vanguard's boosted empty-to-full, from ships.mjs
+  const t = travel(WINDOW);
+  check('and the reactor cannot be in two places, so the window is flown 23% slower',
+    t.fast - t.slow > 1500,
+    `${Math.round(t.fast - t.slow)}px given up over the ${WINDOW}s window — ` +
+    `${Math.round(speedOf(newShip(0, 0, 'vanguard')))}px/s against ` +
+    `${Math.round(speedOf(newShip(0, 0, 'vanguard')) * (1 + BOOST))}, roughly a seventh of a sector`);
+
+  check('a boosted refill is still a share of the pool, so the pool it built is not free hit points',
+    (() => {
+      const s = newShip(0, 0, 'vanguard');
+      routeTo(s.power, 'shields'); hold(s, SPOOL_UP + 0.5);
+      const wired = shieldRate(s) * shieldMax(s);
+      const bare = s.stats.shieldRegen * s.stats.shield;
+      return Math.abs(wired / bare - (1 + BOOST) ** 2) < 0.01;
+    })(),
+    `${(1 + BOOST).toFixed(2)}x the pool at ${(1 + BOOST).toFixed(2)}x the share is ` +
+    `x${((1 + BOOST) ** 2).toFixed(3)} the points per second — and every one of them is a point ` +
+    'that vanishes again the moment you route away');
+
+  // AND THE OTHER HALF: is it worth the keypress at all? The failure mode the
+  // designer named is a mechanic nobody bothers with, so this is the payoff as a
+  // number — and the number that matters is the SHARE of your own pool you turn up
+  // to the next fight holding, because the swelled pool scales straight back down
+  // the moment you route to your guns. Points would flatter it; the share does not.
+  const arrive = (hull, lull, routed) => {
+    const s = newShip(0, 0, hull);
+    applyDamage(s, s.stats.shield * 5 + 1);
+    if (routed) routeTo(s.power, 'shields');
+    hold(s, lull);
+    return s.shield / shieldMax(s);
+  };
+  const LULLS = [10, 15, 20, 30];
+  const EDGE = ['hauler', 'vanguard', 'bulwark'];
+  for (const h of EDGE)
+    console.log(`     ${h.padEnd(9)} ` + LULLS.map(L =>
+      `${L}s ${(100 * arrive(h, L, false)).toFixed(0)}%->${(100 * arrive(h, L, true)).toFixed(0)}%`.padEnd(16)).join(''));
+  check('a short lull is where it pays: ten seconds on, and you turn up with most of a shield instead of a sliver',
+    EDGE.every(h => arrive(h, 10, true) / arrive(h, 10, false) > 1.6),
+    EDGE.map(h => `${h} x${(arrive(h, 10, true) / arrive(h, 10, false)).toFixed(2)}`).join(', ') +
+    ` — a Vanguard at ${(100 * arrive('vanguard', 10, true)).toFixed(0)}% against ` +
+    `${(100 * arrive('vanguard', 10, false)).toFixed(0)}%`);
+  check('and a long one is where it does not, so skipping it costs a pilot nothing they had',
+    EDGE.every(h => arrive(h, 30, false) > 0.79 && arrive(h, 30, true) / arrive(h, 30, false) < 1.3),
+    EDGE.map(h => `${h} x${(arrive(h, 30, true) / arrive(h, 30, false)).toFixed(2)}`).join(', ') +
+    ' at thirty seconds — both pilots are simply full, and nobody was made to press anything');
+
+  // Where it does NOT pay, which is the one place PvP is formalised. `dry` is on in
+  // an instanced sector, so a duel has no regeneration at all to speed up: routing
+  // to shields in there still buys the bigger pool and nothing else.
+  const duel = (() => {
+    const s = newShip(0, 0, 'vanguard');
+    applyDamage(s, s.stats.shield + 1);
+    routeTo(s.power, 'shields');
+    for (let i = 0; i < Math.round(60 / dt); i++) { step(s, dt); stepVitals(s, dt, false, true); }
+    return { shield: s.shield, max: shieldMax(s) };
+  })();
+  check('inside a duel it buys the bigger pool and nothing else, because nothing regenerates in there',
+    duel.shield === 0 && duel.max > 900,
+    `60s routed to shields in an instanced sector: ${Math.round(duel.shield)} of ` +
+    `${Math.round(duel.max)} — this is a between-engagements mechanic, not a duelling one`);
 }
 
 console.log('\nships and technology');

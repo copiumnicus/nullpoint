@@ -314,17 +314,36 @@ export function lowestGun(feed, fit, drones = [], EQUIPMENT) {
 // and there is now somewhere to put the spare — the INVENTORY tab breaks it up — so
 // the fix is one click rather than a mystery.
 //
-// A pilot with no weapon of that sort at all is not blocked. There is nothing to
-// underfeed, nothing will fire, and refusing them a menu choice they cannot act on
-// would only be a sentence they have to decode.
+// AND A PILOT WITH NO WEAPON OF THAT SORT AT ALL IS REFUSED, which is a reversal.
+//
+// It used to return null — "there is nothing to underfeed, nothing will fire, and
+// refusing them a menu choice they cannot act on would only be a sentence they have
+// to decode." That is the rule FAILING OPEN, and it was found doing it: a starter
+// Hauler carrying one MK-I Emitter and no drones at all was handed `head4` over a
+// real socket and the server stored it. The deepest warhead in the game, on a ship
+// with no rack.
+//
+// It is harmless in the tick — you cannot fire a launcher you do not have — and
+// that is exactly why it is worth closing. `using` is a STORED CHOICE that outlives
+// the fit: it survives a refit, a hull swap and a login. Seat one Sparrow Pod
+// tomorrow and the ship is loaded with a grade calibrated for a Cyclone Rack, and
+// the only thing between that and firing it is regrade() happening to run. A rule
+// whose safety depends on another function being called is not a rule.
+//
+// So the sentence is one sentence again — every weapon of that sort must be at the
+// rung, and none is not "every" — and the answer to "a sentence they have to
+// decode" is that the sentence is now a good one and the row it is written on is
+// drawn. Buying already failed closed here (bestTierFor returns 0 with no weapon,
+// and 0 >= need is false), so this only brings loading into line with it.
 export function whyNotLoad(key, { fit, drones = [], EQUIPMENT } = {}) {
   const a = AMMO[key];
   if (!a) return 'no such grade';
   const need = NEEDS[key] ?? 1;
   if (need <= 1) return null;
-  const low = lowestGun(a.for, fit, drones, EQUIPMENT);
-  if (!low || low.tier >= need) return null;
   const what = a.for === 'rocket' ? 'launcher' : 'emitter';
+  const low = lowestGun(a.for, fit, drones, EQUIPMENT);
+  if (!low) return `you fly no ${what} — a grade is calibrated for the weapon that fires it`;
+  if (low.tier >= need) return null;
   return `every ${what} must be tier ${need} — your ${low.where === 'escort' ? 'escort flies' : 'rack holds'} `
        + `${an(low.name)} ${low.name} (tier ${low.tier})`;
 }
