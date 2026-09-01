@@ -312,8 +312,14 @@ console.log('\nwhat is deliberately not deltaed');
   // is at most one per hostile, and the one field that matters — how far through the
   // fuse it is — changes every single tick, so a keyed diff would pay an id and a
   // mask to re-send the only thing that moved.
-  check('bolts, rockets, blasts, hits, pyres and fixes go whole, and the list says so',
-    same(EPHEMERAL, ['bolts', 'rockets', 'blasts', 'hits', 'pyres', 'fixes']),
+  // Orbs joined them, and they are the ordinary case rather than an edge of it: an orb
+  // has no id, lives its weapon's reach — 1.25s for an Ironhusk's, 2.25s for a
+  // Leviathan's — and the two fields that decide where it is on the screen change
+  // every single tick, so a keyed diff would pay an id and a mask to re-send exactly
+  // what moved. Priced against a real server with a Kestrel standing in front of three
+  // Ironhusks, fifteen orbs in the air at peak: 2.9 KiB/s of an 11.1 KiB/s stream.
+  check('bolts, rockets, orbs, blasts, hits, pyres and fixes go whole, and the list says so',
+    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost

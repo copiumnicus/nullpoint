@@ -51,7 +51,7 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, PLATE_STEPS } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, PLATE_STEPS } from '/shared/net.js';
 import { burnOf, burnR } from '/shared/burn.js';
 import { sowOf, HOLD } from '/shared/ground.js';
 // An answering ring. `arcOf` is the whole reason the wedge that glows and the wedge
@@ -87,6 +87,7 @@ import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
          whyNotBuySays } from '/shared/ammo.js';
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
+import { ORB_SPEED } from '/shared/orbs.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -263,7 +264,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [];   // rebuilt every snapshot
 let mySnare = 0;                                  // s of engines-out left, from the bag
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
@@ -1448,6 +1449,7 @@ ws.onmessage = e => {
   if (m.t !== 's') return;
   bolts = (m.bolts ?? []).map(unpackBolt);
   rockets = (m.rockets ?? []).map(unpackRocket);
+  orbs = (m.orbs ?? []).map(unpackOrb);
   snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
   pyres  = (m.pyres ?? []).map(unpackPyre);
@@ -4508,6 +4510,45 @@ function drawFrame(now) {
       g.closePath(); g.fill();
       g.fillStyle = '#0a0f16'; g.fillRect(-len * 0.3, -1, len * 0.5, 2);
       g.restore();
+    }
+  }
+
+  // Orbs. Slow, big and the only thing in the game you beat by not being somewhere,
+  // so they are drawn to be read at a glance rather than to look like ordnance: a
+  // wide soft halo that says where you must not be, and a hard core inside it.
+  //
+  // THE HALO IS THE HIT DISC. `o.r` comes off the wire and it is the exact radius
+  // stepOrbs collides with — the outer stop of the gradient is at `o.r` and not at
+  // some flattering fraction of it, because a ball drawn smaller than it hits is the
+  // "a row you can see and cannot click" bug moved out of a panel and into a fight.
+  // The core is drawn at 0.42 of it purely so the middle reads as solid.
+  if (orbs.length) {
+    // Flown forward from the last snapshot, exactly as rockets are. At 400px/s the
+    // server's 30Hz step is 13px, which is half a hull and visibly steppy under a
+    // shape this big.
+    const ahead = Math.min(0.12, (now - snapAt) / 1000) * ORB_SPEED;
+    for (const o of orbs) {
+      const R = Math.max(2, o.r);
+      const x = o.x + Math.cos(o.h) * ahead, y = o.y + Math.sin(o.h) * ahead;
+      // A slow pulse, so a wall of them shimmers rather than sitting there as flat
+      // discs. Bounded well inside 1 so no alpha can ever leave the legal range.
+      const beat = 0.82 + Math.sin(now / 190 + o.x * 0.05) * 0.12;
+      const hot = o.foe ? '255,140,90' : '150,225,255';
+      const grd = g.createRadialGradient(x, y, 0, x, y, R);
+      grd.addColorStop(0, `rgba(${hot},${(0.85 * beat).toFixed(3)})`);
+      grd.addColorStop(0.55, `rgba(${hot},${(0.34 * beat).toFixed(3)})`);
+      grd.addColorStop(1, `rgba(${hot},0)`);
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(x, y, R, 0, 7); g.fill();
+      g.fillStyle = o.foe ? '#ffd9c4' : '#e8fbff';
+      g.globalAlpha = beat;
+      g.beginPath(); g.arc(x, y, R * 0.42, 0, 7); g.fill();
+      g.globalAlpha = 1;
+      // The rim, so the edge of the thing is a line you can judge against your own
+      // hull rather than a gradient that fades out somewhere around there.
+      g.strokeStyle = o.foe ? 'rgba(255,120,70,0.55)' : 'rgba(120,210,255,0.55)';
+      g.lineWidth = 1.5;
+      g.beginPath(); g.arc(x, y, R, 0, 7); g.stroke();
     }
   }
 

@@ -484,7 +484,12 @@ await wait(1600);
   let open = await arenas(A);
   check('the server reports it as one sector with two seats, both occupied',
     open.open === 1 && open.list[0].duel === true && open.list[0].seats === 2
-    && open.list[0].here === 2 && open.list[0].lists === 8,
+    // NINE, and the number is written out rather than derived on purpose: every one
+    // of these lists is pushed to somewhere without a `?? []` guard, so a sector that
+    // got eight of them throws on the tick somebody uses the ninth. Hard-coding it
+    // means adding a list fails HERE, with a count, instead of in a duel three weeks
+    // later. It was 8 until orbs got a list of their own.
+    && open.list[0].here === 2 && open.list[0].lists === 9,
     JSON.stringify(open.list[0]));
 
   let bagA = await snap(A);

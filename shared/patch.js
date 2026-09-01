@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.90';
+export const VERSION = '0.91';
 
 export const PATCHES = [
+  { v: '0.91', notes: [
+    'Ironhusks stopped firing lasers. They throw a shotgun of big slow orbs instead',
+    'Get off the line and it costs you nothing. Hold it and the whole fan goes through you',
+    'A Leviathan walks three volleys of them across your course. Breaking once is not enough',
+    'Both still hit for exactly what they always did — you can just be somewhere else now',
+  ] },
   { v: '0.90', notes: [
     'CRITICAL DAMAGE: the screen goes red when your hull will not last another four seconds',
     'It reads the rate you are losing hull, so it fires at 5% on a Bulwark and 44% on a Kestrel',
