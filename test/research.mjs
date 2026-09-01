@@ -310,6 +310,71 @@ console.log('\nthe tech tree');
   check('an upgrade nobody has written a gain line for still draws, from `does`',
     R.treeGain('nothing-yet', {}) === null,
     'rule seven: the second tree entry is a row of data, and it works before anybody prices it');
+
+  // THE SECOND TREE ROW, and it is the first thing in the game with no price at all.
+  //
+  // The seam held: TREE grew by one string, MODULES by one entry with its own line,
+  // LINE_NAME by one and LOOKS by one. What is NEW is that a row may name a mission
+  // instead of a number, which is the only function change the whole feature needed
+  // in this file.
+  {
+    const { BYPASS_BROWNOUT, SPOOL_UP } = await import('../shared/power.js');
+    const flown = R.addMod(0, 'bypass1');
+    check('the tree has grown a second row and nothing about the first one moved',
+      R.TREE.length === 2 && R.TREE.includes('pocket') && R.TREE.includes('bypass')
+      && R.tiersOf('bypass').join() === 'bypass1' && R.rowState(0, 'pocket', 1e12).next === 'pocket1',
+      `${R.MODULE_KEYS.length} modules of ${R.MAX_MODULES} — ${R.MAX_MODULES - R.MODULE_KEYS.length} ` +
+      'bits of headroom left');
+    check('a mission is what gates it, and no amount of money is',
+      R.MODULES.bypass1.price === 0 && R.missionOf('bypass1') === 'salvage'
+      && R.whyNotBuild('bypass1', { credits: 1e12, mask: 0, near: true })
+           === 'the wreck is still held — strip it first'
+      && R.whyNotBuild('bypass1', { credits: 0, mask: 0, near: true, salvage: ['bypass1'] }) === null,
+      'a pilot with a billion credits and the wreck unflown gets the same answer as a pilot with none');
+    // The mining rungs were `line === "mine"`, which stopped being the same question
+    // the day a tech tree row was earned by flying. Both now read `mission`.
+    check('and the mining rungs ask the same question through the same field',
+      R.needsClaim('mine2') && !R.needsClaim('pocket1') && !R.needsClaim('bypass1')
+      && R.needsSalvage('bypass1') && !R.needsSalvage('mine2'),
+      '"is this a mining rung" and "is there a fight in front of this" were the same question ' +
+      'for exactly as long as a claim was the only mission there was');
+    // The anti-pay-to-win reading this row is measured against is the MONEY one:
+    // nothing here can be bought, so the question "could someone skip this with a
+    // credit card" has the answer no, at any price. What it must still not do is
+    // move a bar — a pilot who owns one is exactly as easy to kill.
+    const st2 = { hull: 1900, shield: 3700, damage: 500, speed: 300, cargo: 120, capacitor: 45 };
+    const on = R.applyResearch(st2, flown);
+    check('it changes not one number on the ship — only what a keypress does',
+      on.hull === st2.hull && on.shield === st2.shield && on.damage === st2.damage
+      && on.speed === st2.speed && on.capacitor === st2.capacitor && on.bypass === true
+      && R.incomeOf(flown) === 0,
+      'a flag, not a multiplier: nobody is harder to kill for owning one, so it enters no ' +
+      'anti-domination comparison at all');
+    check('and a ship without it is untouched, flag and all',
+      R.applyResearch(st2, R.addMod(0, 'pocket1')).bypass === undefined,
+      'applyResearch returns the block unchanged unless something on the mask actually moves it');
+    // Priced in YOUR capacitor, the way the Pocket Dimension is priced in your hold.
+    const g3 = R.treeGain('bypass1', {}, { capacitor: 45 });
+    check('and it is quoted in the reactor you actually fly, not in prose about spooling',
+      g3.kind === 'bypass' && g3.brownout === BYPASS_BROWNOUT
+      && g3.swaps === Math.floor(45 / BYPASS_BROWNOUT) && /\d/.test(g3.sub),
+      `${g3.label} / ${g3.sub}`);
+    check('a pilot the panel cannot measure is told the shape rather than a wrong number',
+      /\d/.test(R.treeGain('bypass1', {}).sub) && R.treeGain('bypass1', {}).swaps === 0,
+      R.treeGain('bypass1', {}).sub + ' — rule seven: a missing input is a shorter sentence, not a throw');
+    check('it draws in the yard, because it is the one thing there that was flown for',
+      !!R.LOOKS.bypass1 && R.partsOf(flown).length === 1
+      && R.LOOKS.bypass1.part !== R.LOOKS.pocket1.part,
+      `part "${R.LOOKS.bypass1.part}" against the Pocket Dimension's "${R.LOOKS.pocket1.part}" — ` +
+      'a station that has been paid for and a station that has been earned should not look the same');
+    check('and the panel is still one size, so the tabs stay interchangeable',
+      [[1600, 900], [1024, 700], [420, 380]].every(([w, h]) => {
+        const a = R.labPanel(w, h, 'ladder'), b3 = R.labPanel(w, h, 'tree');
+        return a.panel.w === b3.panel.w && a.panel.h === b3.panel.h;
+      }),
+      'the second tree row fits under the three the ladder already needed — the panel is sized ' +
+      'for the longest page and the tree is not it yet');
+  }
 }
 
 console.log('\nthe panel');

@@ -266,6 +266,11 @@ const ARENA = {
   mine1: { theme: 'Ashen Float',  tint: '#c2884f', claim: true },
   mine2: { theme: 'Beltwreck',    tint: '#8fc4c9', claim: true },
   mine3: { theme: 'Cometfall',    tint: '#74b6c9', claim: true },
+  // A SALVAGE RUN. Everything a claim is — instanced, hunted, no portals, no
+  // sanctuary, closed the moment nobody is standing in it — with a different thing
+  // in the middle of it. The hulk is not a rock: it is somebody's ship, it has been
+  // there a very long time, and there is already a crew on it.
+  bypass1: { theme: 'The Long Quiet', tint: '#9d86c9', salvage: true },
   // A quarter of the galaxy's sector by area, with a hard edge and a way home in
   // the middle of it. Everything about why is in shared/duel.js; the numbers are
   // imported from there rather than written twice.
@@ -276,8 +281,16 @@ const ARENA = {
 // and test/arena.mjs still says so; a duel is simply not on it.
 export const ARENA_KEYS = Object.keys(ARENA);
 export const CLAIM_KEYS = ARENA_KEYS.filter(k => ARENA[k].claim);
+// The other kind of objective. A separate list rather than a flag on CLAIM_KEYS
+// because the two are genuinely different things — a rock somebody is sitting on,
+// and a wreck somebody is stripping — and one name meaning both is the drift rule
+// one exists to prevent. What they SHARE is the sector, and that is one template.
+export const SALVAGE_KEYS = ARENA_KEYS.filter(k => ARENA[k].salvage);
 export const ARENA_PREFIX = 'arena:';
 export const ROCK_R = 300;
+// A hulk is longer than a rock is wide, so it gets its own number rather than
+// borrowing one that means something else. It is the half-length of the spine.
+export const WRECK_R = 420;
 
 export const arenaId = (token, key) => `${ARENA_PREFIX}${token}:${key}`;
 
@@ -299,7 +312,7 @@ export function arenaMap(id) {
   if (!at) return null;
   let m = TEMPLATE.get(at.key);
   if (m) return m;
-  const { theme, tint, duel } = ARENA[at.key];
+  const { theme, tint, duel, salvage } = ARENA[at.key];
   const neb = nebFor(tint, ARENA_KEYS.indexOf(at.key));
   m = duel
     // A DUEL. Its own size, and the size is ON THE SECTOR rather than read off the
@@ -317,20 +330,26 @@ export function arenaMap(id) {
         arena: true, duel: true, key: at.key,
         w: DUEL_W, h: DUEL_H, wall: true,
         portals: [homePortal()] }
-    // A CLAIM, unchanged. No portals, no base, no outpost — and therefore no
-    // sanctuary anywhere in it, because havenKind() has nothing to find. That is
-    // the claim's whole shape: you cannot hide in one, and you cannot walk out of
-    // one. It keeps the galaxy's size, because its roster and its 1,200px ring
-    // were measured in a 12,000 x 8,000 sector and shrinking it would silently
-    // re-tune every one of those numbers.
-    // `hunt` is what makes a claim a hunt: everything in it sees you from anywhere
+    // A CLAIM — and, since the salvage run, a WRECK, which is the same sector down
+    // to the last field. No portals, no base, no outpost — and therefore no
+    // sanctuary anywhere in either, because havenKind() has nothing to find. That
+    // is the shape both share: you cannot hide in one, and you cannot walk out of
+    // one. They keep the galaxy's size, because the rosters and the rings they
+    // stand on were measured in a 12,000 x 8,000 sector and shrinking it would
+    // silently re-tune every one of those numbers.
+    // `hunt` is what makes both a hunt: everything in them sees you from anywhere
     // on the map and comes for you, rather than waiting to be walked into. Read by
     // noHorizon() in shared/aliens.js and set on nothing else in the game — an
     // Ironhusk in the open world still has an aggro radius and a leash. A duel
     // sector does not get it: there is nothing in one to hunt you.
-    : { sx: 0, sy: 0, name: `CLAIM · ${theme}`, theme, tint, neb,
+    // The ONLY thing that differs is the landmark — `rock` or `wreck`, never both,
+    // so the client draws one picture or the other and nothing has to ask which
+    // kind of arena it is standing in. Two names for two objects rather than one
+    // name covering both, which is the drift the CLAIM_KEYS note names.
+    : { sx: 0, sy: 0, name: `${salvage ? 'SALVAGE' : 'CLAIM'} · ${theme}`, theme, tint, neb,
         portals: [], arena: true, hunt: true, key: at.key,
-        rock: { x: MAP_W / 2, y: MAP_H / 2, r: ROCK_R } };
+        ...(salvage ? { wreck: { x: MAP_W / 2, y: MAP_H / 2, r: WRECK_R } }
+                    : { rock:  { x: MAP_W / 2, y: MAP_H / 2, r: ROCK_R } }) };
   TEMPLATE.set(at.key, m);
   return m;
 }
