@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.78';
+export const VERSION = '0.79';
 
 export const PATCHES = [
+  { v: '0.79', notes: [
+    'The research station has a third page: a TECH TREE of permanent upgrades',
+    'The first is a Pocket Dimension, ten million — it sells your ore every 30s',
+    'Wherever you are, at 56% of dock value. A quarter to fly nowhere at all',
+    'So a full hold never stops you scooping, and dying costs 30s of ore at most',
+  ] },
   { v: '0.78', notes: [
     'The deep outposts sell a sixth emitter, a fourth rack and a sixth generator',
     'An MK-VI is 700 damage and 1.5M credits — and heavy, so a ship of them crawls',

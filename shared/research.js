@@ -15,6 +15,7 @@
 // exactly the drift rule one exists to prevent.
 
 import { MAPS } from './maps.js';
+import { POCKET_RATE, PIRATE_RATE, pocketValue, holdValue, fmtCredits } from './cargo.js';
 
 // --- staking a plot -----------------------------------------------------------
 //
@@ -155,6 +156,47 @@ export const MINE_RATE = Math.round((LAB_PRICE + 500_000) / 86_400);
 // buy — this one leaves three tiers of it.
 export const TIER_MUL = 2;
 
+// --- the tech tree ------------------------------------------------------------
+//
+// How often a Pocket Dimension empties the hold. Thirty seconds is the designer's
+// number and it is the right one for a reason worth stating: it has to be short
+// enough that the cargo cap stops binding — a Bulwark with an Ore Tender holds 300
+// volume and a single deep kill drops 152 of it, so anything much longer and the
+// hold fills between sales and you are back to stopping — and long enough that a
+// sale is an EVENT you notice rather than a number quietly ticking. Twelve of them
+// a minute would be indistinguishable from the mine.
+//
+// It is also what caps a death. Losing the hold is what dying costs; with a
+// dimension aboard you can never lose more than thirty seconds of scooping.
+export const POCKET_EVERY = 30;
+
+// The price, derived the way berth.js derives the other ten million in this game:
+// against what the thing it is for actually pays.
+//
+// Ore per hour, measured off the real DROPS tables and a finished ship's real
+// 11,307 dps — expected drop value over farm hit points over dps, at 1.5x wall
+// clock for travel and shield regen. At POCKET_RATE, ten million comes back in
+//
+//   4.7 hours of Threshers at best, 17.4 hours of Bandits at worst
+//
+// and the middle of that band is where the mining ladder already sits: the
+// Cometary Harvest Array is 8,000,000 for 300 cr/s, which is 7.4 hours. A tree
+// upgrade at ten million paying back in most of a working day of FLYING, against a
+// mining rig at eight million paying back in most of a day of WALL CLOCK, is the
+// right way round — the tree asks you to be there.
+//
+// The deeps are the outlier, and they were the outlier before this existed: a
+// Crucible's ore is 3.3% of what killing it pays, because the drop is capped at
+// one hold while the bounty is not. That takes the payback out there to 28 hours.
+// It is a fact about the bestiary rather than about this price — see the ceiling
+// note in cargo.js — and it is exactly the complaint this module was asked to
+// answer, not one a sale price can fix.
+//
+// test/cargo.mjs keeps the measurement and re-derives every number in this
+// paragraph. If ore per hour moves far enough that ten million stops being most of
+// a working day, it says so, and this wants re-deriving rather than nudging.
+export const POCKET_PRICE = 10_000_000;
+
 export const MODULES = {
   // --- the mine, which pays for the rest ---
   mine1: { line: 'mine', tier: 1, name: 'Deep Space Mining Operation', price:    500_000, rate: MINE_RATE,
@@ -200,12 +242,38 @@ export const MODULES = {
   shld5: { line: 'shld', tier: 5, name: 'Degenerate Plasma Envelope',  price: 16_000_000, mul: 32,
            blurb: 'A shell of collapsed plasma that will not compress.',
            does: 'thirty-two times the shield — a Hive can be fought alone' },
+
+  // --- the tech tree, which is not a ladder ---
+  //
+  // Everything above is a rung: five tiers of one idea, each superseding the one
+  // below it. The tree is the other shape — permanent things that are not more of
+  // anything, bought once, in any order. It shares the mask and every function
+  // that reads it, and differs only in which lines the panel lists on which page.
+  // TREE, below, is the whole seam.
+  //
+  // Each tree entry is its OWN `line` with one tier on it, and that is not
+  // ceremony. whyNotBuild refuses anything more than one tier above what you own,
+  // so two unrelated upgrades sharing a line would make the second say "you are
+  // already past this one" the moment you bought the first. A line per upgrade
+  // costs one string and leaves room for any of them to grow a second tier later
+  // without touching a single function.
+  pocket1: { line: 'pocket', tier: 1, name: 'Pocket Dimension', price: POCKET_PRICE,
+             blurb: 'A hold with the far end somewhere else entirely.',
+             does: `sells your ore every ${POCKET_EVERY}s, wherever you are` },
 };
 
 // The bit order, frozen. Anything new is appended.
 export const MODULE_KEYS = Object.keys(MODULES);
 export const LINES = ['mine', 'hull', 'shld'];
-export const LINE_NAME = { mine: 'Mining', hull: 'Hull', shld: 'Shields' };
+
+// THE SEAM. The tech tree's lines, in page order — a second permanent upgrade is
+// this array growing by one string, MODULES growing by one entry with its own
+// line, LINE_NAME growing by one and LOOKS growing by one. No function changes,
+// because the tree is the ladder machinery pointed at different lines.
+export const TREE = ['pocket'];
+
+export const LINE_NAME = { mine: 'Mining', hull: 'Hull', shld: 'Shields',
+                           pocket: 'Pocket Dimension' };
 export const modulePrice = key => MODULES[key]?.price ?? Infinity;
 export const tiersOf = line => MODULE_KEYS.filter(k => MODULES[k].line === line);
 
@@ -219,6 +287,11 @@ export const modsOf   = mask => MODULE_KEYS.filter((k, i) => (mask | 0) & (1 << 
 // cleanly rather than drawing a part that is no longer there.
 export const sanitiseMods = mask =>
   ((Number.isFinite(+mask) ? Math.floor(+mask) : 0) & ((1 << MODULE_KEYS.length) - 1)) >>> 0;
+
+// Whether this pilot's station has a Pocket Dimension. A function rather than the
+// string 'pocket1' written into the server tick and the client HUD, because a rule
+// that exists twice will disagree — and this one decides whether ore becomes money.
+export const hasPocket = mask => hasMod(mask, 'pocket1');
 
 // The highest tier built on a line, and the next one you could buy.
 export const tierOn = (mask, line) =>
@@ -329,6 +402,11 @@ export const LOOKS = {
   shld3: { part: 'ring',  at: 0.60 },
   shld4: { part: 'ring',  at: 0.80 },
   shld5: { part: 'ring',  at: 1.00 },
+  // The tree gets its own part rather than a fourth boom or a sixth plate: the
+  // whole first 500,000 buys a thing other people can see is yours, and a ten
+  // million credit module that changed nothing about the picture would be the one
+  // purchase in the yard nobody can tell you made.
+  pocket1: { part: 'rift', at: 0.50 },
 };
 export const partsOf = mask => modsOf(mask).map(k => LOOKS[k]).filter(Boolean);
 
@@ -351,20 +429,25 @@ export const partsOf = mask => modsOf(mask).map(k => LOOKS[k]).filter(Boolean);
 // button on the ladder without lying about what the ladder is. It is its own page.
 export const LAB_ROW = 78, LAB_HEAD = 124, LAB_W = 560, LAB_PAD = 18;
 export const TAB_H = 26, TAB_TOP = 82;
-// The two pages of the research station, as data rather than as two functions:
-// what you are building, and what you have to fight for the right to build.
+// The three pages of the research station, as data rather than as three functions:
+// what you are building, what you have to fight for the right to build, and what
+// is not a ladder at all.
 export const LAB_TABS = [
   { key: 'ladder', name: 'RESEARCH' },
   { key: 'claims', name: 'CLAIMS' },
+  { key: 'tree',   name: 'TECH TREE' },
 ];
 export const LAB_TAB_KEYS = LAB_TABS.map(t => t.key);
 
-// Both pages have exactly three rows — three ladders, three mining tiers — so the
-// panel is one size and a tab switch never moves the rows under the cursor.
+// The panel is ONE SIZE whatever page is on it, so a tab switch never moves the
+// rows under the cursor. It is sized for the longest page — three ladders, three
+// mining tiers, and however many upgrades the tree has grown — so adding the
+// second tree entry widens nothing and adding the fourth makes the panel taller
+// on every page at once, which is the behaviour that keeps the tabs interchangeable.
 export function labPanel(VIEW_W, VIEW_H, tab = 'ladder') {
   const page = LAB_TAB_KEYS.includes(tab) ? tab : 'ladder';
-  const keys = page === 'claims' ? tiersOf('mine') : LINES;
-  const n = Math.max(LINES.length, tiersOf('mine').length);
+  const keys = page === 'claims' ? tiersOf('mine') : page === 'tree' ? TREE : LINES;
+  const n = Math.max(LINES.length, tiersOf('mine').length, TREE.length);
   const w = Math.min(LAB_W, VIEW_W - 40);
   const want = LAB_HEAD + n * (LAB_ROW + 10) + LAB_PAD;
   const h = Math.min(VIEW_H - 80, want);
@@ -413,6 +496,12 @@ export function rungGain(mask, line, stats) {
              label: `${now} -> ${then} ${'cr'}/s`,
              sub: `${Math.round(then * 86400 / 1000)}k a day, flying or not` };
   }
+  // Anything that is not one of the three ladders has no rung to quote here — the
+  // tree's rows are priced in what they PAY rather than in what they make your
+  // ship, and treeGain does that. Named rather than implied: this line used to
+  // read `line === 'hull' ? 'hull' : 'shield'`, which silently quoted a Pocket
+  // Dimension as a shield upgrade the first time the tree page drew.
+  if (line !== 'hull' && line !== 'shld') return null;
   const key = line === 'hull' ? 'hull' : 'shield';
   const base = stats?.[key];
   if (!Number.isFinite(base)) return null;
@@ -433,6 +522,37 @@ export function shortOf(mask, line, credits) {
   if (!next) return null;
   const gap = MODULES[next].price - credits;
   return gap > 0 ? gap : 0;
+}
+
+// What a tree row is worth, in the hold the pilot is carrying RIGHT NOW.
+//
+// Same argument as rungGain's: "sells your ore automatically" is a fact about the
+// module, and "the 12,840 credits under you become 7,222" is a fact about you, and
+// only the second one decides whether ten million is worth it. A pilot cannot tell
+// whether "your ore" means a rounding error or a second income, and the answer
+// depends entirely on what they have been scooping.
+//
+// It reads the LIVE hold rather than a hypothetical one on purpose — a pilot who
+// opens this page with an empty hold is told what the module does instead of being
+// quoted a zero, because the zero would be a fact about this second rather than
+// about the purchase. A key with no entry gets null and the row falls back to
+// `does`, which is rule seven's seam: a second tree upgrade draws correctly
+// before anybody writes it a gain line.
+export function treeGain(key, hold = {}) {
+  if (key !== 'pocket1') return null;
+  const worth = holdValue(hold ?? {}), paid = pocketValue(hold ?? {});
+  return {
+    kind: 'pocket', worth, paid,
+    label: worth > 0
+      ? `your hold now: ${fmtCredits(worth)} -> ${fmtCredits(paid)} every ${POCKET_EVERY}s`
+      : `nothing aboard right now — this sells what you scoop, as you scoop it`,
+    // Short on purpose. A row is 524px wide at 9px type, which is about ninety
+    // characters, and the first draft ran to a hundred and eighteen — the render
+    // harness reported it as a sentence written across the panel it belongs to.
+    // The ladder is the only thing that has to fit: the rest is on the row above.
+    sub: `${Math.round(POCKET_RATE * 100)}% of dock value — the dock pays 100%, ` +
+         `a pirate counter ${Math.round(PIRATE_RATE * 100)}%`,
+  };
 }
 
 export function rowState(mask, line, credits, claims = []) {

@@ -208,6 +208,36 @@ export const PIRATE_RATE = 0.75;
 export const pirateValue = hold =>
   Math.floor(Object.entries(hold).reduce((s, [m, n]) => s + n * (MATERIALS[m]?.value ?? 0), 0) * PIRATE_RATE);
 
+// And what a Pocket Dimension pays, which is the same trade one step further out.
+//
+// The three prices of ore are ONE LADDER and they are here together on purpose,
+// because the only way to judge any of them is against the other two:
+//
+//   your own hangar     100%     you flew it home and stashed it
+//   a pirate counter     75%     you flew into an outpost ring instead
+//   a Pocket Dimension   56.25%  you flew nowhere at all
+//
+// The quarter is already defined, one line up, as "the price of not flying home".
+// Not flying ANYWHERE is that same trade taken one step further, so it is charged
+// the same quarter again: PIRATE_RATE squared, rather than a third number somebody
+// picked. Every step away from your own counter costs a quarter of what is left.
+//
+// Charging the pirates' own 75% was the obvious alternative and it is wrong for a
+// reason worth writing down: it would pay exactly what the counter pays without
+// the flight, so a pilot who owns one would never fly into an outpost ring with a
+// full hold again, and fencing — which is free, and which every pilot has — would
+// become a thing only people who have not spent ten million ever do. A purchase
+// that retires a mechanic is worse than a purchase that competes with one. At 56%
+// all three are live: haul it home if you are going anyway, fence it if there is a
+// counter in the sector, and let the dimension take the rest.
+//
+// It is written as arithmetic rather than as 0.5625 so it moves if PIRATE_RATE
+// does, and it is the seam: a designer who wants the home rate changes this one
+// line and nothing else in the game has to know.
+export const POCKET_RATE = PIRATE_RATE ** 2;
+export const pocketValue = hold =>
+  Math.floor(Object.entries(hold ?? {}).reduce((s, [m, n]) => s + n * (MATERIALS[m]?.value ?? 0), 0) * POCKET_RATE);
+
 // What dying costs beyond the hold.
 //
 // Losing the cargo alone meant a pilot flying empty had nothing at stake: the

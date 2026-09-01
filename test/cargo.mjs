@@ -518,5 +518,78 @@ console.log('\nreading a balance');
     }), 'a readable number that is wrong is not readable');
 }
 
+// The three prices of ore, and what the dearest of them is worth an hour.
+//
+// This is the measurement the Pocket Dimension's ten million was derived from, kept
+// so it can go stale loudly. Rule two: reproduce the complaint as a number, then
+// make the number the test.
+console.log('\nthe three prices of ore');
+{
+  const { PIRATE_RATE, pirateValue, POCKET_RATE, pocketValue } = await import('../shared/cargo.js');
+  const { POCKET_PRICE, POCKET_EVERY } = await import('../shared/research.js');
+  const { stageDps } = await import('../shared/balance.js');
+  const { farmHp } = await import('../shared/aliens.js');
+  const { fmtCredits } = await import('../shared/cargo.js');
+
+  // A hold worth having: one Corsair Hive's drop, which is a full Ore Tender.
+  const load2 = { platinum: 180, iridium: 24 };
+  const home = holdValue(load2), fence = pirateValue(load2), pocket = pocketValue(load2);
+  check('every step away from your own hangar costs a quarter of what is left',
+    Math.abs(POCKET_RATE - PIRATE_RATE ** 2) < 1e-9,
+    `100% at your own counter, ${Math.round(PIRATE_RATE * 100)}% at a pirate one for not flying home, ` +
+    `${(POCKET_RATE * 100).toFixed(2)}% from nowhere at all — the same quarter, one step further out`);
+  // The anti-domination pair. A purchase that pays what a free mechanic pays,
+  // without the flight, retires the mechanic; these two say it never does.
+  check('a Pocket Dimension never beats hauling the hold home yourself',
+    pocket < home,
+    `${fmtCredits(home)} at the dock against ${fmtCredits(pocket)} from anywhere — ` +
+    `flying it in is still worth ${fmtCredits(home - pocket)}`);
+  check('and never beats the pirate counter in the sector you are already standing in',
+    pocket < fence,
+    `${fmtCredits(fence)} at an outpost against ${fmtCredits(pocket)} from nowhere — ` +
+    'so a full hold is still a reason to fly into the ring');
+
+  // Ore per hour, per hostile, off the real drop tables and a finished ship's dps.
+  //
+  // TIME is farm hit points over dps times WALL, and each of those is an
+  // assumption stated rather than a number picked: farmHp is what the game already
+  // prices a kill by (escorts and broods included), and WALL is the multiplier for
+  // travel, shield regen and the walk between posts. ORE is the expectation of the
+  // real DROPS row, so a rebalanced table moves this without anyone remembering.
+  //
+  // It is deliberately CONSERVATIVE in two directions: a brood that drops its own
+  // ore is counted as hit points and not as ore, and respawn is ignored, which
+  // matters at the frontier where you outpace it.
+  const WALL = 1.5;
+  const dps = stageDps('finished');
+  const ev = kind => DROPS[kind].reduce((s, r) => s + r.p * ((r.min + r.max) / 2) * MATERIALS[r.mat].value, 0);
+  const perHour = kind => ev(kind) * 3600 / ((farmHp(kind) / dps) * WALL);
+  const payback = kind => POCKET_PRICE / (perHour(kind) * POCKET_RATE) / 1;   // hours
+  // Everything from the frontier out: the pilot who can find ten million is not
+  // farming Drifters, and pricing this against the home ring would be pricing it
+  // for somebody who will never own one.
+  const OUT = ['lamprey', 'bandit', 'kedge', 'leviathan', 'thresher', 'hive'];
+  const best = OUT.reduce((a, b) => payback(a) < payback(b) ? a : b);
+  const worst = OUT.reduce((a, b) => payback(a) > payback(b) ? a : b);
+  check('a Pocket Dimension pays for itself in a working day of farming, not in an afternoon',
+    payback(best) >= 3 && payback(worst) <= 24,
+    `${fmtCredits(POCKET_PRICE)} back in ${payback(best).toFixed(1)}h of ${best}s at best and ` +
+    `${payback(worst).toFixed(1)}h of ${worst}s at worst, at ${Math.round(dps)} dps and ${WALL}x wall clock — ` +
+    `the mining ladder's top rung is 8,000,000 for 7.4h, so the tree asks for a comparable day`);
+  // And the one place it does not, which is a fact about the bestiary rather than
+  // about this price. A deep hostile's ore is capped at a single hold while its
+  // bounty is not, so ore stops scaling exactly where the money starts.
+  const deep = payback('crucible');
+  check('the deeps are where ore stops scaling, and no sale price can fix that',
+    deep > payback(worst) * 1.5 && ev('crucible') / (farmHp('crucible') * 0.70) < 0.05,
+    `${deep.toFixed(0)}h in the deeps, because a Crucible's ore is ` +
+    `${(100 * ev('crucible') / (farmHp('crucible') * 0.70)).toFixed(1)}% of what killing it pays — ` +
+    'the drop is capped at one hold and the bounty is not');
+  check('and a sale is an event rather than a trickle',
+    POCKET_EVERY >= 10 && POCKET_EVERY <= 60,
+    `every ${POCKET_EVERY}s — short enough that a 300-volume hold never binds against a ` +
+    '152-volume deep drop, long enough that you notice one land');
+}
+
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : `PASS — ${Object.keys(MATERIALS).length} materials`}\n`);
 process.exit(fails.length ? 1 : 0);

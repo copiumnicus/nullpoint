@@ -22,7 +22,7 @@ import { filePanel, filedIn, dossierOf, fileProgress, totalKills,
          FILE_PAD, FILE_HEAD, FILE_ROW } from '/shared/threats.js';
 import { scroller, wheel as scrollWheel, ease as scrollEase } from '/shared/scroll.js';
 import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowState, rungGain, partsOf,
-         shortOf, tiersOf,
+         shortOf, tiersOf, treeGain, hasPocket, POCKET_EVERY,
          applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
 import { ATTRS, HULLS, resolve, slotsOf, baysOf } from '/shared/ships.js';
@@ -55,6 +55,7 @@ import { burnOf, burnR } from '/shared/burn.js';
 import { sowOf, HOLD } from '/shared/ground.js';
 import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
+         pocketValue,
          SCOOP_R, CURRENCY, isBond, podName, podColour } from '/shared/cargo.js';
 import { ALIENS, outlineOf, payloadOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
@@ -166,7 +167,22 @@ let arena = null;                 // { key, left, total, cleared, replay } while
 // be lying to the person holding it.
 let duel = null;
 let labOpen = false;              // the research panel
-let labTab = 'ladder';            // RESEARCH, or the CLAIMS page you go back out from
+let labTab = 'ladder';            // RESEARCH, CLAIMS, or the TECH TREE
+// The last Pocket Dimension sale, and it is what the countdown is drawn from.
+//
+// A thing that fires every thirty seconds while you fly has to be VISIBLE or it
+// feels like nothing happened — but a chat line or a toast every thirty seconds,
+// forever, is the same amount of information delivered as spam. So the server says
+// one word per actual sale and the client draws a continuous readout between them,
+// exactly the way liveCredits() draws the mine's income between its once-a-second
+// banks. `soldAt` is performance.now() and NOT the server's clock: a countdown is
+// an interval rather than an instant, so it needs no agreement about what time it
+// is, and two clocks that have to match is a bug this file has shipped before.
+//
+// Null until the first sale lands, and the readout says what the module does
+// instead of counting down from a phase it has not been told. Rule seven: it
+// degrades to the truth rather than to a guess.
+let soldAt = null, soldCr = 0, soldUnits = 0;
 // Staking is permanent and costs 500,000, and a pilot doing it for the first time
 // has no idea the plot is for good. One click was the whole transaction, which is
 // the wrong shape for the most expensive irreversible thing in the game.
@@ -471,7 +487,82 @@ function drawClaims(L) {
   g.font = '12px ui-monospace, monospace';
 }
 
-// The research panel: two pages, and three ladders on the first of them.
+// The TECH TREE: permanent upgrades that are not more of anything.
+//
+// Drawn from rowState like the ladder page, because a tree line IS a ladder line
+// with one rung on it — see MODULES in shared/research.js for why that shape was
+// chosen over a second kind of entry. What differs is the second line: a ladder
+// rung is priced in what it makes your hull, and a tree row is priced in what it
+// pays you, so this reads treeGain rather than rungGain.
+function drawTree(L, near) {
+  const mask = myLab?.mods ?? 0;
+  for (const row of L.rows) {
+    const st = rowState(mask, row.line, credits, myClaims);
+    const why = st.next ? whyNotBuild(st.next, { credits, mask, near, claims: myClaims }) : null;
+    const hot = hover && hover.x > row.r.x && hover.x < row.r.x + row.r.w
+                      && hover.y > row.r.y && hover.y < row.r.y + row.r.h;
+    g.fillStyle = st.done ? 'rgba(125,224,138,0.10)'
+                : !why ? (hot ? 'rgba(125,224,138,0.16)' : 'rgba(255,255,255,0.03)')
+                : 'rgba(255,255,255,0.02)';
+    g.fillRect(row.r.x, row.r.y, row.r.w, row.r.h);
+    g.strokeStyle = st.done ? '#3d5876' : why ? '#243448' : '#4a6785'; g.lineWidth = 1;
+    g.strokeRect(row.r.x + .5, row.r.y + .5, row.r.w - 1, row.r.h - 1);
+
+    // The name is the UPGRADE, not the line, because on this page they are the
+    // same thing said twice — "Pocket Dimension 0/1" over "Pocket Dimension".
+    const m = MODULES[st.next ?? tiersOf(row.line)[0]];
+    g.font = '12px ui-monospace, monospace';
+    g.fillStyle = st.done ? '#7de08a' : why ? '#66748c' : '#cfe4ff';
+    g.fillText(m?.name ?? LINE_NAME[row.line] ?? row.line, row.r.x + 12, row.r.y + 20);
+    g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+    g.fillText(m?.blurb ?? '', row.r.x + 12, row.r.y + 34);
+
+    // What it is worth in the hold you are carrying right now. Same argument as the
+    // ladder's: a multiplier is a fact about the module, a number is a fact about
+    // you, and only the second decides whether ten million is worth it.
+    const gain = treeGain(st.next ?? tiersOf(row.line)[0], hold);
+    const gap = shortOf(mask, row.line, credits), poor = gap > 0;
+    if (gain) {
+      g.font = '11px ui-monospace, monospace';
+      g.fillStyle = st.done ? '#7de08a' : poor ? '#4e8a5c' : '#7de08a';
+      g.fillText(gain.label, row.r.x + 12, row.r.y + 52);
+      g.font = '9px ui-monospace, monospace'; g.fillStyle = '#66748c';
+      g.fillText(gain.sub, row.r.x + 12, row.r.y + 68);
+    } else {
+      g.font = '10px ui-monospace, monospace'; g.fillStyle = '#7f8fa6';
+      g.fillText(m?.does ?? '', row.r.x + 12, row.r.y + 52);
+    }
+
+    g.textAlign = 'right';
+    if (st.done) {
+      g.font = '11px ui-monospace, monospace'; g.fillStyle = '#7de08a';
+      g.fillText('RESEARCHED', row.r.x + row.r.w - 12, row.r.y + 24);
+    } else {
+      g.font = '12px ui-monospace, monospace';
+      g.fillStyle = poor ? '#8a7038' : '#ffd479';
+      g.fillText(`${fmtCredits(st.price)} ${CURRENCY.short}`, row.r.x + row.r.w - 12, row.r.y + 24);
+      // The distance, not the refusal — the same rule the ladder page follows,
+      // because the moment a pilot most needs to know what they are saving toward
+      // is the moment they cannot buy it yet.
+      g.font = '9px ui-monospace, monospace';
+      if (poor) {
+        g.fillStyle = '#e0a53f';
+        g.fillText(`${fmtCredits(gap)} ${CURRENCY.short} to go`, row.r.x + row.r.w - 12, row.r.y + 44);
+      } else if (why) {
+        g.fillStyle = '#66748c';
+        g.fillText(why.length > 34 ? why.slice(0, 33) + '…' : why,
+                   row.r.x + row.r.w - 12, row.r.y + 44);
+      } else {
+        g.fillStyle = '#7de08a';
+        g.fillText('ready', row.r.x + row.r.w - 12, row.r.y + 44);
+      }
+    }
+    g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
+  }
+  g.font = '12px ui-monospace, monospace';
+}
+
+// The research panel: three pages, and three ladders on the first of them.
 //
 // Not the station panel's machinery — that is shelves you browse, this is a ladder
 // you climb, and forcing one into the other would mean a page of one-item shelves.
@@ -552,6 +643,7 @@ function drawLab() {
     g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
   if (L.tab === 'claims') return drawClaims(L);
+  if (L.tab === 'tree')   return drawTree(L, near);
 
   const tips = [];
   for (const row of L.rows) {
@@ -700,6 +792,21 @@ function labClick(v) {
     }
     return true;
   }
+  // The TECH TREE. Every row is an ordinary purchase, so it takes the same path
+  // the ladder does and refuses in the same words — one whyNotBuild, so the panel
+  // can never offer something the server then declines.
+  if (L.tab === 'tree') {
+    for (const row of L.rows) {
+      if (!inside(row.r)) continue;
+      const st = rowState(mask, row.line, credits, myClaims);
+      if (!st.next) { say('Already researched — it is permanent', '#7de08a'); return true; }
+      const why = whyNotBuild(st.next, { credits, mask, near, claims: myClaims });
+      if (why) { say(why[0].toUpperCase() + why.slice(1), '#e0a53f'); return true; }
+      send({ t: 'build', key: st.next });
+      return true;
+    }
+    return true;
+  }
   for (const row of L.rows) {
     if (!inside(row.r)) continue;
     const st = rowState(mask, row.line, credits, myClaims);
@@ -762,6 +869,16 @@ function drawLabs() {
     g.fillStyle = l.own ? 'rgba(125,224,138,0.14)' : 'rgba(74,103,133,0.12)';
     g.fill();
     g.strokeStyle = col; g.lineWidth = 1 + plates * 0.6; g.stroke();
+
+    // A rift, drawn INSIDE the core rather than around it: the tech tree is not
+    // more armour or a longer boom, so it should not read as either. A hole in the
+    // middle of the hexagon is the only thing on a station that goes inward.
+    for (const part of parts.filter(q => q.part === 'rift')) {
+      g.beginPath(); g.arc(p.x, p.y, R * 0.42, 0, 7);
+      g.fillStyle = 'rgba(4,7,12,0.92)'; g.fill();
+      g.strokeStyle = col; g.lineWidth = 1; g.globalAlpha = 0.45 + part.at * 0.4;
+      g.stroke(); g.globalAlpha = 1;
+    }
 
     // Standing at your own station, the game says what to press. R is not on any
     // other prompt and nothing else in the world mentions it, so a pilot who has
@@ -1134,6 +1251,17 @@ ws.onmessage = e => {
   if (m.t === 'bought') {
     if (typeof m.credits === 'number') credits = m.credits;
     toast(m.what, m.cost, m.note);
+    return;
+  }
+  // A Pocket Dimension sale. Deliberately NOT a toast and NOT a chat line: this
+  // fires every thirty seconds for as long as a pilot keeps scooping, and a
+  // receipt that often is noise you learn to stop reading — which is the same as
+  // no receipt at all. It re-anchors the countdown on the cargo line instead, and
+  // that line is on screen the whole time rather than for two seconds after the
+  // fact.
+  if (m.t === 'sold') {
+    if (typeof m.credits === 'number') credits = m.credits;
+    soldAt = performance.now(); soldCr = m.cr ?? 0; soldUnits = m.units ?? 0;
     return;
   }
   // The field is clear. The mission bar has already flipped and the rock has
@@ -5288,9 +5416,37 @@ function drawFrame(now) {
       g.fillStyle = MATERIALS[m]?.colour ?? '#9aa3ad';
       g.fillRect(gx, 94, w2, 10); gx += w2;
     }
-    g.fillStyle = vol >= cargoCap ? '#ff5c6b' : '#5b6b85';
+    // The Pocket Dimension's whole receipt, and it is deliberately not a receipt.
+    //
+    // It fires every thirty seconds for as long as a pilot keeps scooping, so a
+    // toast or a chat line would be the same sentence a hundred times an hour —
+    // information delivered as noise, which is the same as no information. It goes
+    // on the line that is already describing the hold instead: the figure counts
+    // down while you scoop, the bar under it empties the moment it fires, and the
+    // line goes green for a beat afterwards so the emptying reads as a SALE rather
+    // than as the hold falling out of the ship.
+    //
+    // ONE fillText, not two. A green suffix beside a grey prefix is two labels a
+    // word apart on one line, which is exactly what the crowding rule in
+    // test/uilint.mjs exists to catch, and the whole line changing colour says the
+    // same thing without asking it to.
+    //
+    // The phase comes from `soldAt`, which is this client's own performance.now()
+    // at the last sale — see the note where it is declared. Before the first sale
+    // there is no phase and the line says the period instead of counting down to a
+    // moment nobody has been told about.
+    const pocket = hasPocket(myLab?.mods ?? 0);
+    const since = pocket && soldAt !== null ? (performance.now() - soldAt) / 1000 : null;
+    const flash = since !== null && since < 2.5 && soldUnits > 0;
+    const left = since === null ? null : POCKET_EVERY - (since % POCKET_EVERY);
+    g.fillStyle = flash ? '#7de08a' : vol >= cargoCap ? '#ff5c6b' : '#5b6b85';
     g.fillText(`CARGO ${vol}/${cargoCap}` + (vol >= cargoCap ? '  HOLD FULL' : '') +
-               (vol ? `  ${holdValue(hold)} cr` : ''), 16 + gw + 10, 103);
+               (vol ? `  ${holdValue(hold)} cr` : '') +
+               (!pocket ? ''
+                : flash ? `  POCKET +${fmtCredits(soldCr)} ${CURRENCY.short}`
+                : `  POCKET ${fmtCredits(pocketValue(hold))} ${CURRENCY.short} ` +
+                  (left === null ? `/ ${POCKET_EVERY}s` : `in ${Math.ceil(left)}s`)),
+               16 + gw + 10, 103);
     g.fillStyle = '#ffd479';
     // Full digits, not fmtCredits, and only while a mine is running. Above 100,000
     // fmtCredits drops to no decimals, so the smallest visible change is 500 — at
