@@ -25,7 +25,7 @@ import { LAB_PRICE, LAB_R, LAB_PAD, MODULES, LINES, LINE_NAME, labPanel, rowStat
          shortOf, tiersOf,
          applyResearch,
          nearLab, plotAt, whyNotStake, whyNotBuild, incomeOf } from '/shared/research.js';
-import { ATTRS, HULLS, resolve, slotsOf, baysOf } from '/shared/ships.js';
+import { ATTRS, HULLS, resolve, slotsOf, baysOf, berthed } from '/shared/ships.js';
 import { bonusBays, questLine, questBar } from '/shared/quests.js';
 import { whyNotSold, frontierOnly, deepOnly } from '/shared/gear.js';
 import { whyNotScrap, whyNotScrapHull, scrapOfItem, scrapOfHull, SCRAP_RATE } from '/shared/scrap.js';
@@ -197,8 +197,11 @@ let creditsAt = 0, creditsSeen = 0;
 // functions — a menu offering a bay the server would refuse is the bug this shape
 // exists to prevent.
 // The ship as the ammunition rules see it. Same object the server builds, so the
-// menu can never offer a grade the server would refuse to load.
-const feeding = () => ({ fit: myFit, drones: escortOf(myDrones, myRig), EQUIPMENT });
+// menu can never offer a grade the server would refuse to load — including the
+// berthed() call, because a parked bay is not part of the escort on either side.
+const feeding = () => ({ fit: myFit,
+                         drones: berthed(myHull, escortOf(myDrones, myRig), spareBays()),
+                         EQUIPMENT });
 const foldPorts = () => homePorts({ co: myCo, berths: myBerths }, MAPS);
 const foldDest  = () => foldTo({ co: myCo, berths: myBerths }, MAPS, myFoldTo);
 let bayOpen = false;
@@ -3144,11 +3147,40 @@ const PICK_STRIP = 20;                          // the top of a box opens its ra
 let feedOpen = null;                            // which box has its menu up
 let lastBox = { feed: null, t: -Infinity };     // for spotting a double click on one
 
+// What you are HOLDING of a feed. This is the cycle key's list, not the menu's —
+// see gradeRows below for why those are two different questions.
 const heldGrades = feed => feed === 'repair'
   ? KIT_KEYS.filter(k => (myKits[k] ?? 0) > 0)
   : feed === 'device'
   ? DEVICE_KEYS.filter(k => (myDevices[k] ?? 0) > 0)
   : forWeapon(feed).filter(k => (myAmmo[k] ?? 0) > 0);
+
+// WHAT THE GRADE MENU LISTS, which is every grade of that feed and not only the
+// ones you hold.
+//
+// THE BUG THIS FIXES, in the designer's own words: "I have eleven drones with
+// level six emitters and five Cyclone Racks on the Vanguard, and I cannot select
+// the laser cells for the tier six emitters. I can select the ammo for the Cyclone
+// Racks." Built for real over a socket, that ship is legal — whyNotLoad('cell4')
+// is null and the server accepts the load — and its ammunition is the 4,000
+// Standard Cells and 400 Standard Warheads a new account is issued. So the laser
+// menu had exactly ONE row in it and the purple one was not there to click, while
+// the rocket menu had its own single row and therefore looked like it worked.
+//
+// A pilot who has just spent twenty-four million on MK-VIs and finds no purple row
+// concludes the game is refusing them, and there is nothing on screen that says
+// otherwise. The row-drawing code already knew better and says so two hundred lines
+// down — "A grade you own but may not load is drawn, not hidden... the point of the
+// row is to say what is missing" — it was simply never handed the row.
+//
+// So the menu lists the shelf and the row carries its own count: a grade you have
+// none of is drawn with a 0 beside it, which is the difference between "you cannot
+// have this" and "go and buy some". The geometry was already proven for the full
+// list — test/ammo.mjs measures the chooser against forWeapon(feed) at every window
+// size, and has since before there were four grades.
+const gradeRows = feed => feed === 'repair' || feed === 'device'
+  ? heldGrades(feed)
+  : forWeapon(feed);
 
 // WHAT THE ROWS OF A BOX'S MENU ACTUALLY ARE, asked once.
 //
@@ -3162,7 +3194,7 @@ const heldGrades = feed => feed === 'repair'
 //
 // One function, both callers. This is rule one in its narrowest form — the same
 // question answered in two places will answer it differently.
-const menuRows = feed => feed === 'device' ? foldPorts().map(h => h.map) : heldGrades(feed);
+const menuRows = feed => feed === 'device' ? foldPorts().map(h => h.map) : gradeRows(feed);
 
 // Same shape as repairBlocked: the button, its tooltip and the server all ask
 // one function, so the box never offers what the server will refuse.
@@ -3272,10 +3304,15 @@ function barClick(v) {
   return false;
 }
 
-// Step to the next grade of one feed that you actually hold.
+// Step to the next grade of one feed that you actually hold AND may actually fire.
+//
+// It was hold alone, which meant the key could land you on a crate your ship is not
+// specced for — the server refuses it, the box does not change, and the key reads as
+// broken. The menu is where you go to see a grade you cannot load and why; the key
+// is for flipping between the ones that work.
 function cycleAmmo(feed) {
-  const held = heldGrades(feed);
-  if (held.length < 2) return say(`You hold only one grade of ${feed === 'laser' ? 'cells' : 'warheads'}`, '#66748c');
+  const held = heldGrades(feed).filter(k => !whyNotLoad(k, feeding()));
+  if (held.length < 2) return say(`You hold only one grade of ${feed === 'laser' ? 'cells' : 'warheads'} you can fire`, '#66748c');
   const i = held.indexOf(myUsing[feed]);
   send({ t: 'ammo', key: held[(i + 1) % held.length] });
   feedOpen = null;

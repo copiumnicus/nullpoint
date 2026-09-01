@@ -10,7 +10,7 @@ import { KIT_KEYS } from '../shared/repair.js';
 import { DEVICE_KEYS } from '../shared/devices.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, STAT_KEYS } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
-import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu,
+import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu, forWeapon,
          promptRect, TIP_H, TIP_UP } from '../shared/ammo.js';
 import { settingsLayout } from '../shared/settings.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
@@ -2197,14 +2197,19 @@ const dismiss = () => {
     if (B.r.x < 0 || B.r.x + B.r.w > innerWidth || B.r.y + B.r.h > innerHeight)
       errs.push('the ammunition bar runs off the screen');
 
-    // Two grades of cells held, so the laser box has something to choose between.
+    // The chooser lists the SHELF, not the two grades this pilot happens to hold.
+    // It listed stock until a designer with eleven MK-VI drones found the purple
+    // row simply absent and read that as the game refusing them; the row is drawn
+    // with a 0 now. This geometry has to be built from the same function the client
+    // builds it from, or the harness clicks a rectangle that is not where the row
+    // is — which is how it caught the change rather than the change catching it.
     const laserBox = B.boxes.find(b => b.feed === 'laser');
     sent.length = 0;
     click(laserBox.r);                                             // opens the menu, sends nothing yet
     frame(t += 16); frames++;
     if (sent.length) errs.push(`clicking the box loaded ${JSON.stringify(sent[0])} instead of offering a choice`);
 
-    const M = feedMenu(laserBox, ['cell1', 'cell3']);
+    const M = feedMenu(laserBox, forWeapon('laser'));
     if (M.box.y < 0) errs.push('the ammunition menu opened off the top of the screen');
     for (const row of M.rows) { hoverAt(row.r); frame(t += 16); frames++; }
 
@@ -2273,6 +2278,25 @@ const dismiss = () => {
       else console.log('ammo: double-click safes a weapon and double-click brings it back');
     } finally { performance.now = realNow2; }
 
+    // Q steps the laser feed — between the grades this ship can actually FIRE.
+    //
+    // The ship above was left with an empty rack to test the safe gesture, and a
+    // ship with no emitter at all may now only load Standard Cells: whyNotLoad
+    // stopped waving through a feed the ship has no weapon for, so there is nothing
+    // to step to. That is the rule, not a broken key, so the key is tested on a ship
+    // that has guns — and the rackless case is asserted underneath it.
+    sent.length = 0;
+    evt('keydown', { key: 'q' });
+    frame(t += 16); frames++;
+    if (sent.some(m => m.t === 'ammo'))
+      errs.push('Q cycled the cells of a ship with no emitter to fire them out of');
+
+    feed({ t: 'fit', hull: 'vanguard',
+           fit: { weapon: ['emitter5', 'emitter5'], generator: ['cellA'], tech: [] },
+           drones: ['emitter5', 'emitter5'], formation: 'arrow', formations: ['arrow'],
+           ammo: { cell1: 4000, cell3: 250, head1: 400 }, using: { laser: 'cell1', rocket: 'head1' },
+           armed: { laser: true, rocket: true }, kits: {}, devices: {}, credits: 0 });
+    frame(t += 16); frames++;
     sent.length = 0;
     evt('keydown', { key: 'q' });                                  // cycle the laser feed
     frame(t += 16); frames++;
