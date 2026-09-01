@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.89';
+export const VERSION = '0.90';
 
 export const PATCHES = [
+  { v: '0.90', notes: [
+    'CRITICAL DAMAGE: the screen goes red when your hull will not last another four seconds',
+    'It reads the rate you are losing hull, so it fires at 5% on a Bulwark and 44% on a Kestrel',
+    'It gets louder as you get closer, and it is silent when nothing is shooting you',
+    'Dying in the margin says so once, not twice — the hull warning takes the shear one over',
+  ] },
   { v: '0.89', notes: [
     'A wounded hostile with its back to the edge of the map runs along it, not into it',
     'They were stopping dead — 15px of flight where open space gets 1,267',
