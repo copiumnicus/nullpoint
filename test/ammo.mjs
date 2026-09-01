@@ -589,6 +589,119 @@ console.log('\nthe bar');
     'so a box means the same thing every time you look at it');
 }
 
+console.log('\nbuying by the crate');
+{
+  const { BUY_STEPS, MAX_BUY, buyCrates, buyRow, BUY_W, BUY_GAP, BUY_EDGE, priceRight }
+    = await import('../shared/ammo.js');
+  const { bayLayout, STORE_PAGES } = await import('../shared/hangar.js');
+  const { HULLS } = await import('../shared/ships.js');
+
+  // What a crate actually lasts, so the ladder can be judged rather than admired.
+  // The best gun in every slot and the best rack in every launcher, with the bays
+  // full, on whichever hull carries the most of each.
+  const best = kind => Object.keys(EQUIPMENT)
+    .filter(k => EQUIPMENT[k].slot === 'weapon' && EQUIPMENT[k].kind === kind)
+    .sort((a2, b2) => (EQUIPMENT[b2].tier ?? 0) - (EQUIPMENT[a2].tier ?? 0))[0];
+  const burn = hull => {
+    const n = slotsOf(hull);
+    const esc = Array(12).fill(best('laser'));
+    const guns = gunsOf(fit({ weapon: Array(n.weapon).fill(best('laser')) }), esc);
+    const racks = Math.min(n.weapon, n.launchers ?? n.weapon);
+    const rk = resolve(hull, fit({ weapon: Array(racks).fill(best('rocket')) }), esc, 'wedge');
+    return { rounds: guns * FIRE_RATE, heads: Math.round(rk.rockets) * ROCKET_RATE };
+  };
+  const worst = Object.keys(HULLS).map(burn)
+    .reduce((a2, b2) => ({ rounds: Math.max(a2.rounds, b2.rounds), heads: Math.max(a2.heads, b2.heads) }));
+  const secs = { laser: AMMO.cell1.pack / worst.rounds, rocket: AMMO.head1.pack / worst.heads };
+  console.log(`     a finished ship burns ${worst.rounds.toFixed(1)} rounds/s and ` +
+    `${worst.heads.toFixed(1)} warheads/s — one crate is ${secs.laser.toFixed(0)}s of shooting ` +
+    `and ${secs.rocket.toFixed(0)}s of rockets`);
+
+  // The claim the sizes have to answer. A crate that lasted an hour would make x10
+  // pointless; a crate that lasted five seconds would make x100 too small to help.
+  check('one crate is a fight, not a career', secs.laser < 180 && secs.rocket > 10,
+    `${secs.laser.toFixed(0)}s of cells and ${secs.rocket.toFixed(0)}s of warheads at full trigger`);
+  check('and the biggest button is a long trip rather than a lifetime',
+    MAX_BUY * secs.rocket / 60 > 20 && MAX_BUY * secs.laser / 3600 < 6,
+    `x${MAX_BUY} is ${(MAX_BUY * secs.rocket / 60).toFixed(0)} minutes of rockets and ` +
+    `${(MAX_BUY * secs.laser / 3600).toFixed(1)} hours of shooting`);
+
+  // The clamp is the shelf, not a number somebody typed. It was 99 while the
+  // designer asked for a x100 button, which is the one value that makes that
+  // button a liar — it took the click, charged for 99 and said nothing.
+  check('the server will take exactly the biggest button and no more',
+    MAX_BUY === Math.max(...BUY_STEPS) && BUY_STEPS.every(n => buyCrates(n) === n),
+    `x${BUY_STEPS.join(' x')} all survive the clamp`);
+  check('and a client asking for a billion crates gets the ceiling',
+    buyCrates(1e9) === MAX_BUY && buyCrates(-4) === 1 && buyCrates('nonsense') === 1
+      && buyCrates(undefined) === 1 && buyCrates(10.9) === 10,
+    'the clamp is why it exists and it still clamps');
+
+  // Geometry. Every button has to sit inside the row it belongs to, clear of its
+  // neighbours, at every window this game claims to fit in — a button you can see
+  // and cannot click is the bug shared/ owns.
+  let out = 0, lap = 0, cramped = 0, sizes = 0;
+  for (const [W, H] of [[2560, 1440], [1920, 1080], [1600, 900], [1366, 768],
+                        [1280, 720], [1024, 640], [820, 560]]) {
+    const G = bayLayout(W, H, { tab: 'store', page: 'ammo' });
+    sizes++;
+    for (const it of G.store) {
+      // The widest thing that shares the row's first line with the buttons, in the
+      // 0.6em monospace advance the whole client is set in.
+      const nameW = `${AMMO[it.k].name}   crate of ${AMMO[it.k].pack}`.length * 0.6 * 12;
+      const priceW = `${AMMO[it.k].price} cr`.length * 0.6 * 11;
+      const buys = buyRow(it.r, nameW + 0.6 * 11 + priceW);
+      if (!buys.length) { cramped++; continue; }
+      for (const b of buys) {
+        if (b.r.x < it.r.x || b.r.y < it.r.y
+         || b.r.x + b.r.w > it.r.x + it.r.w || b.r.y + b.r.h > it.r.y + it.r.h) out++;
+      }
+      for (let i = 1; i < buys.length; i++)
+        if (buys[i].r.x < buys[i - 1].r.x + buys[i - 1].r.w + 1) lap++;
+      // The name and the price still have their character of clearance once the
+      // buttons have taken their end of the row.
+      if (priceRight(it.r, buys) - priceW - (it.r.x + BUY_EDGE + nameW) < 0.6 * 11 - 1e-6) cramped++;
+    }
+  }
+  check('every buy button sits inside its row, clear of the next one',
+    out === 0 && lap === 0, `${sizes} window sizes x ${AMMO_KEYS.length} grades`);
+  check('and the name and the price still have room beside them', cramped === 0,
+    'the buttons take what is left, never what the row was already using');
+
+  // Nothing in the render harness measures a PAGE HINT against the column it is
+  // drawn in — `overflows` is a hand tool there and is not asserted — so the line
+  // that tells a pilot what the chips do is measured here instead. 11px monospace,
+  // from the right of the page list to the panel's own padding, on the narrowest
+  // window this game claims to fit in.
+  {
+    const G = bayLayout(820, 560, { tab: 'store', page: 'ammo' });
+    const room = G.panel.x + G.panel.w - 20 - (G.panel.x + 30 + G.pages[0].r.w);
+    const hint = STORE_PAGES.find(q => q.key === 'ammo').hint;
+    check('the shelf says what the buttons do, in the room the hint has',
+      hint.length * 0.6 * 11 <= room && /hundred/.test(hint),
+      `${Math.round(hint.length * 0.6 * 11)}px of hint in ${Math.round(room)}px at 820x560`);
+  }
+
+  // What happens when there is not room for three. The strip gives up the SMALL
+  // end, because clicking the row itself still buys one crate — and the k-th
+  // button from the right must not move when a smaller one goes, or a hit test
+  // written for a wide window would be reading the wrong rectangle on a narrow one.
+  const wide = { x: 0, y: 0, w: 600, h: 50 };
+  const full = buyRow(wide, 0);
+  const cases = [0, 400, 450, 500, 560].map(labelW => buyRow(wide, labelW));
+  check('a row too narrow for three buttons drops the small end, never the big one',
+    cases.every(c => !c.length || c.at(-1).n === MAX_BUY) &&
+    cases.every((c, i) => i === 0 || c.length <= cases[i - 1].length) &&
+    cases.at(-1).length === 0,
+    cases.map(c => c.length ? c.map(b => 'x' + b.n).join(' ') : 'none').join('  |  '));
+  check('and a button does not move when a smaller one is dropped',
+    cases.every(c => c.every((b, i) => {
+      const same = full[full.length - c.length + i];
+      return same.n === b.n && same.r.x === b.r.x;
+    })),
+    'right-aligned, so the hit test reads the same rectangle at every width');
+}
+
 console.log('\nthe mixing desk');
 {
   const { settingsLayout, valueAt, ROWS } = await import('../shared/settings.js');

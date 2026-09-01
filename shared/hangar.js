@@ -65,7 +65,12 @@ export const STORE_PAGES = [
   // rule shelfOf() already answers, and three of the pages would need the same line.
   { key: 'tech',      name: 'Technology',  hint: 'One of each per ship. Each one lets you do something.' },
   { key: 'techx',     name: 'Deep Tech',   hint: 'The top rungs. Sold only at an outpost bay you rent.' },
-  { key: 'ammo',      name: 'Ammunition',  hint: 'Cells and warheads by the crate. The one thing sold anywhere.' },
+  // The only page with controls of its own, so the hint says what the x10 and
+  // x100 chips on each row are for. 75 characters at 11px is 495px, which clears
+  // the 535px this line gets on the narrowest window the game claims to fit in —
+  // and nothing in the harness measures a hint against its panel, so it is
+  // measured here.
+  { key: 'ammo',      name: 'Ammunition',  hint: 'Cells and warheads by the crate — buy one, ten or a hundred. Sold anywhere.' },
   { key: 'utility',   name: 'Utilities',   hint: 'One use each. Repair drones mend hull; beacons fold you home.' },
   { key: 'drones',    name: 'Drones',      hint: 'Escort bays, and the rigs that gather ore instead of firing.' },
   { key: 'forms',     name: 'Formations',  hint: 'Where the escort flies, and what that is worth to you.' },

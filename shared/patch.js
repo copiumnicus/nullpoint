@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.80';
+export const VERSION = '0.81';
 
 export const PATCHES = [
+  { v: '0.81', notes: [
+    'Ammunition sells ten and a hundred crates at a time: ×1 ×10 ×100 on every row',
+    'Short of the full order it buys what you can afford, and the receipt says how many',
+    'A crate you cannot afford at all now says so instead of the click doing nothing',
+    'On a small window a locked grade no longer prints its reason through your round count',
+  ] },
   { v: '0.80', notes: [
     'The ammunition chooser lists every grade your weapon takes, not just the ones you hold',
     'A crate you have not bought shows a 0 instead of vanishing — it was reading as a refusal',

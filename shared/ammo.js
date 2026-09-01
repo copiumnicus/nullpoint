@@ -358,16 +358,37 @@ export const loadable = (feed, ctx) =>
 // A refusal that only says no is a refusal you have to go and research. This one
 // names the rung you are missing, the rung you are on, and the shelf that sells
 // the difference, because that is the entire next step.
-export function whyNotBuy(key, { fit, drones = [], EQUIPMENT } = {}) {
+//
+// SEVERAL WORDINGS, longest first, for the same reason the deep-stock refusals in
+// the client have several: this sentence is drawn on the row's second line and
+// shares that baseline with the rounds-held count on the right of it. The full
+// one is 426px at 10px and "999999 rounds held" is 108px, which fits the 690px
+// row a full-width panel gives and does not fit the 535px row at 820x560 —
+// measured, 22.6px of the two printed through each other there, on every window
+// that small, for as long as a grade has been gated. It was invisible because the
+// only pilot who has the count AND the lock is one with every emitter and no
+// launcher at all, and nothing swept the ammunition shelf at that size.
+//
+// The client picks the longest that fits. The server takes the first, because a
+// chat line has room for the whole sentence and the whole sentence is the one
+// that names the next step.
+export function whyNotBuySays(key, { fit, drones = [], EQUIPMENT } = {}) {
   const a = AMMO[key];
-  if (!a) return 'no such grade';
+  if (!a) return ['no such grade'];
   const need = NEEDS[key] ?? 1;
-  if (need <= 1) return null;
+  if (need <= 1) return [];
   const have = bestTierFor(a.for, fit, drones, EQUIPMENT);
-  if (have >= need) return null;
+  if (have >= need) return [];
   const rocket = a.for === 'rocket';
-  return `needs a tier ${need} ${rocket ? 'launcher' : 'emitter'} — you fly `
-       + `${have ? 'tier ' + have : 'none'}, so buy up on the ${rocket ? 'Launchers' : 'Lasers'} page`;
+  const rung = `needs a tier ${need} ${rocket ? 'launcher' : 'emitter'}`;
+  const fly = `you fly ${have ? 'tier ' + have : 'none'}`;
+  return [`${rung} — ${fly}, so buy up on the ${rocket ? 'Launchers' : 'Lasers'} page`,
+          `${rung} — ${fly}`,
+          rung];
+}
+
+export function whyNotBuy(key, ctx) {
+  return whyNotBuySays(key, ctx)[0] ?? null;
 }
 
 // True if this pilot could fire that weapon at all right now.
@@ -435,3 +456,76 @@ export function feedMenu(box, grades) {
     })),
   };
 }
+
+// --- buying by the crate ------------------------------------------------------
+//
+// One click bought one crate, so a pilot topping up before a long trip clicked
+// the same row twenty times. The ladder is sized off what a crate actually lasts
+// rather than off round numbers.
+//
+// Measured off the real resolve()/gunsOf() numbers — test/ammo.mjs keeps the
+// measurement — with the best gun in every slot and every bay full, firing
+// without pause: 20.4 rounds a second out of the guns (seventeen emitters at
+// FIRE_RATE 1.2) and 19.3 warheads a second out of five Cyclone racks at
+// ROCKET_RATE 0.55. A cell crate is 2000 rounds and a warhead crate is 400, so
+// ONE CRATE IS 98 SECONDS IN THE GUNS AND 21 SECONDS IN THE RACKS — which is why
+// the crate is the unit, and also why the crate is not enough.
+//
+//     x1    98s of shooting         21s
+//     x10   16 minutes              3.5 minutes
+//     x100  2.7 hours               35 minutes
+//
+// x100 is a long trip's worth of warheads and rather more than that of cells;
+// nothing above it is a purchase anybody makes on purpose, and a rung below x10
+// would be back to counting clicks.
+//
+// THERE IS NO "FILL" BUTTON and there cannot be one. Ammunition has no carry
+// limit — see the header — so there is no full to fill up to, and a button that
+// bought "enough" would have to invent a number the game does not have.
+export const BUY_STEPS = [1, 10, 100];
+
+// The most crates one message may ask for. The server clamps to this so a client
+// cannot ask for a billion, which it must go on doing; what changed is that the
+// ceiling is now the BIGGEST BUTTON THE SHELF DRAWS rather than a number somebody
+// picked. It used to be 99, which is the one value that makes the x100 button a
+// liar — it took the click, charged for 99 and said nothing about the hundredth.
+export const MAX_BUY = Math.max(...BUY_STEPS);
+export const buyCrates = n => Math.max(1, Math.min(MAX_BUY, Math.floor(+n) || 1));
+
+// Where those buttons sit on an ammunition row in the store.
+//
+// Here rather than in the client for the reason every rectangle in this directory
+// is here: the client DRAWS these and HIT-TESTS them, and a button you can see
+// and cannot click is the workshop-dock bug with one rule written twice.
+//
+// They ride the row's FIRST line, beside the price. The second line is already
+// full — the blurb reaches 354px and the rounds-held note another 108px, which on
+// the 535px row an 820x560 window gives is nearly all of it — and the price is the
+// only thing on that side of the row with anywhere to go.
+//
+// `labelW` is what the name and the price need on that line, measured by the
+// client and handed in: this file has no canvas and will not keep a second copy
+// of a font metric, the same contract statStrip() already runs on. Buttons that
+// will not fit in what is left are DROPPED, SMALLEST FIRST, the way the store
+// footer drops the sentence it cannot fit — clicking the row itself still buys
+// one crate, so x1 is the button that costs nothing to lose.
+export const BUY_W = 40, BUY_H = 20, BUY_GAP = 5, BUY_PAD = 10, BUY_EDGE = 12, BUY_TOP = 6;
+
+export function buyRow(r, labelW = 0, steps = BUY_STEPS) {
+  const room = r.w - 2 * BUY_EDGE - labelW;
+  let n = steps.length;
+  while (n > 0 && n * BUY_W + (n - 1) * BUY_GAP + BUY_PAD > room) n--;
+  const w = n * BUY_W + Math.max(0, n - 1) * BUY_GAP;
+  const x0 = r.x + r.w - BUY_EDGE - w;
+  // The last n, not the first: dropping the small end keeps the reason the
+  // buttons exist at all.
+  return steps.slice(steps.length - n).map((crates, i) => ({
+    n: crates, label: `×${crates}`,
+    r: { x: x0 + i * (BUY_W + BUY_GAP), y: r.y + BUY_TOP, w: BUY_W, h: BUY_H },
+  }));
+}
+
+// Where the price ends once the buttons have taken their end of the row. One
+// place, so the row cannot draw the price somewhere the buttons already are.
+export const priceRight = (r, buys) =>
+  buys?.length ? buys[0].r.x - BUY_PAD : r.x + r.w - BUY_EDGE;

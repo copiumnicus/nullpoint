@@ -11,7 +11,7 @@ import { DEVICE_KEYS } from '../shared/devices.js';
 import { bayLayout, STORE_PAGES, fitsIn, pickerLayout, STAT_KEYS } from '../shared/hangar.js';
 import { DEV_ID, DEV_BASE } from '../shared/devmap.js';
 import { AMMO_KEYS, FEEDS, BAR_SLOTS, barLayout, feedMenu, forWeapon,
-         promptRect, TIP_H, TIP_UP } from '../shared/ammo.js';
+         promptRect, TIP_H, TIP_UP, buyRow, BUY_STEPS, MAX_BUY } from '../shared/ammo.js';
 import { settingsLayout } from '../shared/settings.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
@@ -1771,6 +1771,64 @@ const dismiss = () => {
   if (kinds.size) console.log(`station: ${rows} hangar rows + ${storeRows} store rows across ` +
     `${STORE_PAGES.length} pages, all hovered and clicked; sent ${[...kinds].join(', ')}`);
 
+  // The x1 x10 x100 buttons on an ammunition row.
+  //
+  // The server has taken a crate count on `buyammo` since ammunition was crated
+  // and nothing ever sent anything but 1, so a pilot topping up before a long trip
+  // clicked the same row twenty times. Three buttons where there was one is a
+  // GEOMETRY change: this clicks the rectangles shared/ammo.js hands out, at every
+  // window size, and reads back what actually went on the wire — a button drawn
+  // somewhere the hit test does not look is the bug that directory exists for.
+  {
+    feed({ t: 's', docked: true, credits: 9_999_999,
+           ships: [packShip({ id: 1, x: 6000, y: 4000, heading: 0, charge: 0, co: 'm',
+                              hull: 'vanguard', hp: 100, sh: 100, flash: 0, tgt: 0, shot: 0,
+                              rk: 0, vis: 2 })] });
+    frame(t += 16); frames++;
+    let answered = 0;
+    for (const [w, h] of SIZES) {
+      globalThis.innerWidth = w; globalThis.innerHeight = h;
+      evt('resize'); SIZE = `${w}x${h}`;
+      const S = bayLayout(w, h, { ...state, tab: 'store', page: 'ammo' });
+      // Clicking a page resets the shelf's scroll to zero, so these rows are
+      // where the client has them and not six pixels off.
+      click(S.tabs.find(x => x.key === 'store').r);
+      click(S.pages.find(x => x.key === 'ammo').r);
+      frame(t += 16); frames++;
+      // cell1 is the grade nobody is gated out of — NEEDS says tier 1 — so a
+      // refusal here is the buttons and never the ladder.
+      const row = S.store.find(it => it.k === 'cell1');
+      // The strip is right-aligned, so the k-th button from the RIGHT sits in the
+      // same place whether the row is showing three of them or one, and asking
+      // with no labels reserved gives every one of them its true rectangle.
+      for (const b of buyRow(row.r)) {
+        sent.length = 0;
+        hoverAt(b.r); frame(t += 16); frames++;        // the hover state is code too
+        click(b.r); frame(t += 16); frames++;
+        const msg = sent.find(m => m.t === 'buyammo');
+        if (!msg) errs.push(`the x${b.n} button on the ammunition shelf sent nothing at ${w}x${h}`);
+        else if (msg.n !== b.n) errs.push(`the x${b.n} button asked for ${msg.n} crates at ${w}x${h}`);
+        else answered++;
+      }
+      // ...and the rest of the row still buys one crate, which is what it has
+      // always done and what the footer along the bottom still promises.
+      sent.length = 0;
+      click({ x: row.r.x, y: row.r.y, w: 60, h: row.r.h });
+      frame(t += 16); frames++;
+      const one = sent.find(m => m.t === 'buyammo');
+      if (one?.n !== 1)
+        errs.push(`clicking the bare ammunition row at ${w}x${h} sent ${JSON.stringify(one)}`);
+    }
+    const want = SIZES.length * BUY_STEPS.length;
+    if (answered !== want)
+      errs.push(`only ${answered} of ${want} ammunition buy buttons answered a click`);
+    else console.log(`ammo: ${BUY_STEPS.map(n => 'x' + n).join(' ')} each buy that many crates at ` +
+      `${SIZES.length} window sizes, and the rest of the row still buys one`);
+    globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
+    evt('resize'); SIZE = '1600x900';
+    frame(t += 16); frames++;
+  }
+
   // Away from the ring, looking is free and spending is not. It used to refuse
   // every click, which also meant the panel stuck on whichever tab you were on
   // when you left — you could not even walk over to Ammunition to see the price.
@@ -2115,7 +2173,14 @@ const dismiss = () => {
   // identical from the outside, which is what made buying feel broken.
   {
     feed({ t: 'bought', what: 'MK-V Emitter', cost: 34000, note: 'in your inventory', credits: 66000 });
-    feed({ t: 'bought', what: 'Standard Cells', cost: 400, note: '2000 rounds', credits: 65600 });
+    // The two longest notes a crate purchase can produce, both drawn, because the
+    // note shares its baseline with the balance printed on the right of the toast:
+    // there are 31 characters between them at 10px on a 260px card, and a x100 buy
+    // spends 28 of them.
+    feed({ t: 'bought', what: 'Standard Cells', cost: 40000,
+           note: '200000 rounds · 999999 held', credits: 65600 });
+    feed({ t: 'bought', what: 'Standard Cells', cost: 20000,
+           note: '50/100 crates · 100000 rounds', credits: 65600 });
     feed({ t: 'bought', what: 'Iridium', cost: -1800, note: '3 sold', credits: 67400 });
     for (let i = 0; i < 6; i++) { frame(t += 16); frames++; }
     // The guard rejects undefined/NaN in any draw call, so a malformed receipt
@@ -2749,8 +2814,21 @@ const dismiss = () => {
           shots(3);
           // The station is four tabs, not one, and only the first was ever drawn
           // in this sweep — the stat strip that overflowed is on all four.
-          if (P.keys[0] === 'h')
+          if (P.keys[0] === 'h') {
             for (const tab of bayLayout(w, h, {}).tabs) { click(tab.r); shots(2); }
+            // ...and then the ammunition shelf, which is the one store page
+            // carrying controls of its own. Three buy buttons on a row that
+            // already holds a name, a price, a blurb and a rounds-held count is
+            // exactly the arrangement that fits at 1600x900 and does not at
+            // 820x560, and the shop walk above runs at one size. The rich pilot
+            // is the one that matters here: 999,999 rounds held is the longest
+            // that line ever gets.
+            const A = bayLayout(w, h, { tab: 'store', page: 'ammo' });
+            click(A.tabs.find(x => x.key === 'store').r);
+            click(A.pages.find(x => x.key === 'ammo').r);
+            for (const it of A.store) { hoverAt(it.r); shots(1); }
+            shots(2);
+          }
           WATCH = null;
           for (const k of P.keys) evt('keydown', { key: k });   // the same key closes it
           frame(t += 16); frames++;
