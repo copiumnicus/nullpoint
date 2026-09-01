@@ -1796,9 +1796,23 @@ wss.on('connection', (ws, req) => {
       // the counter from, because a shop that sells what the server refuses is the
       // one bug this codebase keeps one copy of every rule to avoid.
       const berths = baysOf(ship.hull, bonusBays(P.unlocked));
-      if (!atStation() || ship.drones.length >= berths) return;
+      if (!atStation()) return;
+      // Refused OUT LOUD. A full rack returned silently, so a pilot who had filled
+      // a Vanguard's eleven clicked BUY and the game did nothing at all — the
+      // designer hit this and had to ask why. It is the same bug receipt() exists
+      // for: a refused click and a successful one looked identical from outside.
+      // The number is the answer, and so is the door out of it, because the bays
+      // are a property of the HULL rather than a wallet — a Hauler and a Kestrel
+      // berth twelve where a Vanguard berths eleven, and the Brood Frame adds two
+      // to whatever you fly.
+      if (ship.drones.length >= berths)
+        return tell(`${HULLS[ship.hull].name} berths ${berths} — all ${berths} are yours. `
+          + (bonusBays(P.unlocked) ? 'A bigger hull is the only way up from here.'
+                                   : 'The Brood Frame adds two more, at a hundred Corsair Hives.'));
       const cost = dronePrice(ship.drones.length);
-      if (P.credits < cost) return;
+      if (P.credits < cost)
+        return tell(`Bay ${ship.drones.length + 1} costs ${cost.toLocaleString('en-US')} cr `
+          + `— you hold ${P.credits.toLocaleString('en-US')}`);
       P.credits -= cost;
       refit(ship, ship.hull, ship.fit, [...ship.drones, null]);
       receipt(`Drone ${ship.drones.length}`, cost, `${ship.drones.length} of ${berths} bays used`);

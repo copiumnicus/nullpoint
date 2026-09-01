@@ -8,14 +8,18 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.84';
+export const VERSION = '0.85';
 
 export const PATCHES = [
-  { v: '0.84', notes: [
+  { v: '0.85', notes: [
     'Nullpoint is no longer empty. THE ANTIPHON holds the middle of the map',
     'Eight armour plates: hit one and it hardens, then answers down the line you shot from',
     'Keep turning. A plate you walked away from goes cold, and the answer goes past you',
     'It answers one bearing a second, so four pilots on four bearings each take a quarter',
+  ] },
+  { v: '0.84', notes: [
+    'A full drone rack says so instead of the BUY button doing nothing when you click it',
+    'A Hauler and a Kestrel berth 12, a Vanguard 11, a Bulwark 10 — the hull decides',
   ] },
   { v: '0.83', notes: [
     'Ammunition sells ten and a hundred crates at a time: ×1 ×10 ×100 on every row',
