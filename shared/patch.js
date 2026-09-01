@@ -8,9 +8,14 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.88';
+export const VERSION = '0.89';
 
 export const PATCHES = [
+  { v: '0.89', notes: [
+    'A wounded hostile with its back to the edge of the map runs along it, not into it',
+    'They were stopping dead — 15px of flight where open space gets 1,267',
+    'A Harrier that decides to leave now outruns your rockets. It could not before',
+  ] },
   { v: '0.88', notes: [
     'A Crucible and its Doldrum prowl the sector now instead of standing where they spawned',
     'They move together, at their own speeds, and reform after a fight',

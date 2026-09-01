@@ -423,12 +423,22 @@ console.log('\nwhat it does to something that is moving');
     STEADY.every(k => rate[k].brawl === 100 && rate[k].standoff === 100),
     'twelve fights from a Corsair Hive at 110 to a Harrier at 380, brawling and standing off: ' +
     'every rocket fired, every rocket landed');
-  check('and it still lands on one running for its life',
-    STEADY.filter(k => rate[k].fleeing === 100).length === STEADY.length - 1 &&
-    rate.harrier.fleeing > 85,
+  // REWRITTEN, and the game changed under it rather than the claim being wrong. This
+  // asked for 85% on a fleeing Harrier and got 93 — measured when a fleeing hostile
+  // with its back to the edge of the map stopped dead, because its escape point was
+  // clamped onto its own position. Running works now, so a Harrier at 380 genuinely
+  // outruns a 520px/s rocket with 4.5s of motor and it is 55%.
+  //
+  // That is the honest shape and it is a better one: the Harrier stops being a
+  // faster Drifter and becomes the thing you cannot rocket down once it decides to
+  // leave. What the claim keeps is the half that is about the SEEKER rather than
+  // about speed — everything slower than a Harrier still loses nothing to running.
+  check('and running only saves the one hostile fast enough to outrun a rocket',
+    STEADY.filter(k => k !== 'harrier').every(k => rate[k].fleeing === 100) &&
+    rate.harrier.fleeing > 40 && rate.harrier.fleeing < 80,
     `the Harrier is the one that gets away with any of it — ${rate.harrier.fleeing.toFixed(0)}% ` +
     `at 380 speed against a ${ROCKET_SPEED}px/s rocket with ${ROCKET_TTL}s of motor, and ` +
-    'everything slower than it loses nothing');
+    'everything slower than it loses nothing. It read 93% while fleeing was broken');
   // The one hostile the seeker is NOT allowed to solve. Evasion is a Bandit's whole
   // reason to exist and camouflage is the same mechanic seen from the other side —
   // a floor as well as a ceiling, because a dodge nobody can beat is a health bar
