@@ -8,9 +8,13 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.83';
+export const VERSION = '0.84';
 
 export const PATCHES = [
+  { v: '0.84', notes: [
+    'A full drone rack says so instead of the BUY button doing nothing when you click it',
+    'A Hauler and a Kestrel berth 12, a Vanguard 11, a Bulwark 10 — the hull decides',
+  ] },
   { v: '0.83', notes: [
     'Ammunition sells ten and a hundred crates at a time: ×1 ×10 ×100 on every row',
     'Short of the full order it buys what you can afford, and the receipt says how many',
