@@ -3322,6 +3322,161 @@ const dismiss = () => {
     frame(t += 16); frames++;
   }
 
+  // --- the low-hull warning ----------------------------------------------------
+  //
+  // CRITICAL DAMAGE is a centred bold 30px banner, which is precisely the shape
+  // that lands on the other centred strings in this game — the shear warning, the
+  // notice, the mission bar, the SPACE prompt — so it is driven at every window
+  // size with the three overlap rules watching, and this block is also the first
+  // time the harness has ever drawn the shear warning it shares a slot with.
+  //
+  // The threshold is a claim about NUMBERS rather than about pixels, so it is
+  // measured rather than asserted from a constant: the same hull is burned down
+  // at two rates ten times apart, and what is checked is that the warning arrives
+  // at two very different SHARES of the hull. A flat percentage cannot do that,
+  // and a flat percentage is the thing this replaces.
+  {
+    const { HORIZON } = await import('../shared/alarm.js');
+    dismiss();
+    const saw = s => T.els.some(e => e.kind === 'text' && String(e.text).includes(s));
+    const CRIT = 'CRITICAL DAMAGE', SHEAR = 'BEACON LATTICE LOST', OUT = 'OUTSIDE CHARTED SPACE';
+    // 100ms a frame, which is the longest step drawFrame will believe — it clamps
+    // its own dt there — so a thirty-second fight is three hundred frames rather
+    // than two thousand.
+    const STEP = 100;
+    // Hull arrives as a whole percent, exactly as the server packs it, so the
+    // burn is quoted in percent a second and the arithmetic never needs the hull
+    // points at all. INSIDE is the middle of m1; OUT_X is 900px past its western
+    // edge, which is half of DRIFT_MARGIN and takes shear at a real rate.
+    const INSIDE = 6000, OUT_X = -900;
+    const put = (hp, x = INSIDE) => feed({ t: 's',
+      ships: [packShip({ id: 1, x, y: 4000, heading: .5, charge: 0, co: 'm', hull: 'vanguard',
+                         hp, sh: 0, flash: 0, guns: 3, lvl: 14, drones: 0, form: 0, dmask: 0, vis: 2 })],
+      rockets: [], bolts: [], hits: [], blasts: [], pods: [],
+      hold: {}, cap: 60, credits: 4820, docked: false,
+      gear: {}, hulls: ['vanguard'], drones: [], formation: 'wedge', formations: ['wedge'],
+      xp: 5200, rank: { level: 14, into: 300, need: 900 },
+      power: { to: 'weapons', cap: 62, lv: { thrusters: 0, weapons: 90, shields: 0 } },
+      shieldNow: 0, shieldMax: 1170, vault: {} });
+    // A ship that is not there at all resets the history — the client cannot tell
+    // a fresh pilot's hull from the last one's without it.
+    const forget = () => { feed({ t: 's', ships: [], rockets: [], bolts: [], hits: [], blasts: [],
+                                  pods: [], hold: {}, cap: 60, credits: 0, docked: false, vault: {} });
+                           frame(t += STEP); frames++; };
+
+    feed({ t: 'welcome', id: 1, co: 'm', map: 'm1', hull: 'vanguard', fit: [],
+           gear: {}, hulls: ['vanguard'], drones: [], formation: 'wedge', formations: ['wedge'],
+           credits: 4820, ammo: {}, using: {}, armed: {} });
+    feed({ t: 'map', map: 'm1' });
+
+    // Burn a full hull down at `pcs` percent a second and report the percentage
+    // it first shouted at, and how many seconds of life were left at that moment.
+    const burn = (pcs, x = INSIDE) => {
+      forget();
+      let hp = 100, at = null;
+      for (let i = 0; hp > 0 && i < 900; i++) {
+        put(Math.round(hp), x);
+        frame(t += STEP); frames++;
+        if (at === null && saw(CRIT)) at = hp;
+        hp -= pcs * (STEP / 1000);
+      }
+      return at === null ? null : { pct: at, secs: at / pcs };
+    };
+    const SLOW = 100 / 30, FAST = 100 / 3;         // dead in 30s, and dead in 3s
+    const slow = burn(SLOW), fast = burn(FAST);
+    if (!slow || !fast)
+      errs.push(`a hull burning to nothing never said ${CRIT} ` +
+                `(slow ${slow ? 'ok' : 'silent'}, fast ${fast ? 'ok' : 'silent'})`);
+    else if (fast.pct < slow.pct * 2)
+      errs.push(`the warning is a flat share after all: it fired at ${slow.pct.toFixed(1)}% of the hull ` +
+                `against ${SLOW.toFixed(1)}%/s and ${fast.pct.toFixed(1)}% against ${FAST.toFixed(1)}%/s`);
+    else if (Math.abs(slow.secs - HORIZON) > 0.6)
+      errs.push(`a steady fight should be warned one exchange out: ${HORIZON.toFixed(2)}s wanted, ` +
+                `${slow.secs.toFixed(2)}s got`);
+    else
+      console.log(`  ok   the hull warning is about seconds, not about a share of the hull  — ` +
+        `one Vanguard fires at ${slow.pct.toFixed(1)}% of its hull against ${SLOW.toFixed(1)}%/s ` +
+        `(${slow.secs.toFixed(1)}s left, one exchange) and at ${fast.pct.toFixed(1)}% against ` +
+        `${FAST.toFixed(1)}%/s, ten times the fire`);
+
+    // Wallpaper is the failure mode. A ship that has stopped being shot is
+    // damaged, not dying, and the hull bar going red under a third is already
+    // saying so — thirty seconds of a pulsing red screen is how a pilot learns to
+    // stop seeing the one warning that matters.
+    {
+      forget();
+      for (let i = 0; i < 54; i++) { put(100 - i * 1.5); frame(t += STEP); frames++; }
+      const lit = saw(CRIT);                       // 15%/s got it down to 19%
+      let quiet = 0;
+      for (let i = 0; i < 120; i++) {              // 12s of nobody shooting at all
+        put(19); frame(t += STEP); frames++;
+        if (saw(CRIT)) quiet = (i + 1) * STEP / 1000;
+      }
+      if (!lit) errs.push('the warning never lit while the hull was going');
+      else if (saw(CRIT)) errs.push('the warning was still up 12s after the last hit landed');
+      else if (quiet > HORIZON + 0.5)
+        errs.push(`the warning hung on ${quiet.toFixed(1)}s after the last hit, ` +
+                  `one exchange is ${HORIZON.toFixed(2)}s`);
+      else console.log('  ok   nothing shooting you, nothing shouting at you  — ' +
+                       `gone ${quiet.toFixed(1)}s after the last hit, one exchange, ` +
+                       'and it stays gone while the ship sits on 19% hull');
+    }
+
+    // Two warnings, one slot. Dying in the margin is both things at once, and the
+    // hull takes it — but the shear line is still on screen, because COME ABOUT is
+    // the cause AND the cure and losing it would be losing the instruction.
+    {
+      forget();
+      for (let i = 0; i < 60; i++) { put(100 - i * 1.5, OUT_X); frame(t += STEP); frames++; }
+      const both = { crit: saw(CRIT), shear: saw(SHEAR), out: saw(OUT) };
+      forget();
+      for (let i = 0; i < 12; i++) { put(100, OUT_X); frame(t += STEP); frames++; }
+      const alone = saw(SHEAR);
+      if (!both.crit || !both.out || both.shear || !alone)
+        errs.push(`the two warnings do not share one slot: dying in the margin drew ` +
+                  `${both.crit ? CRIT : 'nothing'}${both.shear ? ` AND ${SHEAR}` : ''}` +
+                  `${both.out ? ', distance kept' : ', distance LOST'}; whole in the margin drew ` +
+                  `${alone ? SHEAR : 'nothing'}`);
+      else console.log('  ok   dying outside charted space says one thing, not two  — ' +
+                       `${CRIT} takes the slot and keeps the shear distance in it; ` +
+                       `a whole ship out there still gets ${SHEAR}`);
+    }
+
+    // And it ends with the ship. The wreck screen is its own picture and a red
+    // banner left beating over it would be the warning outliving what it warned
+    // about.
+    {
+      forget();
+      for (let i = 0; i < 60; i++) { put(100 - i * 1.5); frame(t += STEP); frames++; }
+      const lit = saw(CRIT);
+      feed({ t: 'dead', lost: { iron: 4 }, toll: 120 });
+      frame(t += STEP); frames++;
+      if (!lit) errs.push('the warning never lit on the way to the wreck');
+      else if (saw(CRIT)) errs.push('the warning was still beating over the wreck screen');
+      else console.log('  ok   the warning ends with the ship  — nothing red left over the wreck screen');
+      feed({ t: 'map', map: 'm1', respawned: true });
+    }
+
+    // Every window, both warnings. A centred banner is the one thing that collides
+    // with other centred text, and the overlap rules only see what is drawn.
+    for (const [w, h] of SIZES) {
+      globalThis.innerWidth = w; globalThis.innerHeight = h;
+      evt('resize'); SIZE = `${w}x${h}`;
+      for (const x of [INSIDE, OUT_X]) {
+        forget();
+        for (let i = 0; i < 60; i++) { put(100 - i * 1.5, x); frame(t += STEP); frames++; }
+      }
+      forget();
+      for (let i = 0; i < 8; i++) { put(100, OUT_X); frame(t += STEP); frames++; }
+    }
+    console.log(`alarm: the hull warning and the shear warning drawn at ${SIZES.length} window sizes, ` +
+                'inside and outside charted space');
+    globalThis.innerWidth = 1600; globalThis.innerHeight = 900;
+    evt('resize'); SIZE = '1600x900';
+    forget();
+    frame(t += 16); frames++;
+  }
+
   // idle sign-out: the clock only advances with no input, and a click brings you back
   {
     const perf = performance.now;

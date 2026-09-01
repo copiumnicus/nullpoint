@@ -73,6 +73,8 @@ import { settingsLayout, valueAt, MAX_PILOTS } from '/shared/settings.js';
 import { readActive, setActive, readRoster, writeRoster, entry,
          remember, forget, parked } from '/shared/roster.js';
 import { vitalsPanel, shieldCountdown, WAIT_PX } from '/shared/vitals.js';
+import { newTrack, trackHull, critical, banner as alarmBanner, slot as alarmSlot,
+         wash as alarmWash, beatAt } from '/shared/alarm.js';
 import { sampler, push as pushSample, frameLine, pingLine, GRADE } from '/shared/perf.js';
 import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
@@ -270,6 +272,11 @@ const prevShot = new Map();       // for spotting the frame a gun goes off
 const prevRocket = new Map();     // and the frame a rack empties
 let thrust = 0, lastFrameAt = 0, prevSelf = null;
 let dead = null;                  // { lost, at } while you are a wreck
+// How fast your own hull is going, in points a second. The low-hull warning is
+// measured rather than modelled — see shared/alarm.js for why every model this
+// codebase already has blows up at the top of the climb — so the client keeps
+// one running average of its own hit points and asks that how long it has.
+let hullTrack = newTrack();
 // Chat, with a console inside it. While it is open every keystroke belongs to the
 // line being typed — otherwise 'h' would open the hangar mid-sentence.
 let chatOpen = false, chatLine = '', amAdmin = false;
@@ -4075,6 +4082,15 @@ function drawFrame(now) {
   } else thrust *= 0.9;
   setThrust(thrust);
 
+  // Hull history, fed on every FRAME rather than on every snapshot. The average
+  // decays with time, so a fight that has stopped being a fight has to empty
+  // itself even while nothing new is arriving on the wire — feeding it only on a
+  // snapshot would leave the last measured rate frozen the moment the sector went
+  // quiet, and the alarm with it. A wreck, a hull swap or a pilot switch starts it
+  // over: hull points that arrive from a different ship are not damage.
+  if (me && !dead) trackHull(hullTrack, st.hull * (me.hp ?? 100) / 100, st.hull, frameDt);
+  else hullTrack = newTrack();
+
   for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
   // The camera is held inside THIS SECTOR's bounds, which is the galaxy's rectangle
   // plus the drift margin everywhere except a duel arena — a quarter the size, with
@@ -6025,27 +6041,52 @@ function drawFrame(now) {
     }
   }
 
-  // Compensated, the margin is somewhere you are meant to be, so it must stop
+  // THE WARNING SLOT. One rectangle in the middle of the screen and one occupant,
+  // because two centred bold 30px banners in the same place is the collision
+  // test/render.mjs exists to catch. shared/alarm.js picks the occupant and owns
+  // the three baselines; this only draws what it is handed.
+  //
+  // Compensated, the margin is somewhere you are meant to be, so shear must stop
   // screaming at you — a permanent red vignette over ground you bought the right
   // to fly on reads as a bug, and the pilot learns to ignore the one warning that
-  // still matters. It comes straight back the moment the grace runs short.
-  if (driftDps(depth, shearHeld()) > 0 && !sysOpen && !bayOpen) {
-    const t = Math.min(1, depth / DRIFT_MARGIN);
-    const vig = g.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.28,
-                                       VIEW_W / 2, VIEW_H / 2, VIEW_H * 0.78);
+  // still matters. It comes straight back the moment the grace runs short. The
+  // hull alarm answers to the same rule from the other direction: it is measured
+  // against how fast your hull is actually going, so it cannot be on unless
+  // something is genuinely killing you.
+  //
+  // critical() is asked on every frame, panel open or not, because it keeps the
+  // hold that stops the warning flickering between two shots. Only the DRAWING is
+  // gated on the panels.
+  const shearNow = driftDps(depth, shearHeld());
+  const crit = me && !dead
+    ? critical(hullTrack, { hull: st.hull * (me.hp ?? 100) / 100, max: st.hull, now, dead: !!dead })
+    : null;
+  const warn = !sysOpen && !bayOpen
+    ? alarmBanner({ crit,
+                    shear: shearNow > 0 ? { dps: shearNow, depth, t: Math.min(1, depth / DRIFT_MARGIN) } : null })
+    : null;
+  if (warn) {
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    const beat = beatAt(now, warn.urgency, warn.kind);
+    const W = alarmWash(warn.kind, warn.urgency, beat);
+    const vig = g.createRadialGradient(VIEW_W / 2, VIEW_H / 2, VIEW_H * W.inner,
+                                       VIEW_W / 2, VIEW_H / 2, VIEW_H * W.outer);
     vig.addColorStop(0, 'transparent');
-    vig.addColorStop(1, `rgba(150,12,24,${0.20 + t * 0.5})`);
+    vig.addColorStop(1, `rgba(150,12,24,${al(W.alpha)})`);
     g.fillStyle = vig; g.fillRect(0, 0, VIEW_W, VIEW_H);
 
-    const pulse = 0.5 + 0.5 * Math.abs(Math.sin(now / (150 - t * 80)));
-    g.textAlign = 'center'; g.globalAlpha = pulse;
-    g.fillStyle = '#ff2f42'; g.font = 'bold 30px ui-monospace, SFMono-Regular, monospace';
-    g.fillText('⚠  BEACON LATTICE LOST  ⚠', VIEW_W / 2, VIEW_H * 0.22);
-    g.globalAlpha = 0.6 + pulse * 0.4;
-    g.font = '15px ui-monospace, monospace'; g.fillStyle = '#ff8a95';
-    g.fillText(`UNCOMPENSATED HULL SHEAR — ${driftDps(depth, shearHeld()) | 0}/s`, VIEW_W / 2, VIEW_H * 0.22 + 28);
-    g.font = '13px ui-monospace, monospace'; g.fillStyle = '#ffc4ca';
-    g.fillText(`${depth | 0}m OUTSIDE CHARTED SPACE — COME ABOUT`, VIEW_W / 2, VIEW_H * 0.22 + 52);
+    const S = alarmSlot(VIEW_W, VIEW_H);
+    g.textAlign = 'center';
+    // The onset flare rides on top of the beat for one shot interval, so arriving
+    // in the state is a thing you see happen rather than a thing you notice later.
+    g.globalAlpha = clamp(beat + warn.onset * 0.3, 0, 1);
+    g.fillStyle = '#ff2f42'; g.font = `bold ${S.head.size}px ui-monospace, SFMono-Regular, monospace`;
+    g.fillText(warn.head, S.cx, S.head.y);
+    g.globalAlpha = clamp(0.6 + beat * 0.4, 0, 1);
+    g.font = `${S.sub.size}px ui-monospace, monospace`; g.fillStyle = '#ff8a95';
+    g.fillText(warn.sub, S.cx, S.sub.y);
+    g.font = `${S.foot.size}px ui-monospace, monospace`; g.fillStyle = '#ffc4ca';
+    g.fillText(warn.foot, S.cx, S.foot.y);
     g.globalAlpha = 1; g.textAlign = 'left'; g.font = '12px ui-monospace, monospace';
   }
 
