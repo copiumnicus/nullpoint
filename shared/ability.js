@@ -119,7 +119,7 @@ export const DRUMFIRE_REACH = 0.35;      // weapon range down to 65% at full
 //      a Vanguard cold                 7,462 dps
 //      so the drum has to be     2 x 9,353 / 7,462  =  x2.5066
 //
-// and the same solve on the rocket build — five Swarm Racks against the Kestrel's
+// and the same solve on the rocket build — five Osprey Racks against the Kestrel's
 // two — asks for x2.4020. x2.50 sits between them, so ONE constant satisfies both
 // builds and neither is averaged away. DRUMFIRE_GAIN is that minus the 1 the cycle
 // starts at.

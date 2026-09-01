@@ -378,7 +378,7 @@ check('Launcher Primacy pays a rocket boat at both ends of the ladder, and taxes
       && gain(B.starter) < -0.29 && gain(B.finished) < -0.29 // no rack at all: it is just a tax
       && gain({ ...B.rocketeer, drones: Array(12).fill('emitter5') }) < 0;
 })(), `+${f(100 * (dpsOfStats(statsOf(B.pod, 'primacy')) / dpsOfStats(statsOf(B.pod)) - 1), 0)}% on a Hauler with one Sparrow Pod, ` +
-      `+${f(100 * (dpsOfStats(statsOf(B.rocketeer, 'primacy')) / dpsOfStats(statsOf(B.rocketeer)) - 1), 0)}% on a Bulwark with three Swarm Racks, ` +
+      `+${f(100 * (dpsOfStats(statsOf(B.rocketeer, 'primacy')) / dpsOfStats(statsOf(B.rocketeer)) - 1), 0)}% on a Bulwark with three Osprey Racks, ` +
       `${f(100 * (dpsOfStats(statsOf({ ...B.rocketeer, drones: Array(12).fill('emitter5') }, 'primacy')) / dpsOfStats(statsOf({ ...B.rocketeer, drones: Array(12).fill('emitter5') })) - 1), 0)}% ` +
       'once twelve drones are carrying emitters, and -30% for anyone with no rack');
 check('so the trade a new pilot is offered and the trade a finished ship is offered are the same trade', (() => {

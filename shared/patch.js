@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.80';
+export const VERSION = '0.81';
 
 export const PATCHES = [
+  { v: '0.81', notes: [
+    'A launcher throws ONE rocket now. Five racks on a Vanguard is a volley of five',
+    'Same damage leaving the rails — a Cyclone rocket lands 1,830 where seven landed 261',
+    'The Triad and Swarm Racks are now the Shrike and the Osprey. One warhead, bigger',
+    'A heavier warhead is drawn heavier, so you can see what somebody is flying',
+    'Warheads cost seven times more, because one of them now arms seven times the rocket',
+  ] },
   { v: '0.80', notes: [
     'The ammunition chooser lists every grade your weapon takes, not just the ones you hold',
     'A crate you have not bought shows a 0 instead of vanishing — it was reading as a refusal',
@@ -20,8 +27,7 @@ export const PATCHES = [
   { v: '0.79', notes: [
     'The reactor refills your shields a third faster now, not just into a bigger pool',
     'Ten seconds after a fight a Vanguard sits at 31% shield instead of 18%',
-    'Your guns are at 77% while it is there, so being caught is what it costs you',
-  ] },
+    'Your guns are at 77% while it is there, so being caught is what it costs you',  ] },
   { v: '0.78', notes: [
     'The deep outposts sell a sixth emitter, a fourth rack and a sixth generator',
     'An MK-VI is 700 damage and 1.5M credits — and heavy, so a ship of them crawls',

@@ -1,3 +1,4 @@
+import { HEAD_BASE } from '../shared/ammo.js';
 import { AMMO, AMMO_KEYS, FEEDS, forWeapon, DEFAULT_AMMO, STARTING_AMMO,
          sanitiseAmmo, sanitiseUsing, magazine, hasRounds, roundPrice,
          barLayout, feedMenu, BAR_SLOTS } from '../shared/ammo.js';
@@ -64,6 +65,23 @@ for (const f of FEEDS) {
     g.every(k => Math.abs(perPoint(k) / perPoint(g[0]) - premiumAt(AMMO[k].tier)) < 1e-9),
     g.map(k => perPoint(k).toFixed(3)).join(' > ') +
     ` cr per point — +${Math.round(ANCHORS.premium * 100)}% of the base a rung, on all ${g.length} of them`);
+  // And the BASE the ladder stands on, recomputed rather than read back. The four
+  // crate prices are typed out in ammo.js the way cell4's always has been, and the
+  // arithmetic that produced them lives in a comment — so this is the thing that
+  // fails if somebody edits one of them without moving the others.
+  //
+  // It is the number the rack rework moved. A warhead arms one rocket, and one
+  // Cyclone rocket went from 261.4 points to 1,830, so a volley's worth of warheads
+  // went from seven to one: at the old 1.500 cr base the endgame ammunition bill
+  // would have fallen sevenfold overnight, to a 1,110-fold return on the crate. The
+  // base follows the rocket instead — 1.500 x 7 = 10.500 — and a Cyclone volley
+  // costs to the penny what it cost before.
+  const BASE = { laser: 0.2, rocket: HEAD_BASE }[f];
+  check(`the ${f} ladder is ${BASE} cr a round times the shelf's own premium, on every rung`,
+    g.every(k => Math.abs(AMMO[k].price - BASE * premiumAt(AMMO[k].tier) * carries(k) * AMMO[k].pack) < 0.5),
+    g.map(k => `${AMMO[k].name} ${AMMO[k].price} = ${BASE} x ${premiumAt(AMMO[k].tier).toFixed(2)} x ` +
+               `${carries(k).toFixed(4)} x ${AMMO[k].pack}`).join('   '));
+
   // The invariant that would have caught this ladder being wrong in BOTH
   // directions. Damage tiers live in the emitters, which cost real money and take
   // a slot; a grade is a premium on whatever you already bought. So the entire
@@ -119,21 +137,28 @@ console.log('\nspending it');
   for (let i = 0; i < 300; i++) free += fire(alien, mark(400, 0), dt).length;
   check('anything with no magazine shoots forever', free > 5, `${free} bolts with no supply passed`);
 
-  const pods = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(3).fill('pod3') })));
+  // FIVE racks, not three, and the short magazine is two rather than three. One
+  // rack throws one rocket now, so three racks rate three and a magazine of three
+  // is not short of anything — this block went on passing while testing nothing,
+  // which is the failure mode a detail string exists to catch: it still read
+  // "15 rockets rated" long after a Vanguard rated five.
+  const pods = newShip(0, 0, 'vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(5).fill('pod3') })));
   pods.heading = 0;
+  const rated = pods.stats.rockets;
   const heads = { key: 'head1', n: 7, mult: 1 };
   let up = 0;
   for (let i = 0; i < 600; i++) up += launch(pods, mark(400, 0), dt, heads).length;
   check('a rack short of warheads throws what it has', up === 7 && heads.n === 0,
-    '15 rockets rated, 7 in stock');
+    `${rated} rockets rated, 7 in stock — a warhead arms one rocket, so that is one full volley and part of a second`);
   const full = { key: 'head1', n: 999, mult: 1 };
   const one = launch(pods, mark(400, 0), dt, full);
-  const short = { key: 'head1', n: 3, mult: 1 };
+  const short = { key: 'head1', n: 2, mult: 1 };
   pods.rocketCool = 0;
   const few = launch(pods, mark(400, 0), dt, short);
   check('and each of them still hits full weight',
-    Math.abs(one[0].dmg - few[0].dmg) < 1e-6,
-    'fewer rockets, not weaker ones');
+    one.length === rated && few.length === 2 && Math.abs(one[0].dmg - few[0].dmg) < 1e-6,
+    `${one.length} rockets off a full magazine and ${few.length} off two warheads, ` +
+    `${Math.round(one[0].dmg)} damage either way — fewer rockets, not weaker ones`);
 }
 
 console.log('\nwhat a grade is worth');
@@ -441,8 +466,10 @@ console.log('\npaying for itself');
         pays > spent * 20,
         `${spent.toFixed(1)} cr of cells against ${pays} cr — ${Math.round(pays / spent)}x`);
     }
-    // A full rocket rack is the worst case: fifteen warheads at once, most of
-    // them wasted on something this soft. Standard grade still has to profit.
+    // A full rocket rack is the worst case: one warhead a rail, all of them
+    // arriving at once, most of it wasted on something this soft. It is three
+    // warheads now rather than fifteen — and each of them costs seven times what
+    // it used to, so the bill is the same and the claim is unchanged.
     const volley = resolve('vanguard', sanitiseFit(slotsOf('vanguard'), fit({ weapon: Array(3).fill('pod3') })), []).rockets;
     const heads = volley * roundPrice(DEFAULT_AMMO.rocket);
     check(`even a full rocket volley profits on a ${ALIENS[kind].name}`, pays > heads * 4,
@@ -473,7 +500,7 @@ console.log('\npaying for itself');
   const perKill = ALIENS.drifter.bounty + ORE;
   const kills = c => Math.round(c / perKill);
   console.log(`     at ${perKill} cr a Drifter: a Kestrel in ${kills(18000)} kills, ` +
-              `a Swarm Rack in ${kills(40000)}, a finished Vanguard in ${kills(373000)}`);
+              `an Osprey Rack in ${kills(40000)}, a finished Vanguard in ${kills(373000)}`);
   check('a first upgrade is an evening, not a campaign', kills(18000) < 60);
   check('and the top of the ladder is still something to work toward', kills(373000) > 300);
 }

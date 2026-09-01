@@ -9,9 +9,21 @@
 // guns and the flight takes real seconds, so rockets are the punch you commit to
 // early in a fight rather than the pressure you hold someone under.
 //
+// ONE RACK, ONE ROCKET. A rung of the ladder buys DAMAGE PER ROCKET and never
+// count — so five Cyclone Racks on a Vanguard are a volley of five, not a cloud of
+// thirty-five, and each one of the five carries 1,830. The rule is enforced where
+// it cannot be argued with: resolve() in ships.js DERIVES `stats.rockets` from how
+// many launchers are mounted, so a rack cannot buy count by carrying a mod.
+//
+// It used to be quantity. The top rack declared seven rails and the volley's damage
+// was shared between them, which meant a finished Vanguard put 35 objects in the
+// air off one trigger for the same 9,150 — unreadable past the second rack, and
+// 35 entries on the wire every tick to say it.
+//
 // A launcher occupies a weapon slot, as many to a ship as the hull allows, and
-// never rides a drone — a drone is a gun platform, and six of them carrying swarm
-// racks would put thirty rockets in the air off one trigger.
+// never rides a drone — a drone is a gun platform, and six of them carrying Cyclone
+// Racks would add 10,980 damage a volley to a ship that already fills five
+// hardpoints with them.
 
 import { applyDamage, rangeOf, hullOf } from './sim.js';
 import { drumOf } from './ability.js';
@@ -60,6 +72,32 @@ export const ROCKET_R     = 40;     // proximity fuse, on top of the hull's radi
 // coasts on the last bearing it believed — which is how a missile misses
 // something that was never really there.
 export const SEEK_WOBBLE = 190;    // px of aim error at the faintest return
+
+// --- the seeker does NOT lead its target, and that was measured ---------------
+//
+// combat.js aims a bolt at where the target will be — "lead, don't chase" — and the
+// obvious question when a rocket went from 261 damage to 1,830 was whether the
+// seeker should do the same, since a miss now costs seven times what it did. It was
+// built, run through the real stepAlienAI loop against seven hostiles from a
+// Corsair Hive's 110 speed to a Bandit's 400, in three postures each — brawling at
+// 315px, standing off at 595px, and chasing one in its panic run — and REJECTED.
+//
+// It changes nothing, because there is nothing to fix. Delivery against everything
+// in the bestiary that does not evade is already 100%, at every lead from 0 to 4.5
+// seconds; the only number that moves is the Bandit's, and it moves DOWN — 55.3% to
+// 53.7% overall. That is the right direction for a seeker and the wrong one for the
+// game: evasion is the Bandit's whole reason to exist, and leading a target that
+// reverses its break every 0.5-1.0s aims at a corner it has already left.
+//
+// The reason pure pursuit is enough is TERMINAL_TURN, three declarations up. Inside
+// 400px the fins get 14 rad/s, which is a 37px turn circle against a 66px fuse, so
+// capture is arithmetic rather than a race — and a lead that only matters at the
+// merge cannot improve on a merge that already always closes.
+//
+// If this is ever wanted, the lever is one line in stepRockets: aim at
+// `tg.x + tg.vx * min(LEAD, range / ROCKET_SPEED)`. It is written down rather than
+// left in because a knob nothing can move is a knob the next person has to
+// re-measure. The measurement is above.
 
 // A seeker gets exactly what its own seat can see, and nothing sharpens it.
 //
@@ -113,16 +151,19 @@ export const launcherRoom = (hullKey, fit) => launcherCap(hullKey) - launchersIn
 export function launch(a, b, dt, mag = null) {
   a.rocketCool = Math.max(0, (a.rocketCool ?? 0) - dt);
   a.rocketFlash = Math.max(0, (a.rocketFlash ?? 0) - dt);
-  const rated = Math.round(a.stats?.rockets ?? 0);
-  if (!rated) return [];
+  // One rail per launcher. `stats.rockets` is DERIVED in resolve() from how many
+  // racks are mounted rather than added up out of mods, so this is exactly the
+  // number of launchers on the ship and there is no second place it could differ.
+  const rails = Math.round(a.stats?.rockets ?? 0);
+  if (!rails) return [];
   // The warhead decides how far the rack reaches — see rangeOf. A long warhead
   // in the racks and plain cells in the guns is a legal and sensible fit.
   const live = b && b.hp > 0 && a.hp > 0 &&
                Math.hypot(b.x - a.x, b.y - a.y) <= rangeOf(a, mag);
   if (!live || a.rocketCool > 0) return [];
-  // Short of warheads it throws what it has. Each one still hits for its full
-  // share: you are firing fewer rockets, not weaker ones.
-  const n = mag ? Math.min(rated, mag.n) : rated;
+  // Short of warheads it throws what it has — one warhead arms one rocket. Each one
+  // still hits for its full share: you are firing fewer rockets, not weaker ones.
+  const n = mag ? Math.min(rails, mag.n) : rails;
   if (!n) return [];
   // Drumfire is the rack's cadence too, not just the guns'.
   //
@@ -131,13 +172,20 @@ export function launch(a, b, dt, mag = null) {
   // ability belongs to — and an ability that only touched `fireRate` would hand
   // that build nothing at all, which is the same complaint Lock died of one hull
   // along. The rate is applied to the RACK'S COOLDOWN and nowhere else: the volley
-  // is still `rockets` rails at `rocketVolley` shared between them, so this is
-  // volleys arriving sooner and never a bigger volley.
+  // is still one rail per launcher sharing `rocketVolley` between them, so this is
+  // volleys arriving sooner and never a bigger volley. That distinction got sharper
+  // with the rework rather than softer — a full drum on five Cyclone Racks is five
+  // rockets every 0.73s instead of every 1.82s, and never six rockets.
   a.rocketCool = 1 / (ROCKET_RATE * drumOf(hullOf(a), a.power, a.stats));
   a.rocketFlash = LAUNCH_FLASH;          // one per volley, not one per rocket
   if (mag) mag.n -= n;
 
-  const each = (a.stats.rocketVolley * boostOf(a.power, 'weapons', a.stats) * (mag?.mult ?? 1)) / rated;
+  // Divided by `rails` and not by `n`: firing a short volley off an empty magazine
+  // must not make the rockets you DO have heavier. Same line it always was; what
+  // changed is that `rails` is a launcher count, so on a homogeneous rack this is
+  // exactly the rung's declared damage — 1,830 for a Cyclone, whether you fly one
+  // or five.
+  const each = (a.stats.rocketVolley * boostOf(a.power, 'weapons', a.stats) * (mag?.mult ?? 1)) / rails;
   const mounts = hardpoints(a);
   const aim = Math.atan2(b.y - a.y, b.x - a.x);
   const half = (n - 1) / 2;
@@ -169,6 +217,24 @@ export function stepRockets(list, dt) {
     const r = list[i];
     r.t -= dt;
     const tg = r.target;
+    // A rocket whose target died is gone with it, and it does NOT go looking for
+    // another one. That is a deliberate non-change, and the thing the rework made
+    // worse is not how MUCH gets orphaned — it is how coarse it is. The smallest
+    // amount a finishing rocket can waste went from 261 points to 1,830.
+    //
+    // Measured before deciding, through the real kill loop over seven hostiles from
+    // a Drifter to a Corsair Hive: everything a rocket build throws that buys
+    // nothing — overkill on the last hit plus whatever the kill orphaned — went from
+    // 8.7% of the damage put in the air to 9.7%. One point. It is worst on the small
+    // stuff, where the granularity bites (an Ironhusk is 6,500 effective hit points
+    // against a 9,150 volley, so two thirds of what is thrown at one is wasted
+    // either way) and invisible on anything the weapon is actually for.
+    //
+    // A seeker that re-acquires is the obvious fix and it is a new mechanic rather
+    // than a repair: it would let a volley aimed at one thing kill a second, which
+    // is splash damage with extra steps, and this weapon has never had any. THE
+    // SEAM IS HERE — one line, `r.target = nearestOf(...)` — and the number that
+    // would justify it is a waste figure well past 9.7%.
     if (r.t <= 0 || !tg || tg.hp <= 0) { list.splice(i, 1); continue; }
 
     // Steer toward the target with whatever authority it has right now — and
