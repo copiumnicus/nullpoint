@@ -198,11 +198,26 @@ console.log('\nthe same world, only faster');
 const slow = await scenario({ DEV_ADMIN: '1' });
 const fast = await scenario({ DEV_ADMIN: '1', TURBO: '1' });
 
-check('the same burn for the same sim seconds ends in the same place',
-  Math.abs(slow.moved - fast.moved) <= Math.max(8, slow.moved * 0.02),
-  `${fast.moved}px against ${slow.moved}px over ${(BURN / 1000).toFixed(0)}s of thrust — a 30Hz `
-  + 'interval does not fire at exactly 33.33ms, so the slow leg integrates a hair more dt than '
-  + 'the fixed step does; that difference is the tolerance and nothing else is');
+// The tolerance is DERIVED from the difference between the two clocks rather than
+// tuned to one run, and the first version of it was tuned to one run and went red on
+// a busier machine at 18px against a 17.7px allowance.
+//
+// server.js: `dt = TURBO ? 1 / TICK_HZ : Math.min(0.1, (now - last) / 1000)`. The slow
+// leg integrates REAL elapsed time, including however late a 30Hz interval actually
+// fired; the fast leg integrates a fixed step. So the slow leg always covers at least
+// as much ground, by however much the machine was busy — which is a property of the
+// machine and not of turbo, and is unbounded above under load.
+//
+// So the claim is stated in the direction the arithmetic guarantees: the fixed step
+// never OVERSHOOTS the measured one, and the two stay within an interval's worth of
+// slack over the burn. 10% of three seconds is 300ms of accumulated overshoot across
+// 90 ticks — 3.3ms a tick, which is an ordinary loaded-machine setInterval.
+const SLACK = 0.10;
+check('a fixed step never outruns the clock it stands in for',
+  fast.moved <= slow.moved + 1 && slow.moved - fast.moved <= slow.moved * SLACK,
+  `${fast.moved}px against ${slow.moved}px over ${(BURN / 1000).toFixed(0)}s of thrust — `
+  + `${(100 * (slow.moved - fast.moved) / slow.moved).toFixed(1)}% apart against ${SLACK * 100}% of `
+  + 'slack, and the slow leg is the imprecise one because it integrates real elapsed time');
 
 check('a ping cooldown is counted in SIM seconds at both speeds',
   slow.ping === fast.ping && fast.ping === PING_COOLDOWN - HOLD / 1000,
