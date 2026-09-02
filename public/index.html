@@ -51,11 +51,11 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, unpackPing, PLATE_STEPS } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, unpackPing, unpackWave, PLATE_STEPS } from '/shared/net.js';
 import { pingLayout, pingChip, chipLine, onChip, whyNotPing, pingAlpha,
          PING_TINT, PING_FONT } from '/shared/ping.js';
 import { burnOf, burnR } from '/shared/burn.js';
-import { sowOf, HOLD } from '/shared/ground.js';
+import { sowOf, HOLD, GLOB_R } from '/shared/ground.js';
 // An answering ring. `arcOf` is the whole reason the wedge that glows and the wedge
 // that took your bolt are the same wedge — the server hit-tests a bearing with it and
 // this file draws it, out of one function.
@@ -276,7 +276,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [], fronts = [];   // rebuilt every snapshot
 let mySnare = 0;                                  // s of engines-out left, from the bag
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
@@ -1466,6 +1466,10 @@ ws.onmessage = e => {
   bolts = (m.bolts ?? []).map(unpackBolt);
   rockets = (m.rockets ?? []).map(unpackRocket);
   orbs = (m.orbs ?? []).map(unpackOrb);
+  // Pressure fronts an answering ring has called. Ephemeral like the bolts above:
+  // one at a time in the whole galaxy, alive for a second and a half, and its one
+  // field that matters — the radius — changes on every tick.
+  fronts = (m.waves ?? []).map(unpackWave);
   snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
   pyres  = (m.pyres ?? []).map(unpackPyre);
@@ -4624,6 +4628,52 @@ function drawFrame(now) {
     }
   }
 
+  // --- a ring's call ------------------------------------------------------------
+  //
+  // A pressure front leaving an answering ring: an expanding circle with exactly one
+  // wedge of it missing, and the missing wedge is the only place you may be standing
+  // when it reaches you.
+  //
+  // THE STROKE IS THE THING THAT HITS YOU. `w.r` is the radius the server sweeps
+  // with, so the line is drawn on it and not at some flattering fraction of it —
+  // this is ORB_FIELDS' rule at its sharpest, because the whole mechanic is being on
+  // the right side of a line and a front drawn one radius and resolved at another
+  // would be a fight decided by a rendering choice.
+  //
+  // THE LANE IS DRAWN AS A GAP AND AS TWO POSTS. The gap alone reads as the front
+  // fading out at that bearing rather than as a way through, which was the first cut
+  // and was unreadable at the size these circles get; the posts are what make it a
+  // door. They are radial, so they point at where you have to be rather than at the
+  // circle they are cut out of.
+  //
+  // NOTHING HERE CAN PRODUCE undefined, NaN OR A BAD COLOUR: every number off the
+  // wire goes through Number.isFinite before it reaches a path, the radius through
+  // Math.max, and every alpha is a literal.
+  for (const w of fronts) {
+    if (!Number.isFinite(w.x) || !Number.isFinite(w.y)) continue;
+    if (!Number.isFinite(w.g) || !Number.isFinite(w.h)) continue;
+    const R = Math.max(1, w.r ?? 1);
+    const from = w.g + w.h, to = w.g - w.h + Math.PI * 2;
+    // the wash ahead of the front, so it reads as pressure rather than as a hoop
+    g.strokeStyle = 'rgba(232,196,120,0.130)';
+    g.lineWidth = 26;
+    g.beginPath(); g.arc(w.x, w.y, R, from, to); g.stroke();
+    // and the front itself
+    g.strokeStyle = 'rgba(255,232,170,0.880)';
+    g.lineWidth = 4;
+    g.beginPath(); g.arc(w.x, w.y, R, from, to); g.stroke();
+    // the two posts of the door, one wedge apart
+    g.strokeStyle = 'rgba(255,240,200,0.700)';
+    g.lineWidth = 2;
+    for (const edge of [w.g - w.h, w.g + w.h]) {
+      const c = Math.cos(edge), s = Math.sin(edge);
+      g.beginPath();
+      g.moveTo(w.x + c * (R - 22), w.y + s * (R - 22));
+      g.lineTo(w.x + c * (R + 22), w.y + s * (R + 22));
+      g.stroke();
+    }
+  }
+
   // --- sown ground --------------------------------------------------------------
   //
   // Two kinds, drawn so they cannot be confused with each other at a glance, and so
@@ -4663,22 +4713,56 @@ function drawFrame(now) {
       const pal = PALETTE[gr.k === 1 ? 1 : 0];
       const live = gr.on === 1;
 
-      // The wind-up: the circle it is ABOUT to be, falling onto the place from four
-      // radii out and arriving exactly as it goes live. Dashed, because a dashed
-      // ring in this game has always meant "not yet" — see the fix marker.
+      // A GLOB IN THE AIR. The circle sits still on the place the throw is going to
+      // land, at the size it is going to be, for the whole flight — 2.25s at the
+      // range these two stand off to and 3.93s at the full throw, so backing off buys
+      // you time to read it. Dashed, because a dashed ring in this game has always
+      // meant "not yet": see the fix marker.
+      //
+      // The GLOB itself is drawn travelling into it, from the hostile that threw it
+      // to the middle of the circle. `gr.id` is the sower's own id — the server packs
+      // the marker under it for exactly this — so the muzzle is the hull's rendered
+      // position and the two ends of the line are never a frame apart. If the sower
+      // has gone (killed mid-flight, or slid off radar) the ring alone still says
+      // everything a pilot has to act on, which is the whole point of it being the
+      // circle rather than a dot.
       if (!live) {
-        const fall = R * (3.2 - 2.2 * p);
-        g.strokeStyle = `rgba(${pal.rim},${al(0.20 + 0.55 * p)})`;
-        g.lineWidth = 1 + 2.5 * p;
+        g.strokeStyle = `rgba(${pal.rim},${al(0.24 + 0.50 * p)})`;
+        g.lineWidth = 1 + 2 * p;
         g.setLineDash([18, 14]);
         g.lineDashOffset = -now / 40;
-        g.beginPath(); g.arc(gr.x, gr.y, Math.max(1, fall), 0, 7); g.stroke();
-        g.setLineDash([]);
-        // and the ground it will cover, faint, so the decision is about the right
-        // circle rather than about the one still falling
-        g.strokeStyle = `rgba(${pal.rim},${al(0.12 + 0.30 * p)})`;
-        g.lineWidth = 1;
         g.beginPath(); g.arc(gr.x, gr.y, R, 0, 7); g.stroke();
+        g.setLineDash([]);
+        // the aiming cross in the middle, so the LANDING POINT is a point and not a
+        // guess at the centre of a 560px circle
+        g.strokeStyle = `rgba(${pal.rim},${al(0.30 + 0.40 * p)})`;
+        g.lineWidth = 1.5;
+        g.beginPath();
+        g.moveTo(gr.x - 14, gr.y); g.lineTo(gr.x + 14, gr.y);
+        g.moveTo(gr.x, gr.y - 14); g.lineTo(gr.x, gr.y + 14);
+        g.stroke();
+        const src = ships.get(gr.id);
+        if (src) {
+          const gx = src.rx + (gr.x - src.rx) * p, gy = src.ry + (gr.y - src.ry) * p;
+          // Fattest at the top of the arc and thinnest at both ends. A lob in a
+          // top-down view has no height to draw, so the size IS the height — it is
+          // the only cue that says "this is going over you, not at you", and without
+          // it a glob reads as an orb that forgot to hit anybody.
+          const lift = 1 + 0.55 * Math.sin(Math.PI * p);
+          // GLOB_R off shared/ground.js and NOT a 44 typed here. It is the disc
+          // stepLob resolves the landing against, so a glob drawn at any other size
+          // is the "a ball you can see and cannot be hit by" bug — the same one
+          // ORB_FIELDS puts its own radius on the wire to prevent.
+          const GR = GLOB_R * lift;
+          const grd = g.createRadialGradient(gx, gy, 0, gx, gy, GR);
+          grd.addColorStop(0, `rgba(${pal.fill},0.900)`);
+          grd.addColorStop(0.5, `rgba(${pal.fill},0.400)`);
+          grd.addColorStop(1, `rgba(${pal.fill},0)`);
+          g.fillStyle = grd;
+          g.beginPath(); g.arc(gx, gy, GR, 0, 7); g.fill();
+          g.fillStyle = `rgba(${pal.rim},0.950)`;
+          g.beginPath(); g.arc(gx, gy, Math.max(2, GR * 0.34), 0, 7); g.fill();
+        }
         continue;
       }
 
@@ -5084,11 +5168,13 @@ function drawFrame(now) {
     // The victim is radar-filtered per viewer, so a Kedge can legitimately be sighting
     // somebody this client was never sent — ships.get misses, `mark` is null, and only
     // the arms are drawn, which is the radar rule as much as the arithmetic one.
-    // A sower charging its next patch. The ghost circle already drawn on the ground
-    // says WHERE; this says WHICH HOSTILE, which matters the moment there are two of
-    // them on the field and only one of the two kinds of ground can be steered out
-    // of. It rides `abl` — the fifth thing on that one dial — and `tgt` is already on
-    // the wire, so this cost no new SHIP_FIELDS entry. The row is at 30 of a hard 31.
+    // A sower with a glob in the air. The dashed circle already drawn on the ground
+    // says WHERE it is going to land and the glob itself is drawn flying into it; this
+    // says WHICH HOSTILE threw it, which matters the moment there are two of them on
+    // the field and only one of the two kinds of ground can be steered out of. It
+    // rides `abl` — the fifth thing on that one dial, running from the throw to the
+    // arrival — and `tgt` is already on the wire, so this cost no new SHIP_FIELDS
+    // entry. The row is at 30 of a hard 31.
     //
     // It cannot put a bad number into a draw call: `wind` is 0 unless ALIENS[hull]
     // has a `sow` block, which is undefined for every other hostile and for a ship,

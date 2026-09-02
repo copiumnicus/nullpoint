@@ -17,10 +17,13 @@
 //      party size while time-to-clear falls as 1/n. A ring has ONE voice and answers
 //      one bearing a cycle, so it has to be the other way round.
 //
-//   2. IT MUST REPAIR "KEEP MOVING". The deeps inverted that — test/ground.mjs
-//      asserts, in as many words, that standing still now outlives circling, because
-//      the plasma lands at your feet and moving buys nothing. Circling has to win
-//      here, measured, or the design has failed.
+//   2. IT MUST REPAIR "KEEP MOVING", and that reason has been rewritten once. It read
+//      "the deeps inverted that" — test/ground.mjs used to assert that standing still
+//      outlived circling out there — and re-measuring said the inversion was the
+//      BENCH: the plan called `kite` was not standing still, it was retreating off the
+//      edge of the map. Circling wins in both files now. What survives here, and is
+//      the harder claim, is that circling has to win WITHOUT being the only thing that
+//      does: a hostile with one correct answer is an instruction.
 //
 // Everything below runs through the real loop — stepAlienAI, stepRing, answer, step,
 // stepVitals, fire and stepBolts, in the order server.js calls them — so what is
@@ -36,7 +39,8 @@
 import { ALIENS, WILD, effectiveHp, farmHp, newAlien, stepAlienAI, stepAlienRepair,
          storeHit, mayHarm, CORE_HP, BOUNTY_RATE, XP_RATE, threatDps, bountyFor, xpFor,
          MIRROR, soakOf, payloadOf, outlineOf, dialsOn } from '../shared/aliens.js';
-import { platesOf, plateAt, plateMid, arcOf, plateArc, plateCount, plateFill, plateHalf,
+import { waveOf, waveBeat, crestOf, stepWave, stepWaves, inLane, WAVE_SPEED,
+         platesOf, plateAt, plateMid, arcOf, plateArc, plateCount, plateFill, plateHalf,
          newRing, stepRing, storeBearing, softAt, hottest, dischargeOf, deflectOf,
          spreadOf, answer, PLATE_MAX, ANSWER_FLOOR,
          crackOf, holeOf, broke, brokenCount, openAt } from '../shared/plates.js';
@@ -261,6 +265,36 @@ const PLANS = {
     const r = d + Math.max(-140, Math.min(140, want - d));
     me.tx = f.x + Math.cos(a0) * r; me.ty = f.y + Math.sin(a0) * r;
   },
+  // WALKS THE LANE. The call leaves one wedge silent and steps it one place every
+  // beat, so this flies to whichever wedge is currently open and keeps flying. It is
+  // an ORACLE in the same sense PLANS.fly is in test/ground.mjs — it reads `foe.gap`
+  // rather than watching the screen — so what it measures is the ceiling of that
+  // counter, not the average of it. The lane IS on the screen for the whole flight,
+  // which is what makes reading it legitimate.
+  //
+  // Note what it also is: a slow circle. Walking the lane is walking the ring, so it
+  // dodges the answers too — which is the composition claim stated as a flight path
+  // rather than as a paragraph.
+  walk: (t, me, f, want, bear, crew) => {
+    // ONE WEDGE AHEAD OF THE LANE, not on it, and that is the whole skill rather than
+    // a fudge. A front takes a second to reach the range this thing fights at, and one
+    // wedge is a four-second walk, so a pilot who sets off for the lane the moment it
+    // opens is three quarters of a wedge short when it arrives — measured, that plan
+    // took 100% of the calls and the full 711 a second, which is the bolt back again.
+    // The lane always steps the same way, so where it will be next is the one thing
+    // about this hostile you never have to guess: you leave for the next lane on this
+    // beat and you are standing in it when the next call goes.
+    //
+    // A PARTY SPREADS ACROSS THE LANE rather than stacking in the middle of it. The
+    // lane is one wedge, which is 495px of arc at the range this thing fights at, so
+    // four pilots sit 124px apart inside it — a formation, not a pile. That spread is
+    // the party half of the claim: they all take the same lane, so the call costs a
+    // party of four exactly what it costs one pilot, which is nothing.
+    const nx = plateCount(f.def);
+    const lane = plateMid(f.def, (((f.gap ?? 0) + 1) % nx + nx) % nx);
+    const off = crew > 1 ? (bear / (2 * Math.PI) + 0.5 / crew - 0.5) * plateArc(f.def) * 0.8 : 0;
+    me.tx = f.x + Math.cos(lane + off) * want; me.ty = f.y + Math.sin(lane + off) * want;
+  },
   // In and out along the SAME bearing, which is the plausible mistake: it is moving,
   // it feels like dodging, and it is not — the answer tracks the range and not the
   // angle, so this is standing still by the only measure that counts.
@@ -272,18 +306,19 @@ const PLANS = {
 };
 
 function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
-                  stage = 'deep', reachMul = 0.92, seed = 7 } = {}) {
+                  stage = 'deep', reachMul = 0.92, seed = 7, route = 'weapons' } = {}) {
   const foe = newAlien('antiphon', 5000, MAP, seed, { x: AT.x, y: AT.y });
   foe.x = foe.post.x; foe.y = foe.post.y;
-  const want0 = pilot(stage, research).stats.weaponRange * reachMul;
+  const want0 = pilot(stage, research, route).stats.weaponRange * reachMul;
   const team = Array.from({ length: crew }, (_, i) => {
-    const s = pilot(stage, research);
+    const s = pilot(stage, research, route);
     const a0 = (i / crew) * Math.PI * 2;
     s.x = AT.x + Math.cos(a0) * want0; s.y = AT.y + Math.sin(a0) * want0;
     return { id: i + 1, ship: s, bear: a0, took: 0, dealt: 0, fired: 0, hp0: s.hp, sh0: s.shield,
              ehp0: s.stats.hull + s.stats.shield };
   });
-  let bolts = [], t = 0, answers = 0, thrown = 0, hits = 0, heat = 0, samples = 0;
+  let bolts = [], fronts = [], t = 0, answers = 0, thrown = 0, hits = 0, heat = 0, samples = 0;
+  let calls = 0, swept = 0, waveTook = 0;
   let dealtAll = 0, firstBreak = null, into = 0;          // when the ring first gave, and what it cost to get there
   while (t < secs && foe.hp > 0) {
     const here = team.map(c => ({ id: c.id, ship: c.ship, haven: inHaven(MAP, c.ship), loud: 1 }));
@@ -293,6 +328,11 @@ function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
     step(foe, dt); stepVitals(foe, dt, false); stepAlienRepair(foe, dt);
     faceTarget(foe, victim?.ship ?? null);
     for (const b of fire(foe, victim?.ship ?? null, dt)) bolts.push(b);
+    // THE CALL. fire() above returns nothing at all for this hostile now — the barrel
+    // became this — so without these two lines the bench measures a boss with 711 dps
+    // missing from it, which is exactly the silent hole rule one exists to prevent.
+    const crest = stepWave(foe, victim?.ship ?? null, dt);
+    if (crest) { fronts.push(crest); if (t >= warm) calls++; }
     stepRing(foe, dt);
     const reply = answer(foe, dt, here.filter(c => mayHarm(foe, c)), BOLT_SPEED);
     if (reply) { bolts.push(reply); if (t >= warm) { answers++; thrown++; } }
@@ -300,11 +340,16 @@ function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
     // the pilots
     for (const c of team) {
       const me = c.ship;
-      PLANS[plan](t, me, foe, want0, c.bear);
+      PLANS[plan](t, me, foe, want0, c.bear, crew);
       step(me, dt); stepVitals(me, dt, false);
       faceTarget(me, foe);
       for (const b of fire(me, foe, dt)) { b.owner = c.id; bolts.push(b); if (t >= warm) c.fired += b.dmg; }
       foe.provoked.add(c.id); if (foe.target === null) foe.target = c.id;
+    }
+    for (const h of stepWaves(fronts, here, dt, (w, c) => mayHarm({ provoked: w.by }, c))) {
+      applyDamage(h.target, h.dmg);
+      const who = team.find(c => c.ship === h.target);
+      if (who && t >= warm) { who.took += h.dmg; waveTook += h.dmg; swept++; }
     }
     for (const h of stepBolts(bolts, dt)) {
       const landed = h.split.shield + h.split.hull;
@@ -334,6 +379,11 @@ function expose({ crew = 1, plan = 'orbit', secs = 90, warm = 12, research = 0,
   // after it — one bolt of slop on a ninety-second window, and a share over 1.0 in a
   // printed table reads as a bug rather than as rounding.
   return { t, crew: crew, took, answers: answers / span, landed: thrown ? Math.min(1, hits / thrown) : 0,
+           calls, swept, wave: waveTook / team.length / span,
+           // What share of the calls actually swept each pilot. This is the lane, as a
+           // number: a pilot who walks it takes none of them and one who does not takes
+           // all of them. Clamped for the same one-front-of-slop reason `landed` is.
+           caught: calls ? Math.min(1, swept / (calls * crew)) : 0,
            broke: brokenCount(foe), firstBreak, into, dealt: dealtAll,
            strain: Math.max(0, ...(foe.strain ?? [0])),
            dps: dealtAll / Math.max(1e-9, t) / crew,
@@ -390,9 +440,11 @@ const still = {};
     orbit.took < hold.took * 0.6 && orbit.landed < 0.1 && hold.landed > 0.9,
     `${n(orbit.took)} points a second circling against ${n(hold.took)} committed — ` +
     `${(100 * orbit.landed).toFixed(0)}% of answers find a pilot who keeps turning and ` +
-    `${(100 * hold.landed).toFixed(0)}% find one who does not. test/ground.mjs asserts the OPPOSITE ` +
-    'about a Crucible — "moving is now worse than standing still, which is the mechanic inverted" — ' +
-    'because a pool lands at your FEET. An answer lands on your BEARING, and that is the difference');
+    `${(100 * hold.landed).toFixed(0)}% find one who does not. test/ground.mjs measures the same ` +
+    'shape on a Crucible now that its barrel is a lob — 12,739 a second parked against 5,534 ' +
+    'circling — so the whole bestiary out here says one thing in three geometries: an answer lands ' +
+    'on your BEARING, a glob lands on the course you were holding, and a call lands everywhere but ' +
+    'one wedge');
   // AND THE OTHER HALF IS NEW, and it is the reason the change exists: circling is safe
   // and it opens NOTHING. A pilot who never commits is never answered and never gets
   // through the armour either, which is what turns a rate into a decision.
@@ -430,10 +482,13 @@ const still = {};
 console.log('\nboth of them, run to the kill');
 {
   const race = {};
-  for (const plan of ['orbit', 'hold']) {
-    const r = expose({ plan, crew: 1, secs: 600, warm: 8 });
+  // THREE ways now, not two, and the third is what the call added. `walk` flies with
+  // the reactor on the THRUSTERS because that is what taking the lane costs — see the
+  // call block above — and routing power off the gun is the price it pays in clock.
+  for (const [plan, route] of [['orbit', 'weapons'], ['hold', 'weapons'], ['walk', 'thrusters']]) {
+    const r = expose({ plan, route, crew: 1, secs: 900, warm: 8 });
     race[plan] = r;
-    console.log(`     ${plan.padEnd(6)} cleared in ${r.t.toFixed(0).padStart(4)}s   ` +
+    console.log(`     ${plan.padEnd(6)} on ${route.padEnd(10)} cleared in ${r.t.toFixed(0).padStart(4)}s   ` +
       `${n(r.took * (r.t - 8)).padStart(9)} points taken   ${r.broke} wedges broken   ` +
       `${(100 * r.through).toFixed(0)}% of fire through the armour`);
   }
@@ -446,6 +501,20 @@ console.log('\nboth of them, run to the kill');
     `${(100 * cost('hold') / cost('orbit') - 100).toFixed(0)}% more hull. THAT is the fight this ` +
     'change was asked for: it used to be one number, 684 against 3,376, with circling strictly ' +
     'better and nothing at all to aim at');
+  // AND THE THIRD RUNG, which the call added and which is the reason it can be a total
+  // dodge without being a solved fight. Walking the lane takes NOTHING and it costs
+  // you the reactor: power on the thrusters is power off the gun, so the same kill is
+  // 527 seconds instead of 328. Three policies, monotone in both columns, and no two
+  // of them can be had at once.
+  check('and walking the lane is free and slowest, so the spectrum has three rungs and no dominant one',
+    race.walk.t > race.orbit.t * 1.4 && cost('walk') < cost('orbit') * 0.1,
+    `${race.hold.t.toFixed(0)}s / ${n(cost('hold'))} committed, ${race.orbit.t.toFixed(0)}s / ` +
+    `${n(cost('orbit'))} circling, ${race.walk.t.toFixed(0)}s / ${n(cost('walk'))} walking the lane. ` +
+    'Each rung buys safety with clock and nothing buys both — the lane costs x' +
+    `${(race.walk.t / race.hold.t).toFixed(1)} the clock of committing, and it costs it because taking ` +
+    'the lane means routing power off the gun. Read as a ceiling and not a verdict: `walk` reads the ' +
+    'hostile\'s own gap field and flies a perfect one-wedge lead for nine minutes, and a person does ' +
+    'not');
   // And the honest floor. Both columns have to fit inside a ship somebody can actually
   // be flying five hops out, or neither is a policy — it is two ways of dying.
   //
@@ -523,6 +592,84 @@ console.log('\nwhat it costs to break one');
     'real gun holds a wedge at. It is a party\'s job, not one pilot\'s');
 }
 
+// --- the call, which is what the barrel became ------------------------------------
+//
+// The 711 dps under the answers was a plain aimed bolt, and an aimed bolt is not
+// dodged by anybody. It is a pressure front now: it leaves the hull, grows outward at
+// WAVE_SPEED, and is silent over exactly one wedge that steps round the ring on every
+// beat. This block is the walk, as a number.
+console.log('\nthe call, and the lane through it');
+const call = {};
+{
+  // Two of these fly with the reactor on the GUN, which is the build every other
+  // measurement in this file uses. `walk` flies with it on the THRUSTERS, and that is
+  // not a thumb on the scale — it is the mechanic. A deep-shelf hull makes 74px/s with
+  // its power on the gun and 127 with it on the engines, and one wedge at the range
+  // this thing stands off to is a 6.7s walk at the first and a 3.9s walk at the
+  // second, against a 4.0s beat. The lane is a thing you route power to take.
+  for (const [plan, route] of [['hold', 'weapons'], ['orbit', 'weapons'],
+                               ['walk', 'thrusters'], ['walk', 'weapons']]) {
+    const r = expose({ plan, route, crew: 1, secs: 120 });
+    call[`${plan}/${route}`] = r;
+    console.log(`     ${plan.padEnd(6)} on ${route.padEnd(10)} ${n(r.took).padStart(7)} points a second   ` +
+      `${(100 * r.caught).toFixed(0).padStart(3)}% of calls sweep you   ` +
+      `${n(r.wave).padStart(6)} of it is the call   ` +
+      `${r.took > 0 ? `dead in ${(r.ehp0 / r.took).toFixed(1)}s` : 'never dies'}`);
+  }
+  call.hold = call['hold/weapons']; call.orbit = call['orbit/weapons'];
+  call.walk = call['walk/thrusters']; call.slow = call['walk/weapons'];
+  // The two ends of WAVE_SPEED, both read off numbers already on the definition.
+  check('the front crosses to the range this thing fights at in one of its own cycles',
+    Math.abs((A.attrs.weaponRange * 0.7 - A.r) / WAVE_SPEED - plateHalf(A)) < 0.02,
+    `${((A.attrs.weaponRange * 0.7 - A.r) / WAVE_SPEED).toFixed(2)}s to cross from a ${A.r}px hull to ` +
+    `the ${A.attrs.weaponRange * 0.7}px it stands off to, against a ${plateHalf(A)}s answering cycle — ` +
+    `so there is a full second of front between the flash and the arrival, and the whole ` +
+    `${A.attrs.weaponRange - A.r}px of reach is crossed in ` +
+    `${((A.attrs.weaponRange - A.r) / WAVE_SPEED).toFixed(1)}s of a ${waveBeat(A)}s beat. ONE VOICE AT A ` +
+    'TIME: there is never a second front on the field, which is the fiction and the readability in one');
+  // And the beat, which is the DODGE. It is the only number on the wave block and it
+  // is set by the walk rather than by the look.
+  const wedgeAt = r => 2 * Math.PI * r / plateCount(A);
+  const STAND = A.attrs.weaponRange * 0.7;
+  console.log(`     one wedge of arc is ${Math.round(wedgeAt(STAND))}px at ${STAND}px and ` +
+    `${Math.round(wedgeAt(260))}px in close, against a ${waveBeat(A)}s beat:`);
+  for (const [what, v] of [['deep shelf, reactor on the gun', 74.4],
+                           ['deep shelf, reactor on thrusters', 127],
+                           ['finished Bulwark', 128], ['Kestrel', 430]])
+    console.log(`     ${what.padEnd(32)} walks one wedge in ${(wedgeAt(STAND) / v).toFixed(1).padStart(4)}s at ` +
+      `reach and ${(wedgeAt(260) / v).toFixed(1)}s in close   ` +
+      `${wedgeAt(STAND) / v <= waveBeat(A) ? 'holds the lane' : 'falls behind at reach'}`);
+  check('the beat is the walk: one wedge, at the speed of the ship posted against it',
+    wedgeAt(STAND) / 127 <= waveBeat(A) && wedgeAt(STAND) / 128 <= waveBeat(A),
+    `${(wedgeAt(STAND) / 127).toFixed(2)}s to walk one wedge at the ${STAND}px this thing stands off ` +
+    `to, against a ${waveBeat(A)}s beat. Put the reactor on the GUN instead and the same walk is ` +
+    `${(wedgeAt(STAND) / 74.4).toFixed(1)}s and the lane is gone — which is the siege build's price, ` +
+    'the same one test/ground.mjs already states about it not being able to walk out of a Doldrum. ' +
+    'It is a LIVE decision rather than a purchase: routeTo() is a key, so a pilot can take the lane ' +
+    'on the beat and the gun back afterwards');
+  check('and walking the lane is what the call costs you, measured through the real loop',
+    call.walk.caught < call.hold.caught && call.walk.wave < call.hold.wave * 0.6,
+    `${(100 * call.hold.caught).toFixed(0)}% of calls sweep a pilot holding a bearing and ` +
+    `${(100 * call.walk.caught).toFixed(0)}% sweep one walking the lane — ${n(call.hold.wave)} points a ` +
+    `second against ${n(call.walk.wave)}. A pilot who never walks it takes ` +
+    `${n(A.attrs.damage * A.attrs.fireRate)} a second, which is exactly what the bolt cost; the whole ` +
+    'conversion is that this number is now a mistake instead of a rate');
+  check('and it composes with the plates rather than competing, because the lane is a circle',
+    call.walk.landed <= call.hold.landed,
+    `${(100 * call.walk.landed).toFixed(0)}% of ANSWERS find a pilot walking the lane against ` +
+    `${(100 * call.hold.landed).toFixed(0)}% of one holding a bearing — walking the lane is walking the ` +
+    'ring, so the same flight path answers both halves. That is the point of the lane being an angle: ' +
+    'the answers pay you to hold RANGE and the call pays you to be close, because a wedge is a shorter ' +
+    `walk on a smaller circle — ${Math.round(wedgeAt(260))}px in at 260 against ` +
+    `${Math.round(wedgeAt(STAND))}px out at ${STAND}. One pushes you out, the other pulls you in`);
+  check('what the whole barrel throws is untouched, so nothing derived from it moved',
+    Math.abs(crestOf(A) / waveBeat(A) - A.attrs.damage * A.attrs.fireRate) < 1e-9,
+    `${n(crestOf(A))} points a front every ${waveBeat(A)}s is ` +
+    `${n(A.attrs.damage * A.attrs.fireRate)} a second — damage x fireRate x beat, over beat. So ` +
+    'threatDps, the bounty, the experience and the bestiary report are the numbers they already were, ' +
+    'and the plates keep reading fireRate as their own half-life because it never moved');
+}
+
 // --- property one: does party size STILL divide the answer? ------------------------
 //
 // The headline, and the reason the hostile exists at all. balance.js's POSTING says
@@ -551,14 +698,61 @@ console.log('\nthe party curve, four pilots on four bearings');
     [1, 2, 3, 4].map(c => `${c}p ${n(took(c))}/s`).join('  ') +
     ' — a ring answers ONE bearing a cycle, so the answers are shared out, and the plate a pilot is ' +
     'not standing on cools while it waits its turn');
+  // AND THE COST OF THE CALL, which is the one number this pass made worse and is
+  // stated rather than buried. A ring's ANSWER divides — one voice, one bearing a
+  // cycle — and that is the whole reason this hostile exists. A FRONT does not: it
+  // reaches everybody inside its reach at once, exactly like the ground the deeps lay,
+  // and it costs each of four pilots the full 711 a second instead of a quarter of it.
+  //
+  // So the curve flattened when the barrel became a call, and here is by how much:
+  //
+  //     four pilots, each welded to a bearing   1.00 / 0.50 / 0.31 / 0.14   before
+  //                                             1.00 / 0.62 / 0.46 / 0.32   after
+  //     time to die                                   x7.40  ->  x3.16
+  //
+  // It is shipped at that price for one reason, and the reason is measurable rather
+  // than a hope: a front is not a rate, it is a MISTAKE. There is exactly one lane, it
+  // is 495px of arc at the range this thing fights at, and four pilots fit inside it
+  // 124px apart — so a party that walks it takes NOTHING from the call and the curve
+  // is the answers' curve again. The column below is that, measured.
+  //
+  // What is NOT claimed is that the flat version divides. It does not, and if this
+  // property is ever wanted back at the welded-bearing policy the shape that would buy
+  // it is a call whose payload is shared among the pilots in reach — one voice, spread
+  // over the room it is called into — which divides exactly 1/n by construction and is
+  // one line in stepWave. It is not built, because time-to-die still RISES here and a
+  // rule nobody needs is a rule that will be wrong later.
+  const lane = [1, 2, 3, 4].map(crew =>
+    [crew, expose({ crew, plan: 'walk', route: 'thrusters', secs: 120 })]);
+  for (const [crew, r] of lane)
+    console.log(`     ${crew} in the lane ${n(r.took).padStart(7)} points a second each   ` +
+      `against ${n(took(crew)).padStart(7)} on four bearings   ` +
+      `${(100 * r.caught).toFixed(0)}% of calls sweep them`);
   check('and time-to-die still RISES with party size, which the deeps do not manage',
     took(4) < took(1) * 0.6,
     `each of four takes ${(100 * took(4) / took(1)).toFixed(0)}% of what one takes, so a pilot lives ` +
     `x${(took(1) / took(4)).toFixed(2)} longer for bringing three friends while the fight gets 4x ` +
-    'shorter. It was 1.00 / 0.50 / 0.33 / 0.17 before wedges could break and it is ' +
-    [1, 2, 3, 4].map(c => (took(c) / took(1)).toFixed(2)).join(' / ') + ' now, so breaking did not ' +
-    'cost the property this hostile exists for — which it easily could have, since a party opens ' +
-    'holes and a hole stops answering');
+    'shorter. It was 1.00 / 0.50 / 0.33 / 0.17 before wedges could break, then ' +
+    '1.00 / 0.50 / 0.31 / 0.14, and it is ' +
+    [1, 2, 3, 4].map(c => (took(c) / took(1)).toFixed(2)).join(' / ') + ' now that the barrel is a ' +
+    'front. A front does not divide — it reaches everybody at once, which is the deeps\' own failure ' +
+    'mode — so this is the one property the call cost something, and it cost x7.40 down to ' +
+    `x${(took(1) / took(4)).toFixed(2)}. It still rises, which is the claim`);
+  // AND THE PARTY'S ANSWER TO THE CALL IS TO TAKE IT, which is not what was expected
+  // and is the more interesting half. One pilot walking the lane pays nothing at all.
+  // Four cannot both walk it and stay spread, because THE LANE IS ONE WEDGE — a party
+  // inside it is a party on one bearing, which is precisely the thing the answers are
+  // for, so the wedge they are all standing on runs four times as hot and answers four
+  // times as hard. Measured, that costs more than the call does.
+  const inLaneAt = k => lane.find(([c]) => c === k)[1];
+  check('and a party cannot walk the lane and spread out at once, so it takes the call instead',
+    inLaneAt(1).took < took(1) && inLaneAt(4).took > took(4),
+    `one pilot in the lane takes ${n(inLaneAt(1).took)} a second against ${n(took(1))} circling — ` +
+    `nothing at all, ${(100 * inLaneAt(1).caught).toFixed(0)}% of calls swept. Four in the lane take ` +
+    `${n(inLaneAt(4).took)} each against ${n(took(4))} on four bearings, because the lane is one wedge ` +
+    `— ${Math.round(2 * Math.PI * A.attrs.weaponRange * 0.7 / plateCount(A))}px of arc, four pilots ` +
+    '124px apart, and all four on ONE plate. So the call is a solo pilot\'s dodge and a party\'s tax, ' +
+    'and that is the shape the flattened curve above is made of');
   // AND THE NEW HALF: a party does not merely survive better, it opens the ring
   // faster, and that needed no arranging. Strain goes with CHARGE and charge goes up
   // with party size, because a wedge waits longer for its turn to be answered.

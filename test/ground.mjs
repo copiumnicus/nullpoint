@@ -7,15 +7,16 @@
 // promise every other entry in aliens.js makes in as many words: that you can
 // always decline, always break off, always leave.
 //
-// Everything below is measured through the real loop — stepAlienAI, stepSow,
+// Everything below is measured through the real loop — stepAlienAI, stepLob,
 // step, stepSnare, stepVitals, fire, launch and stepBolts, in the order server.js
 // calls them.
 
 import { driftReady, PAIR_DRIFT, PAIR_HOME, ALIENS, WILD, effectiveHp, farmHp, newAlien, stepAlienAI, stepAlienRepair,
          mayHarm, standOff, BOUNTY_RATE, XP_RATE, threatDps, bountyFor, xpFor,
          SHAPES, outlineOf } from '../shared/aliens.js';
-import { sowOf, stepSow, sowHolds, sowPoint, groundFor, inGround, groundBite,
-         stepGround, stepSnare, holdEngines, held, mayHold, HOLD, CALM, WARN } from '../shared/ground.js';
+import { sowOf, stepLob, sowHolds, sowPoint, groundFor, inGround, groundBite,
+         stepGround, stepSnare, holdEngines, held, mayHold, globHit, globAt,
+         GLOB_SPEED, GLOB_R, GLOB_READ, HOLD, CALM, WARN } from '../shared/ground.js';
 import { newShip, step, stepVitals, applyDamage, inHaven, JUMP_TIME, HAVEN_R } from '../shared/sim.js';
 import { PORTAL_R } from '../shared/maps.js';
 import { poolOf } from '../shared/burn.js';
@@ -330,10 +331,19 @@ console.log('\nthe ground');
     })(),
     'six pools on one point take exactly what one takes — and threatDps counts a sower\'s ' +
     'rate once for the same reason, so the model and the tick agree');
-  check('a Crucible can never have more ground down than it says it may',
-    V.sow.every === V.sow.life / V.sow.max && D.sow.every === D.sow.life / D.sow.max,
-    `${V.sow.max} pools x ${V.sow.life}s / ${V.sow.every}s and ${D.sow.max} stills x ` +
-    `${D.sow.life}s / ${D.sow.every}s — the cadence is life / max rather than a fourth number`);
+  // REWRITTEN because the cadence stopped being a fourth number on the sow block and
+  // became the TRIGGER. There is no `every` any more: the gun throws the ground, so
+  // the interval between patches is `1 / fireRate`, and the invariant `every` used to
+  // carry is now an identity between the two halves of the definition.
+  check('a sower can never have more ground down than it says it may, and its gun is that clock',
+    ['crucible', 'doldrum'].every(k =>
+      Math.abs(ALIENS[k].attrs.fireRate - ALIENS[k].sow.max / ALIENS[k].sow.life) < 1e-9
+      && ALIENS[k].sow.every === undefined),
+    `fireRate ${V.attrs.fireRate} = ${V.sow.max} pool / ${V.sow.life}s and ` +
+    `${D.attrs.fireRate.toFixed(4)} = ${D.sow.max} still / ${D.sow.life}s — one clock, so a definition ` +
+    'cannot ask for more ground than it may hold AND cannot ask for a gun that disagrees with its own ' +
+    'ground. It was two clocks and a `sow.every` beside a 0.75/s barrel, which is two mechanics ' +
+    'wearing one hull');
   // REWRITTEN, and the reason is the carpet. `life` was one lap — 37 seconds, so the
   // ground you laid at the start of a circuit let go as you came back round to it —
   // and with six pools a hostile that was a beautiful relation and an unplayable
@@ -351,7 +361,8 @@ console.log('\nthe ground');
     `at ${Math.round(ORBIT)}px of gun range`);
   for (const k of ['crucible', 'doldrum'])
     console.log(`     ${ALIENS[k].name.padEnd(9)} ${ALIENS[k].sow.max} x ${ALIENS[k].sow.r}px blocks ` +
-      `${(100 * blocked(k)).toFixed(0)}% of it, one every ${ALIENS[k].sow.every}s for ${ALIENS[k].sow.life}s`);
+      `${(100 * blocked(k)).toFixed(0)}% of it, one every ${(1 / ALIENS[k].attrs.fireRate).toFixed(0)}s ` +
+      `for ${ALIENS[k].sow.life}s`);
   check('neither of them holds more than a third of the ground its own fight is on',
     blocked('crucible') <= 1 / 3 && blocked('doldrum') <= 1 / 3,
     `${(100 * blocked('crucible')).toFixed(0)}% and ${(100 * blocked('doldrum')).toFixed(0)}% — ` +
@@ -364,13 +375,13 @@ console.log('\nthe ground');
     `${2 * (V.sow.max + D.sow.max)} live patches across a deep sector's two pairs, against the ` +
     '32 that four of these used to put up at once — every one of them animated. Fewer and bigger ' +
     'is the same mechanic said properly');
-  check('and `every` is still life over max, so nothing can ask for more ground than it may hold',
-    V.sow.every === V.sow.life / V.sow.max && D.sow.every === D.sow.life / D.sow.max,
-    `${V.sow.max} pools x ${V.sow.life}s / ${V.sow.every}s and ${D.sow.max} still x ${D.sow.life}s / ` +
-    `${D.sow.every}s. Both cadences are read off the root's own clocks: a Crucible lays one pool per ` +
-    `CALM (${CALM}s), so a pilot just freed has one fresh pool and never two, and a Doldrum lays one ` +
-    `still per HOLD + CALM (${HOLD + CALM}s), so it can never build a second to catch you inside the ` +
-    'calm it owes you');
+  check('and the trigger is what puts it there, so the carpet cannot come back by accident',
+    ['crucible', 'doldrum'].every(k =>
+      Math.abs(1 / ALIENS[k].attrs.fireRate - ALIENS[k].sow.life / ALIENS[k].sow.max) < 1e-9),
+    `one pool every ${(1 / V.attrs.fireRate).toFixed(0)}s and one still every ` +
+    `${(1 / D.attrs.fireRate).toFixed(0)}s, which ARE their gun cadences. Doubling how often either ` +
+    'one throws now doubles its damage as well, so density cannot creep back up without failing the ' +
+    'on-model check above — which is the whole reason the gun and the sowing were made one clock');
 }
 
 // --- can it be refused? -------------------------------------------------------
@@ -432,32 +443,105 @@ console.log('\nrefusing it');
     D.sow.r > V.sow.r && D.sow.r < 2 * V.sow.r,
     `${D.sow.r} against ${V.sow.r} — caught at the rim you lose five seconds; caught in the middle ` +
     'you lose five seconds standing in what its Crucible poured there');
-  // RETIRED: `wind === HOLD` used to be the combo, because a pilot who was not held
-  // had exactly enough warning to be somewhere else. The radius does that job now —
-  // nothing steps out of 570px whatever the clock says — so the warning went back to
-  // being only a warning, and it is the shortest one this game gives for anything
-  // that matters.
-  check('the warning is half a portal spool, and it is only a warning now',
-    V.sow.wind === WARN && D.sow.wind === WARN && WARN === JUMP_TIME / 2 && WARN < HOLD,
-    `${WARN}s of marker against a ${HOLD}s stop — the two were the same number when the pool was ` +
-    'narrow enough to step out of, and the geometry replaced the identity');
-  check('and the marker is where the ground lands, not where the hostile is',
+  // REWRITTEN TWICE. It was `wind === HOLD`, the combo — a pilot who was not held had
+  // exactly enough warning to be somewhere else. That died to the radius: nothing
+  // steps out of 570px whatever the clock says. Now the wind-up itself is gone and
+  // the warning is the glob's FLIGHT, which is a better warning than any flat clock
+  // because it grows with the range you keep. WARN survives as the FLOOR — the game's
+  // shortest tell for anything that matters, half a portal spool — and the claim is
+  // that the flight beats it everywhere the fight actually happens.
+  const throwFrom = d => Math.max(WARN, d / GLOB_SPEED);
+  check('the warning is the flight, and it is longer than the clock it replaced',
+    throwFrom(V.attrs.weaponRange * 0.7) > WARN && throwFrom(V.sow.reach) > WARN
+    && WARN === JUMP_TIME / 2,
+    `${throwFrom(V.attrs.weaponRange * 0.7).toFixed(2)}s in the air at the ${V.attrs.weaponRange * 0.7}px ` +
+    `these two stand off to and ${throwFrom(V.sow.reach).toFixed(2)}s at the full ${V.sow.reach}px throw, ` +
+    `against the flat ${WARN}s wind-up both used to carry. Back off and you get MORE time to read it, ` +
+    'which is the right shape and is not a thing a fixed clock could ever have said');
+  check('and a throw from point blank still gets the game\'s shortest tell',
+    throwFrom(10) === WARN && GLOB_SPEED * WARN < V.sow.r,
+    `inside ${(GLOB_SPEED * WARN).toFixed(0)}px the flight is floored at ${WARN}s — and that is under ` +
+    `the ${V.sow.r}px pool it lands, so the only throws it binds on are ones from inside the ground ` +
+    'they are making. A pilot who closed to point blank is answered, not deleted with no tell');
+  // REWRITTEN: it used to be "the marker is where the ground lands, not where the
+  // hostile is", and the place was the victim's own feet at the moment a wind-up
+  // began. The glob leads now, so the claim is the stronger one: the marker is where
+  // the pilot is GOING. Sowing at their feet is what "moving buys nothing" was made
+  // of — see the inversion block below for the measurement.
+  check('and the marker is where the pilot is HEADING, not where they are or where the hostile is',
     (() => {
       const map = MAPS.d1;
       const a = newAlien('crucible', 9001, map, 5, { x: 4200, y: 5600 });
       a.x = a.post.x; a.y = a.post.y;
-      const me = pilot(); me.x = 3400; me.y = 5600;
+      const me = pilot(); me.x = 3400; me.y = 5600; me.vx = 0; me.vy = -120;
       let at = null, t = 0;
-      while (t < 6 && !at) { const d = stepSow(a, me, true, dt); if (d) at = d.at; me.x += 300 * dt; t += dt; }
-      return at && Math.abs(at.x - 3400) < 30 && Math.hypot(at.x - a.x, at.y - a.y) > 500;
+      while (t < 20 && !at) { const d = stepLob(a, me, true, dt); if (d) at = d.at; me.y += me.vy * dt; t += dt; }
+      // ahead of where it was thrown at, along the line the pilot was flying, and
+      // nowhere near the hostile
+      return at && at.y < 5600 - 150 && Math.abs(at.x - 3400) < 40
+          && Math.hypot(at.x - a.x, at.y - a.y) > 500;
     })(),
-    'sown on the victim\'s place at the moment the wind-up STARTED — at the end it would be ' +
-    'undodgeable, and on the hostile it would be a ring, which this bestiary already has one of');
+    (() => {
+      const map = MAPS.d1;
+      const a = newAlien('crucible', 9001, map, 5, { x: 4200, y: 5600 });
+      a.x = a.post.x; a.y = a.post.y;
+      const me = pilot(); me.x = 3400; me.y = 5600; me.vx = 0; me.vy = -120;
+      let at = null, t = 0;
+      while (t < 20 && !at) { const d = stepLob(a, me, true, dt); if (d) at = d.at; me.y += me.vy * dt; t += dt; }
+      return `${Math.round(5600 - at.y)}px up the line a pilot at 120px/s was flying — the intercept is ` +
+             'SOLVED, three passes of it, exactly the way an orb\'s is. Aiming at where they are instead ' +
+             'is beaten by holding any course at all, which is not a dodge, it is a walk';
+    })());
+}
+
+// --- the throw, and what beats it ------------------------------------------------
+//
+// The barrel is the delivery now, so the barrel is dodgeable, and this block is the
+// arithmetic that says by how much. It is pinned from BOTH ends the way ORB_SPEED is:
+// a turn has to beat it, and it has to be able to lead anybody at all.
+console.log('\nthe throw');
+{
+  const V_STAND = V.attrs.weaponRange * 0.7;                  // standOff(), where it fights from
+  const SHIP_R = 17;                                          // the hull the bench flies
+  const BENCH_V = 128;                                        // ...at the speed it flies it at
+  // The sagitta between the straight line the intercept solved down and the arc a
+  // circling pilot actually flew: v^2 t^2 / 2d, with t = d / GLOB_SPEED.
+  const turnBuys = (v, d) => v * v * d / (2 * GLOB_SPEED * GLOB_SPEED);
+  const disc = GLOB_R + SHIP_R;
+  console.log(`     one wedge of the answer: a ${GLOB_R}px glob plus a ${SHIP_R}px hull is ${disc}px to beat`);
+  for (const [what, v] of [['a laden finished Bulwark', 128], ['a deep-shelf siege build', 74.4],
+                           ['a Bulwark on thrusters', 195]])
+    console.log(`     ${what.padEnd(26)} a turn at ${Math.round(V_STAND)}px buys ` +
+      `${turnBuys(v, V_STAND).toFixed(0).padStart(4)}px   ${turnBuys(v, V_STAND) > disc ? 'MISSED' : 'lands'}`);
+  check('a turn beats the throw, at the range these two actually fight from',
+    turnBuys(BENCH_V, V_STAND) > disc,
+    `${turnBuys(BENCH_V, V_STAND).toFixed(0)}px of miss against ${disc}px of glob and hull, for the ` +
+    `pilot the claim bench flies. GLOB_SPEED is set from exactly this: v x sqrt(d / 2(r + hull)) is ` +
+    `${(BENCH_V * Math.sqrt(V_STAND / (2 * disc))).toFixed(0)} and it is ${GLOB_SPEED}. Measured through ` +
+    'the real loop rather than left as arithmetic: a circling pilot took 8 throws at a mean of 95px ' +
+    'and the barrel delivered NOTHING, against 3 of 3 dead centre on one that parked');
+  check('and it can still lead everything that comes out here, which is the other end of it',
+    GLOB_SPEED > 195 && GLOB_SPEED > 128 && GLOB_SPEED > 74.4,
+    `${GLOB_SPEED}px/s against 74 for a deep-shelf siege build, 128 for a laden finished Bulwark and ` +
+    '195 for one that put its reactor on the thrusters. The solve CANNOT converge on anything faster ' +
+    'than the throw, and a weapon that misses everything is a light show — the measurement that cost ' +
+    'orbs.js a whole design pass, restated one rung out');
+  // And the pool, which is the half lobbing does NOT fix. Said out loud here rather
+  // than discovered later: the change was asked for as a fix to "you cannot step
+  // around it", and it is not one, because no throw speed can make a 560px circle
+  // steppable by a 128px/s hull.
+  const clear = (V.sow.r + SHIP_R) / BENCH_V;
+  check('but the POOL is still not something you step out of, and no throw speed makes it one',
+    clear > V_STAND / GLOB_SPEED * 1.5,
+    `${clear.toFixed(1)}s to cross ${V.sow.r + SHIP_R}px at ${BENCH_V}px/s against ` +
+    `${(V_STAND / GLOB_SPEED).toFixed(2)}s of flight. A glob slow enough to give you that much warning ` +
+    `would be slower than the pilot and could not lead them at all. The ground is meant to be left ` +
+    'rather than dodged — that is what `r: 560` is FOR — and what lobbing moved is the barrel');
 }
 
 // --- a real fight ---------------------------------------------------------------
 //
-// stepAlienAI, stepSow, step, stepSnare, stepVitals, fire, launch, stepBolts and
+// stepAlienAI, stepLob, step, stepSnare, stepVitals, fire, launch, stepBolts and
 // stepRockets, in the order server.js calls them. Twenty-two milliseconds a fight,
 // so the whole matrix runs inside this suite rather than in a script beside it —
 // which matters, because these are the numbers the rung was argued from and a
@@ -473,7 +557,7 @@ function fight({ kinds, n = 1, research = 0, plan, secs = 900, seed = 7, spread 
     const s = pilot('finished', research);
     s.x = AT.x + Math.cos(i / n * 6.283) * (n > 1 ? spread : 0);
     s.y = AT.y + Math.sin(i / n * 6.283) * (n > 1 ? spread : 0);
-    return { id: i + 1, ship: s, took: 0, inG: 0, snared: 0, onTgt: 0,
+    return { id: i + 1, ship: s, took: 0, inG: 0, snared: 0, onTgt: 0, hitByGlob: 0,
              ehp0: s.stats.hull + s.stats.shield };
   });
   // Posted the way server.js posts them: a Crucible and a Doldrum PAIR_GAP apart, so
@@ -507,9 +591,18 @@ function fight({ kinds, n = 1, research = 0, plan, secs = 900, seed = 7, spread 
       faceTarget(a, victim?.ship ?? null);
       for (const b of fire(a, victim?.ship ?? null, dt)) bolts.push(b);
       if (sowOf(a.def)) {
-        const drop = stepSow(a, victim?.ship ?? null,
+        const drop = stepLob(a, victim?.ship ?? null,
           victim ? sowHolds(a, victim.ship, victim.haven) : false, dt);
         if (drop) {
+          // The glob lands twice, exactly as server.js settles it: on whoever is
+          // standing on the spot for the whole of the gun's damage, and then as the
+          // ground it leaves. Counted into `took` under its own name so the table
+          // below can say what the barrel is worth to each policy.
+          for (const c of crew) {
+            if (c.ship.hp <= 0 || !globHit(drop.at, c.ship)) continue;
+            const split = applyDamage(c.ship, drop.dmg);
+            c.took += split.shield + split.hull; c.hitByGlob += split.shield + split.hull;
+          }
           const mine = ground.filter(g => g.owner === a.id);
           if (mine.length >= a.def.sow.max)
             ground.splice(ground.indexOf(mine.reduce((w, g) => (g.t < w.t ? g : w))), 1);
@@ -558,31 +651,61 @@ function fight({ kinds, n = 1, research = 0, plan, secs = 900, seed = 7, spread 
     t += dt;
   }
   const dead = crew.filter(c => c.ship.hp <= 0).length;
+  const took = crew.reduce((v, c) => v + c.took, 0) / crew.length;
   return { t, killed: foes.every(f => f.hp <= 0), dead, n, longest,
            left: crew.map(c => Math.max(0, (c.ship.hp + c.ship.shield) / c.ehp0)),
-           inG: crew[0].inG, uptime: t > 0 ? crew[0].onTgt / t : 0 };
+           inG: crew[0].inG, uptime: t > 0 ? crew[0].onTgt / t : 0,
+           took, dps: took / Math.max(1e-9, t),
+           // What the BARREL delivered, as a share of everything taken. It is the one
+           // number the conversion is about: an aimed bolt put this at 9% on a pilot
+           // who circled and 3% on one who stood still, because it landed on both.
+           glob: crew.reduce((v, c) => v + c.hitByGlob, 0) / crew.length,
+           globShare: took > 0 ? crew.reduce((v, c) => v + c.hitByGlob, 0) / crew.length / took : 0 };
 }
 
-// Four ways to fly the same fight, from worst to best. Naming them is the point:
+// Five ways to fly the same fight, from worst to best. Naming them is the point:
 // the claim below is not "this hostile is hard", it is "this hostile is answered by
 // a thing a pilot does, and here is the thing".
+
+// Charted space, and every plan below is clamped to it.
+//
+// THIS IS A BENCH BUG THAT PRODUCED A SHIPPED FINDING, and it is worth the four lines
+// it costs to keep it fixed. `kite` backs off whenever the hostile closes, the hostile
+// follows because it is provoked, and neither of them ever stops — so over a 170s
+// fight the pilot retreated 5,200px and ended up at x = -1,783, well outside the map.
+// sowPoint() clamps ground to charted space, so every pool the Crucible was owed
+// landed on the boundary 1,783px behind the pilot: 17 drops at a mean of 1,373px, four
+// of which touched them. The bench was not measuring a policy, it was measuring a ship
+// that had left the sector, and the conclusion it produced — "standing still beats
+// circling, at every radius down to 200px" — was that artefact.
+//
+// The real game charges for this: outside charted space a hull takes drift shear, and
+// nothing here models it. So the plans do not get to use it.
+const inMap = (v, hi) => Math.max(120, Math.min(hi - 120, v));
 const PLANS = {
+  // NEVER TOUCHES THE THROTTLE. This is standing station as a person would mean it,
+  // and it is the plan the inversion claim below is actually about — `kite` is a
+  // retreat, which is a different thing and reads differently.
+  hold: (t, me) => { me.tx = me.ty = null; },
   // stands at its own gun range and holds it. The right answer to every hostile
   // before this one, and the reason these two exist.
   kite: (t, me, foes) => {
     const f = foes[0], d = Math.hypot(f.x - me.x, f.y - me.y), want = me.stats.weaponRange * 0.92;
-    if (d < want - 60) { me.tx = me.x + (me.x - f.x) / d * 400; me.ty = me.y + (me.y - f.y) / d * 400; }
-    else if (d > want + 60) { me.tx = f.x; me.ty = f.y; }
+    if (d < want - 60) {
+      me.tx = inMap(me.x + (me.x - f.x) / d * 400, MAP_W);
+      me.ty = inMap(me.y + (me.y - f.y) / d * 400, MAP_H);
+    } else if (d > want + 60) { me.tx = f.x; me.ty = f.y; }
     else { me.tx = me.ty = null; }
   },
-  // holds range and CIRCLES, which answers "the ground lands where you were" and
-  // nothing else. It does not look at the patches.
+  // holds range and CIRCLES, which answers "the ground lands where you are HEADING"
+  // and nothing else. It does not look at the patches — a circle is a turn, and a
+  // turn is what takes you off a solved intercept.
   orbit: (t, me, foes) => {
     const f = foes[0], dx = me.x - f.x, dy = me.y - f.y, d = Math.hypot(dx, dy) || 1;
     const want = me.stats.weaponRange * 0.92;
     const a0 = Math.atan2(dy, dx) + 0.45;
     const r = d + Math.max(-120, Math.min(120, want - d));
-    me.tx = f.x + Math.cos(a0) * r; me.ty = f.y + Math.sin(a0) * r;
+    me.tx = inMap(f.x + Math.cos(a0) * r, MAP_W); me.ty = inMap(f.y + Math.sin(a0) * r, MAP_H);
   },
   // GIVES UP THE SHOT. The plasma is 560px wide and the orbit only flexes by 120, so
   // "circle and pick a clean lane" stopped being available the moment the pools got
@@ -595,7 +718,8 @@ const PLANS = {
     if (inIt.length) {
       const g = inIt.reduce((w, x) => (x.rate > w.rate ? x : w));
       const dx = me.x - g.x || 1, dy = me.y - g.y, d = Math.hypot(dx, dy) || 1;
-      me.tx = g.x + dx / d * (g.r + me.r + 200); me.ty = g.y + dy / d * (g.r + me.r + 200);
+      me.tx = inMap(g.x + dx / d * (g.r + me.r + 200), MAP_W);
+      me.ty = inMap(g.y + dy / d * (g.r + me.r + 200), MAP_H);
       return;
     }
     PLANS.orbit(t, me, foes, ground);
@@ -609,7 +733,7 @@ const PLANS = {
     for (const side of [0.45, 0.75, 1.1, -0.45, -0.75]) {
       const a0 = Math.atan2(dy, dx) + side;
       const r = d + Math.max(-120, Math.min(120, want - d));
-      const px = f.x + Math.cos(a0) * r, py = f.y + Math.sin(a0) * r;
+      const px = inMap(f.x + Math.cos(a0) * r, MAP_W), py = inMap(f.y + Math.sin(a0) * r, MAP_H);
       if (!ground.some(g => Math.hypot(px - g.x, py - g.y) < g.r + me.r + 40)) {
         me.tx = px; me.ty = py; return;
       }
@@ -700,39 +824,52 @@ console.log('\nthe fight, driven by the real AI');
       solo[`${kinds.join('+')}/${pn}`] = r;
       console.log(line(`${kinds.join(' + ')} / ${pn}`, r));
     }
-  // REWRITTEN, and read the numbers above before the sentence: a single pilot no
-  // longer takes either of these, at any policy. That is the compound effect of six
-  // changes landing together — the plasma at three times its old rate, the stills at
-  // five, a five-second DEAD STOP where there used to be a coast, patches at 560 and
-  // 720px where they were 165 and 420, and the pair posted so that pulling one pulls
-  // both. Each was asked for; this is what they add up to, and it is reported here
-  // rather than left for somebody to find in the deeps.
-  check('no policy saves a lone pilot from either of them any more',
-    ['kite', 'orbit', 'quit', 'fly'].filter(pn => solo[`crucible/${pn}`].dead === 1).length >= 3 &&
-    ['kite', 'orbit', 'quit', 'fly'].filter(pn => solo[`doldrum/${pn}`].dead === 1).length >= 3,
-    `four ways of flying it and ${['kite', 'orbit', 'quit', 'fly'].filter(pn => solo[`crucible/${pn}`].dead === 1).length} ` +
-    'of them die to ONE Crucible. It was 100% of a ship left before this pass');
-  // And the inversion, which is the part worth staring at. Standing still at your own
-  // gun range now OUTLIVES circling, because the ground lands at your feet either way
-  // and moving is what breaks the range you need to end the fight. The mechanic used
-  // to teach "keep moving"; at 560px it teaches the opposite, because there is no
-  // clean lane inside your own reach to move into.
-  check('and moving is now worse than standing still, which is the mechanic inverted',
-    solo['crucible/kite'].t > solo['crucible/orbit'].t &&
-    solo['crucible/kite'].t > solo['crucible/quit'].t,
-    `kiting lasts ${solo['crucible/kite'].t.toFixed(0)}s against ${solo['crucible/orbit'].t.toFixed(0)}s ` +
-    `circling and ${solo['crucible/quit'].t.toFixed(0)}s giving up the shot to leave the ground. A pool ` +
-    'is 560px and the orbit only flexes by 120, so leaving means leaving GUN RANGE, and a fight you ' +
-    'cannot end is one the ground wins.\n' +
-    '       Swept: standing still wins at 560, 450, 380, 320, 250 AND 200px of plasma, and only ' +
-    'loses at 165 — the width this replaced. So the inversion is not the orbit flex, it is that the ' +
-    'plasma lands at your FEET: moving buys nothing unless the pool is small enough to walk out of ' +
-    'inside the warning, and that is the thing the designer asked to stop being true');
+  // REWRITTEN. It read "no policy saves a lone pilot from either of them any more",
+  // and that has stopped being true of a lone DOLDRUM: flown properly a single pilot
+  // now clears one, with 9% of their ship left, in 170 seconds. Two things did that
+  // and both are stated rather than folded away — the barrel became a lob and stopped
+  // landing on anybody who turns, and the bench stopped being allowed to fly out of
+  // charted space (see inMap above, which is a bug fix and not a nerf). The claim that
+  // survives is the one the encounter is actually built on: nothing takes a Crucible
+  // alone, and nothing takes the PAIR, which is the only way either of them is posted.
+  check('no policy saves a lone pilot from either of them, and there is a fifth policy now',
+    ['hold', 'kite', 'orbit', 'quit', 'fly'].every(pn =>
+      solo[`crucible/${pn}`].dead === 1 && solo[`doldrum/${pn}`].dead === 1),
+    'five ways of flying it and all five die to ONE of either — Crucible ' +
+    `${['hold', 'kite', 'orbit', 'quit', 'fly'].map(pn => `${pn} ${solo[`crucible/${pn}`].t.toFixed(0)}s`).join(', ')}; ` +
+    `Doldrum ${['hold', 'kite', 'orbit', 'quit', 'fly'].map(pn => `${pn} ${solo[`doldrum/${pn}`].t.toFixed(0)}s`).join(', ')}. ` +
+    'The fifth policy is `hold`, which is new and is the one this file was measuring wrong: `kite` ' +
+    'is a retreat, and until inMap() above it was a retreat off the edge of the world');
+  // AND THE INVERSION, REWRITTEN — this is the claim the whole pass was asked to
+  // change, and the sentence flipped because the measurement did.
+  //
+  // It read "moving is now worse than standing still, which is the mechanic inverted",
+  // and it was true of the bench rather than of the game: `kite` was not standing
+  // still, it was retreating out of the sector until sowPoint() clamped every pool to
+  // the map edge 1,783px behind it. Re-measured with a plan that actually holds
+  // station and with every plan kept inside charted space, circling has always won.
+  // The lob widened the gap: what a pilot who turns takes from the BARREL went to
+  // nothing, because a solved intercept is beaten by an arc.
+  check('circling outlives standing still, which is the mechanic the right way up',
+    solo['crucible/orbit'].t > solo['crucible/hold'].t * 1.5 &&
+    solo['doldrum/orbit'].t > solo['doldrum/hold'].t * 1.5,
+    `a Crucible: ${solo['crucible/hold'].t.toFixed(0)}s parked against ` +
+    `${solo['crucible/orbit'].t.toFixed(0)}s circling, x${(solo['crucible/orbit'].t / solo['crucible/hold'].t).toFixed(1)}. ` +
+    `A Doldrum: ${solo['doldrum/hold'].t.toFixed(0)}s against ${solo['doldrum/orbit'].t.toFixed(0)}s, ` +
+    `x${(solo['doldrum/orbit'].t / solo['doldrum/hold'].t).toFixed(1)}.\n` +
+    '       Pinned head to head at one range, with the hostile held on its post so the bench cannot ' +
+    'walk the fight off the map, it was 13,050 a second holding against 4,812 circling BEFORE the lob ' +
+    'and 12,739 against 5,534 after — so the mechanic was never inverted, the bench was. What the lob ' +
+    'moved is the BARREL: it delivered 9% of what a circling pilot took as an aimed bolt and ' +
+    `${(100 * solo['crucible/orbit'].globShare).toFixed(0)}% as a glob, against ` +
+    `${(100 * solo['crucible/hold'].globShare).toFixed(0)}% to one that parks. A pool is still 560px ` +
+    'and no throw speed makes THAT dodgeable — 577px of clearance is 4.5s at 128px/s against 2.25s of ' +
+    'flight — and it is not meant to be. The ground is what you leave; the glob is what you turn out of');
   check('but the PAIR kills that same pilot, which is what the deeps are for',
     solo['crucible+doldrum/fly'].dead === 1,
     `dead at ${solo['crucible+doldrum/fly'].t.toFixed(0)}s with ${solo['crucible+doldrum/fly'].inG.toFixed(0)}s ` +
-    'spent in ground — neither of them knows the other exists. They both sow at their ' +
-    'target\'s feet, so if they are both fighting YOU the ground lands in one place');
+    'spent in ground — neither of them knows the other exists. They both throw at the same pilot, so ' +
+    'if they are both fighting YOU the ground lands in one place');
   // How many pilots, measured rather than intended, over three starting arrangements
   // so the answer is not one seed's luck.
   console.log('');
@@ -870,7 +1007,7 @@ console.log('\nthe posting and the pay');
           const tgt = stepAlienAI(a, map, here, dt);
           const vic = tgt ? here[0] : null;
           step(a, dt); stepVitals(a, dt, false); stepAlienRepair(a, dt);
-          stepSow(a, vic?.ship ?? null, vic ? sowHolds(a, vic.ship, vic.haven) : false, dt);
+          stepLob(a, vic?.ship ?? null, vic ? sowHolds(a, vic.ship, vic.haven) : false, dt);
         }
       }
       return true;
@@ -884,7 +1021,8 @@ console.log('\nthe wire, the shape and the colour');
 {
   check('no new field on a ship row, because there is one slot left in the whole format',
     SHIP_FIELDS.length === 30 && SHIP_FIELDS.length < MAX_FIELDS,
-    'a sower\'s wind-up rides `abl`, which is now five deep: draw, spin, fix, load, sow');
+    'a sower\'s glob in the air rides `abl`, which is five deep: draw, spin, fix, load, sow. ' +
+    'A ring\'s call needed no field at all — it is a front at a place, so it is an ephemeral of its own');
   // And the trap that comes with a five-deep multiplex. server.js packs `abl` as
   // `a.draw ?? a.spin ?? a.fix ?? a.load ?? a.sow ?? 0`, which silently keeps the
   // FIRST of the five a hostile happens to carry. Nothing errors; the second dial
