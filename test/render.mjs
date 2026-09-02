@@ -17,7 +17,7 @@ import { joinLayout } from '../shared/join.js';
 import { ROSTER_KEY, TOKEN_KEY as TOK } from '../shared/brand.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, PLATE_STEPS } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, packWave, PLATE_STEPS } from '../shared/net.js';
 import { pingChip, pingLayout, PING_MAX } from '../shared/ping.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
@@ -1001,9 +1001,41 @@ const dismiss = () => {
   feed({ t: 's', ships: [me5, slab()], plates: [[1_000_800, 9e9, -40, PLATE_STEPS, 0, 0, 0, 0, 0,
                                                  PLATE_STEPS + 9, -40, PLATE_STEPS, 0, 0, 0, 0, 0]] });
   frame(t += 16); frames++;
+  // AND THE CALL: a pressure front leaving the ring, with one wedge of it silent. Its
+  // own stream, empty on every map but this one, so nothing else in the suite enters
+  // the loop — rule three's reason again. Every step of one front's life, at the eight
+  // bearings the lane steps through, plus the guards: a front with no numbers on it at
+  // all, a NaN radius, a NaN lane and a lane so wide there is no ring left.
+  let called = 0;
+  for (let g = 0; g < 8; g++)
+    for (const r of [95, 240, 480, 630, 810, 900]) {
+      feed({ t: 's', ships: [me5, slab()], plates: [ring(new Array(8).fill(0.2))],
+             waves: [packWave({ x: 6600, y: 4000, r, g: g * Math.PI / 4, h: Math.PI / 8 })] });
+      frame(t += 16); frames++; called++;
+    }
+  // two fronts at once, which the server never sends and the client must survive
+  feed({ t: 's', ships: [me5, slab()],
+         waves: [packWave({ x: 6600, y: 4000, r: 300, g: 0, h: Math.PI / 8 }),
+                 packWave({ x: 6600, y: 4000, r: 700, g: Math.PI, h: Math.PI / 8 })] });
+  frame(t += 16); frames++; called++;
+  // the guards
+  feed({ t: 's', ships: [me5, slab()], waves: [[6600, 4000, 0, 0, 0]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], waves: [[6600, 4000, NaN, 0, 0.39], [NaN, 4000, 300, 0, 0.39]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], waves: [[6600, 4000, 300, NaN, 0.39], [6600, 4000, 300, 1, NaN]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], waves: [[6600, 4000, 300, 1, 9e9], [6600, 4000, 300, 1, -3]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], waves: [[6600, 4000, 300, 1]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, slab()], waves: [] });
+  frame(t += 16); frames++;
   console.log(`ring: eight plates drawn over ${drew} frames — cold to full, straining to the break, ` +
               'and coming apart one wedge at a time to all eight, plus a missing row, a short row, ' +
-              'a NaN column and one past the top step');
+              `a NaN column and one past the top step\n      and ${called} frames of the CALL: one ` +
+              'front growing from the hull to its full reach at every one of the eight bearings the ' +
+              'lane steps through, two at once, and a row with a NaN in every column in turn');
 }
 
 // Sown ground, through the real draw path — both kinds, the wind-up ghost and the
@@ -1032,14 +1064,26 @@ const dismiss = () => {
   const patch = (id, k, on, p, extra = {}) =>
     packSown({ id, x: 6100, y: 4100, r: k ? 420 : 195, p, k, on, ...extra });
   let drew = 0;
-  // both kinds, from the moment the marker appears to the moment the ground goes out
+  // both kinds, from the moment the glob leaves to the moment the ground goes out.
+  //
+  // A MARKER ROW BORROWS ITS SOWER'S ID, which is not a detail here: the client flies
+  // the glob along the line from that hostile to the landing point, so a marker whose
+  // id is not a ship on the screen draws the ring and NOTHING ELSE. This fixture used
+  // ids of 50 and 51 and the glob half of the draw path was never entered once — the
+  // exact shape of the bug this whole block exists to catch, and it was caught by
+  // going and looking rather than by the harness.
   for (const k of [0, 1])
-    for (const [on, p] of [[0, 0.02], [0, 0.4], [0, 0.99], [1, 0], [1, 0.3], [1, 0.7], [1, 0.99]]) {
+    for (const [on, p] of [[0, 0], [0, 0.02], [0, 0.4], [0, 0.99], [1, 0], [1, 0.3], [1, 0.7], [1, 0.99]]) {
+      const src = 1_000_900 + k;                  // the sower's own id, the way server.js packs it
       feed({ t: 's', ships: [me4, sower(k ? 'doldrum' : 'crucible', { abl: on ? 0 : Math.round(p * 100) })],
-             sown: [patch(50 + k, k, on, p)] });
+             sown: [patch(on ? 50 + k : src, k, on, p)] });
       frame(t += 16); frames++; drew++;
       frame(t += 40); frames++; drew++;           // and again, so the blisters and the ripple move
     }
+  // and a glob whose thrower has gone — killed mid-flight, or slid off radar. The ring
+  // alone still has to draw, because it is the thing a pilot acts on.
+  feed({ t: 's', ships: [me4], sown: [patch(1_000_900, 0, 0, 0.5)] });
+  frame(t += 16); frames++; drew++;
   // the combo, on one screen: a pool inside a still, both sowers winding
   feed({ t: 's', ships: [me4, sower('crucible', { abl: 60 }), sower('doldrum', { abl: 30 })],
          sown: [patch(60, 1, 1, 0.5), packSown({ id: 61, x: 6100, y: 4100, r: 195, p: 0.2, k: 0, on: 1 }),

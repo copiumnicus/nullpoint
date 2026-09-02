@@ -34,17 +34,17 @@ import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packLab, packPyre, packFix,
-         packSown, groundK, packPlates, packPing } from './shared/net.js';
+         packSown, groundK, packPlates, packPing, packWave } from './shared/net.js';
 import { PING_COOLDOWN, PING_LIFE, PING_MAX, whyNotPing } from './shared/ping.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror } from './shared/aliens.js';
 // The answering ring, and the one thing it needs handed to it: bolt speed, because
 // shared/plates.js imports only the wire and combat.js owns how fast a bolt flies.
-import { stepRing, answer as ringAnswer, platesOf } from './shared/plates.js';
+import { stepRing, answer as ringAnswer, platesOf, stepWave, stepWaves } from './shared/plates.js';
 import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
-import { sowOf, stepSow, sowHolds, groundFor, inGround, groundBite, stepGround,
-         stepSnare, holdEngines, BITE_TELL } from './shared/ground.js';
+import { sowOf, stepLob, sowHolds, groundFor, inGround, groundBite, stepGround,
+         stepSnare, holdEngines, globHit, BITE_TELL } from './shared/ground.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture, carried } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -960,6 +960,10 @@ const rockets = new Map();   // mapId -> rockets in flight
 // two settle completely differently: a bolt resolves once against the one ship it
 // was aimed at, and an orb is tested every tick against everything it could touch.
 const orbs = new Map();
+// mapId -> pressure fronts an answering ring has called. Its own list for orbs'
+// reason and one more: a front is not a body at a place, it is a RADIUS, so nothing
+// that filters or draws projectiles by position can be reused on it.
+const waves = new Map();
 
 // A rocket flies for four and a half seconds, which is long enough for its
 // target to jump out or die under it. Bolts land inside a third of a second and
@@ -1011,7 +1015,10 @@ let markId = 1;
 // `marks` is the tenth and it arrived the same way again — the ping handler does
 // `marks.get(P.mapId).push(...)` with no guard, so a duel arena missing from this
 // list would take the tick down the first time either pilot clicked the chart.
-const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, fixes, sown, marks];
+// `waves` is the eleventh and it is the same story a fifth time: the ring pass does
+// `waves.get(mapId).push(...)` with no guard, so a sector missing from this list
+// would throw on the first beat an Antiphon called.
+const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, fixes, sown, marks, waves];
 const openLists  = id => { for (const L of SECTOR_LISTS) L.set(id, []); };
 const closeLists = id => { for (const L of SECTOR_LISTS) L.delete(id); };
 for (const id of Object.keys(MAPS)) openLists(id);
@@ -2687,6 +2694,15 @@ setInterval(() => {
       stepRing(a, dt);
       const reply = ringAnswer(a, dt, here.filter(c => mayHarm(a, c)), BOLT_SPEED);
       if (reply) bolts.get(mapId).push(reply);
+      // And THE CALL, which is what that hostile's barrel became. fire() above
+      // returns nothing at all for it — the gate is inside fire() rather than here,
+      // because the arena bench calls it too and a ring that threw both would be at
+      // twice its book dps in one of the two places. It is placed after the answer
+      // for the same reason the sowing is placed after fire(): reading it in the
+      // order the fiction goes — response, then call — is what makes the ordering
+      // obvious to whoever adds the second one.
+      const crest = stepWave(a, victim?.ship ?? null, dt);
+      if (crest) waves.get(mapId).push(crest);
       // A Lamprey has no gun at all — the tether is instead of firing, not as well
       // as it, and fire() produces nothing for one anyway because its weaponRange is
       // 0. Sanctuary is gated on the SAME `haven` the AI was just handed rather than
@@ -2756,19 +2772,43 @@ setInterval(() => {
       // the ordering obvious to whoever adds the third one.
       if (sowOf(a.def)) {
         const may = victim ? sowHolds(a, victim.ship, victim.haven) : false;
-        const drop = stepSow(a, victim?.ship ?? null, may, dt);
-        // A definition may not have more patches alive than it says. The OLDEST goes
-        // rather than the newest being refused: refusing would mean a Crucible that had
-        // saturated the field stopped doing the only thing it does, and a pilot could
-        // farm one from a corner it had already used up.
+        const drop = stepLob(a, victim?.ship ?? null, may, dt);
         if (drop) {
-          const here = sown.get(mapId);
-          const mine = here.filter(g => g.owner === a.id);
+          // THE GLOB LANDS, and it lands twice: once on whoever is standing on the
+          // spot, for the whole of the gun's damage, and once as the ground it leaves
+          // behind. One act — see stepLob in shared/ground.js for why the barrel and
+          // the sowing are the same clock now.
+          //
+          // Everybody on the spot rather than only the target, because a thrown thing
+          // does not aim once it is in the air; and through mayHarm() for sanctuary,
+          // the same predicate the AI targeted with. `drop.dmg` is already boosted.
+          for (const c of here) {
+            if (c.ship.hp <= 0 || !mayHarm(a, c) || !globHit(drop.at, c.ship)) continue;
+            const split = applyDamage(c.ship, drop.dmg);
+            hits.get(mapId).push({ x: c.ship.x, y: c.ship.y - c.ship.r - 6,
+                                   n: drop.dmg, sh: split.hull === 0,
+                                   by: null, t: HIT_TIME, ttl: HIT_TIME });
+            // The bearing it came from, kept whole off the muzzle the way an orb's is
+            // — a pilot may be carrying plates one day and this is the one place that
+            // knows where the throw started.
+            if (drop.from) storeHit(c.ship, drop.dmg,
+              { a: Math.atan2(drop.from.y - c.ship.y, drop.from.x - c.ship.x),
+                x: drop.from.x, y: drop.from.y });
+          }
+          // A definition may not have more patches alive than it says. The OLDEST goes
+          // rather than the newest being refused: refusing would mean a Crucible that had
+          // saturated the field stopped doing the only thing it does, and a pilot could
+          // farm one from a corner it had already used up.
+          // `patches` and not `here`: the block above reads `here`, which is the
+          // PILOTS in this sector, and a `const here` down here would put that read
+          // in its own temporal dead zone and throw on the tick a glob first landed.
+          const patches = sown.get(mapId);
+          const mine = patches.filter(g => g.owner === a.id);
           if (mine.length >= (a.def.sow.max ?? 1)) {
             const oldest = mine.reduce((w, g) => (g.t < w.t ? g : w));
-            here.splice(here.indexOf(oldest), 1);
+            patches.splice(patches.indexOf(oldest), 1);
           }
-          here.push(Object.assign(groundFor(a, drop.at), { id: groundId++, owner: a.id }));
+          patches.push(Object.assign(groundFor(a, drop.at), { id: groundId++, owner: a.id }));
         }
       }
       // Not while it is chasing somebody: a provoked alien follows you in.
@@ -2954,6 +2994,24 @@ setInterval(() => {
                              n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
                              by: null, t: HIT_TIME, ttl: HIT_TIME });
       storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
+    }
+  }
+  // And the fronts, in their own pass for the same three-lines-not-six reason the orb
+  // pass gives: `here` is PILOTS, so a wave can only ever sweep a player. Nothing of
+  // ours dies to one, there is nobody to credit, and there is no Censer to goad.
+  for (const [mapId, list] of waves) {
+    if (!list.length) continue;
+    const map = mapOf(mapId);
+    const here = [];
+    for (const [id, p] of players)
+      if (p.mapId === mapId && !p.dead && !p.lobby && p.ship.hp > 0)
+        here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
+    for (const h of stepWaves(list, here, dt, (w, c) => mayHarm({ provoked: w.by }, c))) {
+      const split = applyDamage(h.target, h.dmg);
+      hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
+                             n: h.dmg, sh: split.hull === 0,
+                             by: null, t: HIT_TIME, ttl: HIT_TIME });
+      storeHit(h.target, h.dmg, h.from);
     }
   }
   for (const [mapId, list] of bolts) {
@@ -3308,8 +3366,15 @@ setInterval(() => {
     // radar-filtered like anything else on the field.
     const sights = (fixes.get(V.mapId) ?? []).filter(fx =>
       fx.who === V.id || Math.hypot(fx.x - V.ship.x, fx.y - V.ship.y) <= reach);
+    // A front reaches you from outside your radar the same way a pyre and a patch of
+    // ground do, and for the sharper version of the same reason: you cannot be on the
+    // right side of a line you were not shown. The test is against the RING and not
+    // the front's own centre — the wave has already grown, so `<= reach + w.r` asks
+    // "is any part of this circle near enough to matter", which is the whole of it.
+    const fronts = (waves.get(V.mapId) ?? []).filter(w =>
+      Math.hypot(w.x - V.ship.x, w.y - V.ship.y) <= reach + w.r);
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
-                    orbs: balls.map(packOrb),
+                    orbs: balls.map(packOrb), waves: fronts.map(packWave),
                     blasts: flashes.map(packBlast), pyres: alight.map(packPyre),
                     fixes: sights.map(fx => packFix(fx, fx.who === V.id)),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };
@@ -3326,15 +3391,21 @@ setInterval(() => {
       id: g.id, x: g.x, y: g.y, r: g.r, k: groundK(g.kind), on: 1,
       p: Math.max(0, Math.min(1, 1 - g.t / g.ttl)),
     }));
-    // And the ones being laid right now, taken off whoever is holding a wind-up. A
-    // pending patch borrows its sower's id, which cannot collide because alien ids
-    // start at a million and ground ids start at one — so the ghost has a stable
-    // identity for the whole wind-up and vanishes on the tick the real row appears
-    // with an id of its own.
+    // And the ones in the AIR: a glob on its way, drawn as the circle it is about to
+    // become sitting on the place it is about to land, with `p` running from the
+    // throw to the arrival. That row is what makes the lob a mechanic rather than a
+    // surprise — the pilot is shown the ground before it exists, for the whole flight,
+    // and the flight is 2.25s at the range these two stand off to.
+    //
+    // It borrows its sower's id, which cannot collide because alien ids start at a
+    // million and ground ids start at one — so the marker has a stable identity for
+    // the whole flight and vanishes on the tick the real row appears with an id of
+    // its own. The client flies the glob itself along the line from the hostile to
+    // this point using `p`, which is why no second stream is needed for it.
     for (const a of aliens.get(V.mapId) ?? []) {
-      if (a.dead > 0 || !a.sowAt || !((a.sow ?? 0) > 0)) continue;
+      if (a.dead > 0 || !a.sowAt) continue;
       field.push({ id: a.id, x: a.sowAt.x, y: a.sowAt.y, r: a.def.sow.r,
-                   k: groundK(a.def.sow.kind), on: 0, p: Math.max(0, Math.min(1, a.sow)) });
+                   k: groundK(a.def.sow.kind), on: 0, p: Math.max(0, Math.min(1, a.sow ?? 0)) });
     }
     // An answering ring, for any hostile in this sector that has one and that THIS
     // pilot can see. The filter is `ships.has(a.id)` and not a second distance test:

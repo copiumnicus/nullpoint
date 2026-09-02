@@ -91,6 +91,30 @@ export const packOrb   = o   => [Math.round(o.x), Math.round(o.y), +o.heading.to
                                  Math.round(Math.hypot(o.vx ?? 0, o.vy ?? 0))];
 export const unpackOrb = arr => { const o = {}; for (let i = 0; i < ORB_FIELDS.length; i++) o[ORB_FIELDS[i]] = arr[i]; return o; };
 
+// A pressure front leaving an answering ring: where it left from, how wide it has
+// grown, and the one wedge of it that is silent.
+//
+// `r` is the radius the SERVER is sweeping with, for ORB_FIELDS' reason and it is
+// the more important case of it: the whole mechanic is being on the right side of a
+// line, and a ring drawn one radius and resolved at another would be a fight decided
+// by a rendering choice.
+//
+// `g` and `h` are the lane, in world bearings, because the plates are: shared/
+// plates.js says out loud that "the ring is a compass, not a nose", so a wedge is the
+// same wedge whichever way the hull is pointing. Sending them makes the row
+// self-describing — the client does not have to find the hostile that threw it, look
+// up its definition and work out a plate arc, which is three chances to draw a lane
+// that is not the lane you can fly through.
+//
+// It is EPHEMERAL rather than keyed, and it is the profile that list describes
+// exactly: it lives a second and a half, there is at most one of them in the galaxy
+// at a time, it has no identity worth diffing, and the one field that matters changes
+// on every single tick.
+export const WAVE_FIELDS = ['x', 'y', 'r', 'g', 'h'];
+export const packWave   = o   => [Math.round(o.x), Math.round(o.y), Math.round(o.r),
+                                  +(o.g ?? 0).toFixed(2), +(o.h ?? 0).toFixed(2)];
+export const unpackWave = arr => { const o = {}; for (let i = 0; i < WAVE_FIELDS.length; i++) o[WAVE_FIELDS[i]] = arr[i]; return o; };
+
 // A kill flash: where it happened, how big the thing was, how far along the
 // animation is, and whether it was a hostile that died.
 export const BLAST_FIELDS = ['x', 'y', 'r', 'p', 'foe'];
@@ -353,7 +377,7 @@ export const STREAMS = {
 // single tick, so a keyed diff would be paying an id and a mask to save a
 // handful of numbers that were already stale. They go whole, and are simply
 // omitted when empty, which is 44 bytes a tick back for nothing.
-export const EPHEMERAL = ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes'];
+export const EPHEMERAL = ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes', 'waves'];
 
 // Everything else in a snapshot is the viewer's own state — credits, loadout,
 // power, rank. Named keys, so this is a set difference rather than a list anyone

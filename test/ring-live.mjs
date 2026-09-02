@@ -11,8 +11,12 @@
 //     hostile's own id;
 //   * the wedge that heats is the wedge you are standing on, read off the wire
 //     rather than out of the simulation;
-//   * a discharge is a bolt on the wire, visibly heavier than the barrel that fired
-//     it — the tell has to survive packBolt or there is no tell;
+//   * a discharge is a bolt on the wire, and heavy enough to read — the tell has to
+//     survive packBolt or there is no tell. There is nothing to compare it against any
+//     more: the 711 dps that used to sit under the ring as an aimed bolt is a CALL now,
+//     a pressure front with one silent wedge, so every foe bolt out here is an answer;
+//   * that call reaches a client as a front that grows, one at a time, with its lane
+//     on the row rather than looked up from the hostile — and what it costs the wire;
 //   * and leaving the sector stops the rows, because the radar rule is enforced on
 //     the same `seen` set the ship rows come from and not by a second copy of it.
 //
@@ -62,7 +66,7 @@ import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { newBase, absorbFull, decodeDelta } from '../shared/delta.js';
-import { unpackShip, unpackPlates, unpackBolt, unpackHit, PLATE_STEPS } from '../shared/net.js';
+import { unpackShip, unpackPlates, unpackBolt, unpackHit, unpackWave, PLATE_STEPS } from '../shared/net.js';
 import { ALIENS } from '../shared/aliens.js';
 import { dischargeOf, crackOf, holeOf, deflectOf } from '../shared/plates.js';
 
@@ -98,6 +102,10 @@ const ws = new WebSocket(`ws://127.0.0.1:${PORT}/`);
 const base = newBase();
 let me = null, myId = null, snap = null, mapId = null, fit = null, foeId = null;
 let rings = [], answers = [], barrels = new Set(), mine = [], onMe = [], dead = false;
+// The call, and what it costs the wire. `fronts` is one array per front, in the order
+// they left; `laneBytes` is what the `waves` rows alone came to and `wireBytes` is the
+// whole stream, so the share is a measurement rather than an estimate.
+let fronts = [], laneBytes = 0, wireBytes = 0, wireTicks = 0;
 // key -> the last `p` seen for it. Bounded, because it is a dedupe table and not a
 // log: a fight throws thousands.
 const seenHits = new Map();
@@ -165,6 +173,17 @@ ws.on('message', raw => {
     barrels.add(b.w);
     if (b.w > ALIENS.antiphon.attrs.damage * 1.5) answers.push(b);
   }
+  // THE CALL, off the wire. There is no id on a front — it is an ephemeral, and net.js
+  // says why — so a "which front is this" is reconstructed the only way it can be: a
+  // radius that went DOWN is a new one. That is safe here and nowhere else, because at
+  // most one is ever in the air (the beat is 4.0s and a front crosses its whole reach
+  // in 1.5), which is a claim this file then goes on to check rather than assume.
+  for (const w of (snap.waves ?? []).map(unpackWave)) {
+    if (!fronts.length || w.r < fronts.at(-1).at(-1).r) fronts.push([]);
+    fronts.at(-1).push(w);
+    if (mapId === 'x0') laneBytes += JSON.stringify(w).length + 1;
+  }
+  if (mapId === 'x0') { wireTicks++; wireBytes += raw.length; }
 });
 
 await ready;
@@ -310,10 +329,17 @@ check('the wedge that heats is the wedge you are standing on',
   held.peak[held.wedge] > 0 && held.peak.filter(v => v > 0).length <= 3,
   `[${held.peak.join(' ')}] at a mean bearing of ${held.bear.toFixed(0)} degrees — the two the pilot ` +
   'straddled, and six that never left zero. Read off the wire rather than out of the simulation');
-check('a discharge is a bolt on the wire, and visibly heavier than the barrel that fired it',
-  held.answers > 0 && held.big > ALIENS.antiphon.attrs.damage * 2,
-  `widths on the wire: ${held.widths.join(', ')} — ${ALIENS.antiphon.attrs.damage} is its barrel and ` +
-  `everything above is an answer. Biggest ${held.big}, which is a plate at ` +
+// REWRITTEN, because the barrel it was comparing against no longer throws bolts: the
+// 711 dps under the answers is a pressure front now, so EVERY foe bolt in this sector
+// is a discharge. The claim is the one that mattered anyway — a discharge has to be
+// visibly heavy on the wire or there is no tell — and it is now a claim about the
+// whole list rather than about a threshold inside it.
+check('every bolt this thing throws is a discharge now, and they are heavy on the wire',
+  held.answers > 0 && held.big > ALIENS.antiphon.attrs.damage * 2 &&
+  Math.min(...held.widths) > 0,
+  `widths on the wire: ${held.widths.join(', ')} — its barrel throws none of these, because the ` +
+  `${ALIENS.antiphon.attrs.damage} dps under the ring is a front rather than a bolt. Biggest ` +
+  `${held.big}, which is a plate at ` +
   `${(100 * held.big / dischargeOf(ALIENS.antiphon, 1)).toFixed(0)}%. boltWidth() draws it fatter for ` +
   'free, so the tell survives packBolt without a field of its own');
 check('circling costs less than committing, over a real socket',
@@ -322,6 +348,57 @@ check('circling costs less than committing, over a real socket',
   `${held.answers} committed, at the same range with the same gun. That half of the mechanic did ` +
   'not change when plates started breaking — what changed is that circling now opens nothing, so ' +
   'the cheap way through is also the slow one');
+
+// --- THE CALL, off the wire -----------------------------------------------------
+//
+// The barrel became a pressure front: it leaves the hull, grows outward, and is silent
+// over exactly one wedge that steps round the ring on every beat. None of that exists
+// until a socket is involved — the front is an ephemeral stream of its own — so this
+// is where it is checked rather than in a bench.
+{
+  const seen = fronts.filter(f => f.length > 1);
+  const span = f => [f[0].r, f.at(-1).r];
+  const arc = 2 * Math.PI / ALIENS.antiphon.plates.n;
+  const lanes = seen.map(f => f[0].g);
+  // How far each front was seen to grow, and how far apart consecutive lanes were.
+  const grew = seen.map(f => f.at(-1).r - f[0].r);
+  const steps = lanes.slice(1).map((g, i) => {
+    let d = (g - lanes[i]) % (2 * Math.PI);
+    if (d > Math.PI) d -= 2 * Math.PI;
+    if (d < -Math.PI) d += 2 * Math.PI;
+    return d;
+  });
+  console.log(`\n     ${seen.length} fronts seen, growing ${Math.min(...grew).toFixed(0)}-` +
+    `${Math.max(...grew).toFixed(0)}px each, lanes at ` +
+    `${lanes.slice(0, 8).map(g => Math.round(g * 180 / Math.PI)).join(', ')} deg`);
+  check('a ring\'s call reaches a client, as a front that grows',
+    seen.length >= 3 && Math.max(...grew) > 300,
+    `${seen.length} of them over the run, the widest growing ${Math.max(...grew).toFixed(0)}px from ` +
+    `${span(seen[0])[0]}px to ${span(seen.reduce((a2, b2) => (b2.at(-1).r > a2.at(-1).r ? b2 : a2)))[1]}px. ` +
+    'It is drawn from the radius the SERVER sweeps with, so the line you are deciding about and the ' +
+    'line that hits you are one number');
+  check('and never two at once, which is what "one voice at a time" means',
+    (snap?.waves ?? []).length <= 1 && seen.every(f => f.every(w => w.r <= ALIENS.antiphon.attrs.weaponRange + 40)),
+    `a ${ALIENS.antiphon.plates.wave.beat}s beat against a front that crosses its whole ` +
+    `${ALIENS.antiphon.attrs.weaponRange - ALIENS.antiphon.r}px of reach in 1.5s, so there is clear air ` +
+    'for five eighths of every beat. The reach is the BARREL\'s, unchanged — a pilot outside 900 is ' +
+    'outside this exactly as they were outside the bolt, and the ring still answers out to 1,800');
+  check('the lane is on the wire, one wedge wide, and it steps one wedge a beat',
+    seen.every(f => Math.abs(f[0].h - arc / 2) < 0.02) &&
+    steps.filter(d => Math.abs(Math.abs(d) - arc) < 0.02).length >= Math.max(1, steps.length - 2),
+    `half-width ${(seen[0]?.[0]?.h ?? 0).toFixed(2)} against a wedge of ${(arc / 2).toFixed(2)}, and ` +
+    `${steps.filter(d => Math.abs(Math.abs(d) - arc) < 0.02).length} of ${steps.length} steps were ` +
+    `exactly one wedge (${(arc * 180 / Math.PI).toFixed(0)} deg). Both go on the row rather than being ` +
+    'looked up from the hostile: the client would have to find the thrower, read its definition and ' +
+    'work out a plate arc, which is three chances to draw a lane you cannot fly through');
+  check('and it costs the wire almost nothing, which is why it is an ephemeral',
+    laneBytes / Math.max(1, wireBytes) < 0.06,
+    `${(laneBytes / Math.max(1, wireTicks) * 30 / 1024).toFixed(3)} KiB/s of a ` +
+    `${(wireBytes / Math.max(1, wireTicks) * 30 / 1024).toFixed(1)} KiB/s stream — ` +
+    `${(100 * laneBytes / Math.max(1, wireBytes)).toFixed(1)}%, over ${wireTicks} ticks in Nullpoint. ` +
+    'Five numbers, at most one row in the galaxy at a time, and the only one that moves changes every ' +
+    'tick — which is the EPHEMERAL profile stated in net.js, not an exception to it');
+}
 
 const f3 = findFoe();
 console.log(`\n     its hull is at ${f3?.hp}% and its shield at ${f3?.sh}% after all that`);

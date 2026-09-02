@@ -8,15 +8,26 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.94';
+export const VERSION = '0.96';
 
 export const PATCHES = [
-  { v: '0.94', notes: [
+  { v: '0.96', notes: [
     'The bottom three hostiles have thrown their lasers away, and none of them agree',
     'A Drifter lobs ONE slow ball. Move and it goes past — that is the whole lesson',
     'A Harrier lays a fence across the course you are holding. Turn, or drive through it',
     'A Bandit scatters caltrops that STAY where they land. Never back over your own ground',
     'All three still hit for exactly what they did if you stand still. Do not stand still',
+  ] },
+  { v: '0.95', notes: [
+    'A once-a-second hitch is gone — the world no longer waits on the disk to save',
+    'Owning a mine set it off every second, so the stutter followed you everywhere',
+    'Your account is written just as often; the game simply stops waiting for it',
+  ] },
+  { v: '0.94', notes: [
+    'Crucibles and Doldrums stopped shooting. They LOB their ground at you instead',
+    'One slow glob a cycle, thrown where you are heading — turn and it lands behind you',
+    'The Antiphon stopped shooting too. Its ring pulses, and one wedge of it is silent',
+    'The silent wedge steps round the ring every beat. Walk with it and nothing lands',
   ] },
   { v: '0.93', notes: [
     "Lean on ONE of the Antiphon's plates long enough and it BREAKS. The core is open there",
