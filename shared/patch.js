@@ -8,15 +8,21 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.96';
+export const VERSION = '0.97';
 
 export const PATCHES = [
-  { v: '0.96', notes: [
+  { v: '0.97', notes: [
     'The bottom three hostiles have thrown their lasers away, and none of them agree',
     'A Drifter lobs ONE slow ball. Move and it goes past — that is the whole lesson',
     'A Harrier lays a fence across the course you are holding. Turn, or drive through it',
     'A Bandit scatters caltrops that STAY where they land. Never back over your own ground',
     'All three still hit for exactly what they did if you stand still. Do not stand still',
+  ] },
+  { v: '0.96', notes: [
+    'Ships glide instead of stepping — the better your monitor, the worse this used to be',
+    'A hull is drawn where it has flown to, so a late packet is coasted through, not stuck on',
+    'The game now draws 60 frames a second and no more; a fast screen just stops wasting them',
+    'The menu times the DRAW, not the wait — it could not tell a 1ms frame from a 15ms one',
   ] },
   { v: '0.95', notes: [
     'A once-a-second hitch is gone — the world no longer waits on the disk to save',

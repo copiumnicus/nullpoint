@@ -238,9 +238,18 @@ export function orbSlots(o) {
 //            width. At a Harrier's 380px/s a 2.5s strafing run lays 950px of trail
 //            and a hull collects 112px of it — 12% — so a wake cannot carry a
 //            hostile's book dps and must sit on top of something that does.
-//   land     what an orb becomes where it stops. shared/ground.js already owns
-//            patches; the seam is one call at the end of stepOrbs, on the branch that
-//            is already there for an orb whose flight is over.
+//   land     what an orb becomes where it stops. THE DEEPS ALREADY DID THIS AND DID
+//            NOT COME THROUGH HERE, deliberately: a Crucible's glob is one throw a
+//            cycle carrying the hostile's whole damage inside it, so it is a wind-up
+//            on the hostile rather than a body in a list, and shared/ground.js owns
+//            it end to end. What is still unbuilt is a PATTERN of them — several orbs
+//            that each leave something — and the seam for that is one call on the
+//            branch below that already exists for an orb whose flight is over.
+//
+// AND ONE ROW THAT WILL NOT BE WANTED. A rake with `stay` of 0 is a line of orbs
+// strung along your course that all fly past you; it is a fan you have paid extra
+// for. The layout and `stay` are independent, but that does not make every pair of
+// them a hostile.
 export const SHAPES = {
   // A FAN. n bearings spread over `arc` about the aim line, every one of them thrown
   // the same distance. The Ironhusk's cone, the Leviathan's clusters, and a Drifter's
