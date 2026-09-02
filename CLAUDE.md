@@ -124,7 +124,7 @@ over HTTP, because a missing entry in the server's file map did exactly that.
 Tests passing is not the same as the game working. After every feature, connect
 a real WebSocket client to the running server and check the actual behaviour:
 
-    pkill -f "node server.js"; (npm run dev &); sleep 1.5
+    pkill -f "node server.js"; (npm run turbo &); sleep 1.5
     node --input-type=module -e "...connect, send intents, assert on snapshots..."
 
 `/dev` is the testing ground: every hull with a full escort, every formation,
@@ -136,6 +136,60 @@ to set up.
 Things that passed tests and were still wrong: rockets orbiting a stationary
 target, the station panel locking to one tab, ammunition that could not be
 bought where it was needed.
+
+### Do not sleep through it — `npm run turbo`
+
+A 228-second measurement should not cost 228 seconds. `npm run turbo` is
+`npm run dev` with the wall clock taken off the tick: the world runs on
+`setImmediate` with `dt` pinned at exactly `1/TICK_HZ` instead of waiting out a
+30Hz interval. Same simulation, same order, same results — it simply gets there
+sooner. **It needs `DEV_ADMIN` as well as `TURBO`**, so `npm start` — what the
+host runs — cannot reach it however the dashboard is set.
+
+A fast server cannot be waited on with a sleep, so ask it instead. Send
+`{ t: 'sync', ms, id }` and it answers `{ t: 'sync', id, tick, sim, turbo, hz }`
+once that much **sim** time has been stepped:
+
+    ws.send(JSON.stringify({ t: 'sync', ms: 4000, id: 1 }));   // 4s of world, however long that takes
+
+It asks in milliseconds because the tick rate is the server's business; a test
+that converted for itself would be a second copy of `TICK_HZ`. `sync` is refused
+without `DEV_ADMIN`, so it does not exist on a deployed server either.
+
+**Turbo only runs flat out while a client is waiting on a `sync`.** Without that
+gate it kept simulating in the gaps while the test process was busy parsing, and
+sim time became a function of how long the test took to think — measured against
+the same suite at 30Hz, the duel countdown read 2.87s of 5 where it should have
+read 4.03, a 4.7-second kill was reported as 1.9, and the mine had paid 40
+credits nobody asked for. That is a differently-quantised world, not a faster
+one. With the gate, a browser pointed at a turbo server sees an ordinary 30Hz
+world and a live test that has not been taught to sync behaves exactly as it
+does today.
+
+`test/arena.mjs` and `test/duel.mjs` run turbo by default and take `TURBO=0` to
+go back on the wall clock — reach for that when an assertion goes red and you
+want to know whether the pace is what broke it. Both print how many seconds of
+world they flew per second of wall clock, which is the only thing in the output
+that says turbo is on. **Do not measure the WIRE under turbo:**
+`test/wire-live.mjs` counts bytes per *wall* second, and a turbo server sends a
+snapshot only to a connection whose socket has drained.
+
+### Two clocks, and which is which
+
+There are two clocks in `server.js` and turbo is what makes the difference
+visible. Every **duration the game owns** — a ping cooldown, a challenge that
+lapses, a claim's fifteen-minute wall, a duel's five minutes, what the mine has
+earned, when the Pocket Dimension next sells, how long a pilot has been flying —
+is measured against `simNow()`, and scales with turbo. Anything that is a fact
+about the **deployment** — how often the accounts file is written, when an
+account was created, the recency stamp on a window size that `viewsOf()` compares
+against its own `Date.now()` — stays on `Date.now()` and does not.
+
+At normal speed `simNow()` *is* `Date.now()`, so nothing about a deployed server
+changes shape. Mixing the two is the bug this codebase keeps finding the hard
+way: the mine paid nothing for a day because `lab.since` is wall clock and the
+tick's `now` counts from process start. If you add a timer, decide which clock it
+is on and say so at the site.
 
 ---
 
