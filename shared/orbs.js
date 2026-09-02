@@ -1,6 +1,35 @@
 // Orbs. The second kind of projectile, and the first one in this game you beat by
 // not standing somewhere.
 //
+// IT IS A VOCABULARY NOW RATHER THAN A WEAPON, and that is the shape of the file: the
+// bestiary wants nine attacks that are all different from each other, and the choice
+// is nine bespoke mechanics or a handful of layouts they compose out of. SHAPES below
+// is the handful and it is the seam — a new pattern is a row there and a line in
+// aliens.js, not another module. Five hostiles ride it today and each one teaches a
+// different verb:
+//
+//     Drifter     one slow ball                    MOVE
+//     Harrier     a rake across the road ahead     TURN
+//     Ironhusk    a cone                           GET OFF THE LINE
+//     Leviathan   three cones, re-led              KEEP CHANGING YOUR MIND
+//     Bandit      caltrops that stay where they    DO NOT GO BACK
+//                 land
+//
+// Measured through the real AI loop against a starter Hauler holding station and a
+// laden Bulwark weaving — what the pattern costs, against the bolt each one replaced:
+//
+//                    parked: bolt / pattern      weaving: bolt / pattern
+//     Drifter              48.0 / 48.0                  48.0 / 14.3
+//     Harrier              57.5 / 57.5                  52.5 / 15.0
+//     Bandit              195.0 / 190.0                145.0 / 57.5
+//     Ironhusk             72.0 / 70.5                  72.0 / 14.1
+//     Leviathan           120.0 / 120.0                 75.0 / 21.7
+//
+// The left column is the whole invariant: a pilot who does not move pays what they
+// always paid, so threatDps, the bounties, the experience, the bestiary report and
+// three claim rosters are every one of them the numbers they already were. The right
+// column is the feature.
+//
 // A bolt is aimed at where you WILL be and then resolved once, at its destination:
 // stepBolts counts `ttl` down and asks, on the tick it lands, whether the target is
 // still inside `HIT_R + r` of the aim point. That is dodging by outrunning a
@@ -90,11 +119,23 @@ import { softAt } from './plates.js';
 export const ORB_SPEED = 400;    // px/s
 export const READ_TIME = 0.35;   // s a pilot is assumed to need before they move
 
-// A pattern, read off the hostile's definition. Data, so the third one is a line in
+// --- THE VOCABULARY -------------------------------------------------------------
+//
+// A pattern, read off the hostile's definition. Data, so the next one is a line in
 // aliens.js rather than a change here.
 //
-//   n     slots in the fan
-//   arc   how wide the fan is, radians, tip to tip
+// It answers four questions and they are independent of each other, which is the
+// whole reason this is a vocabulary rather than a list of nine bespoke weapons:
+//
+//   WHEN        `fireRate` owns the cycle; `burst` and `beat` split it into clusters
+//   WHICH WAY   `shape` picks the layout, `n` and `arc` or `span` size it
+//   HOW BIG     `r`
+//   WHAT THEN   `stay` — whether an orb is spent on arrival or sits on its mark
+//
+//   n     slots in the pattern
+//   arc   how wide a FAN is, radians, tip to tip. A rake ignores it.
+//   span  seconds of the TARGET's own travel between the marks of a RAKE. A fan
+//         ignores it.
 //   r     px, and it is BOTH the collision radius and the drawn radius. It goes on
 //         the wire for that reason: a ball you can see and cannot be hit by is the
 //         same bug as a row you can see and cannot click, and this codebase has
@@ -103,7 +144,31 @@ export const READ_TIME = 0.35;   // s a pilot is assumed to need before they mov
 //         cluster. Each one is aimed afresh, so a burst covers where you are GOING
 //         over the next second rather than a width across it.
 //   beat  seconds between the clusters of a burst.
+//   shape which layout — a key of SHAPES below. Defaults to 'fan', which is what
+//         every pattern was before there was a second one.
+//   stay  seconds an orb sits still ON its mark once it gets there. 0, the default,
+//         is the original behaviour: it flies its weapon's full reach and expires.
+//         See stayFor() for what the number has to be and why.
 export const orbsOf = def => def?.orbs ?? null;
+
+// How long a laid orb stands, and it is DERIVED rather than picked.
+//
+// A pattern that leaves things behind is area denial, and shared/aliens.js already
+// argued the ceiling for that on the Crucible: "a hostile that holds more than a
+// third of the ground its own fight is on has stopped shaping the space and started
+// being the space". The same argument in a raider's units is a count of THROWS: the
+// field may never be more than the one that has just landed plus the one arriving.
+//
+//     throws alive  =  (flight + stay) / cycle
+//
+// At the range these hostiles fight from the flight is about one cycle already — a
+// Bandit's mark is 448px out, which is 1.12s at ORB_SPEED against a 1.54s cycle — so
+// one cycle of `stay` puts that at 1.7 and one and a half puts it at 2.2. One cycle,
+// then, and the bestiary writes the seconds out with the arithmetic shown, the way
+// shared/ground.js writes a pool's `life`. test/orbs.mjs re-derives it rather than
+// trusting the line.
+export const STAND = 1.0;                    // cycles of its own cadence
+export const stayFor = o => Math.max(0, o?.stay ?? 0);
 
 // How many orbs one trigger puts in the air, all clusters counted.
 export const orbCount = o => Math.max(1, o.n) * Math.max(1, o.burst ?? 1);
@@ -138,6 +203,81 @@ export function orbSlots(o) {
   return out;
 }
 
+// --- SHAPES, AND THIS TABLE IS THE SEAM -------------------------------------------
+//
+// Nine hostiles each wanting an attack of their own is either nine bespoke mechanics
+// or a handful of layouts they compose out of. This is the handful. A shape is handed
+// the pattern and one `aim` — everything already worked out about where the muzzle is,
+// where the target is and where it is going — and returns one SLOT per orb: a bearing
+// to leave on, and how far away that orb's MARK is.
+//
+// What happens AT the mark is deliberately not the shape's business. `stay` decides
+// that, once, for every shape — which is why "a fan you fly through" and "a fan that
+// lies there afterwards" are one row of data apart rather than two mechanics.
+//
+//   aim.ax, aim.ay      where the muzzle is
+//   aim.lead            the solved intercept bearing
+//   aim.markD           px from the muzzle to the intercept point
+//   aim.bx, aim.by      where the target is
+//   aim.bvx, aim.bvy    and how it is moving
+//   aim.travel          seconds to the intercept
+//
+// THE ROWS THE REST OF THE BESTIARY WILL WANT, named here so the next pass is a row
+// rather than a refactor. Every one of them is a different answer to "which way", and
+// all of them get `stay`, `burst` and `r` for free:
+//
+//   sweep    a fan whose aim TURNS between the clusters of a burst — a line walked
+//            across the sky. One `spin` field, radians per cluster.
+//   charge   a fan whose `arc` is read off a live dial instead of the definition, so
+//            a hostile that has been winding up throws a wider one.
+//   ring     `arc` of 2*PI. orbSlots already produces it; nothing else has to change.
+//   wake     laid at the muzzle along the hostile's OWN course rather than at a mark.
+//            NOTE BEFORE BUILDING IT: a trail spreads a volley over the length it is
+//            laid across and a point target intercepts a fixed 2 x (orb r + hull r)
+//            of it, which is the same arithmetic orbSlots argues above for a fan's
+//            width. At a Harrier's 380px/s a 2.5s strafing run lays 950px of trail
+//            and a hull collects 112px of it — 12% — so a wake cannot carry a
+//            hostile's book dps and must sit on top of something that does.
+//   land     what an orb becomes where it stops. shared/ground.js already owns
+//            patches; the seam is one call at the end of stepOrbs, on the branch that
+//            is already there for an orb whose flight is over.
+export const SHAPES = {
+  // A FAN. n bearings spread over `arc` about the aim line, every one of them thrown
+  // the same distance. The Ironhusk's cone, the Leviathan's clusters, and a Drifter's
+  // single ball, which is this with n of 1.
+  fan: (o, aim) => orbSlots(o).map(off => ({ h: aim.lead + off, d: aim.markD })),
+
+  // A RAKE. n marks strung out along the TARGET'S OWN COURSE, `span` seconds of its
+  // travel apart, starting at the intercept. Every orb flies to its own mark and — if
+  // the pattern stays — sits on it, so what lands is a fence across the road ahead.
+  //
+  // IT COLLAPSES TO A FAN OF ONE WHEN YOU ARE NOT MOVING, and that is the point rather
+  // than a degenerate case: a pilot holding station has one mark, so the whole volley
+  // arrives on them and the book number stays reachable, which is what threatDps
+  // promises. Hold a straight course and the marks string out along it and you drive
+  // through every one — a straight line is not a dodge, the same rule the fan states.
+  // Turn, and the fence is behind you.
+  //
+  // The fence is therefore about `span` x (n-1) seconds of your own road, whatever you
+  // fly: fast hulls get a long one, slow hulls a short one, and both get the same
+  // second or so of warning. `span` is capped from above by the no-hole rule orbSlots
+  // argues — span x (the fastest hull) must stay under 2 x (orb r + hull r), or the
+  // quickest ships fly between the marks.
+  rake: (o, aim) => {
+    const out = [];
+    for (let i = 0; i < Math.max(1, o.n); i++) {
+      const t = aim.travel + i * (o.span ?? 0);
+      const dx = aim.bx + aim.bvx * t - aim.ax, dy = aim.by + aim.bvy * t - aim.ay;
+      out.push({ h: Math.atan2(dy, dx), d: Math.hypot(dx, dy) });
+    }
+    return out;
+  },
+};
+// Unknown shapes fall back to the fan rather than throwing, for rule seven's reason:
+// a definition with a typo in it should be a hostile that shoots oddly, not a sector
+// that stops ticking.
+export const shapeOf = o => SHAPES[o?.shape ?? 'fan'] ?? SHAPES.fan;
+
 // Advances this hostile's launcher and returns the orbs released this tick.
 //
 // It LEADS, the same way fire() does and for the same reason: a pattern aimed at
@@ -159,6 +299,14 @@ export function throwOrbs(a, b, dt) {
   // return is the first line and not the second.
   if (!o) return [];
   a.cool = Math.max(0, a.cool - dt);
+  // THE MUZZLE GLOW, and it is decayed here because nothing else will. combat.js owns
+  // the only other copy of this line and it sits BELOW the gate at the top of fire()
+  // that sends a pattern-thrower straight home — so every hostile converted off its
+  // barrel held a full flash for ever, from its first shot to its death. It was live on
+  // the Ironhusk and the Leviathan from the day orbs landed, and shared/ground.js
+  // named it in a comment when the deeps were converted rather than inherit it. Five
+  // hostiles throw a pattern now, so this is where it gets fixed.
+  a.shotFlash = Math.max(0, (a.shotFlash ?? 0) - dt);
   const reach = a.stats.weaponRange ?? 0;
   const live = b && b.hp > 0 && a.hp > 0 && Math.hypot(b.x - a.x, b.y - a.y) <= reach;
   // The burst runs on its own beat inside the cycle the cadence owns, which is the
@@ -178,7 +326,6 @@ export function throwOrbs(a, b, dt) {
   a.orbLeft--;
   a.orbBeat = o.beat ?? 0;
 
-  const slots = orbSlots(o);
   // THE CEILING, and it is the same claim threatDps makes for a mirror's chamber and
   // an answering ring: `damage x fireRate` is what the whole volley does if all of it
   // lands, and all of it CAN land — point blank, where the fan is narrower than a
@@ -211,11 +358,30 @@ export function throwOrbs(a, b, dt) {
   a.shotFlash = SHOT_FLASH;   // one glow for the whole fan, not one per orb
   a.sinceShot = 0;
 
-  return slots.map(off => {
-    const h = lead + off;
+  // The layout, off the table above. The intercept is solved ONCE and handed to it,
+  // so a shape is geometry and nothing else — no shape re-solves an aim, which is
+  // what stops two of them disagreeing about where the target is going.
+  const slots = shapeOf(o)(o, { ax: a.x, ay: a.y, lead, travel, markD: travel * ORB_SPEED,
+                                bx: b.x, by: b.y, bvx: b.vx, bvy: b.vy });
+  const stay = stayFor(o);
+  return slots.map(s => {
+    const h = s.h;
+    // HOW LONG IT FLIES, and the two answers are the whole of what `stay` changes.
+    //
+    // A pattern that does not stay flies until its clock runs out, and Infinity here
+    // is that stated rather than a special case in stepOrbs: `min(dt, Infinity)` is
+    // dt, so every orb the game had before this line existed moves exactly as it did.
+    //
+    // One that stays flies to its MARK and stops on it. The mark is clamped to the
+    // weapon's reach for the same reason the life is: an orb that came to rest past
+    // where its hostile can shoot would let it deny ground it cannot reach.
+    const fly = stay > 0 ? Math.max(0, Math.min(s.d, reach)) / ORB_SPEED : Infinity;
     return {
       x: a.x, y: a.y, heading: h,
       vx: Math.cos(h) * ORB_SPEED, vy: Math.sin(h) * ORB_SPEED,
+      // Seconds of powered flight left. Server-side only — packOrb sends the SPEED,
+      // worked out from the velocity so a parked orb cannot be drawn moving.
+      fly,
       r: o.r, dmg: each, foe: !!a.isAlien,
       // Sanctuary travels WITH the orb, by reference, exactly as a sown patch carries
       // its sower's set: a pattern is in the air for over two seconds at a Leviathan's
@@ -227,10 +393,12 @@ export function throwOrbs(a, b, dt) {
       // muzzle is exactly the lever arm an Antiphon's ring wants and there is nothing
       // to reconstruct. Server-side only — packOrb names its five fields.
       ox: a.x, oy: a.y,
-      // Its full reach and no further. An orb that outlived its own weapon range would
-      // let a hostile hit you from somewhere it cannot shoot from, which is the one
-      // thing a pilot holding range is entitled to rely on.
-      t: reachT, ttl: reachT,
+      // Its full reach and no further, plus however long it is entitled to lie there.
+      // An orb that outlived its own weapon range would let a hostile hit you from
+      // somewhere it cannot shoot from, which is the one thing a pilot holding range
+      // is entitled to rely on — so a pattern that STAYS spends its life getting to a
+      // mark inside that reach and then standing on it, and never travels further.
+      t: (stay > 0 ? fly : reachT) + stay, ttl: (stay > 0 ? fly : reachT) + stay,
     };
   });
 }
@@ -253,8 +421,21 @@ export function stepOrbs(list, bodies, dt, may = () => true) {
   const hits = [];
   for (let i = list.length - 1; i >= 0; i--) {
     const b = list[i];
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
+    // The step is CLAMPED to what is left of the flight, which matters only for a
+    // pattern that stays: a full tick is 13px and an orb that overshot its mark by
+    // that much would come to rest a quarter of a hit disc off the place the pilot
+    // was actually going to be. `fly` is Infinity for everything that does not stay,
+    // so min(dt, fly) is dt and nothing the game had before this moves differently.
+    const go = Math.min(dt, b.fly ?? Infinity);
+    if (go > 0) { b.x += b.vx * go; b.y += b.vy * go; }
+    if (b.fly !== undefined) {
+      b.fly -= dt;
+      // Parked. The velocity is zeroed rather than remembered, because packOrb reads
+      // the SPEED off it — a caltrop the client flew forward at ORB_SPEED would drift
+      // off the thing it is actually sitting on, which is the "drawn at one radius,
+      // hit at another" bug in a different axis.
+      if (b.fly <= 0) { b.vx = 0; b.vy = 0; }
+    }
     b.t -= dt;
     // Collision BEFORE expiry, not after. An orb that runs out of reach on the same
     // tick it crosses a hull was still there when it crossed it, and settling the

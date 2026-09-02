@@ -69,13 +69,26 @@ export const unpackRocket = arr => { const o = {}; for (let i = 0; i < ROCKET_FI
 // ball drawn at one radius and hit at another is the "a row you can see and cannot
 // click" bug moved out of the panel and into the world, where it decides fights.
 //
-// `h` and not `vx, vy`, because every orb in the game travels at ORB_SPEED and one
-// heading is one field where a velocity is two. The client flies it forward from the
-// last snapshot exactly as it does a rocket — at 300px/s a tick is 10px, which is
-// under half a hull and visibly steppy without it.
-export const ORB_FIELDS = ['x', 'y', 'h', 'r', 'foe'];
+// `h` and not `vx, vy`, because a heading is one field where a velocity is two. The
+// client flies it forward from the last snapshot exactly as it does a rocket — at
+// 400px/s a tick is 13px, which is under half a hull and visibly steppy without it.
+//
+// `v` IS THE SIXTH FIELD AND IT ARRIVED WITH THE CALTROPS. Orbs used to be five and
+// the note here said "one fewer than a rocket, because every orb travels at
+// ORB_SPEED"; that stopped being true the moment a pattern could `stay` — an orb that
+// has reached its mark sits on it at 0 px/s, and the client dead-reckons between
+// snapshots. Without this it flew a parked caltrop forward 13px a tick and drew the
+// hazard 48px off the place the server collides with, which is the "a ball you can see
+// and cannot be hit by" bug the `r` field two lines up exists to stop.
+//
+// It is DERIVED from the velocity rather than stored beside it, so the two can never
+// disagree: there is one answer to how fast an orb is going and stepOrbs owns it.
+// Measured live, at the worst crowd this produces — one Bandit's steady field is
+// seven parked caltrops — the sixth field costs 0.11 KiB/s of a 12 KiB/s stream.
+export const ORB_FIELDS = ['x', 'y', 'h', 'r', 'foe', 'v'];
 export const packOrb   = o   => [Math.round(o.x), Math.round(o.y), +o.heading.toFixed(2),
-                                 Math.round(o.r), o.foe ? 1 : 0];
+                                 Math.round(o.r), o.foe ? 1 : 0,
+                                 Math.round(Math.hypot(o.vx ?? 0, o.vy ?? 0))];
 export const unpackOrb = arr => { const o = {}; for (let i = 0; i < ORB_FIELDS.length; i++) o[ORB_FIELDS[i]] = arr[i]; return o; };
 
 // A kill flash: where it happened, how big the thing was, how far along the

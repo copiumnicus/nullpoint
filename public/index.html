@@ -4598,10 +4598,16 @@ function drawFrame(now) {
     // Flown forward from the last snapshot, exactly as rockets are. At 400px/s the
     // server's 30Hz step is 13px, which is half a hull and visibly steppy under a
     // shape this big.
-    const ahead = Math.min(0.12, (now - snapAt) / 1000) * ORB_SPEED;
+    //
+    // AT ITS OWN SPEED, off the wire, and not at ORB_SPEED. A caltrop that has reached
+    // its mark is parked — `v` is 0 — and dead-reckoning it at 400px/s drew the hazard
+    // up to 48px away from the disc the server actually collides with, which is the
+    // same bug as drawing the ball smaller than it hits.
+    const ahead = Math.min(0.12, (now - snapAt) / 1000);
     for (const o of orbs) {
       const R = Math.max(2, o.r);
-      const x = o.x + Math.cos(o.h) * ahead, y = o.y + Math.sin(o.h) * ahead;
+      const v = Math.max(0, o.v ?? ORB_SPEED);
+      const x = o.x + Math.cos(o.h) * ahead * v, y = o.y + Math.sin(o.h) * ahead * v;
       // A slow pulse, so a wall of them shimmers rather than sitting there as flat
       // discs. Bounded well inside 1 so no alpha can ever leave the legal range.
       const beat = 0.82 + Math.sin(now / 190 + o.x * 0.05) * 0.12;
@@ -4621,6 +4627,15 @@ function drawFrame(now) {
       g.strokeStyle = o.foe ? 'rgba(255,120,70,0.55)' : 'rgba(120,210,255,0.55)';
       g.lineWidth = 1.5;
       g.beginPath(); g.arc(x, y, R, 0, 7); g.stroke();
+      // AND A PARKED ONE GETS A SECOND RIM, because it is a different piece of news.
+      // Everything else in this pass is coming at you and will be gone in a second; a
+      // caltrop that has reached its mark is ground you may not use for the next two.
+      // Same colour and same radius — the hazard is identical and the disc must read
+      // as identical — with an inner ring inside it, which is the one cue the sown
+      // ground below uses for the same "this is terrain now" meaning.
+      if (v <= 0) {
+        g.beginPath(); g.arc(x, y, R * 0.74, 0, 7); g.stroke();
+      }
     }
   }
 

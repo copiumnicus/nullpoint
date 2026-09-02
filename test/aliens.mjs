@@ -7,6 +7,7 @@ import { WILD, ALIENS, ALIENS_PER_MAP, effectiveHp, newAlien, respawnAlien, step
          forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R, shieldMax } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
+import { throwOrbs, stepOrbs, orbsOf } from '../shared/orbs.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { HULLS, resolve, DEFAULT_HULL } from '../shared/ships.js';
 import { BOOST } from '../shared/power.js';
@@ -50,8 +51,14 @@ const full = s => s.stats.hull + s.stats.shield;
 // 6,450 of a finished Bulwark's 11,307 and holds the chamber at 49% where a real
 // one holds it at 91%. That gap was read as "a Thresher dodges a third of your
 // fire" for a whole revision. It does not — 97% of what you fire reaches it.
+//
+// AND ORBS, because half the bestiary throws a pattern instead of a bolt now and a
+// harness that only stepped bolts read every one of them as harmless. It cost this
+// file ten failures in one edit — "in the open, inside aggro range, it engages" was
+// asserting on damage taken from a Drifter that no longer has a barrel. server.js
+// calls fire() and throwOrbs() in the same tick and settles both; so does this.
 function fight(a, p, secs, { playerFires = false, drive = null, hold = null, immortal = false, route = null } = {}) {
-  let t = 0, everTargeted = false, air = [], fired = 0;
+  let t = 0, everTargeted = false, air = [], balls = [], fired = 0;
   let took = 0, biggest = 0, peak = 0, mirrored = 0, lowest = Infinity;
   while (t < secs && a.hp > 0 && p.hp > 0) {
     if (drive) drive(p, t);
@@ -63,6 +70,7 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
     peak = Math.max(peak, stepMirror(a, dt));
     const base = a.def?.attrs?.damage ?? 0;
     for (const s1 of fire(a, tgt ? p : null, dt)) { air.push(s1); fired++; mirrored += Math.max(0, s1.dmg - base); }
+    for (const ob of throwOrbs(a, tgt ? p : null, dt)) { balls.push(ob); fired++; }
     if (playerFires && !(hold && hold(t))) {
       faceTarget(p, a);
       const volley = fire(p, a, dt);
@@ -72,6 +80,13 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
       const n = h.split.shield + h.split.hull;
       if (h.target === a) storeHit(a, n);
       else { took += n; biggest = Math.max(biggest, n); }
+    }
+    // An orb has no target — it hits whatever it passes through — so the candidate
+    // list is the pilot and nothing else, exactly as it is in server.js where `here`
+    // is the players in the sector. Nothing of ours can be hit by one.
+    for (const h of stepOrbs(balls, [{ id: 1, ship: p }], dt)) {
+      const n = h.split.shield + h.split.hull;
+      took += n; biggest = Math.max(biggest, n);
     }
     // AFTER the damage is applied, not before it. Restoring at the top of the tick
     // leaves the loop condition to see a pilot one bolt below zero, so the reader
@@ -302,10 +317,19 @@ console.log('\nbreaking off when it is losing');
   check('it never repairs mid-fight', engaged.hp === engaged.stats.hull * 0.1);
 }
 
-console.log('\ndodging');
+console.log('\ndodging a bolt');
+// THESE ARE CLAIMS ABOUT A BOLT, and they used to be flown against a Drifter because
+// the Drifter was the cheapest bolt in the game. It throws a slow ball now, so the
+// hostile here is a Kedge — the plainest barrel left standing, and one whose 900px
+// reach covers every range this block measures at. Not one assertion moved: a bolt is
+// still aimed where you WILL be, and six hostiles still fire one.
+//
+// What a Drifter's ball does instead is measured in test/orbs.mjs, where the same two
+// policies are flown against the pattern that replaced this.
 {
+  const gun = (x, y, seed = 1) => { const a = newAlien('kedge', 2e6, map, seed); a.x = x; a.y = y; a.vx = a.vy = 0; return a; };
   const shotAt = (setup) => {                       // one bolt, resolved honestly
-    const a = foe(6000, 4000, 2); a.vx = a.vy = 0;
+    const a = gun(6000, 4000, 2); a.vx = a.vy = 0;
     const p = newShip(6400, 4000, 'kestrel');
     setup.aim(p);
     const air = fire(a, p, dt);
@@ -321,9 +345,10 @@ console.log('\ndodging');
     'this is the dodge');
 
   const takenOver = (secs, move) => {                // sustained fire, fixed range
-    const a = foe(6000, 4000, 4); a.vx = a.vy = 0; a.target = 1; a.provoked.add(1);
+    const a = gun(6000, 4000, 4); a.vx = a.vy = 0; a.target = 1; a.provoked.add(1);
     const p = newShip(6400, 4000, 'kestrel');
-    const before = ehp(p);
+    p.stats = { ...p.stats, hull: 1e9 }; p.hp = 1e9;   // a Kedge's bolt is 467 and the
+    const before = ehp(p);                             //   ratio is the measurement
     const air = []; let t = 0;
     while (t < secs) { move(p, t); air.push(...fire(a, p, dt)); stepBolts(air, dt); t += dt; }
     return before - ehp(p);

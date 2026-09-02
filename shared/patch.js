@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.93';
+export const VERSION = '0.94';
 
 export const PATCHES = [
+  { v: '0.94', notes: [
+    'The bottom three hostiles have thrown their lasers away, and none of them agree',
+    'A Drifter lobs ONE slow ball. Move and it goes past — that is the whole lesson',
+    'A Harrier lays a fence across the course you are holding. Turn, or drive through it',
+    'A Bandit scatters caltrops that STAY where they land. Never back over your own ground',
+    'All three still hit for exactly what they did if you stand still. Do not stand still',
+  ] },
   { v: '0.93', notes: [
     "Lean on ONE of the Antiphon's plates long enough and it BREAKS. The core is open there",
     'A broken wedge stops deflecting and stops answering, and lets through double',
