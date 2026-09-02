@@ -159,6 +159,12 @@ export function throwOrbs(a, b, dt) {
   // return is the first line and not the second.
   if (!o) return [];
   a.cool = Math.max(0, a.cool - dt);
+  // And the muzzle glow. combat.js owns the only other copy of this line and it sits
+  // BELOW the gate that sends an orb-thrower home, so a hostile whose barrel became a
+  // fan held a full flash for ever — an Ironhusk and a Leviathan have been glowing
+  // since the day the orbs landed, at every range, whether or not they had anybody.
+  // stepLob named it and fixed its own two; this is the pair it could not reach.
+  a.shotFlash = Math.max(0, (a.shotFlash ?? 0) - dt);
   const reach = a.stats.weaponRange ?? 0;
   const live = b && b.hp > 0 && a.hp > 0 && Math.hypot(b.x - a.x, b.y - a.y) <= reach;
   // The burst runs on its own beat inside the cycle the cadence owns, which is the

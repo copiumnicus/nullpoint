@@ -6,7 +6,7 @@ import { fire, stepBolts, faceTarget, BOLT_SPEED } from './shared/combat.js';
 import { launch, stepRockets, launcherRoom, LAUNCH_FLASH } from './shared/rockets.js';
 import { throwOrbs, stepOrbs, ORB_SPEED, orbsOf } from './shared/orbs.js';
 import { newAlien, respawnAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading,
-         broodReady, BROOD_R, shoveFromBase,
+         shoveFromBase,
          forgetPlayer, ALIENS, ALIENS_PER_MAP, WILD, mayHarm, effectiveHp, dialOf, roamPoint,
          driftReady } from './shared/aliens.js';
 import { DEV_ID, PROPS, PEN_SLOTS, BENCH_SLOTS, propFit } from './shared/devmap.js';
@@ -34,7 +34,7 @@ import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
 import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packLab, packPyre, packFix,
-         packSown, groundK, packPlates, packPing, packWave } from './shared/net.js';
+         packSown, groundK, packPlates, packPing, packWave, packSweep, packHatch } from './shared/net.js';
 import { PING_COOLDOWN, PING_LIFE, PING_MAX, whyNotPing } from './shared/ping.js';
 import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror } from './shared/aliens.js';
@@ -45,6 +45,12 @@ import { stepSiphon, tetherHolds, DRAIN_TELL } from './shared/siphon.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from './shared/burn.js';
 import { sowOf, stepLob, sowHolds, groundFor, inGround, groundBite, stepGround,
          stepSnare, holdEngines, globHit, BITE_TELL } from './shared/ground.js';
+// A Kedge's lance, a Thresher's wall of splinters and a Hive's pod: three barrels that
+// are not barrels. Each owns its own clock and none of them calls fire() — see the gate
+// at the top of it in shared/combat.js.
+import { stepSweep, stepSweeps } from './shared/sweep.js';
+import { throwShards } from './shared/shards.js';
+import { stepPod, podHolds, podOf, podHit, podFlight, hatchAt, POD_R } from './shared/brood.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture, carried } from './shared/account.js';
 import { GAME } from './shared/brand.js';
@@ -964,6 +970,11 @@ const orbs = new Map();
 // reason and one more: a front is not a body at a place, it is a RADIUS, so nothing
 // that filters or draws projectiles by position can be reused on it.
 const waves = new Map();
+// mapId -> lances mid-swing. Its own list for the same two reasons a wave has one: it
+// is not a body at a place but an ARC about a pivot, so nothing that filters or draws
+// projectiles by position can be reused on it, and it settles against everything it
+// crosses rather than against one ship it was aimed at.
+const sweeps = new Map();
 
 // A rocket flies for four and a half seconds, which is long enough for its
 // target to jump out or die under it. Bolts land inside a third of a second and
@@ -1018,7 +1029,10 @@ let markId = 1;
 // `waves` is the eleventh and it is the same story a fifth time: the ring pass does
 // `waves.get(mapId).push(...)` with no guard, so a sector missing from this list
 // would throw on the first beat an Antiphon called.
-const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, fixes, sown, marks, waves];
+// `sweeps` is the twelfth and it is the same story a sixth time: the lance pass does
+// `sweeps.get(mapId).push(...)` with no guard, so a sector missing from this list would
+// throw on the first swing a Kedge took.
+const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, fixes, sown, marks, waves, sweeps];
 const openLists  = id => { for (const L of SECTOR_LISTS) L.set(id, []); };
 const closeLists = id => { for (const L of SECTOR_LISTS) L.delete(id); };
 for (const id of Object.keys(MAPS)) openLists(id);
@@ -2584,24 +2598,13 @@ setInterval(() => {
       }
       const tgt = stepAlienAI(a, map, here, dt);
 
-      // A mothership launches escorts, but only once it has noticed somebody — a
-      // hive nobody has found should not quietly fill its sector with raiders.
-      if (a.def.broods && a.target !== null) {
+      // A mothership keeps a register of what it has in the air, and the register is
+      // kept HERE because this is the only place that has `list`. The launch itself has
+      // moved down beside the other guns — the barrel is the pod now, so it belongs
+      // with the things that are fired rather than in a block of its own. See
+      // shared/brood.js.
+      if (a.def.broods)
         a.brood = (a.brood ?? []).filter(kid => list.some(x => x.id === kid && !x.gone && x.dead <= 0));
-        if (a.brood.length < a.def.broods.max && broodReady(a, dt)) {
-          const ang = Math.random() * Math.PI * 2;
-          const kid = newAlien(a.def.broods.kind, alienId++, map, alienId,
-                               { x: a.x + Math.cos(ang) * BROOD_R, y: a.y + Math.sin(ang) * BROOD_R });
-          kid.spawned = true;                     // launched, not posted: it fights and it stays dead
-          kid.post = null;
-          kid.target = a.target;
-          kid.provoked.add(a.target);
-          born.push(kid);
-          if (process.env.DEBUG_BROOD)
-            console.log(`brood: hive ${a.id} launched ${kid.id}, now ${a.brood.length + 1}/${a.def.broods.max}`);
-          a.brood.push(kid.id);
-        }
-      }
       // Anything in the air with this one's name on it. Rockets first: they are
       // the shots that will not simply go past on their own.
       const incoming = [
@@ -2734,6 +2737,19 @@ setInterval(() => {
       // the arena bench calls fire() too and a husk that fired both would be at twice
       // its book dps in one of the two places.
       for (const ob of throwOrbs(a, victim?.ship ?? null, dt)) orbs.get(mapId).push(ob);
+      // A LANCE. fire() returns nothing at all for a Kedge now — the gate is inside
+      // fire() rather than here, because the arena bench calls it too and a hostile that
+      // threw both would be at twice its book dps in one of the two places. The pivot is
+      // where it was standing when the line went out and it does not follow; see
+      // stepSweep for stepWave's measurement, which is why.
+      const swing = stepSweep(a, victim?.ship ?? null, dt);
+      if (swing) sweeps.get(mapId).push(swing);
+      // AND A WALL OF SPLINTERS, which is what a mirror's chamber comes back as. They
+      // are ordinary bolts in the ordinary list — same speed, same drawing, same slack —
+      // and only the aim is different: one volley fanned about the lead point, split
+      // evenly, so `payloadOf(def, load)` is still exactly what a volley carries.
+      // BOLT_SPEED is handed over rather than imported, the way ringAnswer takes it.
+      for (const sh of throwShards(a, victim?.ship ?? null, dt, BOLT_SPEED)) bolts.get(mapId).push(sh);
       // The ring. It winds up while it has somebody and settles when it does not, and
       // it burns whoever is standing in it — everyone, not just its target, because a
       // field does not aim. Sanctuary is checked with mayHarm(), the same predicate
@@ -2809,6 +2825,60 @@ setInterval(() => {
             patches.splice(patches.indexOf(oldest), 1);
           }
           patches.push(Object.assign(groundFor(a, drop.at), { id: groundId++, owner: a.id }));
+        }
+      }
+      // A POD, which is what a mothership's barrel became. One clock, one act: it is
+      // thrown on `broods.every` — the gun's cadence is `1 / every` by construction —
+      // it carries the whole of the gun's damage to where it lands, and it cracks open
+      // there. Dodging it therefore decides WHERE the raider comes out, not only whether
+      // you were hit. See shared/brood.js.
+      //
+      // Sanctuary is gated on the SAME `haven` the AI was just handed rather than on a
+      // second lookup, the way the tether, the fix and the sowing above all are: one
+      // predicate, one answer. Two copies of "where is it safe to stand" is exactly how
+      // the workshop dock ended up refusing to sell anything for a day.
+      if (podOf(a.def)) {
+        // Whether it is LADEN is decided at the throw and this is the fact it is decided
+        // against. A pod thrown at a full brood is ordnance and nothing else, which is
+        // what keeps `damage x fireRate` honest — and `max` cannot be got round, because
+        // the register above is rebuilt from the sector's own list every tick.
+        const room = (a.brood?.length ?? 0) < a.def.broods.max;
+        const may = victim ? podHolds(a, victim.ship, victim.haven) : false;
+        const drop = stepPod(a, victim?.ship ?? null, may, room, dt);
+        if (drop) {
+          // Everybody on the spot rather than only the target, because a thrown thing
+          // does not aim once it is in the air; and through mayHarm() for sanctuary, the
+          // same predicate the AI targeted with. `drop.dmg` is already boosted.
+          for (const c of here) {
+            if (c.ship.hp <= 0 || !mayHarm(a, c) || !podHit(drop.at, c.ship)) continue;
+            const split = applyDamage(c.ship, drop.dmg);
+            hits.get(mapId).push({ x: c.ship.x, y: c.ship.y - c.ship.r - 6,
+                                   n: drop.dmg, sh: split.hull === 0,
+                                   by: null, t: HIT_TIME, ttl: HIT_TIME });
+            // The bearing it came from, kept whole off the muzzle the way an orb's and a
+            // glob's are — a pilot may be carrying plates one day and this is the one
+            // place that knows where the throw started.
+            if (drop.from) storeHit(c.ship, drop.dmg,
+              { a: Math.atan2(drop.from.y - c.ship.y, drop.from.x - c.ship.x),
+                x: drop.from.x, y: drop.from.y });
+          }
+          // And the raider, at the place the pod cracked open — pushed out to BROOD_R
+          // only if the pod landed inside that, so the damage lands where the pod landed
+          // and nothing hatches inside its own mother. Re-checked against the register
+          // here as well as at the throw: the brood can only have shrunk in the 2.75s the
+          // pod was in the air, so this can only ever agree, and it is the line that
+          // makes `max` true whatever else changes.
+          if (drop.laden && (a.brood?.length ?? 0) < a.def.broods.max) {
+            const kid = newAlien(a.def.broods.kind, alienId++, map, alienId, hatchAt(a, drop.at));
+            kid.spawned = true;                   // launched, not posted: it fights and it stays dead
+            kid.post = null;
+            kid.target = a.target;
+            if (a.target !== null) kid.provoked.add(a.target);
+            born.push(kid);
+            if (process.env.DEBUG_BROOD)
+              console.log(`brood: hive ${a.id} hatched ${kid.id}, now ${(a.brood?.length ?? 0) + 1}/${a.def.broods.max}`);
+            (a.brood ??= []).push(kid.id);
+          }
         }
       }
       // Not while it is chasing somebody: a provoked alien follows you in.
@@ -3007,6 +3077,26 @@ setInterval(() => {
       if (p.mapId === mapId && !p.dead && !p.lobby && p.ship.hp > 0)
         here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
     for (const h of stepWaves(list, here, dt, (w, c) => mayHarm({ provoked: w.by }, c))) {
+      const split = applyDamage(h.target, h.dmg);
+      hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
+                             n: h.dmg, sh: split.hull === 0,
+                             by: null, t: HIT_TIME, ttl: HIT_TIME });
+      storeHit(h.target, h.dmg, h.from);
+    }
+  }
+  // And the lances, in their own pass for the same reason again: `here` is PILOTS, so a
+  // swing can only ever cut a player. It runs AFTER every hull in the sector has moved,
+  // exactly where the orb and ground passes do — "did the head cross this ship" has to
+  // be asked of where the ship actually IS, not of where it was at the top of the tick,
+  // and at 84px of head travel a tick that is most of a hull's width of difference.
+  for (const [mapId, list] of sweeps) {
+    if (!list.length) continue;
+    const map = mapOf(mapId);
+    const here = [];
+    for (const [id, p] of players)
+      if (p.mapId === mapId && !p.dead && !p.lobby && p.ship.hp > 0)
+        here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
+    for (const h of stepSweeps(list, here, dt, (w, c) => mayHarm({ provoked: w.by }, c))) {
       const split = applyDamage(h.target, h.dmg);
       hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
                              n: h.dmg, sh: split.hull === 0,
@@ -3373,8 +3463,17 @@ setInterval(() => {
     // "is any part of this circle near enough to matter", which is the whole of it.
     const fronts = (waves.get(V.mapId) ?? []).filter(w =>
       Math.hypot(w.x - V.ship.x, w.y - V.ship.y) <= reach + w.r);
+    // A lance reaches you from outside your radar for the front's reason and the
+    // sharper version of it: the whole mechanic is being at a different RANGE when the
+    // head comes round, and an arc that appeared once its pivot crossed your radar would
+    // be a hazard with no tell at all. The test is against the arc rather than the pivot
+    // — `reach + w.d + w.r` asks "is any part of this swing near enough to matter",
+    // which is the whole of it.
+    const arcs = (sweeps.get(V.mapId) ?? []).filter(w =>
+      Math.hypot(w.x - V.ship.x, w.y - V.ship.y) <= reach + w.d + w.r);
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
                     orbs: balls.map(packOrb), waves: fronts.map(packWave),
+                    sweeps: arcs.map(packSweep),
                     blasts: flashes.map(packBlast), pyres: alight.map(packPyre),
                     fixes: sights.map(fx => packFix(fx, fx.who === V.id)),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };
@@ -3414,12 +3513,31 @@ setInterval(() => {
     // copy of "may this pilot see that", not two. Two copies is the workshop dock.
     const rings = (aliens.get(V.mapId) ?? [])
       .filter(a => platesOf(a.def) && a.dead <= 0 && ships.has(a.id));
+    // A pod in the air, keyed on the mothership that threw it — there is never more
+    // than one per hull, so the hull's own id is the key and the row has a stable
+    // identity for the whole flight.
+    //
+    // Drawn from OUTSIDE its own radius the way an orb and a patch of ground are, and
+    // measured at BOTH ends: where it is now and where it is going. The landing point
+    // matters as much as the body — the whole read is "is that one carrying a raider,
+    // and where is it going to open" — so a pod thrown from beyond your radar at a spot
+    // right beside you still arrives on the wire.
+    const flight = [];
+    for (const a of aliens.get(V.mapId) ?? []) {
+      const now2 = podFlight(a);
+      if (a.dead > 0 || !now2) continue;
+      if (Math.hypot(now2.x - V.ship.x, now2.y - V.ship.y) > reach + POD_R &&
+          Math.hypot(a.podAt.x - V.ship.x, a.podAt.y - V.ship.y) > reach + POD_R) continue;
+      flight.push({ id: a.id, x: a.podFrom.x, y: a.podFrom.y, tx: a.podAt.x, ty: a.podAt.y,
+                    p: Math.max(0, Math.min(1, a.pod ?? 0)), k: a.podLaden ? 1 : 0 });
+    }
     const streams = { ships, pods: new Map(cans.map(c => [c.id, packPod(c)])),
                       labs: new Map(yardHere.map(l => [l.id, packLab(l, l.token === V.token)])),
                       sown: new Map(field
                         .filter(g => Math.hypot(g.x - V.ship.x, g.y - V.ship.y) <= reach + g.r)
                         .map(g => [g.id, packSown(g)])),
                       plates: new Map(rings.map(a => [a.id, packPlates(a)])),
+                      hatch: new Map(flight.map(f => [f.id, packHatch(f)])),
                       // Every ping standing in this sector, NOT radar-filtered, and
                       // that is the one deliberate hole in "an enemy you have not
                       // detected never reaches the wire". It is not a hole in the

@@ -51,7 +51,7 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, unpackPing, unpackWave, PLATE_STEPS } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, unpackPing, unpackWave, unpackSweep, unpackHatch, PLATE_STEPS } from '/shared/net.js';
 import { pingLayout, pingChip, chipLine, onChip, whyNotPing, pingAlpha,
          PING_TINT, PING_FONT } from '/shared/ping.js';
 import { burnOf, burnR } from '/shared/burn.js';
@@ -92,6 +92,11 @@ import { AMMO, AMMO_KEYS, FEEDS, DEFAULT_AMMO, ARMED_ALL, magazine, forWeapon,
 import { PEN, PEN_SLOTS, PROPS, LABELS as DEV_LABELS } from '/shared/devmap.js';
 import { ROCKET_SPEED, MAX_LAUNCHERS, isLauncher, launcherRoom } from '/shared/rockets.js';
 import { ORB_SPEED } from '/shared/orbs.js';
+// A Kedge's lance and a Hive's pod. Both read their geometry off the modules that
+// RESOLVE them rather than out of a literal here, for ORB_FIELDS' reason: a thing you
+// can see and cannot be hit by is the same bug as a row you can see and cannot click.
+import { headAt } from '/shared/sweep.js';
+import { POD_R } from '/shared/brood.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -278,7 +283,7 @@ const rOf   = s => defOf(s)?.r ?? 12;
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [], fronts = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [], fronts = [], lances = [], seeds = [];   // rebuilt every snapshot
 let mySnare = 0;                                  // s of engines-out left, from the bag
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
@@ -1472,6 +1477,7 @@ ws.onmessage = e => {
   // one at a time in the whole galaxy, alive for a second and a half, and its one
   // field that matters — the radius — changes on every tick.
   fronts = (m.waves ?? []).map(unpackWave);
+  lances = (m.sweeps ?? []).map(unpackSweep);
   snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
   pyres  = (m.pyres ?? []).map(unpackPyre);
@@ -1502,6 +1508,7 @@ ws.onmessage = e => {
   // set the ship rows came from, so a boss you have not detected has no row here to
   // find — this file does no filtering of its own, which is the point.
   rings = new Map((m.plates ?? []).map(unpackPlates).map(r => [r.id, r]));
+  seeds = (m.hatch ?? []).map(unpackHatch);
   // Pings on the chart. A keyed stream like the labs and the ground, so a name that
   // never changes rides the add and then goes quiet — see PING_FIELDS in net.js for
   // the measurement. Nothing is filtered here: the server sends every ping in the
@@ -4713,6 +4720,164 @@ function drawFrame(now) {
       g.moveTo(w.x + c * (R - 22), w.y + s * (R - 22));
       g.lineTo(w.x + c * (R + 22), w.y + s * (R + 22));
       g.stroke();
+    }
+  }
+
+  // --- a lance on a line ---------------------------------------------------------
+  //
+  // A Kedge pays a line out to the range you are holding and swings a fluke round it.
+  // Two phases and they are drawn as two completely different things on purpose,
+  // because the pilot has to do two completely different things in them:
+  //
+  //   winding   the whole band it is about to sweep, drawn as a dim arc with the line
+  //             lying on the leading edge of it. This is the read, and it is 0.70s of
+  //             the 1.30 the attack takes. What it says is "you are at this radius and
+  //             the head is coming round it", which is the sentence the answer is in.
+  //   swinging  the band ahead of the head stays, the head is a hard disc, and the arc
+  //             it has already crossed is gone. So the thing you can see is exactly the
+  //             thing that has not happened yet.
+  //
+  // THE BAND IS THE HIT BAND. `w.d` is the radius the server sweeps at and `w.r` the
+  // half-width it resolves against, so the band is drawn at d +/- r and not at some
+  // flattering fraction of it — this is ORB_FIELDS' rule at its sharpest, because the
+  // whole mechanic is being at a different RANGE when the head comes round and a band
+  // drawn one width and resolved at another would be a fight decided by a rendering
+  // choice.
+  //
+  // The line back to the pivot is drawn thin and dim, and that is honest rather than
+  // decorative: the line does NOT cut. Only the head does, which is why the head is the
+  // only part drawn solid.
+  //
+  // NOTHING HERE CAN PRODUCE undefined, NaN OR A BAD COLOUR: every number off the wire
+  // goes through Number.isFinite before it reaches a path, every radius through
+  // Math.max, every alpha is a literal or goes through al(), and the array is empty on
+  // every tick nobody is swinging anything.
+  for (const w of lances) {
+    if (!Number.isFinite(w.x) || !Number.isFinite(w.y)) continue;
+    if (!Number.isFinite(w.g) || !Number.isFinite(w.e)) continue;
+    if (!Number.isFinite(w.d) || !Number.isFinite(w.r)) continue;
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    const D = Math.max(2, w.d), HR = Math.max(2, w.r);
+    // Number.isFinite BEFORE the clamp and not after it, because a clamp does not clamp
+    // a NaN: `Math.max(0, Math.min(1, NaN))` is NaN, and this number goes straight into
+    // an arc's start angle. It cannot arrive as a NaN today — JSON.stringify turns one
+    // into `null` and `?? 0` would catch that — but every other field on this row is
+    // guarded by a Number.isFinite above and `p` is the one that would have had to rely
+    // on the transport for it. The harness feeds this row a NaN, an undefined, 9e9 and
+    // -3 in that column.
+    const p = Number.isFinite(w.p) ? Math.max(0, Math.min(1, w.p)) : 0;
+    const live = w.on === 1;
+    // Where the head is, out of the one function the server sweeps with. A head drawn
+    // anywhere else would be the marker-and-the-thing-it-marks bug this codebase has
+    // shipped twice, once at 61px.
+    const h = headAt({ x: w.x, y: w.y, d: D, g: w.g, e: w.e, p: live ? p : 0 });
+    const back = w.e >= w.g ? 1 : -1;
+    // THE BAND STILL TO COME. From wherever the head is to the far end, so it shrinks
+    // as the swing crosses it. During the wind-up that is the whole arc.
+    const at = w.g + (w.e - w.g) * (live ? p : 0);
+    g.strokeStyle = `rgba(214,232,96,${al(live ? 0.16 : 0.10 + 0.10 * p)})`;
+    g.lineWidth = Math.max(2, HR * 2);
+    g.beginPath();
+    g.arc(w.x, w.y, D, back > 0 ? at : w.e, back > 0 ? w.e : at);
+    g.stroke();
+    // and the two rails of it, so the RANGE you have to leave is a pair of lines you
+    // can judge your own hull against rather than a soft wash
+    g.strokeStyle = `rgba(214,232,96,${al(live ? 0.40 : 0.20 + 0.25 * p)})`;
+    g.lineWidth = 1.2;
+    for (const rr of [Math.max(1, D - HR), D + HR]) {
+      g.beginPath();
+      g.arc(w.x, w.y, rr, back > 0 ? at : w.e, back > 0 ? w.e : at);
+      g.stroke();
+    }
+    // the line itself, thin and dim: it is what the head is ON, not what cuts
+    if (h && Number.isFinite(h.x) && Number.isFinite(h.y)) {
+      g.strokeStyle = `rgba(214,232,96,${al(live ? 0.55 : 0.22 + 0.40 * p)})`;
+      g.lineWidth = live ? 2 : 1 + 1.4 * p;
+      if (!live) { g.setLineDash([12, 9]); g.lineDashOffset = -now / 45; }
+      g.beginPath(); g.moveTo(w.x, w.y); g.lineTo(h.x, h.y); g.stroke();
+      g.setLineDash([]);
+      // THE HEAD. Solid once it is moving, a held outline while the line is taut — a
+      // fluke you can see filled in is a fluke that is already cutting.
+      const grd = g.createRadialGradient(h.x, h.y, 0, h.x, h.y, HR);
+      grd.addColorStop(0, `rgba(238,255,150,${al(live ? 0.90 : 0.28)})`);
+      grd.addColorStop(0.55, `rgba(214,232,96,${al(live ? 0.42 : 0.14)})`);
+      grd.addColorStop(1, 'rgba(214,232,96,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(h.x, h.y, HR, 0, 7); g.fill();
+      g.strokeStyle = `rgba(238,255,170,${al(live ? 0.85 : 0.30 + 0.35 * p)})`;
+      g.lineWidth = live ? 2 : 1.4;
+      g.beginPath(); g.arc(h.x, h.y, HR, 0, 7); g.stroke();
+    }
+  }
+
+  // --- a mothership's pod ---------------------------------------------------------
+  //
+  // A Corsair Hive's gun IS its hatch: one slow pod that carries the whole of its
+  // damage to where it lands and cracks open there. So the thing a pilot has to read is
+  // not "am I about to be hit" but "where is that going to open, and is there anything
+  // in it" — and both are on the wire.
+  //
+  // `k` is the whole tell and it is drawn as two different objects rather than as two
+  // shades of one. A LADEN pod gets the ring on the ground where it is going to open
+  // and a hard rim; an empty one is a dim ball and nothing else, because there is
+  // nothing to plan around. A pilot who cannot tell them apart is a pilot dodging every
+  // second throw for no reason.
+  //
+  // The ring is drawn at BROOD-scale rather than at the pod's own radius, because what
+  // it is marking is where a raider will be standing rather than where the damage
+  // lands. The damage disc is the pod itself, at POD_R, which is the radius podHit()
+  // resolves against — ORB_FIELDS' rule again.
+  //
+  // NOTHING HERE CAN PRODUCE undefined, NaN OR A BAD COLOUR: every coordinate goes
+  // through Number.isFinite, `p` is clamped before it reaches a string, every radius
+  // through Math.max, and the array is empty on every tick nobody is throwing one.
+  for (const sd of seeds) {
+    if (!Number.isFinite(sd.x) || !Number.isFinite(sd.y)) continue;
+    if (!Number.isFinite(sd.tx) || !Number.isFinite(sd.ty)) continue;
+    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
+    // Number.isFinite before the clamp, for the lance's reason: a clamp does not clamp a
+    // NaN, and `p` is the one field on this row that reaches the arithmetic rather than
+    // being guarded above it.
+    const p = Number.isFinite(sd.p) ? Math.max(0, Math.min(1, sd.p)) : 0;
+    const laden = sd.k === 1;
+    const px = sd.x + (sd.tx - sd.x) * p, py = sd.y + (sd.ty - sd.y) * p;
+    const tint = laden ? '224,79,160' : '150,120,160';
+    if (laden) {
+      // where it is going to open, sitting still on the spot for the whole flight —
+      // the sown ground's dashed marker, in the mothership's own colour
+      g.strokeStyle = `rgba(${tint},${al(0.22 + 0.45 * p)})`;
+      g.lineWidth = 1 + 2 * p;
+      g.setLineDash([16, 12]);
+      g.lineDashOffset = -now / 40;
+      g.beginPath(); g.arc(sd.tx, sd.ty, Math.max(2, POD_R), 0, 7); g.stroke();
+      g.setLineDash([]);
+      g.strokeStyle = `rgba(${tint},${al(0.30 + 0.40 * p)})`;
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(sd.tx - 13, sd.ty); g.lineTo(sd.tx + 13, sd.ty);
+      g.moveTo(sd.tx, sd.ty - 13); g.lineTo(sd.tx, sd.ty + 13);
+      g.stroke();
+    }
+    // and the pod on its way. Fattest at the top of the arc and thinnest at both ends,
+    // exactly as a glob is drawn and for the same reason: a lob in a top-down view has
+    // no height, so the size IS the height, and it is the only cue that says this is
+    // going OVER you rather than at you.
+    const lift = 1 + 0.5 * Math.sin(Math.PI * p);
+    const PR = Math.max(2, POD_R * lift * (laden ? 1 : 0.7));
+    const grd = g.createRadialGradient(px, py, 0, px, py, PR);
+    grd.addColorStop(0, `rgba(${tint},${al(laden ? 0.85 : 0.45)})`);
+    grd.addColorStop(0.5, `rgba(${tint},${al(laden ? 0.36 : 0.18)})`);
+    grd.addColorStop(1, `rgba(${tint},0)`);
+    g.fillStyle = grd;
+    g.beginPath(); g.arc(px, py, PR, 0, 7); g.fill();
+    if (laden) {
+      g.strokeStyle = `rgba(255,190,225,${al(0.55 + 0.30 * p)})`;
+      g.lineWidth = 1.6;
+      g.beginPath(); g.arc(px, py, PR, 0, 7); g.stroke();
+      // the raider folded up inside it — a dart-sized core, so what is in there reads
+      // before it is out
+      g.fillStyle = `rgba(95,208,255,${al(0.50 + 0.40 * p)})`;
+      g.beginPath(); g.arc(px, py, Math.max(2, PR * 0.26), 0, 7); g.fill();
     }
   }
 

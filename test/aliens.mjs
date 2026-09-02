@@ -4,9 +4,23 @@ import { outlineOf, CLOSER_HOLD, CLOSER_EDGE, THREAT_HOLD, THREAT_EDGE,
          farmHp, XP_RATE, BOUNTY_RATE, SPAWN_CLEAR,
          broodReady, shoveFromBase, BASE_KEEPOUT } from '../shared/aliens.js';
 import { WILD, ALIENS, ALIENS_PER_MAP, effectiveHp, newAlien, respawnAlien, stepAlienAI, stepAlienRepair,
-         forgetPlayer, roamPoint, rng, REPAIR_QUIET } from '../shared/aliens.js';
+         forgetPlayer, roamPoint, rng, REPAIR_QUIET, BROOD_R } from '../shared/aliens.js';
+// A mothership's barrel. fire() returns nothing at all for one now — see the gate at
+// the top of it — so the bench has to pull the same trigger the server does.
+import { stepPod, podHit, hatchAt, POD_R, POD_SPEED } from '../shared/brood.js';
 import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAVEN_R, SIGHT_R, shieldMax } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
+// Every other trigger in the game, for the muzzle-flash claim below: a hostile whose
+// barrel became something else never calls fire(), so the line that fades the glow has
+// to live in whichever of these owns its clock.
+import { throwOrbs } from '../shared/orbs.js';
+import { stepSweep } from '../shared/sweep.js';
+import { stepLob } from '../shared/ground.js';
+import { stepWave } from '../shared/plates.js';
+// A mirror's barrel. fire() returns nothing at all for one now — see the gate at the
+// top of it — so the shared bench below has to pull the same trigger the server does,
+// or every measurement in this file reads a Thresher that never shot back.
+import { throwShards, shardCount, shardFan, shardSlots, shardsOf } from '../shared/shards.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { HULLS, resolve, DEFAULT_HULL } from '../shared/ships.js';
 import { BOOST } from '../shared/power.js';
@@ -53,6 +67,9 @@ const full = s => s.stats.hull + s.stats.shield;
 function fight(a, p, secs, { playerFires = false, drive = null, hold = null, immortal = false, route = null } = {}) {
   let t = 0, everTargeted = false, air = [], fired = 0;
   let took = 0, biggest = 0, peak = 0, mirrored = 0, lowest = Infinity;
+  // The biggest WALL, and how many splinters were in it. `biggest` is one hit; these two
+  // are the volley, and after the conversion the volley is what a pilot actually feels.
+  let volley = 0, shards = 0;
   while (t < secs && a.hp > 0 && p.hp > 0) {
     if (drive) drive(p, t);
     if (route) p.power.to = route;
@@ -62,7 +79,23 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
     faceTarget(a, tgt ? p : null);
     peak = Math.max(peak, stepMirror(a, dt));
     const base = a.def?.attrs?.damage ?? 0;
-    for (const s1 of fire(a, tgt ? p : null, dt)) { air.push(s1); fired++; mirrored += Math.max(0, s1.dmg - base); }
+    // Both triggers, because a hostile has exactly one and which function owns it is a
+    // property of the definition. fire() is gated off for anything whose barrel became
+    // something else and throwShards returns nothing for everything else, so calling
+    // both is one trigger and not two — and it is the same pair server.js pulls, in the
+    // same order. A bench that called only fire() measured a Thresher that never shot
+    // back and read every line of play as a win.
+    //
+    // `volley` is what the WALL carries, summed over the splinters that left together on
+    // one tick, and it is measured here rather than off the hits because the claim is
+    // about what the chamber threw. `mirrored` counts the same points and is what the
+    // identity is read off; splitting a payload seven ways cannot move it, which is the
+    // whole reason the conversion is a split rather than an addition.
+    const spat = [...fire(a, tgt ? p : null, dt), ...throwShards(a, tgt ? p : null, dt, BOLT_SPEED)];
+    let wall = 0;
+    for (const s1 of spat) { air.push(s1); fired++; wall += s1.dmg; mirrored += Math.max(0, s1.dmg - base / Math.max(1, spat.length)); }
+    volley = Math.max(volley, wall);
+    shards = Math.max(shards, spat.length);
     if (playerFires && !(hold && hold(t))) {
       faceTarget(p, a);
       const volley = fire(p, a, dt);
@@ -85,7 +118,7 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
     lowest = Math.min(lowest, Math.max(0, p.hp) + Math.max(0, p.shield));
     t += dt;
   }
-  return { t, everTargeted, fired, took, biggest, peak, mirrored, lowest,
+  return { t, everTargeted, fired, took, biggest, peak, mirrored, lowest, volley, shards,
            won: a.hp <= 0, died: p.hp <= 0 };
 }
 
@@ -535,6 +568,114 @@ const onRung = k => {
     for (let i = 0; i < 30 * secs; i++) if (broodReady(a2, 1 / 30)) n++;
     return Math.abs(n - want) <= 1;
   })(), `first at ${ALIENS.hive.broods.first}s, then every ${ALIENS.hive.broods.every}s`);
+
+  // --- AND THE POD, which is what its barrel became -----------------------------
+  //
+  // A mothership had two things with nothing to do with each other: a 110 dps aimed
+  // bolt beneath notice next to twelve raiders, and a hatch that produced a Bandit
+  // 300px off its own flank on a clock nobody could see. Both are one act now — a slow
+  // pod carries the whole of the gun's damage to where it lands and cracks open there,
+  // so dodging it decides WHERE the raider comes out and not only whether you were hit.
+  // See shared/brood.js.
+  //
+  // Everything below is measured through the real loop, in server.js's order.
+  //
+  // THE EDIT THAT MADE IT ONE CLOCK, pinned here so a change to the cadence that forgot
+  // the gun fails with a number rather than halving the hostile in silence. The gun was
+  // 220 x 0.5 and is 550 x 0.2: the same 110 dps to the decimal, because every reader of
+  // that table takes the product.
+  check('a mothership fires exactly as often as it broods, because they are the same act',
+    Math.abs(H.attrs.fireRate - 1 / H.broods.every) < 1e-12 &&
+    Math.abs(H.attrs.damage * H.attrs.fireRate - 110) < 1e-9,
+    `${H.attrs.damage} x ${H.attrs.fireRate} = ${(H.attrs.damage * H.attrs.fireRate).toFixed(0)} dps on a ` +
+    `${H.broods.every}s cadence — it was 220 x 0.5, which is the same number and a different clock`);
+
+  // One tick of a mothership, in server.js's order, against one pilot flying `plan`.
+  // Returns the ledger: what the pods delivered, how many hatched, where they hatched,
+  // and the high-water mark of the brood.
+  const hiveRun = (plan, secs = 120) => {
+    const m = MAPS.g1;
+    const a = newAlien('hive', 2_000_000, m, 5, { x: 6000, y: 4000 });
+    a.post = null; a.vx = a.vy = 0;
+    const b = buildFor('finished');
+    const p = newShip(6000 + 700, 4000, b.hull, b.fit, b.drones ?? []);
+    p.vx = p.vy = 0;
+    a.provoked.add(1); a.target = 1;
+    let t = 0, took = 0, thrown = 0, laden = 0, hatched = 0, most = 0, near = Infinity, tight = Infinity;
+    const brood = [];
+    while (t < secs) {
+      plan(p, t, a);
+      const here = [{ id: 1, ship: p, haven: false, loud: 1 }];
+      stepAlienAI(a, m, here, dt);
+      // The register the server rebuilds every tick from the sector's own list. Nothing
+      // kills the escorts in this bench, so it only ever grows — which is the worst case
+      // for the one claim that matters.
+      a.brood = brood.slice();
+      step(a, dt); step(p, dt); stepVitals(a, dt); stepVitals(p, dt);
+      const room = a.brood.length < H.broods.max;
+      const before = !!a.podAt;
+      const drop = stepPod(a, p, true, room, dt);
+      if (!before && a.podAt) { thrown++; if (a.podLaden) laden++; }
+      if (drop) {
+        if (podHit(drop.at, p)) took += drop.dmg;
+        if (drop.laden && brood.length < H.broods.max) {
+          const born = hatchAt(a, drop.at);
+          brood.push(brood.length + 1);
+          hatched++;
+          near = Math.min(near, Math.hypot(born.x - p.x, born.y - p.y));
+          tight = Math.min(tight, Math.hypot(born.x - a.x, born.y - a.y));
+        }
+        most = Math.max(most, brood.length);
+      }
+      p.hp = p.stats.hull; p.shield = p.stats.shield;      // an immortal reader
+      t += dt;
+    }
+    return { took, dps: took / secs, thrown, laden, hatched, most, near, tight };
+  };
+  const park = p => { p.dx = p.dy = null; };
+  // Circles at the range it is standing at, which is the turn that beats a solved
+  // intercept everywhere else in this game and beats this one too.
+  const turn = (p, t, a) => { const dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy) || 1;
+                              p.tx = p.ty = null; p.dx = -dy / d; p.dy = dx / d; };
+  const still = hiveRun(park), moving = hiveRun(turn);
+  console.log(`     pods: parked took ${still.dps.toFixed(1)} dps of a book ${(H.attrs.damage * H.attrs.fireRate).toFixed(0)}, ` +
+    `${still.hatched} raiders hatched of ${still.thrown} thrown; circling took ${moving.dps.toFixed(1)} and the ` +
+    `nearest raider came out ${Math.round(moving.near)}px away against ${Math.round(still.near)}px`);
+  check('a pod delivers the whole of the gun to a pilot who never moved',
+    still.dps > H.attrs.damage * H.attrs.fireRate * 0.95 &&
+    still.thrown === Math.round(120 / H.broods.every),
+    `${still.dps.toFixed(1)} dps against a book of ${(H.attrs.damage * H.attrs.fireRate).toFixed(0)}, from ` +
+    `${still.thrown} pods in 120s — exactly one a cadence, each carrying the whole of it. The missing 4% is ` +
+    'the pod still in the air when the window closed, and it is why this is a floor rather than an equality');
+  // A CADENCE CANNOT BE LOST TO A POD ALREADY IN THE AIR, and it is arithmetic rather
+  // than luck. The clock ticks through the flight — see stepPod, where putting it behind
+  // the in-flight return made the real cadence `every + flight` and read 73.3 dps
+  // against a book of 110 — but a launch would still be dropped if a flight could
+  // outlast a cadence, so the inequality is pinned here.
+  check('and a pod can never still be in the air when the next one is due',
+    H.attrs.weaponRange / POD_SPEED < H.broods.every,
+    `the longest possible throw is ${H.attrs.weaponRange} / ${POD_SPEED} = ` +
+    `${(H.attrs.weaponRange / POD_SPEED).toFixed(2)}s against a ${H.broods.every}s cadence — a faster ` +
+    'mothership or a slower pod fails here instead of silently dropping launches');
+  check('and dodging it puts the raider somewhere else rather than on top of you',
+    moving.dps < still.dps * 0.5 && moving.near > still.near * 1.5,
+    `${moving.dps.toFixed(1)} dps circling against ${still.dps.toFixed(1)} parked, and the nearest raider ` +
+    `hatched ${Math.round(moving.near)}px off instead of ${Math.round(still.near)}px — the dodge is the ` +
+    'positioning, which is the whole reason the gun and the hatch are one act');
+  // THE ONE THAT MUST NEVER GO GREEN BY ACCIDENT. A pod is thrown on the clock whether
+  // or not there is room, because a gun that stopped once the escorts were out would be
+  // a hostile at a fraction of the dps its own table claims — so the cap has to be
+  // enforced on the HATCH and nowhere else, and this is the claim that says it is.
+  check('and it can never produce more raiders than the mothership is allowed',
+    still.most <= H.broods.max && moving.most <= H.broods.max &&
+    still.thrown > still.laden && still.hatched === H.broods.max,
+    `${still.hatched} raiders of ${still.thrown} pods thrown over 120s — ${still.thrown - still.laden} of them ` +
+    `were empty ordnance because the brood was full, and the ceiling is ${H.broods.max}`);
+  check('and nothing hatches inside its own mother',
+    still.tight >= BROOD_R - 1e-6 && moving.tight >= BROOD_R - 1e-6,
+    `nearest hatch ${Math.round(Math.min(still.tight, moving.tight))}px from the hull against a ${BROOD_R}px ` +
+    'floor — the pod itself is not floored, so the damage still lands where it lands and a pilot hugging ' +
+    'the hull is hit exactly as hard as one standing off');
 }
 
 // --- restricted space --------------------------------------------------------
@@ -658,6 +799,45 @@ console.log('\ntargeting');
     check('but a graze does not', run(b, [held, gun], THREAT_HOLD + 0.5) === 1,
       'it has to be a lot more damage, not a bit more');
   }
+}
+
+// THE MUZZLE FLASH, and it is a bug this file exists to stop coming back.
+//
+// `a.shotFlash` counts down in exactly one place per weapon, and combat.js's copy of
+// that line sits BELOW the gate at the top of fire() that sends a hostile whose barrel
+// became something else straight home. So every hostile that stopped firing bolts held
+// a full flash FOR EVER: an Ironhusk and a Leviathan glowed continuously from the day
+// orbs landed, at every range, whether or not they had anybody, and nothing threw.
+// stepLob named it in a comment and fixed its own two; the pair it could not reach were
+// in a file it did not own.
+//
+// It is asserted over the WHOLE bestiary rather than over the four that have it,
+// because the failure mode is "somebody adds a sixth weapon and forgets the line" and a
+// test that names the hostiles it knows about cannot catch that. Each one is stepped
+// through its own trigger with nothing to shoot at, which is the state the bug lives in.
+{
+  const glow = k => {
+    const a = newAlien(k, 3_000_000, map, 7, { x: 6000, y: 4000 });
+    a.shotFlash = 1;                       // as if it had just fired
+    for (let i = 0; i < 30; i++) {
+      // Every trigger in the game, in server.js's order. All but one return immediately
+      // for any given hostile — which is the point: the one that does not is the one
+      // that owns this hostile's clock, and it is the one that has to decay the glow.
+      fire(a, null, dt);
+      throwOrbs(a, null, dt);
+      throwShards(a, null, dt, BOLT_SPEED);
+      stepSweep(a, null, dt);
+      stepLob(a, null, false, dt);
+      stepWave(a, null, dt);
+      stepPod(a, null, false, false, dt);
+    }
+    return a.shotFlash;
+  };
+  const stuck = WILD.filter(k => glow(k) > 0.001);
+  check('no hostile in the game holds a muzzle flash for ever',
+    stuck.length === 0,
+    `all ${WILD.length} of them fade a full flash inside a second with nothing to shoot at` +
+    (stuck.length ? ` — stuck: ${stuck.join(', ')}` : ''));
 }
 
 // Each hostile is its own silhouette. They were all one arrowhead at different
@@ -833,17 +1013,55 @@ console.log('\nthe mirror');
     (() => { const a = mirror(0, 0); storeHit(a, soakOf(T) * 40); return a.load === 1; })(),
     `a full chamber throws ${f(payloadOf(T, 1))} and no gun, party or ammunition grade can raise it — ` +
     'it used to be exactly your own dps, with no ceiling at all');
+  // Same claim, new trigger: the barrel is throwShards now and fire() returns nothing
+  // at all for a mirror — see the gate at the top of it. What is being asserted has not
+  // moved a millimetre.
   check('firing no longer empties it: the chamber is a charge, not a magazine',
     (() => {
       const a = mirror(0, 0);
       storeHit(a, soakOf(T));
       const before = a.load;
-      const spat = fire(a, Object.assign(newShip(300, 0, 'bulwark'), { vx: 0, vy: 0 }), 1 / 30);
+      const spat = throwShards(a, Object.assign(newShip(300, 0, 'bulwark'), { vx: 0, vy: 0 }), 1 / 30, BOLT_SPEED);
       stepMirror(a, 1 / 30);
       return spat.length > 0 && a.load > before * 0.9;
     })(),
     'a load that vanished the instant a shot left could never be watched falling, ' +
     'and watching it fall is the only way a pilot learns to stop shooting');
+  // --- and what it comes back AS ----------------------------------------------
+  //
+  // These three are the conversion. The chamber is unchanged and every claim above it
+  // still holds; what is new is that the charge is a SHAPE on the way to you rather
+  // than a number that arrives with you.
+  check('an empty chamber is one splinter and a full one is a wall of seven',
+    shardCount(T, 0) === 1 && shardCount(T, 1) === shardsOf(T).n &&
+    shardCount(T, 0.5) > 1 && shardCount(T, 0.5) < shardsOf(T).n &&
+    shardFan(T, 0) === 0 && shardFan(T, 1) === shardsOf(T).fan,
+    `${[0, 0.25, 0.5, 0.75, 1].map(l => `${(l * 100) | 0}% -> ${shardCount(T, l)}`).join(', ')} splinters, ` +
+    `over ${(2 * shardFan(T, 1) * T.attrs.weaponRange * 0.7).toFixed(0)}px at the range it fights from. ` +
+    'The count IS the meter, and it is the thing you can see get smaller when you stop shooting');
+  // The width is DERIVED from the one thing that must not move, and this is where the
+  // two ends are pinned together — shards.js writes the number down rather than
+  // importing HIT_R, because combat.js imports shards.js and reaching back is a cycle.
+  // That is SHOP_DPS's arrangement exactly, and this is SHOP_DPS's test.
+  check('the wall is exactly one slack radius wide, so a pilot who never moved still takes all of it',
+    Math.abs(shardsOf(T).fan - HIT_R / (T.attrs.weaponRange * 0.7)) < 1e-9 &&
+    shardSlots(T, 1).every(off => Math.abs(off) * T.attrs.weaponRange * 0.7 <= HIT_R + 1e-9),
+    `${shardsOf(T).fan.toFixed(6)} rad is ${HIT_R} / ${(T.attrs.weaponRange * 0.7).toFixed(0)} to nine places — ` +
+    `the outermost splinter's aim point is ${(shardFan(T, 1) * T.attrs.weaponRange * 0.7).toFixed(0)}px off ` +
+    `centre and a bolt lands within ${HIT_R} of its own, so every hull in the game is inside all ` +
+    `${shardsOf(T).n} discs at once`);
+  // And the half that is not free. A single bolt is all-or-nothing at one slack radius;
+  // a wall degrades from there, so a weave that half clears it half lands.
+  check('but clearing the whole wall asks for nearly twice the room clearing one bolt did',
+    (() => {
+      const d = T.attrs.weaponRange * 0.7, r = 17;             // the hull that fights it
+      const one = HIT_R + r;
+      const all = HIT_R + r + shardFan(T, 1) * d;
+      return all > one * 1.6 && Math.abs(all - (one + HIT_R)) < 1e-9;
+    })(),
+    `${HIT_R + 17}px clears one bolt; ${(HIT_R + 17 + shardFan(T, 1) * T.attrs.weaponRange * 0.7).toFixed(0)}px ` +
+    'clears a full wall, and everything between the two takes a share. That is the chamber making the ' +
+    'DODGE harder as it fills rather than only the hit bigger, which is what a meter alone could never say');
   check('breaking off for one second halves what the next bolt carries',
     (() => {
       const a = mirror(0, 0);
@@ -917,7 +1135,7 @@ console.log('\nthe mirror');
   for (const [k, v] of Object.entries(runs))
     console.log(`     ${k.padEnd(14)} ${(v.r.won ? 'killed it' : v.r.died ? 'DIED' : 'timeout').padEnd(10)}` +
       ` ${v.r.t.toFixed(1).padStart(6)}s  worst ${f(Math.max(0, v.r.lowest)).padStart(7)} of ${f(v.full).padStart(7)}` +
-      `  biggest ${f(v.r.biggest).padStart(6)}  chamber peaked ${(100 * v.r.peak).toFixed(0)}%`);
+      `  wall ${f(v.r.volley).padStart(6)} x${String(v.r.shards).padStart(2)}  chamber peaked ${(100 * v.r.peak).toFixed(0)}%`);
 
   // This used to read "one bolt is no longer most of your ship", at 855 into 7,050.
   // It is most of your ship again, and it is supposed to be — the complaint that
@@ -932,13 +1150,23 @@ console.log('\nthe mirror');
   // the ship it lands on got bigger. 57% of a finished ship became 46%. The claim is
   // the pair, not the number: a bolt that is a large share of the ship, and a bolt
   // that came out of the pilot rather than out of the hostile.
-  check('one bolt is most of your ship, and it is the bolt you loaded',
-    runs.stand.r.biggest > runs.stand.full * 0.4 &&
-    runs.stand.r.biggest <= payloadOf(T, 1) &&
-    runs.cruiser.r.biggest < runs.stand.r.biggest * 0.7,
-    `${f(runs.stand.r.biggest)} into a finished Bulwark's ${f(runs.stand.full)} — ` +
-    `${(100 * runs.stand.r.biggest / runs.stand.full).toFixed(0)}% of it, under the ${f(payloadOf(T, 1))} ceiling. ` +
-    `The same Thresher throws ${f(runs.cruiser.r.biggest)} at a cruiser, because a cruiser loaded it less`);
+  // This has now read three things and the third is the conversion rather than a
+  // rebalance. It was "one bolt is no longer most of your ship" at 855 into 7,050; then
+  // "one bolt is most of your ship, and it is the bolt you loaded" when the ceiling
+  // moved to the shop. The chamber comes back as a WALL now, so the unit is the VOLLEY
+  // — seven splinters arriving together — and the claim is the pair it always was: a
+  // volley that is a large share of the ship, and a volley that came out of the pilot.
+  // `biggest` is one splinter of it and is deliberately not what this rests on; a claim
+  // built on the size of one seventh would have to be rewritten again the day the count
+  // moves.
+  check('one volley is most of your ship, and it is the wall you loaded',
+    runs.stand.r.volley > runs.stand.full * 0.4 &&
+    runs.stand.r.volley <= payloadOf(T, 1) &&
+    runs.cruiser.r.volley < runs.stand.r.volley * 0.7,
+    `${f(runs.stand.r.volley)} in ${runs.stand.r.shards} splinters into a finished Bulwark's ` +
+    `${f(runs.stand.full)} — ${(100 * runs.stand.r.volley / runs.stand.full).toFixed(0)}% of it, under the ` +
+    `${f(payloadOf(T, 1))} ceiling. The same Thresher throws ${f(runs.cruiser.r.volley)} in ` +
+    `${runs.cruiser.r.shards} at a cruiser, because a cruiser loaded it less`);
   check('standing still in front of one is still what kills you',
     runs.stand.r.died && !runs.stand.r.won,
     `dead in ${runs.stand.r.t.toFixed(1)}s with a finished ship and no research — ` +
@@ -977,11 +1205,17 @@ console.log('\nthe mirror');
   // at 800 dmg back, make it like 10k". So pin what a pilot SEES, not what the
   // algebra allows — those are different, and quoting the second one is how a
   // 4,312 shipped believing it was a 10,191.
-  check('and the biggest number a pilot ever sees off one is near ten thousand',
-    runs.stand8.r.biggest > 9000 && runs.stand8.r.biggest <= payloadOf(T, 1),
-    `${f(runs.stand8.r.biggest)} on the screen, against a ${f(payloadOf(T, 1))} ceiling and the ` +
-    `${f(80 + MIRROR.dps * Math.min(1, stageDps('finished') / (soakOf(T) * Math.LN2)))} the equilibrium predicts. ` +
-    'It was 855, and it read 4,312 on a bench whose pilot never routed power');
+  // The complaint this whole line of work answers, as a number: "he seems to cap out at
+  // 800 dmg back, make it like 10k". It is still ten thousand and it still arrives all
+  // at once — what changed is that it arrives as a wall rather than as a single number,
+  // so the claim is on the VOLLEY and the splinter count is printed beside it. Quoting
+  // one splinter here would say 1,700 and be a lie about what a pilot takes.
+  check('and the biggest wall a pilot ever eats off one is near ten thousand',
+    runs.stand8.r.volley > 9000 && runs.stand8.r.volley <= payloadOf(T, 1) &&
+    runs.stand8.r.shards > 1,
+    `${f(runs.stand8.r.volley)} in ${runs.stand8.r.shards} splinters, against a ${f(payloadOf(T, 1))} ceiling ` +
+    `and the ${f(80 + MIRROR.dps * Math.min(1, stageDps('finished') / (soakOf(T) * Math.LN2)))} the ` +
+    'equilibrium predicts. It was 855, and it read 4,312 on a bench whose pilot never routed power');
   // The discovery that made the number above make sense, kept as a claim because it
   // cost a revision. A pilot who leaves the reactor idle delivers a little over half
   // the gun the shop sold them, so the chamber they load is half the size — and yet
@@ -989,12 +1223,15 @@ console.log('\nthe mirror');
   // reactor is free against a mirror. It buys you a shorter, louder fight.
   check('the reactor is most of your gun, and against a mirror it is free',
     runs['cold reactor'].r.peak < runs.stand8.r.peak * 0.75 &&
-    runs['cold reactor'].r.biggest < runs.stand8.r.biggest * 0.75 &&
+    runs['cold reactor'].r.volley < runs.stand8.r.volley * 0.75 &&
+    runs['cold reactor'].r.shards < runs.stand8.r.shards &&
     runs['cold reactor'].r.t > runs.stand8.r.t,
-    `reactor idle: the chamber peaks ${(100 * runs['cold reactor'].r.peak).toFixed(0)}% and the bolt is ` +
-    `${f(runs['cold reactor'].r.biggest)}, against ${(100 * runs.stand8.r.peak).toFixed(0)}% and ` +
-    `${f(runs.stand8.r.biggest)} with it on — over a fight ${runs['cold reactor'].r.t.toFixed(1)}s long instead of ` +
-    `${runs.stand8.r.t.toFixed(1)}s. It is not that a Thresher dodges: 97% of what you fire reaches it`);
+    `reactor idle: the chamber peaks ${(100 * runs['cold reactor'].r.peak).toFixed(0)}% and the wall is ` +
+    `${f(runs['cold reactor'].r.volley)} in ${runs['cold reactor'].r.shards} splinters, against ` +
+    `${(100 * runs.stand8.r.peak).toFixed(0)}% and ${f(runs.stand8.r.volley)} in ${runs.stand8.r.shards} with ` +
+    `it on — over a fight ${runs['cold reactor'].r.t.toFixed(1)}s long instead of ` +
+    `${runs.stand8.r.t.toFixed(1)}s. It is not that a Thresher dodges: 97% of what you fire reaches it. ` +
+    'A splinter is BIGGER at a cold chamber, which is why this reads the volley and not one hit');
   // Holding fire is the disengage the fiction offers and it is measurably worth
   // nothing on its own, which is not a bug — it falls straight out of the identity
   // below. The total returned over a whole fight does not depend on your dps, so
