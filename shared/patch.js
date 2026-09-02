@@ -8,15 +8,26 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.95';
+export const VERSION = '0.97';
 
 export const PATCHES = [
-  { v: '0.95', notes: [
+  { v: '0.97', notes: [
     'The Kedge stopped shooting. It swings a lance on a line at whatever range you hold',
     'Change your RANGE to duck it — and its fix drags you back to the range you left',
     'A Thresher throws its chamber back as a WALL of splinters, wide as the meter is full',
     'The Corsair Hive stopped shooting too: its gun is the pod it launches Bandits in',
     'Dodge the pod and the raider hatches where it lands, not on top of you',
+  ] },
+  { v: '0.96', notes: [
+    'Ships glide instead of stepping — the better your monitor, the worse this used to be',
+    'A hull is drawn where it has flown to, so a late packet is coasted through, not stuck on',
+    'The game now draws 60 frames a second and no more; a fast screen just stops wasting them',
+    'The menu times the DRAW, not the wait — it could not tell a 1ms frame from a 15ms one',
+  ] },
+  { v: '0.95', notes: [
+    'A once-a-second hitch is gone — the world no longer waits on the disk to save',
+    'Owning a mine set it off every second, so the stutter followed you everywhere',
+    'Your account is written just as often; the game simply stops waiting for it',
   ] },
   { v: '0.94', notes: [
     'Crucibles and Doldrums stopped shooting. They LOB their ground at you instead',

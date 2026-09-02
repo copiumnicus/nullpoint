@@ -77,7 +77,9 @@ import { readActive, setActive, readRoster, writeRoster, entry,
 import { vitalsPanel, shieldCountdown, WAIT_PX } from '/shared/vitals.js';
 import { newTrack, trackHull, critical, banner as alarmBanner, slot as alarmSlot,
          wash as alarmWash, beatAt } from '/shared/alarm.js';
-import { sampler, push as pushSample, frameLine, pingLine, GRADE } from '/shared/perf.js';
+import { sampler, push as pushSample, stats as perfStats, frameLine, pingLine, GRADE,
+         drawEvery } from '/shared/perf.js';
+import { chase } from '/shared/smooth.js';
 import { fmtPlayed } from '/shared/playtime.js';
 import { nameProblem, cleanName, NAME_MAX, NAME_MIN } from '/shared/signup.js';
 import { joinLayout as joinPanel } from '/shared/join.js';
@@ -1576,6 +1578,12 @@ ws.onmessage = e => {
     const n = unpackShip(raw);
     seen.add(n.id);
     const s = ships.get(n.id) ?? { rx: n.x, ry: n.y };
+    // Where it was one tick ago. The wire has never carried a velocity and does
+    // not need to: the tick is a known 33.3ms, so the difference between two
+    // snapshots IS the velocity, and shared/smooth.js flies the ship forward on
+    // it between them. Read BEFORE the assign, obviously, and off `s` rather than
+    // `n` so a ship being seen for the first time has no phantom motion.
+    s.px = s.x ?? n.x; s.py = s.y ?? n.y;
     Object.assign(s, n);
     ships.set(n.id, s);
   }
@@ -3553,7 +3561,7 @@ function drawSettings() {
   // one is not the fix for the other. Coloured against the server tick, so "good"
   // means good relative to the only clock the game actually runs on.
   for (const row of (L.perf ?? [])) {
-    const line = row.key === 'frame' ? frameLine(frameSamples) : pingLine(pingSamples);
+    const line = row.key === 'frame' ? frameLine(frameSamples, rateSamples) : pingLine(pingSamples);
     g.font = '12px ui-monospace, monospace'; g.fillStyle = '#8ea3bd';
     g.fillText(row.label, row.r.x + 20, row.r.y + 21);
     g.textAlign = 'right';
@@ -4127,19 +4135,46 @@ function drawBar() {
 
 // --- render -------------------------------------------------------------------
 let renderFailed = false;
-// How long a frame took, and how long the server takes to answer. Sampled always
-// rather than only while the menu is open: a readout that starts measuring when
-// you look at it can only ever show you the frames you spent opening a menu.
-const frameSamples = sampler(), pingSamples = sampler();
+// What a draw COSTS, how far apart the drawn frames landed, and how long the
+// server takes to answer. Sampled always rather than only while the menu is open:
+// a readout that starts measuring when you look at it can only ever show you the
+// frames you spent opening a menu.
+//
+// Cost and rate are two samplers because they are two facts. This used to be one,
+// taken off the gap between requestAnimationFrame timestamps, and a machine
+// holding vsync reads 16.7ms there whether the draw took 1ms or 15 — so the
+// number that exists to say "your machine is struggling" could not say it.
+const frameSamples = sampler(), rateSamples = sampler(), pingSamples = sampler();
 let lastPingAt = 0;
 const PING_EVERY = 1000;                            // once a second is plenty for a median
 
+// The frame cap. The display's own cadence is measured off the RAW callbacks —
+// every one of them, including the ones we skip — so the measurement cannot chase
+// its own tail; shared/perf.js turns it into how many refreshes go by per draw.
+// Recomputed a couple of times a second rather than per frame, because stats()
+// sorts, and a performance readout that allocates every frame is the joke that
+// tells itself.
+const rawSamples = sampler(30);
+let lastRawAt = 0, rawSeen = 0, everyNth = 1;
+
 requestAnimationFrame(function frame(now) {
+  requestAnimationFrame(frame);                     // keep asking, whatever we do with this one
+  // Outside the cap: a heartbeat is not a picture, and the ping readout should
+  // not go stale because the monitor is fast.
   if (now - lastPingAt > PING_EVERY) { lastPingAt = now; send({ t: 'ping', at: now }); }
+  if (lastRawAt && now > lastRawAt) pushSample(rawSamples, now - lastRawAt);
+  lastRawAt = now;
+  if (++rawSeen % 30 === 0) everyNth = drawEvery(perfStats(rawSamples)?.typical);
+  // Skip by COUNTING refreshes rather than by watching a clock — see drawEvery.
+  // Inert under test by construction: test/render.mjs steps frames 16ms apart,
+  // which is 62.5fps, and 62.5 does not divide by 60, so everyNth is 1 and every
+  // frame it drives is drawn.
+  if (everyNth > 1 && rawSeen % everyNth) return;
+  const began = performance.now();
   try { drawFrame(now); } catch (err) {
     if (!renderFailed) { renderFailed = true; console.error('render error (loop kept alive):', err); }
   }
-  requestAnimationFrame(frame);
+  pushSample(frameSamples, performance.now() - began);
 });
 
 function drawFrame(now) {
@@ -4153,9 +4188,10 @@ function drawFrame(now) {
 
   // Thruster tracks how fast you are actually going, measured off the smoothed
   // render position — the server never sends velocity and does not need to.
-  // Sampled here, off the delta the renderer already computes — timing the frame
-  // in two places is two answers waiting to disagree.
-  if (lastFrameAt) pushSample(frameSamples, now - lastFrameAt);
+  // The gap since the last DRAWN frame, taken here off the delta the renderer
+  // already computes — measuring it twice is two answers waiting to disagree.
+  // What a draw costs is a different number and is timed around the call above.
+  if (lastFrameAt) pushSample(rateSamples, now - lastFrameAt);
   const frameDt = Math.min(0.1, (now - lastFrameAt) / 1000) || 0.016;
   lastFrameAt = now;
   if (me) {
@@ -4176,7 +4212,13 @@ function drawFrame(now) {
   if (me && !dead) trackHull(hullTrack, st.hull * (me.hp ?? 100) / 100, st.hull, frameDt);
   else hullTrack = newTrack();
 
-  for (const s of ships.values()) { s.rx += (s.x - s.rx) * 0.35; s.ry += (s.y - s.ry) * 0.35; }
+  // Every hull moves toward where the server says it is by shared/smooth.js, off
+  // ELAPSED TIME and aimed at where the ship has flown to since the snapshot —
+  // not by a fixed fraction of the gap per frame, which was five times stiffer on
+  // a 144Hz screen than on a 30Hz one and made the whole camera judder on the
+  // better monitor. `now - snapAt` is the same age the rockets fly forward on.
+  const since = now - snapAt;
+  for (const s of ships.values()) chase(s, frameDt, since);
   // The camera is held inside THIS SECTOR's bounds, which is the galaxy's rectangle
   // plus the drift margin everywhere except a duel arena — a quarter the size, with
   // a hard edge. boundsOf() is what the server clamps a course with, so the frame
