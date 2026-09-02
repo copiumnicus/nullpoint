@@ -12,8 +12,10 @@ import { newShip, step, stepVitals, stepDrift, applyDamage, inBase, inHaven, HAV
 import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat.js';
 // Every other trigger in the game, for the muzzle-flash claim below: a hostile whose
 // barrel became something else never calls fire(), so the line that fades the glow has
-// to live in whichever of these owns its clock.
-import { throwOrbs } from '../shared/orbs.js';
+// to live in whichever of these owns its clock. stepOrbs comes with throwOrbs because
+// three of the lowest rungs throw a pattern too and a bench that never settled one
+// read a Drifter as harmless.
+import { throwOrbs, stepOrbs } from '../shared/orbs.js';
 import { stepSweep } from '../shared/sweep.js';
 import { stepLob } from '../shared/ground.js';
 import { stepWave } from '../shared/plates.js';
@@ -64,8 +66,14 @@ const full = s => s.stats.hull + s.stats.shield;
 // 6,450 of a finished Bulwark's 11,307 and holds the chamber at 49% where a real
 // one holds it at 91%. That gap was read as "a Thresher dodges a third of your
 // fire" for a whole revision. It does not — 97% of what you fire reaches it.
+//
+// AND ORBS, because half the bestiary throws a pattern instead of a bolt now and a
+// harness that only stepped bolts read every one of them as harmless. It cost this
+// file ten failures in one edit — "in the open, inside aggro range, it engages" was
+// asserting on damage taken from a Drifter that no longer has a barrel. server.js
+// calls fire() and throwOrbs() in the same tick and settles both; so does this.
 function fight(a, p, secs, { playerFires = false, drive = null, hold = null, immortal = false, route = null } = {}) {
-  let t = 0, everTargeted = false, air = [], fired = 0;
+  let t = 0, everTargeted = false, air = [], balls = [], fired = 0;
   let took = 0, biggest = 0, peak = 0, mirrored = 0, lowest = Infinity;
   // The biggest WALL, and how many splinters were in it. `biggest` is one hit; these two
   // are the volley, and after the conversion the volley is what a pilot actually feels.
@@ -96,6 +104,10 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
     for (const s1 of spat) { air.push(s1); fired++; wall += s1.dmg; mirrored += Math.max(0, s1.dmg - base / Math.max(1, spat.length)); }
     volley = Math.max(volley, wall);
     shards = Math.max(shards, spat.length);
+    // And the third trigger, which is a pattern of slow bodies rather than a volley of
+    // lines. Same rule as the two above: fire() is gated off for anything that throws
+    // one, so this is that hostile's ONE trigger and not an extra.
+    for (const ob of throwOrbs(a, tgt ? p : null, dt)) { balls.push(ob); fired++; }
     if (playerFires && !(hold && hold(t))) {
       faceTarget(p, a);
       const volley = fire(p, a, dt);
@@ -105,6 +117,13 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
       const n = h.split.shield + h.split.hull;
       if (h.target === a) storeHit(a, n);
       else { took += n; biggest = Math.max(biggest, n); }
+    }
+    // An orb has no target — it hits whatever it passes through — so the candidate
+    // list is the pilot and nothing else, exactly as it is in server.js where `here`
+    // is the players in the sector. Nothing of ours can be hit by one.
+    for (const h of stepOrbs(balls, [{ id: 1, ship: p }], dt)) {
+      const n = h.split.shield + h.split.hull;
+      took += n; biggest = Math.max(biggest, n);
     }
     // AFTER the damage is applied, not before it. Restoring at the top of the tick
     // leaves the loop condition to see a pilot one bolt below zero, so the reader
@@ -335,12 +354,31 @@ console.log('\nbreaking off when it is losing');
   check('it never repairs mid-fight', engaged.hp === engaged.stats.hull * 0.1);
 }
 
-console.log('\ndodging');
+console.log('\ndodging a bolt');
+// THESE ARE CLAIMS ABOUT A BOLT, AND THE PILOT NOW OWNS THE LAST ONE.
+//
+// They were flown against a Drifter, because a Drifter was the cheapest bolt in the
+// game. Then against a Kedge, because a Drifter had been given a slow ball and a Kedge
+// was the plainest barrel still standing. There is no barrel still standing: every one
+// of the thirteen has been converted, and `fire()` returns an empty array for all of
+// them. The only ship in the game that shoots a bolt is the one you are flying.
+//
+// So the shooter here is a bare Vanguard and the target is a Kestrel, and not one of
+// the six assertions moved — a bolt is still aimed where you WILL be, still lands on
+// anybody holding a course, and is still dodged by changing one, and it still gets
+// easier to dodge the further out it is fired from. That was always a claim about
+// stepBolts rather than about whoever pulled the trigger, and now it is measured on
+// the trigger that is left.
+//
+// What the hostiles do instead is measured where each of them lives: test/orbs.mjs for
+// the five that throw a pattern, and the sweep, shard, lob and wave files for the rest.
 {
+  const gun = (x, y) => { const g = newShip(x, y, 'vanguard'); g.vx = g.vy = 0; return g; };
   const shotAt = (setup) => {                       // one bolt, resolved honestly
-    const a = foe(6000, 4000, 2); a.vx = a.vy = 0;
+    const a = gun(6000, 4000);
     const p = newShip(6400, 4000, 'kestrel');
     setup.aim(p);
+    faceTarget(a, p);
     const air = fire(a, p, dt);
     while (air.length) { setup.fly(p); stepBolts(air, dt); }
     return ehp(p) < full(p);
@@ -354,11 +392,15 @@ console.log('\ndodging');
     'this is the dodge');
 
   const takenOver = (secs, move) => {                // sustained fire, fixed range
-    const a = foe(6000, 4000, 4); a.vx = a.vy = 0; a.target = 1; a.provoked.add(1);
+    const a = gun(6000, 4000);
     const p = newShip(6400, 4000, 'kestrel');
-    const before = ehp(p);
+    p.stats = { ...p.stats, hull: 1e9 }; p.hp = 1e9;   // it is the RATIO that is being
+    const before = ehp(p);                             //   measured, not the hull
     const air = []; let t = 0;
-    while (t < secs) { move(p, t); air.push(...fire(a, p, dt)); stepBolts(air, dt); t += dt; }
+    while (t < secs) {
+      move(p, t); faceTarget(a, p);
+      air.push(...fire(a, p, dt)); stepBolts(air, dt); t += dt;
+    }
     return before - ehp(p);
   };
   const weave = (at) => (p, t) => { p.x = 6000 + at; p.y = 4000 + 150 * Math.sin(t * 3);

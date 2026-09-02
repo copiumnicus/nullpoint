@@ -2623,6 +2623,14 @@ setInterval(() => {
       // jinking away from a wall a Leviathan threw at somebody else, three sectors
       // of raiders dancing around ordnance that cannot touch them. THE SEAM IS HERE:
       // the day a pilot's weapon throws orbs, this is one spread of the same list.
+      //
+      // A CALTROP DOES NOT CHANGE THE ANSWER, and it is worth saying because it is the
+      // first orb in the game that stops. A Bandit's own scatter lies in the space it
+      // is jinking through for a second and a half, and it flies straight over its own
+      // leavings — correctly, because stepOrbs below is handed PILOTS, and nothing a
+      // hostile throws can touch another hostile. It would be ignored here even if it
+      // were in the list: threatBreak divides by the thing's own speed to decide how
+      // soon it arrives, and a parked orb has none.
       const breaking = stepEvade(a, incoming, map, dt);
       // The fix, and it runs BEFORE the hull is stepped rather than after it. That is
       // not tidiness: planting a Kedge means clearing the course stepAlienAI has just

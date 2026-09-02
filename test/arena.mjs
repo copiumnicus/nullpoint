@@ -110,6 +110,18 @@ function makeRoster(key, map, phase = 0) {
 function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
   let t = 0, bolts = [], rockets = [], orbs = [], arcs = [], pyres = [], dealt = 0, taken = 0;
   const pool = poolOf(ship);
+  // THE LOW-WATER MARK, and it is the number "and only just" was always about.
+  //
+  // `over` is the ship at the END, and on a 228-second salvage run that is a reading
+  // of the last thirty seconds rather than of the fight: a finished Bulwark puts back
+  // 3.33% of its pool a second once nothing has touched it for six, so how much is
+  // left says as much about when the last hostile died as about how close the pilot
+  // came. It is the mirror of the flaw test/aliens.mjs names on its own `took`, and it
+  // was found the hard way — converting the Bandit off its laser moved bypass1's `over`
+  // from 9% to 63% while the total damage the field delivered fell 3% and the closest
+  // the pilot came to dying went from 3% to 6%. The fight did not get easier; the
+  // measurement was taken after the ship had healed.
+  let low = Infinity;
   const marks = curve ? Object.keys(curve).map(Number).sort((a, b) => a - b) : [];
   let markAt = 0;
   while (t < limit) {
@@ -213,12 +225,14 @@ function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
         const took = py.dmg * poolOf(ship); applyDamage(ship, took); taken += took;
       }
     }
+    low = Math.min(low, (Math.max(0, ship.hp) + Math.max(0, ship.shield)) / pool);
     t += DT;
   }
   const left = list.filter(a => a.dead <= 0 && a.hp > 0).length;
   const hp = Math.max(0, ship.hp), sh = Math.max(0, ship.shield);
   return { secs: +t.toFixed(1), left, cleared: left === 0 && ship.hp > 0, died: ship.hp <= 0,
-           over: +((hp + sh) / pool).toFixed(3), taken: Math.round(taken), dealt: Math.round(dealt) };
+           over: +((hp + sh) / pool).toFixed(3), low: +Math.max(0, low).toFixed(3),
+           taken: Math.round(taken), dealt: Math.round(dealt) };
 }
 
 // "all in": fly to the middle of the field and hold the trigger on the nearest.
@@ -691,23 +705,31 @@ console.log('\nthe salvage run, six spawn rotations, and the ladder it is the ga
   const ROT = 6;
   for (const key of SALVAGE_MODULES) {
     const map = arenaFor(key), mask = assumedFor(key).mask;
-    let died = 0, cleared = 0, over = 0, secs = 0, inDied = 0;
+    let died = 0, cleared = 0, over = 0, secs = 0, inDied = 0, low = 0;
     const curve = { 5: 0, 15: 0, 30: 0, 60: 0 };
     for (let i = 0; i < ROT; i++) {
       const phase = (i / ROT) * Math.PI * 2;
       const ship = makePilot('finished', mask, -Math.PI / 2 + phase);
       const r = run(map, ship, makeRoster(key, map, phase), stream(map.wreck), { limit: 900, curve });
-      if (r.cleared) { cleared++; over += r.over; secs += r.secs; }
+      if (r.cleared) { cleared++; over += r.over; secs += r.secs; low += r.low; }
       if (r.died) died++;
       const s2 = makePilot('finished', mask, -Math.PI / 2 + phase);
       if (run(map, s2, makeRoster(key, map, phase), allIn(map.wreck), { limit: 900 }).died) inDied++;
     }
     for (const t2 of Object.keys(curve)) curve[t2] = +(curve[t2] / ROT).toFixed(1);
     const left = cleared ? over / cleared : 0, took = cleared ? secs / cleared : 0;
+    // REWRITTEN, and it is the METRIC that moved rather than the claim. This read
+    // `left < 0.4` — the ship at the end — and a 228-second run is long enough that
+    // the end is a reading of the last half-minute: see the note on `low` in run().
+    // Converting the Bandit off its laser took `left` from 9% to 63% while the total
+    // damage the field delivered fell 3% and the deepest the pilot ever got into its
+    // own hull went from 3% to 6%. "And only just" means it nearly died, so the
+    // assertion is on the closest it came and the end state stays in the detail.
+    const deep = cleared ? low / cleared : 1;
     check(`${key} is clearable by the pilot it assumes, and only just`,
-      cleared >= ROT - 2 && left < 0.4,
-      `${cleared} of ${ROT} cleared with ${(left * 100).toFixed(0)}% of the ship left in ` +
-      `${took.toFixed(0)}s — the same band the claims read (7% / 11%), and the floor policy carries ` +
+      cleared >= ROT - 2 && deep < 0.25,
+      `${cleared} of ${ROT} cleared in ${took.toFixed(0)}s, down to ${(deep * 100).toFixed(0)}% of the ` +
+      `ship at its worst and ${(left * 100).toFixed(0)}% left at the end — the floor policy carries ` +
       'no repair kit, no ability, no power routing and no ammunition above cell1');
     check(`${key} arrives as a stream, not as a wall`,
       curve[15] > curve[5] && curve[5] < countOf(key) * 0.5,

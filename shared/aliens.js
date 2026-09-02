@@ -124,9 +124,32 @@ export const ALIENS = {
     // ship 2664, which is the grind this game exists not to have.
     bounty: 455,      // credits your company pays for the kill
     xp: 140,          // and what the kill is worth toward your rank
+    // ONE SLOW BALL, and it is deliberately the simplest thing in the game.
+    //
+    // This is the first shot anybody is ever shot at with, so it has one job: teach
+    // that moving works. The bolt it replaces could not, because it is aimed where you
+    // WILL be and resolved once — measured against this hostile, a Hauler holding
+    // station took 48.0 dps of a book 49.5 and a laden Bulwark weaving hard enough to
+    // reverse three times a second took 48.0 as well. The identical number is the
+    // whole complaint: there was no dodging here to be good at, so nothing later in
+    // the bestiary had a foundation to build on.
+    //
+    // 60px, and it is the Leviathan's orb rather than a third size. The bestiary
+    // already had two — an Ironhusk's 44, one of five, and a Leviathan's 60, one of
+    // nine — and the thing that throws ONE should throw the big one: the heaviest ball
+    // in the sky is also the easiest to read, and there is only ever one of it in the
+    // air at a time. Reusing the number rather than inventing one is the point.
+    //
+    // IT CLEARS EASILY AND THAT IS CORRECT. The dodge inequality in shared/orbs.js is
+    // v x (d/ORB_SPEED - READ_TIME) >= orb r + hull r; at the 364px this holds station
+    // at, a starter Hauler has 168px of lateral room against the 72px it needs, so a
+    // new pilot who moves at all is clear with 2.3x to spare. Charge it to point blank
+    // and that room goes to nothing — which is the Ironhusk's lesson arriving early,
+    // and the only other thing a Drifter has to say.
+    orbs: { n: 1, arc: 0, r: 60 },
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'Drifts a patrol and shoots whatever comes close. Nothing else.',
+    tell: 'Lobs one slow ball at a time. Move, and it goes past. That is the whole lesson.',
   },
 
   // A reactor with nothing left holding it in, and no gun at all.
@@ -519,9 +542,43 @@ export const ALIENS = {
     respawn: 20,      // between a Drifter's 14 and an Ironhusk's 30, like the rest of it
     bounty: 1442,     // 2060 ehp at BOUNTY_RATE, exactly
     xp: 444,          // and the same at XP_RATE, to the nearest point
+    // A FENCE ACROSS THE ROAD IN FRONT OF YOU, and it is the only pattern in the game
+    // aimed at where you are GOING rather than at where you will be when it arrives.
+    //
+    // A rake — see SHAPES in shared/orbs.js. Three orbs, thrown at three marks strung
+    // along your own course a fifth of a second of your own travel apart, each one
+    // flying to its mark and then sitting on it for a cycle. What lands is a hedge
+    // laid across the line you were flying, about a second of road long.
+    //
+    // WHAT IT ASKS FOR IS A TURN, and nothing else in the bestiary asks for one. An
+    // Ironhusk wants you off its line once; a Leviathan wants you to keep changing your
+    // mind; this wants you to stop committing to a heading. Hold station and the three
+    // marks collapse onto one point and the whole volley lands on you — which is what
+    // keeps 60 dps reachable and therefore what keeps the bounty, the experience and
+    // every claim roster the numbers they already were. Hold a straight course and you
+    // drive through all three, because a straight line is not a dodge. Turn and it is
+    // behind you.
+    //
+    // A STRAFING RUN LAYING A WAKE WAS THE FIRST DESIGN AND THE ARITHMETIC KILLED IT,
+    // which is worth writing down because it is the same arithmetic orbSlots uses for
+    // a fan's width. A trail spreads a volley across the distance it is laid over and
+    // a point target intercepts a fixed 2 x (orb r + hull r) of it: at 380px/s a 2.5s
+    // pass lays 950px of wake and a hull collects 112px, 12%. A wake cannot carry a
+    // hostile's book dps, so it can only ever sit on top of a weapon that does — and
+    // this hostile has one weapon. The seam is named `wake` in SHAPES for the day
+    // something is given two.
+    //
+    // 0.28s BETWEEN THE MARKS, and it is a ceiling rather than a taste. orbSlots
+    // argues at length that a pattern may not have a hole in it; the same rule in a
+    // rake's units is span x (the fastest hull) <= 2 x (orb r + hull r), and a Kestrel
+    // at 430px/s against a 52px orb and a 10px hull gives 0.288. So at the top speed
+    // the shop sells the fence is still solid, and at a Hauler's 300 the marks are
+    // 84px apart inside 128px of disc.
+    orbs: { shape: 'rake', n: 3, span: 0.28, r: 52,
+            stay: 0.83 },   // STAND cycles at fireRate 1.2 — see stayFor in orbs.js
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'Faster than every hull but a Kestrel. You do not disengage from one, you finish it.',
+    tell: 'Lays a fence across the course you are holding. Turn — running straight through it is not a dodge.',
   },
 
   // Ten Drifters welded into one hull, and deliberately exactly that: 6500 ehp
@@ -745,9 +802,18 @@ export const ALIENS = {
     // interceptor. That is what makes the jink readable: it commits, and a
     // patient gunner can lead it. Give it fighter-grade acceleration and
     // lasers stop landing at all.
+    //
+    // 300 x 0.65 and NOT 150 x 1.3, which is the same 195 dps to the decimal — every
+    // reader of this table takes the PRODUCT (threatDps, hiveDps, the balance model,
+    // the bestiary report, test/kedge.mjs's ladder) so nothing downstream moves. What
+    // it buys is HALF AS MANY CALTROPS IN THE AIR, and that is a wire measurement
+    // rather than a preference: a scatter that stays is the first thing in this game
+    // that accumulates, a Corsair Hive keeps twelve of these alive at once, and at the
+    // old cadence twelve raiders held a hundred and seven parked orbs between them. It
+    // is the Leviathan's 300 x 0.4 argument, made for the same reason one rung down.
     attrs: { hull: 22000, shield: 8000, shieldRegen: 0.0112, shieldDelay: 5,
              speed: 400, accel: 500, signature: 2,
-             damage: 150, fireRate: 1.3, weaponRange: 640 },
+             damage: 300, fireRate: 0.65, weaponRange: 640 },
     aggro: 520,       // it picks the fight, and from further out than you can see it
     leash: 2200,
     patience: 4.0,
@@ -765,9 +831,40 @@ export const ALIENS = {
     effort: 3.8,
     bounty: 79800,    // 30000 ehp x 3.8 effort at BOUNTY_RATE
     xp: 24554,        // and the same effective hp at XP_RATE
+    // CALTROPS. A tight scatter thrown at your feet that comes to rest and lies there,
+    // and it is the first thing in this game that leaves anything behind that is not
+    // a Crucible's ground.
+    //
+    // Four orbs over 0.14rad, every one of them flown to the intercept and parked on
+    // it for a cycle and a half — `stay`, see stayFor in shared/orbs.js. The arc is
+    // narrow for the Ironhusk's reason and by the same arithmetic: at the 448px this
+    // holds station from the four centres are 21px apart inside 124px discs, so a
+    // pilot who never moved is covered by all four and takes the full 195 the threat
+    // file quotes. Move, and they land where you were about to be and STAY there.
+    //
+    // WHAT IT ASKS FOR IS NOT COMING BACK, which is a verb no other hostile has. A
+    // Drifter teaches move, a Harrier teaches turn, an Ironhusk teaches get off the
+    // line, a Leviathan teaches keep changing your mind. This one fills the space the
+    // fight is happening in with its own leavings, one throw and a half deep at any
+    // moment, and the ground you have already used is the ground you may not use again.
+    // The evasion and the attack finally point the same way: it jinks, so the clumps
+    // come in from a new bearing every time, and the field it builds is shaped by
+    // where it has been.
+    //
+    // "IT DROPS THEM BEHIND ITSELF" WAS THE ASK AND THE MEASUREMENT REFUSED IT, which
+    // is worth the paragraph. A hostile that lays its gun on ground it is standing on
+    // cannot deliver its book number, because it does not stand where you stand: this
+    // one holds station at 448px and jinks 160px at a time, so a pilot who never moved
+    // would take 0 of 195 and threatDps, the bounty, the experience and three claim
+    // rosters would every one of them be quoting a hostile that no longer exists.
+    // Thrown at your feet instead, the fiction survives with the subject changed — the
+    // field is still where the FIGHT has been, and chasing something faster than you
+    // through it is still what hurts.
+    orbs: { n: 4, arc: 0.14, r: 50,
+            stay: 1.54 },   // STAND cycles at fireRate 0.65 — see stayFor in orbs.js
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'Dodges, and nose-on it is barely there. Hard to hit and harder to see coming.',
+    tell: 'Scatters caltrops that stay where they land. Keep moving, and never back over your own ground.',
   },
 
   // A parasite. It has no gun at all.
