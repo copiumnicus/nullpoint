@@ -90,6 +90,14 @@ export const unpackRocket = arr => { const o = {}; for (let i = 0; i < ROCKET_FI
 // field is four bytes of it: 5.4 x 30 x 4 is 0.63 KiB/s, a tenth of that stream. It is
 // the dearest field on the row and it is the one that cannot be inferred — the client
 // has the heading and the radius and no way at all to know the thing has stopped.
+//
+// AND WHAT IT COSTS WHERE IT MATTERS, which is a different question and was measured
+// rather than argued. Three of the bestiary were converted off a bolt onto a pattern
+// in the same change that added this field, so the honest test is the whole of it
+// against none of it: test/wire-live.mjs's twenty-pilot fight reads 11.37 KiB/s a
+// player either way, and 9.09 against 9.07 compressed. The sixth field and three new
+// weapons together are inside the noise of that measurement, because what a delta
+// costs there is twenty ships moving and not the ordnance.
 export const ORB_FIELDS = ['x', 'y', 'h', 'r', 'foe', 'v'];
 export const packOrb   = o   => [Math.round(o.x), Math.round(o.y), +o.heading.toFixed(2),
                                  Math.round(o.r), o.foe ? 1 : 0,

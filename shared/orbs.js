@@ -40,17 +40,11 @@
 // most hulls move in half a second while under thrust.
 //
 // An orb is a body. It has a place every tick, it hits whatever it passes THROUGH on
-// the way, and it crawls. Same hostile, same policies, same bench:
-//
-//                             bolt          orb
-//     holding station      71.0 dps      71.0 dps      the book number, both ways
-//     weaving, Hauler      40.0          2.0
-//     weaving, Bulwark     68.0         12.4
-//
-// That is the whole feature in one table. What a pilot who does not read it takes has
-// not moved by a decimal place — so threatDps, the bounty, the bestiary report and
-// three claim rosters are all the numbers they already were — and what a pilot who
-// does read it takes has fallen through the floor.
+// the way, and it crawls — which is the difference the table above is made of. That
+// table used to hold one hostile and both of its weapons; it holds five now, and the
+// claim it makes is the one it always made: what a pilot who does not read the pattern
+// takes has not moved by a decimal place, and what a pilot who does read it takes has
+// fallen through the floor.
 //
 // WHY THE COLLISION IS RESOLVED CONTINUOUSLY AND NOT ON ARRIVAL, which is the
 // question the shape of this file turns on. A slow orb that only checks its endpoint
@@ -303,9 +297,11 @@ export function throwOrbs(a, b, dt) {
   // Nothing at all for a hostile that has no pattern, and the clock is not touched
   // on the way out. Decrementing it first ran every OTHER hostile's gun at twice its
   // rate: server.js and the bench both call fire() and this in the same tick, so a
-  // Drifter's 0.8 cycles a second became 1.58 and the bench read an Ironhusk's bolt
-  // at 142 dps against a book of 72. Measured, not guessed — it is why this early
-  // return is the first line and not the second.
+  // bolt-thrower's 0.8 cycles a second became 1.58 and the bench read an Ironhusk's
+  // bolt at 142 dps against a book of 72. Measured, not guessed — it is why this early
+  // return is the first line and not the second. (The hostile that found it was a
+  // Drifter, which throws a pattern of its own now; a Kedge is what test/orbs.mjs
+  // holds the clock against today.)
   if (!o) return [];
   a.cool = Math.max(0, a.cool - dt);
   // THE MUZZLE GLOW, and it is decayed here because nothing else will. combat.js owns
@@ -400,7 +396,7 @@ export function throwOrbs(a, b, dt) {
       // Where it came FROM, kept whole rather than walked back from the impact the
       // way a rocket's is. An orb travels in a straight line and never turns, so the
       // muzzle is exactly the lever arm an Antiphon's ring wants and there is nothing
-      // to reconstruct. Server-side only — packOrb names its five fields.
+      // to reconstruct. Server-side only — packOrb names the six fields that go out.
       ox: a.x, oy: a.y,
       // Its full reach and no further, plus however long it is entitled to lie there.
       // An orb that outlived its own weapon range would let a hostile hit you from
