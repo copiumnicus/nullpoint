@@ -23,6 +23,15 @@ import { orbsOf } from './orbs.js';
 // sim and power, and plates.js imports net and power, so neither reaches back here.
 import { sowOf } from './ground.js';
 import { waveOf } from './plates.js';
+// Nor one that swings a lance, nor one whose chamber comes back as a wall, nor a
+// mothership whose barrel is the pod it launches raiders out of. Same gate, same
+// reason, and the same one-predicate-per-mechanic arrangement: sweep.js imports sim and
+// power, shards.js the same two, and brood.js adds maps and aliens — none of the four
+// reaches back here, which is why throwShards takes its bolt speed as an argument the
+// way plates.js's answer() already does.
+import { sweepOf } from './sweep.js';
+import { shardsOf } from './shards.js';
+import { podOf } from './brood.js';
 
 // Bolt speed is a balance dial, not a cosmetic one. A shot has to be slow enough
 // that a ship can accelerate clear of where it was aimed: displacement goes with
@@ -85,7 +94,14 @@ export function fire(a, b, dt, mag = null) {
   // also throw a bolt, or the hostile is at twice the dps its own definition claims.
   // Three predicates on one line rather than three `def.x` tests, so the mechanic and
   // the gate can never end up disagreeing about which hostiles they are about.
-  if (orbsOf(a.def) || sowOf(a.def) || waveOf(a.def)) return [];
+  //
+  // A LANCE, A WALL OF SPLINTERS and a POD are the same statement again. A Kedge's gun
+  // is the line it swings, a Thresher's is the chamber coming back, and a Hive's is the
+  // thing it launches raiders in; every one of them owns its own clock (`a.cool` for the
+  // first two, `a.hatch` for the third) and none of them may also throw a bolt, or the
+  // hostile is at twice the dps its own definition claims.
+  if (orbsOf(a.def) || sowOf(a.def) || waveOf(a.def) ||
+      sweepOf(a.def) || shardsOf(a.def) || podOf(a.def)) return [];
   a.cool = Math.max(0, a.cool - dt);
   a.shotFlash = Math.max(0, a.shotFlash - dt);
 

@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.94';
+export const VERSION = '0.95';
 
 export const PATCHES = [
+  { v: '0.95', notes: [
+    'The Kedge stopped shooting. It swings a lance on a line at whatever range you hold',
+    'Change your RANGE to duck it — and its fix drags you back to the range you left',
+    'A Thresher throws its chamber back as a WALL of splinters, wide as the meter is full',
+    'The Corsair Hive stopped shooting too: its gun is the pod it launches Bandits in',
+    'Dodge the pod and the raider hatches where it lands, not on top of you',
+  ] },
   { v: '0.94', notes: [
     'Crucibles and Doldrums stopped shooting. They LOB their ground at you instead',
     'One slow glob a cycle, thrown where you are heading — turn and it lands behind you',

@@ -323,8 +323,14 @@ console.log('\nwhat is deliberately not deltaed');
   // 4.0s and its front crosses its entire reach in 1.5 — it has no identity worth
   // diffing, it lives a second and a half, and the field that decides everything about
   // it, the radius it has grown to, changes on every single tick.
-  check('bolts, rockets, orbs, blasts, hits, pyres, fixes and waves go whole, and the list says so',
-    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes', 'waves']),
+  // And a Kedge's LANCE joined them, on the fix's argument and the front's together:
+  // there is at most one per hostile, it lives 1.30s — a 0.70s wind-up and a 0.60s
+  // swing, which is one firing cycle — it has no identity worth diffing, and the field
+  // that decides everything about it, how far through the swing the head has got,
+  // changes on every single tick. Note that a Kedge's OTHER stream, its fix, is
+  // ephemeral for the identical reason and there is no case where both are quiet.
+  check('bolts, rockets, orbs, blasts, hits, pyres, fixes, waves and lances go whole, and the list says so',
+    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes', 'waves', 'sweeps']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost
@@ -352,8 +358,14 @@ console.log('\nwhat is deliberately not deltaed');
   // average: 3.820 KiB/s sent whole every tick against 0.567 keyed, and 1.502 of
   // that 3.820 is the name being re-transmitted thirty times a second. Keyed, it
   // rides the add and then goes quiet, exactly the way `name` does on a ship row.
-  check('ships, pods, stations, sown ground, an answering ring and a ping are the ones worth diffing',
-    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown', 'plates', 'pings']),
+  // REWRITTEN A FOURTH TIME, one more row, and it is the sown-ground case again rather
+  // than a new argument: a mothership's POD. It is in the air 2.75s at the range a Hive
+  // stands off to, it is keyed on the mothership's own id — there is never more than
+  // one per hull — and SIX of its seven fields never change once it has been thrown.
+  // Priced through the real codec at two Hives each throwing every five seconds: 0.62
+  // KiB/s sent whole against 0.19 keyed.
+  check('ships, pods, stations, sown ground, an answering ring, a ping and a launched pod are the ones worth diffing',
+    same(Object.keys(STREAMS), ['ships', 'pods', 'labs', 'sown', 'plates', 'pings', 'hatch']),
     'long-lived, keyed, and 82% of the traffic in a crowded sector');
   check('and nothing is in both lists',
     !Object.keys(STREAMS).some(k => EPHEMERAL.includes(k)),
