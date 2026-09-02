@@ -26,8 +26,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { newShip, step, stepVitals, stepDrift, applyDamage, drainHull, havenKind } from '../shared/sim.js';
-import { fire, stepBolts, faceTarget } from '../shared/combat.js';
+import { fire, stepBolts, faceTarget, BOLT_SPEED } from '../shared/combat.js';
 import { throwOrbs, stepOrbs } from '../shared/orbs.js';
+// The three barrels that are not barrels. fire() returns nothing at all for the
+// hostiles that carry them — see the gate at the top of it — so a bench that called
+// only fire() and throwOrbs() would put a Kedge in a claim roster doing NOTHING, which
+// is exactly what "twelve Ironhusks in a claim doing nothing at all" was the first
+// time. Only the Kedge is rostered today; the other two are here so that adding one is
+// a line of data in shared/arena.js rather than a silent free hostile.
+import { stepSweep, stepSweeps } from '../shared/sweep.js';
+import { throwShards } from '../shared/shards.js';
+import { stepPod, podHit } from '../shared/brood.js';
 import { launch, stepRockets } from '../shared/rockets.js';
 import { newAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading, mayHarm,
          effectiveHp, threatDps, ALIENS, WILD, storeHit, stepMirror,
@@ -99,7 +108,7 @@ function makeRoster(key, map, phase = 0) {
 // the fix is planted BEFORE the hull is stepped, because a plant written after
 // step() is a plant that never happens.
 function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
-  let t = 0, bolts = [], rockets = [], orbs = [], pyres = [], dealt = 0, taken = 0;
+  let t = 0, bolts = [], rockets = [], orbs = [], arcs = [], pyres = [], dealt = 0, taken = 0;
   const pool = poolOf(ship);
   // THE LOW-WATER MARK, and it is the number "and only just" was always about.
   //
@@ -174,6 +183,15 @@ function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
       // different weapon on the end of it, and leaving it out would have twelve
       // Ironhusks in a claim doing nothing at all.
       for (const ob of throwOrbs(a, seen?.ship ?? null, DT)) orbs.push(ob);
+      const swing = stepSweep(a, seen?.ship ?? null, DT);
+      if (swing) arcs.push(swing);
+      for (const sh of throwShards(a, seen?.ship ?? null, DT, BOLT_SPEED)) bolts.push(sh);
+      const drop = stepPod(a, seen?.ship ?? null, !!seen, (a.brood?.length ?? 0) < (a.def.broods?.max ?? 0), DT);
+      // A claim does not spawn escorts — the roster IS the encounter — so a pod that
+      // lands is its damage and nothing else. That is stated rather than assumed,
+      // because a claim that quietly bred raiders would be a different fight from the
+      // one shared/arena.js priced.
+      if (drop && podHit(drop.at, ship)) { applyDamage(ship, drop.dmg); taken += drop.dmg; }
       if (burnOf(a.def)) {
         const scorched = here.filter(c => c.ship.hp > 0 && mayHarm(a, c) && inBurn(a, c.ship));
         stepBurn(a, a.target !== null, scorched.length > 0, DT);
@@ -186,6 +204,9 @@ function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
     // candidate rather than as a target. There is one ship on this bench and no
     // sanctuary in a claim, so the predicate is the constant it is.
     for (const h of stepOrbs(orbs, [{ id: 1, ship }], DT)) taken += h.split.shield + h.split.hull;
+    // And the lances, settled the same way and for the same reason: a swing cuts
+    // whatever its head crosses rather than a ship it was aimed at.
+    for (const h of stepSweeps(arcs, [{ id: 1, ship }], DT)) { applyDamage(h.target, h.dmg); taken += h.dmg; }
     for (const h of [...stepRockets(rockets, DT), ...stepBolts(bolts, DT)]) {
       storeHit(h.target, h.split.shield + h.split.hull);
       goadBurn(h.target, h.split.shield + h.split.hull, h.target.isAlien ? effectiveHp(h.target.kind) : 0);

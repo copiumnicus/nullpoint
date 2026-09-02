@@ -336,9 +336,48 @@ export const ALIENS = {
   // Shield regen 0.012 rebuilds its shell in 83 seconds — deliberately not the
   // Leviathan's 0.045, because a rung-mate that ALSO punished breaking off would be
   // a second cooperation gate and this one is meant to be soloed.
+  // A Surveyor, and the only thing in the game that charges you for LEAVING.
+  //
+  // Its fix takes a sighting of where you are standing and three seconds later puts you
+  // back on it — see shared/kedge.js for why that is a toll rather than a trap, and why
+  // it has to hold station to do it. What sat underneath was a plain aimed bolt for 350
+  // a second, and an aimed bolt is not dodged by anybody: the table at the top of
+  // orbs.js measures 94% of what one fires landing on a hull weaving as hard as it can.
+  //
+  // A LANCE ON A LINE, then, and it is the same 350 dps in a shape you can be somewhere
+  // else for. The line is paid out to YOUR range with a fluke on the end of it and swung
+  // through an arc; the head is what cuts you, and it arrives at your bearing half a
+  // swing after it starts moving. See shared/sweep.js — the numbers below are pinned
+  // there from both ends and this is what they came out as.
+  //
+  //   span 2.4   rad. 137 degrees, and it is a FLOOR rather than a look: the fastest
+  //              thing in the game boosted covers 727px of arc at this hostile's 630px
+  //              standoff over the 1.30s the attack takes, which is 1.15rad a side. So
+  //              nothing in the shop can walk out of the side of it, and the answer has
+  //              to be the other one.
+  //   wind 0.70  s of the line taut and still, at the radius and over the arc it is
+  //              about to sweep. This is the read, and it is most of the budget.
+  //   swing 0.60 s to cross the arc. 0.70 + 0.60/2 = 1.00s from the throw to the head
+  //              arriving, against the 0.891 a cruiser needs to clear 77px at 142 px/s
+  //              with 0.35 of that spent reading it. 15px of margin, deliberately thin.
+  //   r 60       px of fluke, the largest ball this game throws. It is the CEILING in
+  //              the budget above: a bigger head is a head a jink no longer beats.
+  //
+  // AND THE DODGE IS RADIAL, WHICH IS NEW HERE. Every other pattern in the bestiary is
+  // answered by moving sideways; a lance paid out to your own range is answered by
+  // changing your RANGE. That is what makes the two halves of this hostile one fight
+  // instead of a gun beside an ability: a collapse is a radial displacement — it puts
+  // you back on a range you have left — so the sweep bills you for holding a range and
+  // the fix undoes a change of one. Measured together and separately in test/kedge.mjs,
+  // because "hauled back into a sweep you already dodged" is either the best thing in
+  // this bestiary or unplayable and only the bench can say which. It is neither: the
+  // haul lands inside a swing 22% of the time and the pair costs a pilot who answers
+  // both 20.9% of a hostile that reads 350 dps, against 100% for one who answers
+  // neither.
   kedge: {
     name: 'Kedge', cls: 'Surveyor', r: 34, colour: '#7c8824', shape: 'fluke',
-    tell: 'Takes a fix on where you are and three seconds later puts you back on it. It has to stand dead still to do it, which is when you kill it. A portal mouth breaks the fix.',
+    tell: 'Swings a lance on a line at the range you are holding — change your range, not your bearing. Its fix then hauls you back to the range you just left.',
+    sweep: { span: 2.4, wind: 0.70, swing: 0.60, r: 60 },
     fix: {
       fuse: 3.0,      // s from the sighting to the collapse. JUMP_TIME exactly: the fix
                       //   and the door cost the same three seconds, so reaching a portal
@@ -421,6 +460,33 @@ export const ALIENS = {
   thresher: {
     name: 'Thresher', cls: 'Revenant', r: 46, colour: '#e4e4e4', shape: 'facet',
     returns: 1,
+    // AND WHAT IT COMES BACK AS. One fat bolt was a bigger number, and a bigger number
+    // is only legible after it has landed on you. The chamber returns a WALL now, and
+    // how much wall is how full it is: one splinter at nothing, seven at a full one,
+    // fanned across 76px at the range this thing fights from. The volley carries
+    // `payloadOf(def, load)` in TOTAL and is split evenly, so the identity above is
+    // untouched to the decimal — see shared/shards.js.
+    //
+    //   fan 0.06032  rad of half-width at a full chamber, and it is DERIVED from the one
+    //                thing that must not move: a pilot who never moved has to take all of
+    //                it. A bolt lands on anything within HIT_R + hull r of its aim point,
+    //                so the outermost splinter may sit at most one slack radius off the
+    //                middle — 38 / (900 x 0.7) = 38/630. At the standoff every hull in
+    //                the game is inside all seven discs at once and holding station costs
+    //                exactly what the single bolt cost. test/aliens.mjs pins this equal to
+    //                HIT_R / (weaponRange x 0.7) to eleven places.
+    //   n 7          splinters at a full chamber, and this one was ARGUED. Above: the
+    //                count IS the meter, and a meter you have to count is not a meter.
+    //                Below: a splinter has to be a number worth reading — the 10,053 a
+    //                finished pilot actually holds it at is 1,436 each at seven, 15% of
+    //                their ship; at twelve it is 838 and the wall is a light show.
+    //
+    // What it costs the pilot is the half that is not free: clearing the whole wall asks
+    // for twice the displacement clearing one bolt did, and a weave that half clears it
+    // now half lands instead of missing outright. So the chamber makes the DODGE harder
+    // as it fills rather than only the hit bigger, which is the thing a meter alone
+    // could never say.
+    shards: { n: 7, fan: 0.06031746031746032 },   // = 38 / 630, exactly
     attrs: { hull: 175550, shield: 30000, shieldRegen: 0.0133, shieldDelay: 6,
              speed: 200, accel: 320, signature: 9,
              damage: 80, fireRate: 1.0, weaponRange: 900 },
@@ -433,7 +499,7 @@ export const ALIENS = {
     xp: 44272,
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'A mirror. It throws back what you have just dealt it — watch the chamber over its head, and stop shooting to empty it. Do not stand still.',
+    tell: 'A mirror. It throws your own fire back as a wall of splinters, and how wide the wall is is how full its chamber is. Stop shooting to empty it, and do not stand still.',
   },
 
   // The rung between a Drifter and an Ironhusk, and the reason the frontier is
@@ -677,14 +743,33 @@ export const ALIENS = {
   // which is deliberate: everything dangerous about it is something else.
   hive: {
     name: 'Corsair Hive', cls: 'Mothership', r: 70, colour: '#e04fa0', shape: 'hive',
+    // 550 x 0.2 AND NOT 220 x 0.5, which is the same 110 dps to the decimal — every
+    // reader of this table takes the PRODUCT (threatDps, hiveDps, the balance model's
+    // armed span, the bestiary report, the claim rosters), so nothing downstream moved.
+    // What it buys is the whole conversion: the cadence is now `1 / broods.every`, which
+    // means the gun and the hatch are ONE clock and one act. The barrel is a pod that
+    // arcs out slowly, carries the whole of the gun's damage to where it lands, and
+    // cracks open there — so dodging it decides where the raider comes out rather than
+    // only whether you were hit. See shared/brood.js.
+    //
+    // It is the Leviathan's trick one rung up ("300 x 0.4 and NOT 150 x 0.8") and the
+    // Crucible's shape exactly ("the gun IS the delivery of the ground"). test/aliens.mjs
+    // pins fireRate equal to 1 / broods.every, so a change to the cadence that forgot the
+    // gun fails there instead of quietly halving the hostile.
     attrs: { hull: 450000, shield: 200000, shieldRegen: 0.006, shieldDelay: 4,
              speed: 110, accel: 180, signature: 10,
-             damage: 220, fireRate: 0.5, weaponRange: 1100 },
+             damage: 550, fireRate: 0.2, weaponRange: 1100 },
     // Escorts are the fight, so there have to be enough of them for that to be
     // true. Four every eighteen seconds was a trickle you could ignore between
     // volleys. One every five now, up to twelve alive — which means a hive left
     // alone for a minute has a dozen raiders around it, and the pressure comes
     // from what you did not clean up rather than from any single one of them.
+    //
+    // `max` is absolute and the pod cannot get round it: the pod is thrown on the clock
+    // whatever happens, and whether it is LADEN is decided at the throw against the brood
+    // that is actually alive. A pod thrown at a full brood is ordnance and nothing else,
+    // which is what keeps `damage x fireRate` honest — a gun that stopped once the
+    // escorts were out would be a hostile at a fraction of the dps this table claims.
     broods: { kind: 'bandit', every: 5, first: 2, max: 12 },
     aggro: 540,       // still inside SIGHT_R, so you see it before it decides
     leash: 2600,
@@ -695,7 +780,7 @@ export const ALIENS = {
     xp: 140000,
     // One line for the pilot's threat file, which is the only place a hostile
     // explains itself. Data, so the next one is a line here rather than a UI change.
-    tell: 'A mothership. It broods Bandits once it has noticed somebody, and keeps brooding until it is dead.',
+    tell: 'A mothership. Its gun is the launch: a slow pod that cracks open where it lands and lets a Bandit out. Dodge it and the raider hatches somewhere else.',
   },
 
   // A raider that you mostly cannot see. Its signature is shaped rather than
@@ -2044,6 +2129,16 @@ export function respawnAlien(a, map, away = []) {
   a.load = 0;                                                     // nor a chamber: a mirror that
                                                                   // respawned loaded would open the
                                                                   // next fight with your last one
+  // Nor a pod. It is cleared field by field here rather than through a clearPod() in
+  // shared/brood.js, and that is not an oversight: brood.js imports THIS file for
+  // broodReady and BROOD_R, so importing it back would be a cycle that blows up in the
+  // TDZ on whichever of the two loaded first. Same arrangement SHOP_DPS lives under.
+  a.pod = 0; a.podAt = null; a.podFrom = null;                    // a mothership that came
+  a.podFly = 0; a.podLaden = false; a.hatch = undefined;          // back five minutes later would drop
+                                                                  // a raider on whoever was standing
+                                                                  // where the last fight ended, and the
+                                                                  // hatch clock starts from `first`
+                                                                  // again so the ramp is the ramp
   a.way = a.post ?? roamPoint(map, a.rand, away);
   a.tx = a.ty = a.dx = a.dy = null;
 }

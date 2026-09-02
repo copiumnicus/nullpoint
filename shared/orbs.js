@@ -307,10 +307,11 @@ export function throwOrbs(a, b, dt) {
   // THE MUZZLE GLOW, and it is decayed here because nothing else will. combat.js owns
   // the only other copy of this line and it sits BELOW the gate at the top of fire()
   // that sends a pattern-thrower straight home — so every hostile converted off its
-  // barrel held a full flash for ever, from its first shot to its death. It was live on
-  // the Ironhusk and the Leviathan from the day orbs landed, and shared/ground.js
-  // named it in a comment when the deeps were converted rather than inherit it. Five
-  // hostiles throw a pattern now, so this is where it gets fixed.
+  // barrel held a full flash for ever, from its first shot to its death, at every
+  // range, whether or not it had anybody. It was live on the Ironhusk and the
+  // Leviathan from the day orbs landed; shared/ground.js named it and fixed its own
+  // two when the deeps were converted, and this pass and the mid-tier one arrived at
+  // the same line independently, which is what an unowned bug looks like.
   a.shotFlash = Math.max(0, (a.shotFlash ?? 0) - dt);
   const reach = a.stats.weaponRange ?? 0;
   const live = b && b.hp > 0 && a.hp > 0 && Math.hypot(b.x - a.x, b.y - a.y) <= reach;

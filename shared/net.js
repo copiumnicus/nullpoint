@@ -368,6 +368,65 @@ export const unpackPlates = arr => { const o = {}; for (let i = 0; i < PLATE_FIE
 // which reads as a label blinking out rather than fading. A patch of ground could
 // take that cut because one percent of a thirty-six-second countdown arc is under
 // the resolution of the thing it draws; a four-frame fade is not.
+// A LANCE ON A LINE, mid-swing: where it is pivoting, how far the head is paid out,
+// how big the head is, the two ends of the arc, and how far through the current phase
+// it has got.
+//
+// `d` and `r` are the radius the SERVER is sweeping with and the disc it is sweeping,
+// for ORB_FIELDS' reason and it is the sharper case of it: the whole mechanic is being
+// at a different range when the head comes round, and a band drawn one width and
+// resolved at another would be a fight decided by a rendering choice.
+//
+// `g` and `e` are the two ends in WORLD bearings rather than a centre and a span,
+// because the client draws an arc from one to the other and that is one subtraction
+// fewer between the wire and the canvas. They also say which way round it goes, which
+// is a thing a pilot has to be able to see rather than remember.
+//
+// `on` is the phase, exactly the way SOWN_FIELDS uses it: 0 while the line is taut and
+// still — which is the whole of the warning — and 1 once the head is moving. `p` is
+// "how far through whatever this row is currently doing", so one field covers both.
+//
+// It is EPHEMERAL rather than keyed, and it is the profile that list describes exactly:
+// it lives 1.3 seconds, there is at most one per Kedge, it has no identity worth
+// diffing, and the one field that matters changes on every single tick.
+export const SWEEP_FIELDS = ['x', 'y', 'd', 'r', 'g', 'e', 'p', 'on'];
+export const packSweep   = o   => [Math.round(o.x), Math.round(o.y), Math.round(o.d), Math.round(o.r),
+                                   +(o.g ?? 0).toFixed(2), +(o.e ?? 0).toFixed(2),
+                                   +Math.max(0, Math.min(1, o.p ?? 0)).toFixed(3), o.on ? 1 : 0];
+export const unpackSweep = arr => { const o = {}; for (let i = 0; i < SWEEP_FIELDS.length; i++) o[SWEEP_FIELDS[i]] = arr[i]; return o; };
+
+// A POD in flight: where it left from, where it is going, how far along it is, and
+// whether there is a raider folded up inside it.
+//
+// `k` is the whole tell. A mothership throws one of these on its gun's clock whatever
+// happens, and it only carries an escort when the brood has room — so a pilot who can
+// see which is which knows whether dodging this one decides where a Bandit comes out or
+// merely whether they were hit. A field that is sometimes 0 and sometimes 1 is worth
+// more here than any amount of drawing.
+//
+// It is a keyed STREAM and not an EPHEMERAL, and that is SOWN_FIELDS' argument
+// unchanged: those go whole every tick because they have no identity, live under a
+// second, and every field that matters changes every tick. A pod is the opposite of all
+// three — it is in the air for 2.75s at the range a Hive stands off to, it is keyed on
+// the mothership's own id (there is never more than one per hull), and SIX of its seven
+// fields never change once it has been thrown. Measured through the real delta codec at
+// the steady state of a gate sector, two Hives each throwing every five seconds:
+//
+//     sent whole every tick   0.62 KiB/s
+//     keyed and diffed        0.19 KiB/s
+//
+// THREE decimal places on `p` and not SOWN_FIELDS' two, and that is the one place this
+// row disagrees with the patch it is modelled on. `p` drives a POSITION here rather
+// than a countdown arc: one percent of a 770px throw is 7.7px, which is most of a hull
+// and reads as the pod stepping toward you. A patch could take the cut because one
+// percent of a thirty-six-second countdown is under the resolution of the thing it
+// draws; a moving body cannot.
+export const HATCH_FIELDS = ['id', 'x', 'y', 'tx', 'ty', 'p', 'k'];
+export const packHatch   = o   => [o.id, Math.round(o.x), Math.round(o.y),
+                                   Math.round(o.tx), Math.round(o.ty),
+                                   +Math.max(0, Math.min(1, o.p ?? 0)).toFixed(3), o.k ? 1 : 0];
+export const unpackHatch = arr => { const o = {}; for (let i = 0; i < HATCH_FIELDS.length; i++) o[HATCH_FIELDS[i]] = arr[i]; return o; };
+
 export const PING_FIELDS = ['id', 'x', 'y', 'p', 'name'];
 export const packPing   = o   => [o.id, Math.round(o.x), Math.round(o.y),
                                   +Math.max(0, Math.min(1, o.p)).toFixed(2), o.name ?? ''];
@@ -380,6 +439,10 @@ export const STREAMS = {
   sown:   streamOf('g', SOWN_FIELDS,  'id'),
   plates: streamOf('a', PLATE_FIELDS, 'id'),
   pings:  streamOf('n', PING_FIELDS,  'id'),
+  // A mothership's pod, keyed on the mothership. See HATCH_FIELDS for the measurement
+  // that says keyed rather than whole — and note that adding it here is the entire
+  // change, which is what STREAMS is for.
+  hatch:  streamOf('h', HATCH_FIELDS, 'id'),
 };
 
 // Deliberately NOT deltaed, and this is the measurement that says so rather than
@@ -390,7 +453,7 @@ export const STREAMS = {
 // single tick, so a keyed diff would be paying an id and a mask to save a
 // handful of numbers that were already stale. They go whole, and are simply
 // omitted when empty, which is 44 bytes a tick back for nothing.
-export const EPHEMERAL = ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes', 'waves'];
+export const EPHEMERAL = ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes', 'waves', 'sweeps'];
 
 // Everything else in a snapshot is the viewer's own state — credits, loadout,
 // power, rank. Named keys, so this is a set difference rather than a list anyone

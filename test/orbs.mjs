@@ -19,6 +19,10 @@ import { buildFor } from '../shared/balance.js';
 import { HULLS } from '../shared/ships.js';
 import { MAPS } from '../shared/maps.js';
 import { ORB_FIELDS, packOrb, unpackOrb, EPHEMERAL } from '../shared/net.js';
+// The trigger a Kedge owns instead of a barrel, for the clock claim below: nothing in
+// the bestiary fires a bolt any more, so the thing that must not be disturbed by the
+// orb clock is somebody else's cadence rather than fire()'s.
+import { stepSweep } from '../shared/sweep.js';
 
 const fails = [];
 const check = (name, ok, detail = '') => {
@@ -74,19 +78,22 @@ check('a hostile that throws a pattern does not also fire bolts', (() => {
 check('and a hostile with no pattern is not touched by the one that throws them', (() => {
   const mark = { x: AT.x + 200, y: AT.y, vx: 0, vy: 0, r: 12, hp: 1e9, shield: 0,
                  stats: { hull: 1e9, shield: 0 }, sinceHit: 0, shieldHit: 0 };
-  // Bolts fired, not damage dealt, so this is about the CLOCK and nothing else.
+  // TRIGGERS PULLED, not damage dealt, so this is about the CLOCK and nothing else.
   //
-  // A KEDGE and not a Drifter, and the swap is the whole reason this check still has
-  // teeth: the Drifter it was written against throws a ball now, so it would have been
-  // asserting that a hostile with a pattern is unaffected by the pattern code. A Kedge
-  // is the plainest barrel left standing.
+  // It has been rewritten twice for the same reason and the second time is the
+  // interesting one. It was flown against a Drifter, which throws a ball now. Then
+  // against a Kedge, "the plainest barrel left standing" — and there is no barrel left
+  // standing: every hostile in the game has been converted and fire() returns nothing
+  // for all thirteen. So the trigger counted here is the Kedge's LANCE, which is what
+  // `a.cool` means for that hostile, and the claim is exactly the one it always was:
+  // stepping the orb clock on something that does not throw orbs must not move it.
   const at = seed => { const a = newAlien('kedge', seed, MAP, 11, null); a.x = AT.x; a.y = AT.y; return a; };
   const a2 = at(3); let alone = 0;
-  for (let i = 0; i < 30 * 30; i++) alone += fire(a2, mark, DT).length;
+  for (let i = 0; i < 30 * 30; i++) if (stepSweep(a2, mark, DT)) alone++;
   const a3 = at(4); let both = 0;
-  for (let i = 0; i < 30 * 30; i++) { throwOrbs(a3, mark, DT); both += fire(a3, mark, DT).length; }
+  for (let i = 0; i < 30 * 30; i++) { throwOrbs(a3, mark, DT); if (stepSweep(a3, mark, DT)) both++; }
   return alone === both && alone > 0;
-})(), 'a Kedge fires the same number of bolts in thirty seconds whether or not the orb clock is stepped');
+})(), 'a Kedge swings the same number of lances in thirty seconds whether or not the orb clock is stepped');
 
 // ============================================================================
 console.log('\nhow slow is slow, and what dodgeable comes to in px/s');

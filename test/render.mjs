@@ -17,7 +17,7 @@ import { joinLayout } from '../shared/join.js';
 import { ROSTER_KEY, TOKEN_KEY as TOK } from '../shared/brand.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, packWave, PLATE_STEPS } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, packWave, packSweep, packHatch, PLATE_STEPS } from '../shared/net.js';
 import { pingChip, pingLayout, PING_MAX } from '../shared/ping.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
@@ -1036,6 +1036,91 @@ const dismiss = () => {
               `a NaN column and one past the top step\n      and ${called} frames of the CALL: one ` +
               'front growing from the hull to its full reach at every one of the eight bearings the ' +
               'lane steps through, two at once, and a row with a NaN in every column in turn');
+
+  // --- A LANCE ON A LINE, and a POD ---------------------------------------------
+  //
+  // Two more streams that are empty on every map but the ones their hostiles hold, so
+  // nothing else in this suite ever enters either code path — rule three's reason
+  // again, and the reason it is worth the forty lines: a draw path nobody runs is a
+  // draw path nobody has tested, and that is exactly how two helper functions went
+  // missing while every frame still rendered.
+  //
+  // The lance is walked through its whole life at both phases and at both radii it can
+  // legitimately be paid out to, and swung BOTH ways round — `g` may be greater or less
+  // than `e` and the arc has to come out the same shape either way, which is the one
+  // thing an arc drawn from two bearings can get wrong.
+  //
+  // The pod is walked from the muzzle to the landing point, laden and empty, because
+  // `k` picks between two completely different objects rather than two shades of one.
+  //
+  // The guards after each are the ways the wire can arrive wrong: a row with no numbers
+  // on it, a NaN in every column in turn, a zero radius, and a phase past both ends.
+  let swung = 0;
+  const kedge = () => packShip({ id: 1_000_801, x: 6600, y: 4000, heading: 2.2, charge: 0,
+    co: 'x', hull: 'kedge', hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1, name: '' });
+  for (const d of [140, 420, 630, 900])
+    for (const [g0, e0] of [[-1.2, 1.2], [1.2, -1.2]])
+      for (const [pp, on] of [[0, 0], [0.4, 0], [1, 0], [0, 1], [0.35, 1], [0.8, 1], [1, 1]]) {
+        feed({ t: 's', ships: [me5, kedge()],
+               sweeps: [packSweep({ x: 6600, y: 4000, d, r: 60, g: g0, e: e0, p: pp, on })] });
+        frame(t += 16); frames++; swung++;
+      }
+  // two at once, which one Kedge never produces and two standing together do
+  feed({ t: 's', ships: [me5, kedge()],
+         sweeps: [packSweep({ x: 6600, y: 4000, d: 400, r: 60, g: 0, e: 2, p: 0.5, on: 1 }),
+                  packSweep({ x: 6300, y: 4200, d: 700, r: 60, g: 3, e: 1, p: 0.2, on: 0 })] });
+  frame(t += 16); frames++; swung++;
+  feed({ t: 's', ships: [me5, kedge()], sweeps: [[6600, 4000]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, kedge()], sweeps: [[NaN, 4000, 400, 60, 0, 2, 0.5, 1],
+                                                 [6600, NaN, 400, 60, 0, 2, 0.5, 1]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, kedge()], sweeps: [[6600, 4000, NaN, 60, 0, 2, 0.5, 1],
+                                                 [6600, 4000, 400, NaN, 0, 2, 0.5, 1]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, kedge()], sweeps: [[6600, 4000, 400, 60, NaN, 2, 0.5, 1],
+                                                 [6600, 4000, 400, 60, 0, NaN, 0.5, 1]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, kedge()], sweeps: [[6600, 4000, 0, 0, 0, 0, 9e9, 1],
+                                                 [6600, 4000, 400, 60, 0, 2, -3, 0],
+                                                 // and a NaN phase, which is the one that
+                                                 // gets through a clamp: Math.min(1, NaN)
+                                                 // is NaN, and packSweep sends
+                                                 // +NaN.toFixed(3)
+                                                 [6600, 4000, 400, 60, 0, 2, NaN, 1],
+                                                 [6600, 4000, 400, 60, 0, 2, undefined, 0]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, kedge()], sweeps: [] });
+  frame(t += 16); frames++;
+
+  let flung = 0;
+  const hive = () => packShip({ id: 1_000_802, x: 6600, y: 4000, heading: 2.2, charge: 0,
+    co: 'x', hull: 'hive', hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1, name: '' });
+  for (const k of [1, 0])
+    for (const pp of [0, 0.2, 0.5, 0.8, 1]) {
+      feed({ t: 's', ships: [me5, hive()],
+             hatch: [packHatch({ id: 1_000_802, x: 6600, y: 4000, tx: 6050, ty: 4100, p: pp, k })] });
+      frame(t += 16); frames++; flung++;
+    }
+  feed({ t: 's', ships: [me5, hive()], hatch: [[1_000_802, 6600, 4000]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, hive()], hatch: [[1_000_802, NaN, 4000, 6050, 4100, 0.5, 1],
+                                               [1_000_803, 6600, NaN, 6050, 4100, 0.5, 1]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, hive()], hatch: [[1_000_802, 6600, 4000, NaN, 4100, 0.5, 1],
+                                               [1_000_803, 6600, 4000, 6050, NaN, 0.5, 0]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, hive()], hatch: [[1_000_802, 6600, 4000, 6050, 4100, 9e9, 1],
+                                               [1_000_803, 6600, 4000, 6050, 4100, -3, 0],
+                                               [1_000_804, 6600, 4000, 6050, 4100, NaN, 1],
+                                               [1_000_805, 6600, 4000, 6050, 4100, undefined, 0]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, hive()], hatch: [] });
+  frame(t += 16); frames++;
+  console.log(`lance: ${swung} frames of a Kedge's swing — four radii, both directions round, ` +
+              'the taut wind-up and the whole of the sweep, two at once, plus a short row, a NaN in ' +
+              `every column in turn and a phase past both ends\n      and ${flung} frames of a Hive's ` +
+              'POD, laden and empty, from the muzzle to the place it opens');
 }
 
 // Sown ground, through the real draw path — both kinds, the wind-up ghost and the
