@@ -83,8 +83,13 @@ export const unpackRocket = arr => { const o = {}; for (let i = 0; i < ROCKET_FI
 //
 // It is DERIVED from the velocity rather than stored beside it, so the two can never
 // disagree: there is one answer to how fast an orb is going and stepOrbs owns it.
-// Measured live, at the worst crowd this produces — one Bandit's steady field is
-// seven parked caltrops — the sixth field costs 0.11 KiB/s of a 12 KiB/s stream.
+//
+// WHAT IT COSTS, off a real socket. test/orbs-live.mjs measures a pilot weaving in
+// front of one Bandit at 5.4 orbs on the wire per tick, peaking at 8, inside a 6.64
+// KiB/s stream. Orbs are EPHEMERAL, so every row goes whole every tick, and the sixth
+// field is four bytes of it: 5.4 x 30 x 4 is 0.63 KiB/s, a tenth of that stream. It is
+// the dearest field on the row and it is the one that cannot be inferred — the client
+// has the heading and the radius and no way at all to know the thing has stopped.
 export const ORB_FIELDS = ['x', 'y', 'h', 'r', 'foe', 'v'];
 export const packOrb   = o   => [Math.round(o.x), Math.round(o.y), +o.heading.toFixed(2),
                                  Math.round(o.r), o.foe ? 1 : 0,

@@ -21,18 +21,27 @@
 // anything else somebody has running. PORT=0 is NOT enough on its own: server.js
 // reads `Number(process.env.PORT) || 3000`, so a zero falls through to 3000.
 //
-// What it produced, on this machine. A starter Hauler, healed every half second so
-// the reading is of the weapon and not of a wreck, at each hostile's own standoff:
+// What it produced, on this machine. A bare Bulwark, healed every quarter second so
+// the reading is of the weapon and not of a wreck, standing at each hostile's own
+// standoff for forty seconds each way with nothing else in the sector engaged:
 //
-//                  parked         weaving        book   what is in the air
-//     Drifter     49.5 dps        13.7 dps       49.5   1 orb  of 60px
-//     Harrier     56.9            17.1           60     3 orbs of 52px
-//     Bandit     186.2            72.4          195     4 orbs of 50px, parked
+//                  book    parked   weaving     orbs on the wire      the stream
+//     Drifter      49.5      49.5      13.5     0.7 / 1.2 a tick        3.22 KiB/s
+//     Harrier      60.0      59.9      18.7     2.8 / 5.8              7.05
+//     Bandit      195.0     195.0      78.8     2.4 / 5.4, parked      6.64
 //
-// The parked column is the invariant: threatDps, the bounties, the experience and
-// three claim rosters all read `damage x fireRate` and a pilot who does not move
-// still pays it. The weaving column is the feature. Both are FLOORS rather than
-// answers — the policy here is a scripted weave, and a person does better.
+// The parked column is the invariant, and it lands on the book to the decimal:
+// threatDps, the bounties, the experience and three claim rosters all read
+// `damage x fireRate` and a pilot who does not move still pays exactly it. The
+// weaving column is the feature — 27%, 31% and 40% of standing still. Both are
+// FLOORS rather than answers, because the weave here is a script that reverses on a
+// timer and a person reads the pattern instead.
+//
+// The two orb columns are parked and weaving: a pilot who does not move detonates
+// every caltrop as it lands, and one who does leaves them on the floor, which is why
+// the field only exists for somebody who is dodging it. The KiB/s is the whole
+// stream, not the orbs — the room refills between phases, so the Harrier's window had
+// fourteen hostiles in radar and the Drifter's nine.
 
 import { spawn } from 'node:child_process';
 import { WebSocket } from 'ws';
@@ -81,13 +90,15 @@ const base = newBase();
 let me = null, myId = null, snap = null, mapId = null, deaths = 0;
 // What the socket has told us this window. Reset between phases.
 let win = null;
-const seenHits = new Map();
-setInterval(() => { if (seenHits.size > 4000) seenHits.clear(); }, 5000).unref?.();
 const send = o => ws.send(JSON.stringify(o));
 const say = t => send({ t: 'chat', text: t });
 const ready = new Promise(r => ws.on('open', () => { send({ t: 'join', name: 'orbcheck', co: 'm' }); r(); }));
 
 ws.on('message', raw => {
+  // Bytes off the socket, so the wire numbers below are measured rather than
+  // reasoned about. Framing is not in this — it is the payload — which is the same
+  // basis shared/net.js quotes its per-stream costs on.
+  if (win) win.bytes += (raw.length ?? Buffer.byteLength(String(raw)));
   const m = JSON.parse(raw);
   if (m.t === 'welcome') { myId = m.id; mapId = m.map; return; }
   if (m.t === 'map') { mapId = m.map; base.map = null; base.ready = false; return; }
@@ -104,8 +115,22 @@ ws.on('message', raw => {
   if (!win) return;
   const balls = (snap.orbs ?? []).map(unpackOrb);
   win.ticks++;
+  // Contamination, and it asks for a TARGET as well as a range. A Thresher reaches
+  // 900px and a pilot 800px from one is not being shot at unless the Thresher has
+  // decided to — `tgt` is on the wire, so the honest question is "is anything else
+  // both in range and engaged", not "is anything else nearby".
+  // HOW MANY OF EACH KIND ARE ACTUALLY IN THE ROOM, which is the question a
+  // neighbour list keyed on "not the kind under test" cannot ask. A Corsair Hive
+  // broods BANDITS, so a second Bandit is invisible to every contamination test that
+  // filters by kind — and it read a Bandit at 1,277 dps of a book 195.
+  {
+    const count = new Map();
+    for (const r of (snap.ships ?? []).map(unpackShip))
+      if (r.id !== myId && ALIENS[r.hull]) count.set(r.hull, (count.get(r.hull) ?? 0) + 1);
+    for (const [k, n] of count) win.most.set(k, Math.max(win.most.get(k) ?? 0, n));
+  }
   if (me) for (const o of nearMe(win.kind))
-    if (Math.hypot(o.x - me.x, o.y - me.y) <= (ALIENS[o.hull].attrs.weaponRange ?? 0)) { win.dirty++; break; }
+    if (o.tgt && Math.hypot(o.x - me.x, o.y - me.y) <= (ALIENS[o.hull].attrs.weaponRange ?? 0)) { win.dirty++; break; }
   win.orbs += balls.length;
   win.peak = Math.max(win.peak, balls.length);
   for (const o of balls) {
@@ -119,15 +144,23 @@ ws.on('message', raw => {
       win.parked.set(key, (win.parked.get(key) ?? 0) + 1);
     }
   }
-  // Floating damage numbers, DEDUPED rather than taken at p === 0 — the note in
-  // test/ring-live.mjs says why, and it cost an afternoon there: the tick steps a hit
-  // before it builds the snapshot, so `p` is never exactly zero on the wire and
-  // counting on it reports a pilot taking no damage while it is being destroyed.
+  // Floating damage numbers, counted ON THEIR FIRST FRAME, which is what `p` is for.
+  //
+  // test/ring-live.mjs deduplicates on a key instead and warns that p === 0 matches
+  // nothing — the tick steps a hit before it builds the snapshot, so the wire never
+  // sees a zero. Both halves of that are true and the CONCLUSION does not survive a
+  // volley: four caltrops landing on one stationary pilot make four hit records at the
+  // same place carrying the same number, so they share a key, and one slot of
+  // last-seen `p` oscillates between them and counts one every tick for the whole
+  // 0.95s life of the numbers. It read a Bandit at 1,273 dps of a book 195.
+  //
+  // The first frame is exact instead: a hit is created with t === ttl and stepped once
+  // before it is packed, so its first `p` on the wire is dt / 0.95 = 0.035, which
+  // packHit fixes to 0.04. Nothing else is ever that low — the second frame is 0.07 —
+  // and four simultaneous hits all arrive at 0.04 and are all counted, which is the
+  // case the key could not express.
   for (const h of (snap.hits ?? []).map(unpackHit)) {
-    const key = `${h.x}:${h.y}:${h.n}:${h.mine}`;
-    const was = seenHits.get(key);
-    if (was !== undefined && h.p >= was) { seenHits.set(key, h.p); continue; }
-    seenHits.set(key, h.p);
+    if (h.p > 0.05) continue;                         // not its first frame
     if (h.mine === 1) continue;                       // nothing we caused; we never fire
     if (me && Math.hypot(h.x - me.x, h.y - me.y) < 160) win.took += h.n;
   }
@@ -192,7 +225,7 @@ const cleanSpot = (foe, dist, kind) => {
 // rather than assumed away.
 const phase = async (kind, secs, move) => {
   const died0 = deaths;
-  win = { ticks: 0, orbs: 0, peak: 0, took: 0, dirty: 0,
+  win = { ticks: 0, orbs: 0, peak: 0, took: 0, dirty: 0, bytes: 0, most: new Map(),
           radii: new Set(), speeds: new Set(), parked: new Map(), kind };
   const steps = Math.round(secs * 4);
   for (let i = 0; i < steps; i++) {
@@ -202,7 +235,8 @@ const phase = async (kind, secs, move) => {
     await wait(250);
   }
   const out = win; win = null;
-  return { ...out, died: deaths - died0, dps: out.took / secs, avg: out.orbs / Math.max(1, out.ticks) };
+  return { ...out, died: deaths - died0, dps: out.took / secs,
+           kibs: out.bytes / 1024 / secs, avg: out.orbs / Math.max(1, out.ticks) };
 };
 
 const SECS = 40;
@@ -217,6 +251,13 @@ for (const kind of ['drifter', 'harrier', 'bandit']) {
   // the first one had been walked 2,644px out of the pen and nothing else was in
   // sensor range to be found.
   say('/dev'); await wait(1200); say('/dev'); await wait(1400);
+  // AND THE FIELD IS CLEARED BEFORE THE FLIGHT AS WELL AS AFTER IT. The route from
+  // the dock to a slot on the firing line goes past other slots, and a bare Bulwark
+  // that flies past a Thresher is a wreck: the pilot died on the way to the Bandit,
+  // respawned at its own hangar four sectors away, and the harness went on sending
+  // dev-map waypoints into the home sector and reported a Bandit that never fired.
+  // Cleared first, the sector is empty for the eight seconds the crossing takes.
+  say('/clear'); await wait(600);
   // THE SPOT IS CHOSEN ONCE, OFF THE POST IN devmap.js, and then held. Two reasons
   // it is not chosen off the wire: a Bandit is not on the wire from across the room,
   // and recomputing it every step walks the pair out of the pen — the hostile closes
@@ -225,12 +266,20 @@ for (const kind of ['drifter', 'harrier', 'bandit']) {
   // the fight stays inside the room.
   const post = PEN_SLOTS.find(s => s.kind === kind);
   const at = cleanSpot(post, hold, kind);
-  for (let k = 0; k < 60; k++) {
+  let arrived = false;
+  for (let k = 0; k < 80 && !arrived; k++) {
+    // A death on the way puts the pilot in its own home sector, and a dev-map waypoint
+    // sent from there flies it somewhere irrelevant for the rest of the run. Back in,
+    // and start the crossing again.
+    if (mapId !== 'dev') { say('/dev'); await wait(1400); say('/clear'); await wait(600); }
     send({ t: 'intent', mode: 'pt', x: at.x, y: at.y });
-    if (me && Math.hypot(me.x - at.x, me.y - at.y) < 90) break;
     say('/heal');
     await wait(300);
+    arrived = !!me && mapId === 'dev' && Math.hypot(me.x - at.x, me.y - at.y) < 90;
   }
+  check(`the pilot is standing in front of the ${ALIENS[kind].name}`, arrived,
+    arrived ? `${Math.round(hold)}px off its post with ${Math.round(at.slack)}px of room to the next slot`
+            : `never got there — ${mapId}, ${Math.round(me?.x)},${Math.round(me?.y)} against ${Math.round(at.x)},${Math.round(at.y)}`);
   // AND THE FIELD IS CLEARED ONCE THE PILOT IS ALREADY STANDING THERE, which is the
   // order that matters and it took three runs to see. Clearing first and then flying
   // in reads a Drifter at 124 dps of a book 49.5: the flight from the dock to the spot
@@ -240,7 +289,17 @@ for (const kind of ['drifter', 'harrier', 'bandit']) {
   // back at its own post with no target, and the only one that can reach the pilot is
   // the one whose post is `hold` away.
   say('/clear');
-  await wait(Math.max(2500, (def.respawn + 3) * 1000));
+  // HELD AND HEALED THROUGH THE RESPAWN WAIT, not slept through. A Bandit is forty
+  // seconds of respawn and a bare Bulwark parked in the firing line with nothing
+  // holding its hull up does not last that long once the field comes back — the pilot
+  // was found 1,594px from the post with the run already half over, and the window it
+  // then measured was of an empty sector.
+  for (let k = 0; k < Math.max(10, (def.respawn + 3) * 4); k++) {
+    if (mapId !== 'dev') { say('/dev'); await wait(1400); }
+    send({ t: 'intent', mode: 'pt', x: at.x, y: at.y });
+    say('/heal');
+    await wait(250);
+  }
   {
     const row = rowFor(kind);
     console.log(`  ${ALIENS[kind].name}: post ${Math.round(post.x)},${Math.round(post.y)}  ` +
@@ -268,14 +327,18 @@ const book = k => ALIENS[k].attrs.damage * ALIENS[k].attrs.fireRate;
 const fmtSet = s => `[${[...s].sort((a, b) => a - b).join(' ')}]`;
 
 console.log('\nwhat each of them costs, off the wire');
-console.log('     hostile      book   parked  weaving   orbs avg/peak   radii   speeds   room  contaminated');
+console.log('     hostile      book   parked  weaving   orbs avg/peak (parked | weaving)   KiB/s   radii   speeds');
 for (const [kind, r] of Object.entries(table))
   console.log(`     ${ALIENS[kind].name.padEnd(10)} ${book(kind).toFixed(1).padStart(6)}  ` +
     `${r.parked.dps.toFixed(1).padStart(7)} ${r.weaving.dps.toFixed(1).padStart(7)}   ` +
-    `${(r.parked.avg.toFixed(1) + '/' + r.parked.peak).padEnd(13)} ` +
-    `${fmtSet(r.parked.radii).padEnd(7)} ${fmtSet(r.parked.speeds).padEnd(8)} ` +
-    `${String(r.slack).padStart(4)}px  ${r.parked.dirty + r.weaving.dirty} of ` +
-    `${r.parked.ticks + r.weaving.ticks} ticks, ${r.parked.died + r.weaving.died} deaths`);
+    `${(r.parked.avg.toFixed(1) + '/' + r.parked.peak).padStart(12)} | ` +
+    `${(r.weaving.avg.toFixed(1) + '/' + r.weaving.peak).padEnd(12)} ` +
+    `${r.weaving.kibs.toFixed(2).padStart(6)}   ` +
+    `${fmtSet(r.weaving.radii).padEnd(7)} ${fmtSet(r.weaving.speeds).padEnd(8)}` +
+    `\n        ${r.slack}px to the next slot, ${r.parked.dirty + r.weaving.dirty} of ` +
+    `${r.parked.ticks + r.weaving.ticks} ticks with anything else engaged in range, ` +
+    `${r.parked.died + r.weaving.died} deaths` +
+    `\n        in the room: ${[...r.weaving.most].map(([k, n]) => `${n}x${k}`).join(' ')}`);
 
 check('nothing but the hostile under test was ever in range of the pilot',
   Object.values(table).every(r => r.parked.dirty === 0 && r.weaving.dirty === 0),
