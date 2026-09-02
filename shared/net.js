@@ -76,22 +76,47 @@ export const unpackRocket = arr => { const o = {}; for (let i = 0; i < ROCKET_FI
 // ball drawn at one radius and hit at another is the "a row you can see and cannot
 // click" bug moved out of the panel and into the world, where it decides fights.
 //
-// `h` and not `vx, vy`, because every orb in the game travels at ORB_SPEED and one
-// heading is one field where a velocity is two. The client flies it forward from the
-// last snapshot exactly as it does a rocket — at 300px/s a tick is 10px, which is
-// under half a hull and visibly steppy without it.
+// `h` and not `vx, vy`, because a heading is one field where a velocity is two. The
+// client flies it forward from the last snapshot exactly as it does a rocket — at
+// 400px/s a tick is 13px, which is under half a hull and visibly steppy without it.
 //
-// `k` is WHOSE IT IS, as a row in the bestiary, and it is the whole reason a Leviathan's
-// orbs are green. There was no owner and no colour on this row, so the client drew every
-// orb in the game in one shade and an Ironhusk's #d0563f red was what a Leviathan threw
-// too — the designer found it in a minute of flying. An index rather than a colour for
-// three reasons, all of them written down at kindIx() in shared/aliens.js; the one that
-// decides it is that a colour on the wire is `ALIENS[kind].colour` kept in two places.
+// `v` IS THE SIXTH FIELD AND IT ARRIVED WITH THE CALTROPS. Orbs used to be five and
+// the note here said "one fewer than a rocket, because every orb travels at
+// ORB_SPEED"; that stopped being true the moment a pattern could `stay` — an orb that
+// has reached its mark sits on it at 0 px/s, and the client dead-reckons between
+// snapshots. Without this it flew a parked caltrop forward 13px a tick and drew the
+// hazard 48px off the place the server collides with, which is the "a ball you can see
+// and cannot be hit by" bug the `r` field two lines up exists to stop.
 //
-// WHAT IT COSTS, measured against a real server rather than estimated, because this is
-// the stream where it matters most: orbs go WHOLE every tick and a deep claim holds
-// around fifty. A pilot standing in front of an Ironhusk and then a Leviathan in /dev,
-// 1,287 orb rows over 59 seconds:
+// It is DERIVED from the velocity rather than stored beside it, so the two can never
+// disagree: there is one answer to how fast an orb is going and stepOrbs owns it.
+//
+// WHAT IT COSTS, off a real socket. test/orbs-live.mjs measures a pilot weaving in
+// front of one Bandit at 5.4 orbs on the wire per tick, peaking at 8, inside a 6.64
+// KiB/s stream. Orbs are EPHEMERAL, so every row goes whole every tick, and the sixth
+// field is four bytes of it: 5.4 x 30 x 4 is 0.63 KiB/s, a tenth of that stream. It is
+// the dearest field on the row and it is the one that cannot be inferred — the client
+// has the heading and the radius and no way at all to know the thing has stopped.
+//
+// AND WHAT IT COSTS WHERE IT MATTERS, which is a different question and was measured
+// rather than argued. Three of the bestiary were converted off a bolt onto a pattern
+// in the same change that added this field, so the honest test is the whole of it
+// against none of it: test/wire-live.mjs's twenty-pilot fight reads 11.37 KiB/s a
+// player either way, and 9.09 against 9.07 compressed. The sixth field and three new
+// weapons together are inside the noise of that measurement, because what a delta
+// costs there is twenty ships moving and not the ordnance.
+//
+// `k` IS THE SEVENTH AND IT ARRIVED THE SAME WEEK, from the other end of the same
+// complaint. There was no owner and no colour on this row at all, so the client drew
+// every orb in the game in one shade and an Ironhusk's #d0563f red was what a
+// Leviathan threw too — the designer found it in a minute of flying. It is a row in
+// the bestiary rather than a colour, for the three reasons written down at kindIx() in
+// shared/aliens.js; the one that decides it is that a colour on the wire is
+// `ALIENS[kind].colour` kept in two places.
+//
+// WHAT IT COSTS, measured the same way and against a real server, because this is the
+// stream where a per-row field matters most: a pilot standing in front of an Ironhusk
+// and then a Leviathan in /dev, 1,287 orb rows over 59 seconds:
 //
 //     orbs with the index      0.521 KiB/s        1.97 bytes a row
 //     orbs without it          0.478
@@ -101,9 +126,10 @@ export const unpackRocket = arr => { const o = {}; for (let i = 0; i < ROCKET_FI
 // holds that is 2.89 KiB/s against 14.6. The index also cannot go stale, which is the
 // reason that would have decided it on its own. On bolts, where the same field rides a
 // far busier stream, it measured 0.014 KiB/s.
-export const ORB_FIELDS = ['x', 'y', 'h', 'r', 'foe', 'k'];
+export const ORB_FIELDS = ['x', 'y', 'h', 'r', 'foe', 'v', 'k'];
 export const packOrb   = o   => [Math.round(o.x), Math.round(o.y), +o.heading.toFixed(2),
-                                 Math.round(o.r), o.foe ? 1 : 0, o.k | 0];
+                                 Math.round(o.r), o.foe ? 1 : 0,
+                                 Math.round(Math.hypot(o.vx ?? 0, o.vy ?? 0)), o.k | 0];
 export const unpackOrb = arr => { const o = {}; for (let i = 0; i < ORB_FIELDS.length; i++) o[ORB_FIELDS[i]] = arr[i]; return o; };
 
 // A pressure front leaving an answering ring: where it left from, how wide it has

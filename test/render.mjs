@@ -332,12 +332,20 @@ for (const id of Object.keys(MAPS)) {
   // The far one is a heading of pi to the third decimal and the near one is on top of
   // the pilot, because the two things that can go wrong in a radial gradient are a
   // zero radius and a colour built out of a rounded alpha.
+  //
+  // The velocities are real, because `v` is DERIVED from them by packOrb and the
+  // client dead-reckons at it: an orb packed with no velocity is a parked one, and a
+  // fixture that forgot to give them any would have quietly stopped exercising the
+  // moving case at all. The last two are a Bandit's caltrops, which is the parked
+  // case — 0 px/s, a second rim, and one of them sitting on the pilot.
   orbs: [
-    packOrb({ x: 6180, y: 4090, heading: 0.42,   r: 44, foe: true }),
-    packOrb({ x: 6220, y: 4150, heading: 0.42,   r: 44, foe: true }),
-    packOrb({ x: 6260, y: 4210, heading: 0.42,   r: 44, foe: true }),
-    packOrb({ x: 6000, y: 4000, heading: -3.1415, r: 60, foe: true }),   // right on the hull
-    packOrb({ x: 5400, y: 3300, heading: 1.9,    r: 60, foe: false }),   // and one of ours
+    packOrb({ x: 6180, y: 4090, heading: 0.42,   r: 44, foe: true, vx: 366, vy: 163 }),
+    packOrb({ x: 6220, y: 4150, heading: 0.42,   r: 44, foe: true, vx: 366, vy: 163 }),
+    packOrb({ x: 6260, y: 4210, heading: 0.42,   r: 44, foe: true, vx: 366, vy: 163 }),
+    packOrb({ x: 6000, y: 4000, heading: -3.1415, r: 60, foe: true, vx: -400, vy: 0 }),  // on the hull
+    packOrb({ x: 5400, y: 3300, heading: 1.9,    r: 60, foe: false, vx: -130, vy: 378 }), // one of ours
+    packOrb({ x: 6120, y: 3940, heading: 0.9,    r: 50, foe: true, vx: 0, vy: 0 }),      // a caltrop
+    packOrb({ x: 6000, y: 4000, heading: 0,      r: 50, foe: true, vx: 0, vy: 0 }),      // under the hull
   ],
   bolts: [
     packBolt({ sx: 6000, sy: 4000, ax: 6400, ay: 4300, t: 0.10, ttl: 0.21, foe: false }),
