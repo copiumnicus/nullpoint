@@ -324,10 +324,50 @@ fs.mkdirSync(path.join(SAND, 'data'));
 for (const d of ['public', 'shared', 'node_modules'])
   fs.symlinkSync(path.join(ROOT, d), path.join(SAND, d));
 
+// --- LETTING THE SIMULATION RUN, WHICH IS NOT THE SAME AS SLEEPING ------------
+//
+// Every `await wait(400)` below meant "let 400ms of the world happen". Against a
+// turbo server that sentence stops being true: 400ms of wall clock is however many
+// thousand ticks the box managed, and the sleep has no relationship left to the
+// thing it was waiting for.
+//
+// sim(ms) asks the SERVER to step that much sim time and waits to be told it has.
+// It is strictly better than a sleep at either speed, because the request is
+// ordered behind everything already sent on the same socket — no more hoping 250ms
+// was enough for a keyframe to come back.
+//
+// It syncs EVERY open pilot, not just one. Most of the assertions in this file are
+// about what the OTHER pilot was told, and a sync on one socket says nothing about
+// another's. Waiting on all of them is one parallel round trip and removes the
+// whole class.
+//
+// wait() survives for the handful of things that are genuinely wall clock: a
+// process starting, a socket closing. Those are named WALL at the call site so
+// nobody converts them by mistake.
+let syncId = 0, simSpent = 0;
+const sockets = new Set();
+const WALL = wait;
+const sim = async ms => {
+  simSpent += ms;
+  await Promise.all([...sockets].map(p => p.sync(ms)));
+  // A few real milliseconds on top, and it is not slack. A note sent to ANOTHER
+  // pilot's socket is written before this pilot's sync reply but arrives on its own
+  // schedule, and under turbo the reply can come back inside a millisecond. This is
+  // the only wall-clock cost sim() has and it is about 4ms a call.
+  await wait(4);
+};
+
 let srv = null;
+// TURBO by default, and it is still a REAL server over a REAL socket — the same
+// process, the same tick, the same wire. All turbo changes is that the tick runs on
+// setImmediate with dt pinned at 1/TICK_HZ instead of waiting out a wall clock
+// nobody in here is measuring. `TURBO=0 node test/duel.mjs` puts it back on the
+// 30Hz interval, which is the thing to reach for when an assertion goes red and you
+// want to know whether the pace is what broke it.
 const boot = () => {
   srv = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    cwd: SAND, env: { ...process.env, PORT: String(PORT), DEV_ADMIN: '1' },
+    cwd: SAND, env: { ...process.env, PORT: String(PORT), DEV_ADMIN: '1',
+                      TURBO: process.env.TURBO ?? '1' },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   srv.stderr.on('data', d => process.stderr.write('[server] ' + d));
@@ -340,6 +380,7 @@ class Pilot {
   constructor(name, token = null) {
     this.name = name; this.map = null; this.bag = {}; this.said = []; this.notes = [];
     this.dead = null; this.ended = []; this.challenged = [];
+    this.pend = new Map(); sockets.add(this);
     this.ready = new Promise(r => { this._ready = r; });
     this.ws = new WebSocket(`ws://127.0.0.1:${PORT}/${token ? `?t=${token}` : ''}`);
     this.ws.on('open', () => { if (!token) this.send({ t: 'join', name, co: 'm' }); });
@@ -351,14 +392,40 @@ class Pilot {
       if (m.t === 'challenge') { this.challenged.push(m); return; }
       if (m.t === 'duelend') { this.ended.push(m); return; }
       if (m.t === 'dead') { this.dead = m; return; }
+      if (m.t === 'sync') { this.pend.get(m.id)?.(m); this.pend.delete(m.id); return; }
       // Only keyframes are read: every place this test reads the bag has just asked
       // for one, so there is no baseline to keep and no decoder to get wrong.
       if (m.t === 's') this.bag = m;
     });
+    // A socket that goes releases anything waiting on it. Two of the exits tested
+    // below ARE a pilot pulling the plug mid-duel, and a sim() that went on waiting
+    // for one of them would hang the suite instead of failing an assertion.
+    this.ws.on('close', () => { sockets.delete(this); this.settle(); });
+    this.ws.on('error', () => { sockets.delete(this); this.settle(); });
   }
+  settle() { for (const r of this.pend.values()) r(null); this.pend.clear(); }
   send(o) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(o)); }
   chat(text) { this.send({ t: 'chat', text }); }
-  close() { try { this.ws.close(); } catch {} }
+  // Ask the server to step `ms` of SIM time and tell us when it has. In
+  // MILLISECONDS because the tick rate is the server's business — see the `sync`
+  // handler in server.js for why this side does not do the arithmetic.
+  sync(ms) {
+    const id = ++syncId;
+    return new Promise(res => {
+      // A guard on the WALL clock, because a sim that has stopped cannot answer a
+      // question about sim time. Loud rather than silent: a suite that hangs says
+      // nothing at all, and this at least names the pilot it was waiting for.
+      const bail = setTimeout(() => {
+        if (!this.pend.delete(id)) return;
+        check('the server kept simulating', false,
+          `${this.name} waited 30s of wall clock for ${ms}ms of sim and was never answered`);
+        res(null);
+      }, 30000);
+      this.pend.set(id, m => { clearTimeout(bail); res(m); });
+      this.send({ t: 'sync', ms, id });
+    });
+  }
+  close() { sockets.delete(this); this.settle(); try { this.ws.close(); } catch {} }
 }
 const join = async (name, token = null) => {
   const p = new Pilot(name, token);
@@ -366,7 +433,7 @@ const join = async (name, token = null) => {
   if (!got) check(`the test server answered ${name}`, false, `nothing on port ${PORT}`);
   return p;
 };
-const snap = async p => { p.bag = {}; p.send({ t: 'need' }); await wait(250); return p.bag; };
+const snap = async p => { p.bag = {}; p.send({ t: 'need' }); await sim(250); return p.bag; };
 const rowOf = (bag, id) => (bag.ships ?? []).find(r => r[0] === id);
 // Folding is FOLD_SECS plus a few ticks of slack, read off the constant so moving
 // the fold moves the test with it rather than leaving a magic number behind.
@@ -374,29 +441,29 @@ const FOLD_WAIT = FOLD_SECS * 1000 + 600;
 // Ask what instanced sectors are open. It is the only visibility there is: a duel
 // is not in MAPS, not on the chart, and only its two pilots can ever see one.
 const arenas = async p => {
-  p.said.length = 0; p.chat('/arenas'); await wait(300);
+  p.said.length = 0; p.chat('/arenas'); await sim(300);
   try { return JSON.parse(p.said.at(-1)); } catch { return { open: -1, list: [] }; }
 };
 
 console.log('\ntwo pilots, one server, and every way a duel ends');
 boot();
-await wait(1600);
+await WALL(1600);
 
 {
   const A = await join('Ash'), B = await join('Bly');
-  await wait(200);
+  await sim(200);
 
   // Kit them out at the dock, where a shop is a shop. A finished rack so the fight
   // is seconds rather than half a minute — a starter hauler needs 24 seconds to
   // kill another one, measured, and the suite should not spend that six times.
   A.chat('/money 1000000'); B.chat('/money 500000');
-  A.chat('/ship vanguard'); await wait(200);
-  A.send({ t: 'hull', key: 'vanguard' }); await wait(200);
-  A.chat('/gear emitter5 5'); await wait(200);
-  for (let i = 0; i < 5; i++) { A.send({ t: 'install', item: 'emitter5' }); await wait(80); }
+  A.chat('/ship vanguard'); await sim(200);
+  A.send({ t: 'hull', key: 'vanguard' }); await sim(200);
+  A.chat('/gear emitter5 5'); await sim(200);
+  for (let i = 0; i < 5; i++) { A.send({ t: 'install', item: 'emitter5' }); await sim(80); }
   A.chat('/ammo cell5 4000');
-  B.chat('/ore iron 40'); await wait(250);
-  B.send({ t: 'load', mat: 'iron', n: 40 }); await wait(250);
+  B.chat('/ore iron 40'); await sim(250);
+  B.send({ t: 'load', mat: 'iron', n: 40 }); await sim(250);
   A.send({ t: 'ammo', feed: 'laser', key: 'cell5' });
   const heldB = { ...(await snap(B)).hold };
 
@@ -405,15 +472,15 @@ await wait(1600);
   // Done first because it is the only part that needs a pilot standing in their own
   // ring: a plot is staked at your own dock, and a claim launches from the plot.
   // Everything after this happens out in open space.
-  A.send({ t: 'stake' }); await wait(300);
-  A.chat('/tolab'); await wait(300);
+  A.send({ t: 'stake' }); await sim(300);
+  A.chat('/tolab'); await sim(300);
   A.said.length = 0;
-  A.send({ t: 'claim', key: 'mine1' }); await wait(400);
+  A.send({ t: 'claim', key: 'mine1' }); await sim(400);
   check('going to a claim is a fold now, not a teleport',
     /folding out/.test(A.said.at(-1) ?? '') && !isArena(A.map),
     `"${A.said.at(-1)}" — an instant, free, uninterruptible ride out of any fight, `
     + 'sitting on the station panel beside a 3,400cr beacon that can be broken');
-  A.send({ t: 'dev-damage' }); await wait(FOLD_WAIT);
+  A.send({ t: 'dev-damage' }); await sim(FOLD_WAIT);
   check('a claim fold broken by a hit leaves you where you were',
     !isArena(A.map), A.map);
   check('and leaves NO arena open — not one the sweep collects later, none at all',
@@ -427,24 +494,24 @@ await wait(1600);
   // pilots are leaving somewhere safe on purpose, to be shot at by somebody who
   // agreed. So it is allowed, and the challenge goes out from inside the ring.
   B.said.length = 0; A.challenged.length = 0;
-  B.chat('/1v1 Ash'); await wait(350);
+  B.chat('/1v1 Ash'); await sim(350);
   check('a duel can be arranged from inside your own ring',
     A.challenged.length === 1, B.said.at(-1) ?? '(nothing said)');
   check('and still nothing is opened until somebody accepts',
     (await arenas(A)).open === 0, 'a challenge is a line you answer, not a sector');
   // Declined rather than flown, and BLY asks so the 60s cooldown lands on Bly>Ash.
   // The key is directional, so Ash>Bly is still free for the duel below.
-  A.chat('/decline'); await wait(250);
+  A.chat('/decline'); await sim(250);
 
-  A.chat('/tp m2'); B.chat('/tp m2'); await wait(400);
+  A.chat('/tp m2'); B.chat('/tp m2'); await sim(400);
 
   // --- 2. THE CHALLENGE ----------------------------------------------------
   A.said.length = 0; B.said.length = 0; B.challenged.length = 0;
-  A.chat('/1v1 nobody at all'); await wait(300);
+  A.chat('/1v1 nobody at all'); await sim(300);
   check('challenging a name nobody flies under says so',
     /nobody is flying/.test(A.said.at(-1) ?? ''), A.said.at(-1));
   const crA0 = (await snap(A)).credits;
-  A.chat('/1v1 Bly'); await wait(350);
+  A.chat('/1v1 Bly'); await sim(350);
   check('a challenge reaches the other pilot',
     B.challenged.length === 1 && B.challenged[0].from === 'Ash',
     `${JSON.stringify(B.challenged[0] ?? null)}`);
@@ -455,12 +522,12 @@ await wait(1600);
 
   // --- 3. A BROKEN FOLD CALLS THE WHOLE THING OFF --------------------------
   B.said.length = 0; A.said.length = 0;
-  B.chat('/accept'); await wait(400);
+  B.chat('/accept'); await sim(400);
   check('accepting folds BOTH of them, not one',
     /folding out/.test(A.said.at(-1) ?? '') && /folding out/.test(B.said.at(-1) ?? ''),
     `${FOLD_SECS}s each, and one hit calls it off`);
   B.send({ t: 'dev-damage' });                    // something lands on Bly mid-fold
-  await wait(FOLD_WAIT);
+  await sim(FOLD_WAIT);
   check('a fold broken by a hit calls the duel off and NEITHER of them goes',
     !isArena(A.map) && !isArena(B.map),
     'a duel with one seat filled is a pilot alone in an empty sector with no way out');
@@ -475,8 +542,8 @@ await wait(1600);
   // Read at the moment it starts, not at setup: staking a plot costs 500,000 and the
   // stake is a share of what you are carrying NOW.
   const crB0 = (await snap(B)).credits, crA1 = (await snap(A)).credits;
-  A.chat('/1v1 Bly'); await wait(400);
-  B.chat('/accept'); await wait(FOLD_WAIT);
+  A.chat('/1v1 Bly'); await sim(400);
+  B.chat('/accept'); await sim(FOLD_WAIT);
   check('both of them land in ONE instanced sector, and it is the duel sector',
     isArena(A.map) && A.map === B.map && parseArena(A.map).key === DUEL_KEY,
     `${A.map} / ${B.map} — "${A.said.at(-1)}"`);
@@ -519,7 +586,7 @@ await wait(1600);
   A.send({ t: 'jump' });
   A.send({ t: 'recall' });
   A.send({ t: 'power', sys: 'weapons' });
-  await wait(900);
+  await sim(900);
   bagA = await snap(A);
   const nowA = rowOf(bagA, A.id);
   check('the server refuses every intent while the clock is running',
@@ -529,13 +596,17 @@ await wait(1600);
     nowA[1] === startA[1] && nowA[2] === startA[2] && nowA[10] === 0,
     `still at ${nowA[1]},${nowA[2]} — a course set before the fold cannot coast through it either`);
 
-  await wait(COUNT * 1000);
+  await sim(COUNT * 1000);
   bagA = await snap(A);
   check('and then it lets go',
     (bagA.duel?.count ?? 1) === 0, `${bagA.duel?.count} — ${COUNT}s exactly, from the server`);
 
   // --- 7. A KILL, BY ACTUAL GUNFIRE ----------------------------------------
-  const t0 = Date.now();
+  // SIM seconds, not wall clock. This number is a claim about the game — how long a
+  // finished rack takes to kill a starter hauler — and under turbo the wall clock
+  // answers a different question entirely (how fast is this laptop). simSpent is
+  // what sim() has asked the world to step, which is the same figure at both speeds.
+  const t0 = simSpent;
   let over = null;
   for (let i = 0; i < 90 && !over; i++) {
     const bb = await snap(A);
@@ -543,12 +614,12 @@ await wait(1600);
     if (rb) A.send({ t: 'intent', mode: 'pt', x: rb[1], y: rb[2] });
     A.send({ t: 'target', id: B.id });
     if (bb.duel?.over) over = bb.duel;
-    else await wait(300);
+    else await sim(300);
   }
-  const took = (Date.now() - t0) / 1000;
+  const took = (simSpent - t0) / 1000;
   check('one pilot can destroy another in here — with guns, over a real socket',
     !!over && over.won === 1,
-    `${took.toFixed(1)}s of a finished rack against a starter hauler`);
+    `${took.toFixed(1)}s of sim: a finished rack against a starter hauler`);
   check('and the loser is a wreck, told they lost',
     B.dead?.where === duelId && B.ended.at(-1)?.won === 0 && B.ended.at(-1)?.draw === 0,
     JSON.stringify(B.ended.at(-1) ?? null));
@@ -570,7 +641,7 @@ await wait(1600);
     `a ${n(bond?.[6] ?? 0)} cr bond and ${ore?.[4]} ${ore?.[3]}`);
 
   // --- 9. THE SCOOP --------------------------------------------------------
-  for (const c of cans) { A.send({ t: 'scoop', id: c[0] }); await wait(2400); }
+  for (const c of cans) { A.send({ t: 'scoop', id: c[0] }); await sim(2400); }
   bagA = await snap(A);
   const gotOre = bagA.hold?.[ore[3]] ?? 0;
   check('the bond goes onto the balance whole, because credits have no volume',
@@ -598,14 +669,14 @@ await wait(1600);
   // purpose and does not touch the portal at all — the portal gets its own test at
   // step 12, in a duel that is not over, where the linger cannot be the answer.
   A.said.length = 0;
-  await wait(LINGER * 1000 + 1200);
+  await sim(LINGER * 1000 + 1200);
   check('when the linger runs out the winner is put back at their own hangar',
     !isArena(A.map) && !!MAPS[A.map] && MAPS[A.map].base
     && A.said.some(t => /you won/.test(t)),
     `${A.map} after ${LINGER}s — long enough to scoop what fell out and watch the wreck`);
 
   // --- 11. AND THE SECTOR CLOSES ------------------------------------------
-  B.send({ t: 'respawn' }); await wait(600);
+  B.send({ t: 'respawn' }); await sim(600);
   open = await arenas(A);
   check('the sector closes once NEITHER seat is standing in it',
     open.open === 0 && open.list.length === 0,
@@ -613,12 +684,12 @@ await wait(1600);
     + 'wreck that respawned, a beacon, /tp and a closed tab are all the same fact');
 
   // --- 12. A FORFEIT ------------------------------------------------------
-  A.chat('/heal'); B.chat('/heal'); await wait(200);
-  A.chat('/tp m2'); B.chat('/tp m2'); await wait(400);
+  A.chat('/heal'); B.chat('/heal'); await sim(200);
+  A.chat('/tp m2'); B.chat('/tp m2'); await sim(400);
   B.challenged.length = 0; A.ended.length = 0; B.ended.length = 0;
   const crB2 = (await snap(B)).credits, crA2 = (await snap(A)).credits;
-  A.chat('/1v1 Bly'); await wait(400);
-  B.chat('/accept'); await wait(FOLD_WAIT + COUNT * 1000 + 400);
+  A.chat('/1v1 Bly'); await sim(400);
+  B.chat('/accept'); await sim(FOLD_WAIT + COUNT * 1000 + 400);
   check('a second duel opens a second sector, and the first one is long gone',
     isArena(A.map) && A.map === B.map && (await arenas(A)).open === 1, A.map);
   // Bly runs for the way out — the portal, on foot, in a duel that is still live.
@@ -626,14 +697,14 @@ await wait(1600);
   // no linger, and they have sent no beacon and no /tp.
   B.said.length = 0;
   B.send({ t: 'intent', mode: 'pt', x: DUEL_W / 2, y: DUEL_H / 2 });
-  await wait(5000);
+  await sim(5000);
   B.send({ t: 'jump' });
-  await wait(JUMP_TIME * 1000 + 900);
+  await sim(JUMP_TIME * 1000 + 900);
   check('the portal in the middle takes you back to your own hangar',
     !isArena(B.map) && !!MAPS[B.map] && MAPS[B.map].base,
     `${B.map} — the first portal any instanced sector has ever had, and it names no `
     + 'sector because it goes to a different one for each of them');
-  await wait(600);
+  await sim(600);
   check('leaving while the other one is still standing is a forfeit, and it pays the same',
     A.ended.at(-1)?.won === 1 && A.ended.at(-1)?.cr === tollOn(crB2)
     && (await snap(B)).credits === crB2 - tollOn(crB2),
@@ -644,7 +715,11 @@ await wait(1600);
     'reading their position after the forfeit would drop a duel’s stake in their home dock');
 
   // --- 13. A CLOSED TAB IS THE SAME EXIT ----------------------------------
-  A.close(); await wait(900);
+  // WALL first, then sim: the close has to be DELIVERED before the sweep that
+  // notices it can run, and a socket closing is wall clock however fast the world
+  // is turning. Under turbo 900ms of sim is a millisecond or two, which is not
+  // enough time for a FIN to cross loopback.
+  A.close(); await WALL(150); await sim(900);
   open = await arenas(B);
   check('and the sector goes when the last of them does, however they go',
     open.open === 0,
@@ -656,24 +731,24 @@ await wait(1600);
   // gone by the time anybody notices, so the stake has to reach the ACCOUNT — which
   // is the reason it is charged at resolution rather than held in escrow.
   const C = await join('Cyd');
-  await wait(200);
-  C.chat('/money 800000'); await wait(200);
-  C.chat('/tp m2'); B.chat('/tp m2'); B.chat('/heal'); await wait(400);
+  await sim(200);
+  C.chat('/money 800000'); await sim(200);
+  C.chat('/tp m2'); B.chat('/tp m2'); B.chat('/heal'); await sim(400);
   const crC0 = (await snap(C)).credits;
   const tokC = C.token;
   B.challenged.length = 0; B.ended.length = 0;
-  B.chat(`/1v1 Cyd`); await wait(400);
-  C.chat('/accept'); await wait(FOLD_WAIT + COUNT * 1000 + 400);
+  B.chat(`/1v1 Cyd`); await sim(400);
+  C.chat('/accept'); await sim(FOLD_WAIT + COUNT * 1000 + 400);
   check('a third pilot can duel too — a duel is per pair, not a global',
     isArena(C.map) && C.map === B.map, `${C.map} / ${B.map}`);
   C.close();                                    // Cyd pulls the plug rather than pay
-  await wait(1200);
+  await WALL(150); await sim(1200);             // the FIN is wall clock; the sweep is not
   check('closing the tab mid-duel is a forfeit, and the stake still comes off the account',
     B.ended.at(-1)?.won === 1 && B.ended.at(-1)?.cr === tollOn(crC0),
     `${n(B.ended.at(-1)?.cr ?? 0)} cr of ${n(crC0)} — the player object is gone by the tick `
     + 'after, so it is charged where it can still be found');
   const back = await join('Cyd', tokC);
-  await wait(400);
+  await sim(400);
   check('and the pilot who pulled it finds the money gone when they come back',
     (await snap(back)).credits === crC0 - tollOn(crC0),
     `${n((await snap(back)).credits)} cr — there is nothing to spend it on inside a duel `
@@ -683,9 +758,14 @@ await wait(1600);
 }
 
 kill();
+// The ratio at the end is the only thing in the output that says turbo is on: it
+// is how many seconds of WORLD went past per second of wall clock. At TURBO=0 it
+// reads about 1.0, which is the number this file used to run at.
 const liveSecs = (Date.now() - began) / 1000 - simSecs;
+const flown = simSpent / 1000;
 console.log(fails.length
   ? `\nFAIL — ${fails.length}: ${fails.join(', ')}`
   : `\nPASS — the duel: ${DUEL_W}x${DUEL_H}, ${COUNT}s held, a tenth on the table`
-    + ` — ${simSecs.toFixed(1)}s offline, ${liveSecs.toFixed(1)}s over the wire`);
+    + ` — ${simSecs.toFixed(1)}s offline, ${liveSecs.toFixed(1)}s over the wire `
+    + `for ${flown.toFixed(0)}s of world (${(flown / liveSecs).toFixed(1)}x)`);
 process.exit(fails.length ? 1 : 0);

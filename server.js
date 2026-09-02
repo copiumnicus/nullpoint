@@ -178,6 +178,76 @@ const DEV_ADMIN = process.env.DEV_ADMIN === '1';
 const ADMIN_TOKENS = new Set((process.env.ADMIN_TOKENS ?? '').split(',').map(t => t.trim()).filter(Boolean));
 const isAdmin = acct => DEV_ADMIN || acct.admin === true || ADMIN_TOKENS.has(acct.token);
 
+// --- TURBO, AND THE TWO CLOCKS IT SEPARATES -----------------------------------
+//
+// The simulation normally advances on a setInterval at 1000/TICK_HZ, so a 228
+// second measurement costs 228 seconds of somebody's afternoon. Under turbo the
+// same tick runs on setImmediate with dt pinned to exactly 1/TICK_HZ, so the
+// world advances as fast as the process can compute it and sim time comes
+// unstuck from wall clock entirely — while a client is waiting on `sync`, which
+// is the gate that keeps it a faster world rather than a different one. See the
+// pump at the bottom of this file for the measurement that put the gate there.
+//
+// IT REQUIRES DEV_ADMIN AS WELL AS ITS OWN FLAG. One env var is one dashboard
+// mistake away from a deployed world running at three thousand ticks a second,
+// which is not a cheat one player has — it is a cheat everybody has at once.
+// `npm run dev` sets neither; `npm run turbo` sets both; `npm start`, which is
+// what the host runs, can set TURBO=1 all it likes and get nothing.
+const TURBO = DEV_ADMIN && process.env.TURBO === '1';
+
+// THE SIM CLOCK. There have always been two clocks in here and turbo is what
+// makes the difference visible: the tick's own `now` runs on performance.now(),
+// which counts from process start, and a dozen features are timed off Date.now()
+// because they are wall-clock facts — a mine that keeps earning while the tab is
+// shut, an account's creation date. Mixing the two is what made the mine pay
+// nothing for a day (see bankLab), and under turbo they do not drift by
+// milliseconds, they diverge by hours.
+//
+// So: every DURATION THE GAME OWNS — a ping cooldown, a challenge that lapses, a
+// claim's fifteen-minute wall, a duel's five minutes, what the mine has earned,
+// when the Pocket Dimension next sells — is measured against simNow(). Anything
+// that is a fact about the DEPLOYMENT rather than about the game — how often the
+// accounts file is written, when an account was created, the recency stamp on a
+// window size that viewsOf() compares against its own Date.now() — stays on
+// Date.now() and does not scale. Where the two legitimately differ it is said at
+// the site rather than papered over.
+//
+// At normal speed simNow() IS Date.now(), to the character, so nothing about the
+// deployed game changes shape: there is no accumulated skew to go wrong, no
+// drift while the world is paused, and no new failure mode on a server that will
+// never set the flag. Only turbo takes the other branch.
+let simMs = Date.now();
+const simNow = () => TURBO ? simMs : Date.now();
+
+// --- SYNCHRONISING A LIVE TEST WITH A SIM THAT IS NOT ON THE WALL CLOCK --------
+//
+// Every live verification in this repo is written as "send an intent, sleep 400ms,
+// read the snapshot", and what it MEANS is "let twelve ticks happen". At 30Hz
+// those are the same sentence. Under turbo they are not: 400ms is however many
+// thousand ticks the box managed, and the sleep no longer has any relationship to
+// the thing being waited for.
+//
+// So a test asks for SIM MILLISECONDS and is told when they have been stepped. It
+// is ordered behind everything else that pilot has already sent on the same
+// socket, which makes it strictly better than a sleep even at normal speed — no
+// more hoping 250ms was enough for a keyframe to come back.
+//
+// Dev-only, and gated on DEV_ADMIN rather than on TURBO so that a suite can use
+// one helper at both speeds. It is a handle on the server's pace and nothing a
+// real client has any use for; the deployed game does not answer it at all.
+const syncs = [];
+let ticks = 0;
+function flushSyncs() {
+  for (let i = syncs.length - 1; i >= 0; i--) {
+    const q = syncs[i];
+    if (ticks < q.at) continue;
+    syncs.splice(i, 1);
+    if (q.ws.readyState === 1)
+      q.ws.send(JSON.stringify({ t: 'sync', id: q.id, tick: ticks, sim: simNow(),
+                                 turbo: TURBO ? 1 : 0, hz: TICK_HZ }));
+  }
+}
+
 // The countdown to the shields coming back, as the wire carries it: tenths of a
 // second, or undefined when there is nothing to wait for. The rule itself is
 // shieldWait() in shared/sim.js — the same call the sim's own gate makes — so the
@@ -191,7 +261,7 @@ const waitField = V => {
 // the field leaves the bag entirely the moment the wait is over and the chip on the
 // plot goes back to saying PING.
 const pingWait = V => {
-  const s = Math.ceil(PING_COOLDOWN - (Date.now() - (V.markAt ?? 0)) / 1000);
+  const s = Math.ceil(PING_COOLDOWN - (simNow() - (V.markAt ?? 0)) / 1000);
   return s > 0 ? s : undefined;
 };
 
@@ -213,12 +283,21 @@ let nextId = 1;
 // lose it and you are a new pilot, which is the right trade for a game that has no
 // passwords in it yet.
 const db = store.load();
+// Date.now(), and it is the same number as simNow() here — this runs before the
+// first tick, so the sim clock is still sitting on its anchor. It is written as
+// the wall clock because that is what it means: sanitiseLab clamps a `since` from
+// the future back to now, which is the thing that makes a turbo run's timestamps
+// safe to read back on an ordinary boot. See the TURBO block above.
 for (const [tok, a] of Object.entries(db.accounts))
   db.accounts[tok] = sanitiseAccount({ ...a, token: tok }, a.seq ?? 0, Date.now());
 console.log(`accounts loaded: ${Object.keys(db.accounts).length}`);
 
 const persistAll = () => {
-  const now = Date.now();
+  // simNow(), because the only thing capture() does with it is bank playtime
+  // against `acted` and `banked` — both of which are stamped from the same clock
+  // in the message handler. sessionSeconds() is a subtraction of the two, so a
+  // mixed pair does not fail loudly, it silently banks zero forever.
+  const now = simNow();
   for (const p of players.values()) capture(p.acct, p, now);
   store.save(db);
   dirty = false;
@@ -233,7 +312,7 @@ let dirty = false;
 // A hostile's own size, for anything reasoning in shares of it — a Censer's ring
 // winds up by what has been taken OFF it, so it needs to know what it started with.
 const alienEhp = a => (a?.isAlien ? effectiveHp(a.kind) : 0);
-const touch = p => { capture(p.acct, p, Date.now()); dirty = true; };
+const touch = p => { capture(p.acct, p, simNow()); dirty = true; };
 
 // --- the yard -----------------------------------------------------------------
 //
@@ -276,7 +355,7 @@ const reyard = () => { labs = yard(); };
 // Whole credits only, and the remainder is left in `since` rather than dropped:
 // at 12 cr/s a per-tick floor would round away most of the income and the mine
 // would quietly pay a fraction of what it promised.
-function bankLab(p, now = Date.now()) {
+function bankLab(p, now = simNow()) {
   const lab = p?.lab;
   if (!lab) return 0;
   const rate = incomeOf(lab.mods);
@@ -586,7 +665,7 @@ function openArena(p, key, replay = false) {
   // sold and a company can be changed mid-fight; the way home should not depend on
   // anything that can still move.
   const home = respawnAt(p, MAPS);
-  arenas.set(id, { key, seats: [p.token], back: { [p.token]: home }, opened: Date.now(),
+  arenas.set(id, { key, seats: [p.token], back: { [p.token]: home }, opened: simNow(),
                    cleared: false, leaveIn: 0, total: countOf(key), replay });
   return id;
 }
@@ -613,7 +692,7 @@ function openDuel(a, b) {
                    seats: [a.token, b.token],
                    name: { [a.token]: a.acct.name, [b.token]: b.acct.name },
                    back: { [a.token]: respawnAt(a, MAPS), [b.token]: respawnAt(b, MAPS) },
-                   opened: Date.now(),
+                   opened: simNow(),
                    // Five seconds where the server refuses every intent either of
                    // them can send. The client draws this number; it does not own it.
                    count: DUEL_COUNT,
@@ -920,7 +999,7 @@ function stepDuel(aid, ar, seated, dt) {
     // The wall. A DRAW, and it pays nothing at all — see shared/duel.js: if running
     // out the clock paid, the cheapest way to move credits between two accounts
     // would be to fly to opposite corners and wait for it.
-    else if ((Date.now() - ar.opened) / 1000 > DUEL_LIMIT)
+    else if ((simNow() - ar.opened) / 1000 > DUEL_LIMIT)
       settleDuel(aid, ar, { draw: true, why: 'time' });
   }
 
@@ -1167,6 +1246,10 @@ const wss = new WebSocketServer({ server, perMessageDeflate: {
 } });
 wss.on('connection', (ws, req) => {
   const id = nextId++;
+  // WALL CLOCK, and deliberately not the sim clock. The only thing this stamps is
+  // `created`/`seen` on a brand new account, and when an account was made is a
+  // date rather than a duration the game owns — see the TURBO block. Everything
+  // below that measures elapsed time takes simNow() explicitly.
   const now = Date.now();
 
   let token = '';
@@ -1187,7 +1270,7 @@ wss.on('connection', (ws, req) => {
   // copy of the same pilot with diverging state.
   for (const [pid, p] of players) if (p.token === token) {
     try { p.ws.send(JSON.stringify({ t: 'bumped' })); p.ws.close(4001, 'signed in elsewhere'); } catch {}
-    capture(p.acct, p, now);
+    capture(p.acct, p, simNow());             // banks playtime: the sim clock, like every other capture
     players.delete(pid);
   }
 
@@ -1225,7 +1308,7 @@ wss.on('connection', (ws, req) => {
                     // later — starting it false would only mean one frame where
                     // the readout lied about it.
                     plate: true,
-                    acted: Date.now(), banked: Date.now() });
+                    acted: simNow(), banked: simNow() });
   // A line back to this pilot only. Lives out here rather than inside the chat
   // handler because anything that refuses a request owes an explanation, and the
   // repair rack was the first thing outside chat that needed one.
@@ -1304,7 +1387,7 @@ wss.on('connection', (ws, req) => {
     // Playtime is measured to the last thing a pilot actually did. Anything they
     // send counts, including a keypress that changes nothing — it is presence
     // that is being measured, not productivity.
-    if (P) P.acted = Date.now();
+    if (P) P.acted = simNow();
 
     if (lobby) {                                  // nothing works until you exist
       if (m.t !== 'join') return;
@@ -1334,6 +1417,24 @@ wss.on('connection', (ws, req) => {
     // sent every tick until now.
     if (m.t === 'need') { if (P) P.base = newBase(); return; }
 
+    // Answered once `ms` MILLISECONDS OF SIM TIME have been stepped — see the sync
+    // queue up by the sim clock for why a live test wants this instead of a sleep.
+    //
+    // It asks in milliseconds and the SERVER turns them into ticks, so the tick
+    // rate stays a fact one file knows. A test that converted for itself would be a
+    // second copy of TICK_HZ, and the day the tick moves it is the copy that is
+    // wrong — silently, by exactly the ratio, in every timed assertion at once.
+    //
+    // At least one tick, so `sync` always means "let the world move"; capped at an
+    // hour of sim so a typo cannot park a socket forever; and refused outright
+    // unless this process was started with DEV_ADMIN.
+    if (m.t === 'sync' && DEV_ADMIN) {
+      const want = Math.round((Math.max(0, +m.ms || 0) / 1000) * TICK_HZ);
+      const n = Math.max(1, Math.min(3600 * TICK_HZ, want));
+      syncs.push({ at: ticks + n, ws, id: m.id ?? 0 });
+      return;
+    }
+
     // How big the window is. Advisory, and it rides the intent path because that
     // is what it is: the client telling us something about itself that the server
     // files and never acts on. Nothing in the tick reads a viewport — see
@@ -1353,6 +1454,12 @@ wss.on('connection', (ws, req) => {
     // a bucket is the freshest, and the client has no business setting it.
     if (m.t === 'view') {
       if (!P) return;
+      // WALL CLOCK on purpose. `at` is only ever compared against another `at` to
+      // pick the freshest dpr — and viewsOf() re-sanitises off disk with its OWN
+      // Date.now() default, so a sim timestamp written here would be a comparison
+      // between the two clocks, silently clamped, in a file nobody would think to
+      // look at. A window size is a fact about a monitor, not a duration the game
+      // owns. See the TURBO block.
       const now = Date.now();
       const v = sanitiseView({ w: m.w, h: m.h, dpr: m.dpr }, now);
       if (!v) return;
@@ -1632,7 +1739,7 @@ wss.on('connection', (ws, req) => {
           if (!want) return tell('who? — /1v1 <callsign>');
           const them = byName(want);
           const key = `${token}>${them?.token ?? want}`;
-          const cool = Math.max(0, ((cooling.get(key) ?? 0) - Date.now()) / 1000);
+          const cool = Math.max(0, ((cooling.get(key) ?? 0) - simNow()) / 1000);
           // ONE outstanding challenge per pilot, in either direction. Without it a
           // single pilot can put a line on every screen in the game at once, which
           // is the spam this cooldown exists to stop by a slower route.
@@ -1641,7 +1748,7 @@ wss.on('connection', (ws, req) => {
                                       { cooling: cool, pending: mine });
           if (why) return tell(why);
           const stake = stakeOf(P.credits, P.hold);
-          challenges.set(them.token, { from: token, fromName: acct.name, at: Date.now() });
+          challenges.set(them.token, { from: token, fromName: acct.name, at: simNow() });
           // Both ends are told, and the challenged pilot is told the NUMBER. An
           // uncapped stake is only fair if nobody can accept one blind — see the
           // cap argument in shared/duel.js, which is why there is no cap.
@@ -1666,7 +1773,7 @@ wss.on('connection', (ws, req) => {
           // BOTH fold. Five seconds each, cancelled by anything that lands, and
           // neither goes unless both land — see arriveDuel.
           pending.set(id, { seats: [them.token, token], ready: new Set(), off: false,
-                            since: Date.now() });
+                            since: simNow() });
           for (const q of [them, P]) {
             q.duelWith = id;
             q.folding = newFold({ kind: FOLD_DUEL, id }, q.ship.sinceHit);
@@ -1678,7 +1785,7 @@ wss.on('connection', (ws, req) => {
           const c = challenges.get(token);
           if (!c) return tell('nobody has challenged you');
           challenges.delete(token);
-          cooling.set(`${c.from}>${token}`, Date.now() + CHALLENGE_CD * 1000);
+          cooling.set(`${c.from}>${token}`, simNow() + CHALLENGE_CD * 1000);
           const them = byToken(c.from);
           if (them) note(them, `${acct.name} declined`);
           return tell('declined');
@@ -2012,12 +2119,12 @@ wss.on('connection', (ws, req) => {
     // back thirty times a second and not one extra ping. `whyNotPing` is shared so
     // the refusal the client speaks and the one the server sends are one string.
     if (m.t === 'mark') {
-      const left = PING_COOLDOWN - (Date.now() - (P.markAt ?? 0)) / 1000;
+      const left = PING_COOLDOWN - (simNow() - (P.markAt ?? 0)) / 1000;
       const why = whyNotPing({ cool: left });
       if (why) return tell(why);
       const S = sizeOf(mapOf(P.mapId));
       const x = Math.max(0, Math.min(S.w, +m.x || 0)), y = Math.max(0, Math.min(S.h, +m.y || 0));
-      P.markAt = Date.now();
+      P.markAt = simNow();
       const here = marks.get(P.mapId);
       if (!here) return;
       here.push({ id: markId++, x, y, name: acct.name ?? '', t: PING_LIFE, ttl: PING_LIFE });
@@ -2081,7 +2188,7 @@ wss.on('connection', (ws, req) => {
                                 room: slot !== null, plots: plotsFor(base).length });
       if (why) return tell(why);
       P.credits -= LAB_PRICE;
-      P.lab = { slot, mods: 0, since: Date.now() };
+      P.lab = { slot, mods: 0, since: simNow() };
       touch(P); reyard();
       receipt('Research Station', LAB_PRICE, 'your plot in the yard');
       return outfit();
@@ -2236,19 +2343,40 @@ wss.on('connection', (ws, req) => {
     // capture banks the playtime, and it banks up to the last action rather than
     // to now — which is the whole point when the tab has been idle for half an
     // hour before the socket finally goes.
-    if (p && !p.lobby) { capture(p.acct, p, Date.now()); store.save(db); }   // last word on where you were
+    if (p && !p.lobby) { capture(p.acct, p, simNow()); store.save(db); }   // last word on where you were
     for (const list of aliens.values()) forgetPlayer(list, id);
     players.delete(id);
+    // Anything this socket was waiting on goes with it. Nothing would ever answer
+    // it — the flush only runs inside a tick, and a tick with nobody in it returns
+    // before reaching one — so the entry would sit in the queue for the life of the
+    // process.
+    for (let i = syncs.length - 1; i >= 0; i--) if (syncs[i].ws === ws) syncs.splice(i, 1);
     if (!lobby) console.log(`- ${acct.name} (${players.size} online)`);
   });
 });
 
 let last = performance.now();
 let idling = false;
-setInterval(() => {
+function tick() {
+  // TWO WAYS TO GET A dt, and turbo is the whole reason the second one exists.
+  //
+  // At normal speed dt is measured off performance.now(), clamped at 0.1s so that
+  // a stalled process does not teleport everything through a wall on the tick it
+  // recovers. Under turbo it is pinned to exactly 1/TICK_HZ instead — the step the
+  // interval was ASKING for — because a setImmediate loop measures the microsecond
+  // it actually took, which would run the same fight in ten-thousand steps of
+  // 0.0001s. Same integrator, wildly different granularity, and no faster in sim
+  // seconds per wall second. A fixed step is what makes turbo the same simulation
+  // rather than a differently-quantised one.
   const now = performance.now();
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const dt = TURBO ? 1 / TICK_HZ : Math.min(0.1, (now - last) / 1000);
   last = now;
+  // And the sim clock moves with it, BEFORE the pause check below: at normal speed
+  // a paused world still has wall clock running under it — that is what lets the
+  // mine pay for the hours a tab was shut — so a paused turbo world has to keep
+  // its clock running too or the two would disagree about the one case they were
+  // built to agree on.
+  simMs += dt * 1000;
 
   // With nobody connected there is nothing to simulate and nobody to see it.
   // Aliens hold position, bolts stay put, and a metered host stops billing for a
@@ -2304,13 +2432,20 @@ setInterval(() => {
     stepVitals(p.ship, dt, p.docked, isDuelMap(mapOf(p.mapId)));
     // The mine, paid out once a second rather than once a tick — see bankLab.
     //
-    // Date.now(), NOT the tick's `now`. The tick runs on performance.now(), which
-    // counts from when the process started; `lab.since` is wall clock, because the
-    // mine has to keep running while nobody is connected. Subtracting one from the
-    // other gives a large negative, cappedSecs clamps it to zero, and the mine
-    // silently pays nothing forever — which is exactly what it did, and only a live
-    // socket caught it. CLAUDE.md says two clocks matter; this is the third time.
-    const wall = Date.now();
+    // simNow(), NOT the tick's `now`. The tick's `now` runs on performance.now(),
+    // which counts from when the process started; `lab.since` is a millisecond
+    // stamp on the same scale as Date.now(), because the mine has to keep running
+    // while nobody is connected. Subtracting one from the other gives a large
+    // negative, cappedSecs clamps it to zero, and the mine silently pays nothing
+    // forever — which is exactly what it did, and only a live socket caught it.
+    // CLAUDE.md says two clocks matter; this is the third time.
+    //
+    // It reads simNow() rather than Date.now() so that turbo scales it: an hour of
+    // mine income is a game rule with a duration in it, and a suite that races the
+    // world forward and finds the mine has paid for two real seconds would be
+    // measuring the wrong thing. At normal speed simNow() IS Date.now(), so this
+    // line is unchanged for every server that is not a test rig.
+    const wall = simNow();
     if (p.lab && incomeOf(p.lab.mods) > 0 && wall - (p.paidAt ?? 0) >= 1000) {
       p.paidAt = wall;
       if (bankLab(p, wall)) touch(p);
@@ -3242,9 +3377,9 @@ setInterval(() => {
   // does — ignoring somebody twice a minute is the same interruption as being
   // refused twice a minute.
   for (const [to, c] of [...challenges]) {
-    if ((Date.now() - c.at) / 1000 < CHALLENGE_TTL) continue;
+    if ((simNow() - c.at) / 1000 < CHALLENGE_TTL) continue;
     challenges.delete(to);
-    cooling.set(`${c.from}>${to}`, Date.now() + CHALLENGE_CD * 1000);
+    cooling.set(`${c.from}>${to}`, simNow() + CHALLENGE_CD * 1000);
     note(byToken(c.from), 'your challenge lapsed — no answer');
     note(byToken(to), 'the challenge lapsed');
   }
@@ -3256,8 +3391,8 @@ setInterval(() => {
   // pilot who can never duel again and nothing anywhere saying why. Half a second
   // past the fold is long enough that a normal rendezvous is never caught by it.
   for (const [pid, pend] of [...pending]) {
-    pend.since = pend.since ?? Date.now();
-    if ((Date.now() - pend.since) / 1000 < FOLD_SECS + 1.5) continue;
+    pend.since = pend.since ?? simNow();
+    if ((simNow() - pend.since) / 1000 < FOLD_SECS + 1.5) continue;
     callOffDuel(pid, 'the duel is off — the other pilot never arrived');
   }
 
@@ -3334,7 +3469,7 @@ setInterval(() => {
     // here heals and they can always die — but the sector they are holding open
     // has no other way to close. Fifteen minutes is nine times the longest clear
     // measured, so nothing that is actually a fight is ever cut short by it.
-    if ((Date.now() - ar.opened) / 1000 > LIMIT)
+    if ((simNow() - ar.opened) / 1000 > LIMIT)
       leaveArena(who, 'the claim held. Come back with a better ship.');
   }
 
@@ -3426,6 +3561,35 @@ setInterval(() => {
   }
   for (const [vid, V] of players) {
     if (V.ws.readyState !== 1 || V.lobby) continue;
+    // WHAT HAPPENS WHEN THE SERVER OUTRUNS THE SOCKET, which only turbo can do: a
+    // few thousand snapshots a second is more than any client is obliged to read,
+    // and ws buffers whatever it cannot write, so an unbounded producer is a memory
+    // leak with a socket on the end of it. Measured on a real socket at 300 ticks a
+    // go: unthrottled, one pilot alone in a sector fell from 971 ticks/s to 171 and
+    // was still falling, with the client 3,071 messages behind on 300 ticks of sim.
+    //
+    // So a DELTA is only encoded for a connection whose socket has drained — "as
+    // fast as this client can actually take them", which needs no threshold to
+    // defend and self-tunes to a crowded sector. Same measurement: a steady 3,297
+    // ticks/s, 110x real time, at about one snapshot every other tick.
+    //
+    // The reason skipping is SAFE rather than a desync is that encodeDelta advances
+    // `V.base` as a side effect of encoding. Not calling it leaves the baseline
+    // exactly where the last message the client actually received put it, so the
+    // next delta is a correct — merely larger — diff against that. Skipping AFTER
+    // encoding would be the desync; skipping instead of encoding is a lower frame
+    // rate and nothing else.
+    //
+    // A KEYFRAME IS NEVER SKIPPED. It is owed because the client asked (`need`) or
+    // because it changed sector, and dropping it would drop the answer to a
+    // question rather than a frame of animation — which a live test would see as
+    // `sync` returning before the snapshot it was waiting for arrived.
+    //
+    // Which is also the one thing turbo cannot measure: a wire-cost figure counts
+    // bytes per WALL second, and under turbo the snapshot rate is whatever the
+    // client could keep up with. test/wire-live.mjs must stay at normal speed.
+    const full = needsFull(V.base, V.mapId);
+    if (TURBO && !full && V.ws.bufferedAmount > 0) continue;
     V.id = vid;
     const seen = stepContacts(V, byMap.get(V.mapId) ?? [], dt);
     const ships = new Map();
@@ -3620,7 +3784,7 @@ setInterval(() => {
             // wire thirty times a second for the whole five minutes. Rounded, it
             // moves once a second — and a clock nobody reads to two decimals has no
             // use for the other twenty-nine.
-            left: Math.max(0, Math.ceil(DUEL_LIMIT - (Date.now() - duelIn(V).opened) / 1000)),
+            left: Math.max(0, Math.ceil(DUEL_LIMIT - (simNow() - duelIn(V).opened) / 1000)),
             over: duelIn(V).over ? 1 : 0,
             draw: duelIn(V).over?.draw ? 1 : 0,
             won: duelIn(V).over && duelIn(V).over.winner === V.token ? 1 : 0 }
@@ -3681,11 +3845,62 @@ setInterval(() => {
     // that: a seventh place added later gets a keyframe rather than a client
     // quietly interpolating against ships in a sector it is no longer in.
     // Everything else is a delta against what this connection was last told.
-    const msg = needsFull(V.base, V.mapId)
+    const msg = full
       ? encodeFull(V.base, V.mapId, streams, bag, extra)
       : encodeDelta(V.base, streams, bag, extra);
     V.ws.send(JSON.stringify(msg));
   }
-}, 1000 / TICK_HZ);
+
+  // Every sync that has come due, AFTER the snapshots — so a test that waits on
+  // one is holding a world it has already been sent, rather than one it will hear
+  // about next. See the `sync` handler for what this is for.
+  ticks++;
+  if (syncs.length) flushSyncs();
+}
+
+// --- HOW THE TICK IS DRIVEN ----------------------------------------------------
+//
+// Normally: a setInterval at 1000/TICK_HZ, which is what it has always been.
+//
+// Under turbo: setImmediate, which puts the next tick in the event loop's check
+// phase — so the poll phase runs between every pair of ticks and an intent arriving
+// on a socket is still read before the tick that should act on it. A bare `while`
+// loop would be faster and would never read another message again.
+//
+// AND ONLY WHILE SOMEBODY IS WAITING FOR THE WORLD TO MOVE. The first draft ran
+// flat out unconditionally and it was measurably wrong: between one `sync` and the
+// next, a test client spends a millisecond or two parsing and asserting, and the
+// server spent that millisecond simulating another two thousand ticks. Sim time
+// then depended on how long the TEST took to think. Measured against the same suite
+// at 30Hz: the duel countdown read 2.87s of 5 where it should have read 4.03, the
+// kill that takes 4.7s of sim was reported as 1.9, and the mine had paid 40 credits
+// nobody asked it for. That is a differently-quantised world, not a faster one.
+//
+// With the gate, sim time between syncs is real time — a millisecond or two, well
+// under a tick — so what a test measures is what it asked for, and the SAME suite
+// produces the same numbers at either speed. It costs nothing: the flat-out stretch
+// is the part with the seconds in it.
+//
+// Two things fall out of it, both wanted. A browser pointed at a turbo server sees
+// an ordinary 30Hz world, because nothing is waiting. And a live test that has not
+// been taught to sync — every other *-live.mjs — runs against a turbo server
+// exactly as it does today rather than being raced past its own sleeps.
+//
+// The world still pauses with nobody connected, and under turbo that pause has to
+// be a TIMER rather than a setImmediate: the paused tick returns having done
+// nothing, and a setImmediate around nothing is a busy loop pinning a core for as
+// long as the server is up.
+if (TURBO) {
+  const pump = () => {
+    tick();
+    if (players.size && syncs.length) setImmediate(pump);
+    else setTimeout(pump, 1000 / TICK_HZ);
+  };
+  setImmediate(pump);
+  console.log('TURBO — the simulation runs flat out while a client is waiting on `sync`, '
+            + `dt pinned at ${(1000 / TICK_HZ).toFixed(2)}ms`);
+} else {
+  setInterval(tick, 1000 / TICK_HZ);
+}
 
 server.listen(PORT, () => console.log(`${GAME} — http://localhost:${PORT}`));

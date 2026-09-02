@@ -1022,10 +1022,49 @@ fs.mkdirSync(path.join(SAND, 'data'));
 for (const d of ['public', 'shared', 'node_modules'])
   fs.symlinkSync(path.join(ROOT, d), path.join(SAND, d));
 
+// --- LETTING THE SIMULATION RUN, WHICH IS NOT THE SAME AS SLEEPING ------------
+//
+// Every `await wait(400)` below meant "let 400ms of the world happen". Against a
+// turbo server that sentence stops being true: 400ms of wall clock is however many
+// thousand ticks the box managed, and the sleep has no relationship left to the
+// thing it was waiting for.
+//
+// sim(ms) asks the SERVER to step that much sim time and waits to be told it has.
+// It is strictly better than a sleep at either speed, because the request is
+// ordered behind everything already sent on the same socket — no more hoping 250ms
+// was enough for a keyframe to come back.
+//
+// It syncs EVERY open pilot, not just one. Half the assertions here are about what
+// somebody ELSE was told, and a sync on one socket says nothing about another's.
+// Waiting on all of them is one parallel round trip and removes the whole class.
+//
+// wait() survives for the handful of things that are genuinely wall clock: a
+// process starting, a process dying, a socket closing. Those are named WALL at the
+// call site so nobody converts them by mistake.
+let syncId = 0, simSpent = 0;
+const sockets = new Set();
+const WALL = wait;
+const sim = async ms => {
+  simSpent += ms;
+  await Promise.all([...sockets].map(p => p.sync(ms)));
+  // A few real milliseconds on top, and it is not slack. A note sent to ANOTHER
+  // pilot's socket is written before this pilot's sync reply but arrives on its own
+  // schedule, and under turbo the reply can come back inside a millisecond. This is
+  // the only wall-clock cost sim() has and it is about 4ms a call.
+  await wait(4);
+};
+
 let srv = null;
+// TURBO by default, and it is still a REAL server over a REAL socket — the same
+// process, the same tick, the same wire. All turbo changes is that the tick runs
+// on setImmediate with dt pinned at 1/TICK_HZ instead of waiting out a wall clock
+// nobody in here is measuring. `TURBO=0 node test/arena.mjs` puts it back on the
+// 30Hz interval, which is the thing to reach for when an assertion goes red and
+// you want to know whether the pace is what broke it.
 const boot = () => {
   srv = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    cwd: SAND, env: { ...process.env, PORT: String(PORT), DEV_ADMIN: '1' },
+    cwd: SAND, env: { ...process.env, PORT: String(PORT), DEV_ADMIN: '1',
+                      TURBO: process.env.TURBO ?? '1' },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   srv.stderr.on('data', d => process.stderr.write('[server] ' + d));
@@ -1040,6 +1079,7 @@ class Pilot {
   constructor(name, token = null) {
     this.name = name; this.map = null; this.bag = {}; this.said = []; this.freed = [];
     this.dead = null; this.devices = {}; this.awards = [];
+    this.pend = new Map(); sockets.add(this);
     this.ready = new Promise(r => { this._ready = r; });
     this.ws = new WebSocket(`ws://127.0.0.1:${PORT}/${token ? `?t=${token}` : ''}`);
     this.ws.on('open', () => { if (!token) this.send({ t: 'join', name, co: 'm' }); });
@@ -1061,14 +1101,41 @@ class Pilot {
       if (m.t === 'award') { this.awards.push(m); return; }
       if (m.t === 'dead') { this.dead = m; return; }
       if (m.t === 'bumped') { this.bumped = true; return; }
+      if (m.t === 'sync') { this.pend.get(m.id)?.(m); this.pend.delete(m.id); return; }
       // Only keyframes are read. Every place this test reads the bag has just
       // asked for one, so there is no baseline to keep and no decoder to get wrong.
       if (m.t === 's') this.bag = m;
     });
+    // A socket that goes releases anything waiting on it. Half this file is about
+    // pilots leaving by every route there is — bumped by a second session, killed
+    // with the process — and a sim() that went on waiting for one of them would
+    // hang the suite instead of failing an assertion.
+    this.ws.on('close', () => { sockets.delete(this); this.settle(); });
+    this.ws.on('error', () => { sockets.delete(this); this.settle(); });
   }
+  settle() { for (const r of this.pend.values()) r(null); this.pend.clear(); }
   send(o) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(o)); }
   chat(text) { this.send({ t: 'chat', text }); }
-  close() { try { this.ws.close(); } catch {} }
+  // Ask the server to step `ms` of SIM time and tell us when it has. In
+  // MILLISECONDS because the tick rate is the server's business — see the `sync`
+  // handler in server.js for why this side does not do the arithmetic.
+  sync(ms) {
+    const id = ++syncId;
+    return new Promise(res => {
+      // A guard on the WALL clock, because a sim that has stopped cannot answer a
+      // question about sim time. Loud rather than silent: a suite that hangs says
+      // nothing at all, and this at least names the pilot it was waiting for.
+      const bail = setTimeout(() => {
+        if (!this.pend.delete(id)) return;
+        check('the server kept simulating', false,
+          `${this.name} waited 30s of wall clock for ${ms}ms of sim and was never answered`);
+        res(null);
+      }, 30000);
+      this.pend.set(id, m => { clearTimeout(bail); res(m); });
+      this.send({ t: 'sync', ms, id });
+    });
+  }
+  close() { sockets.delete(this); this.settle(); try { this.ws.close(); } catch {} }
 }
 
 // Never wait forever for a server that is not there. Without this a boot that
@@ -1081,7 +1148,7 @@ const join = async (name, token = null) => {
 };
 
 // The bag only arrives on a keyframe here, so ask for one and wait for it.
-const snap = async p => { p.bag = {}; p.send({ t: 'need' }); await wait(250); return p.bag; };
+const snap = async p => { p.bag = {}; p.send({ t: 'need' }); await sim(250); return p.bag; };
 
 // GOING TO A CLAIM IS A FOLD NOW, not a teleport. Five seconds standing still,
 // cancelled by anything that lands on you — the same fold a Recall Beacon runs, and
@@ -1094,24 +1161,24 @@ const snap = async p => { p.bag = {}; p.send({ t: 'need' }); await wait(250); re
 // with it. It costs the suite about five seconds per claim entry and that is the
 // price of the fold actually being tested rather than mocked.
 const FOLD_WAIT = FOLD_SECS * 1000 + 500;
-const foldOut = async (p, msg, extra = 0) => { p.send(msg); await wait(FOLD_WAIT + extra); };
+const foldOut = async (p, msg, extra = 0) => { p.send(msg); await sim(FOLD_WAIT + extra); };
 
 const simSecs = (Date.now() - began) / 1000;
 console.log('\nevery way out of a claim, over a real socket');
 boot();
-await wait(1600);
+await WALL(1600);
 {
   const p = await join('Claimer');
   const home = p.map;
   p.chat('/money 900000000');
-  await wait(150);
+  await sim(150);
   p.send({ t: 'stake' });
-  await wait(250);
+  await sim(250);
   let bag = await snap(p);
   const lab = bag.lab;
   // Fly to the station: a claim launches from the plot, not from the dock.
   p.chat('/tolab');
-  await wait(200);
+  await sim(200);
 
   // --- 1. IN --------------------------------------------------------------
   await foldOut(p, { t: 'claim', key: 'mine1' });
@@ -1125,13 +1192,13 @@ await wait(1600);
   // --- 2. DIED ------------------------------------------------------------
   const before = bag.credits;
   p.chat('/kill');
-  await wait(400);
+  await sim(400);
   check('dying on a claim costs nothing but the claim',
     p.dead && p.dead.toll === 0 && Object.keys(p.dead.lost ?? {}).length === 0,
     `toll ${p.dead?.toll}, hold ${JSON.stringify(p.dead?.lost)} — you are meant to lose this two `
     + 'or three times before you win it');
   p.send({ t: 'respawn' });
-  await wait(400);
+  await sim(400);
   check('and it puts you back at your hangar rather than in the sector you died in',
     !isArena(p.map) && MAPS[p.map], p.map);
   bag = await snap(p);
@@ -1144,11 +1211,11 @@ await wait(1600);
 
   // --- 3. WON -------------------------------------------------------------
   p.chat('/tolab');
-  await wait(200);
+  await sim(200);
   await foldOut(p, { t: 'claim', key: 'mine1' });
   const wonIn = p.map;
   p.chat('/clear');
-  await wait(400);
+  await sim(400);
   bag = await snap(p);
   check('clearing the field frees the rock and says so',
     p.freed.length === 1 && p.freed[0].key === 'mine1' && !p.freed[0].replay
@@ -1159,15 +1226,15 @@ await wait(1600);
     'and only that rung: mine2 still wants its own fight');
   // The linger. There is nothing to fly to, so an automatic return is the only
   // honest way out of a claim you have won.
-  await wait((LINGER + 1.5) * 1000);
+  await sim((LINGER + 1.5) * 1000);
   check('and the station pulls you back to where you launched from',
     p.map === home && !isArena(p.map), `${p.map} after ${LINGER}s`);
 
   // --- 4. THE ROCK IS BUYABLE --------------------------------------------
   p.chat('/tolab');
-  await wait(200);
+  await sim(200);
   p.send({ t: 'build', key: 'mine1' });
-  await wait(300);
+  await sim(300);
   bag = await snap(p);
   check('the rig you fought for can then be bought',
     (bag.lab?.mods ?? 0) !== 0 && (bag.lab?.income ?? 0) > 0,
@@ -1182,7 +1249,7 @@ await wait(1600);
     isArena(p.map) && bag.arena?.replay === 1 && bag.arena?.left === countOf('mine1'),
     `${p.map} — the same field, ${bag.arena?.left} of ${bag.arena?.total}`);
   p.chat('/clear');
-  await wait(400);
+  await sim(400);
   bag = await snap(p);
   // Credits alone cannot say this once a mine is running: the rig bought two steps
   // up pays 12 cr/s and the balance climbs between the two reads. `award` is the
@@ -1196,11 +1263,11 @@ await wait(1600);
   // --- 6. /tp -------------------------------------------------------------
   const stillIn = p.map;
   p.chat('/tp m2');
-  await wait(400);
+  await sim(400);
   check('a dev jump out of a claim lands somewhere real',
     p.map === 'm2', p.map);
   p.chat('/arenas');
-  await wait(250);
+  await sim(250);
   check('and the sector closes behind you',
     /"open":0/.test(p.said.at(-1) ?? ''), p.said.at(-1));
 
@@ -1213,22 +1280,22 @@ await wait(1600);
   // has ten, so what lands the pilot at home here can only be the beacon — and the
   // beacon is SPENT on arrival, which the linger would never do.
   p.chat('/tolab');
-  await wait(200);
+  await sim(200);
   p.send({ t: 'buydevice', key: 'recall' });       // at the dock ring, before leaving
-  await wait(300);
+  await sim(300);
   const hadBeacon = p.devices.recall ?? 0;
   await foldOut(p, { t: 'claim', key: 'mine2' });
   check('the second claim is a different sector from the first',
     isArena(p.map) && p.map !== wonIn && parseArena(p.map).key === 'mine2', p.map);
   p.chat('/clear');
-  await wait(300);
+  await sim(300);
   p.send({ t: 'recall' });
-  await wait(6200);
+  await sim(6200);
   check('a Recall Beacon is a way out of a claim, and it takes the sector with it',
     !isArena(p.map) && hadBeacon > 0 && (p.devices.recall ?? 0) === hadBeacon - 1,
     `folded to ${p.map} and the beacon was spent — ${hadBeacon} aboard, ${p.devices.recall ?? 0} now`);
   p.chat('/arenas');
-  await wait(250);
+  await sim(250);
   check('the sweep does not need to be told which exit was used',
     /"open":0/.test(p.said.at(-1) ?? ''),
     'one sweep, not a list of exits — the first draft enumerated them and had already missed two');
@@ -1237,16 +1304,16 @@ await wait(1600);
   // mine3 rather than mine2: clearing the field in step 7 freed that rock, and a
   // rock you have freed is a replay from then on.
   p.chat('/tolab');
-  await wait(200);
+  await sim(200);
   await foldOut(p, { t: 'claim', key: 'mine3' });
   const abandoned = isArena(p.map);
   p.close();
-  await wait(500);
+  await sim(500);
   const q = await join('Watcher');
   q.chat('/admin');
-  await wait(150);
+  await sim(150);
   q.chat('/arenas');
-  await wait(250);
+  await sim(250);
   check('closing the tab inside a claim closes the claim',
     abandoned && /"open":0/.test(q.said.at(-1) ?? ''),
     'a sector full of hostiles nobody will ever see, stepped thirty times a second, forever');
@@ -1254,17 +1321,17 @@ await wait(1600);
   // --- 9. A SECOND SESSION ------------------------------------------------
   const r = await join('Twinned');
   r.chat('/money 900000000');
-  await wait(150);
+  await sim(150);
   r.send({ t: 'stake' });
-  await wait(250);
+  await sim(250);
   r.chat('/tolab');
-  await wait(200);
+  await sim(200);
   await foldOut(r, { t: 'claim', key: 'mine1' });
   const inClaim = isArena(r.map);
   const r2 = await join('Twinned', r.token);       // the same account, a second tab
-  await wait(400);
+  await sim(400);
   q.chat('/arenas');
-  await wait(250);
+  await sim(250);
   check('a second tab taking the account over closes the claim the first one was in',
     inClaim && r.bumped && /"open":0/.test(q.said.at(-1) ?? ''),
     'the exit the first draft missed, because nobody thinks of it as an exit');
@@ -1282,20 +1349,20 @@ await wait(1600);
   // --- 11. A SERVER RESTART ----------------------------------------------
   const s = await join('Restarter');
   s.chat('/money 900000000');
-  await wait(150);
+  await sim(150);
   s.send({ t: 'stake' });
-  await wait(250);
+  await sim(250);
   s.chat('/tolab');
-  await wait(200);
+  await sim(200);
   await foldOut(s, { t: 'claim', key: 'mine1' }, 100);
   const wasIn = isArena(s.map) ? s.map : null;
   const tok = s.token;
   kill();
-  await wait(400);
+  await WALL(400);
   boot();
-  await wait(1600);
+  await WALL(1600);
   const back = await join('Restarter', tok);
-  await wait(400);
+  await sim(400);
   check('a pilot who was inside a claim when the process died signs back in at their dock',
     !!wasIn && !isArena(back.map) && MAPS[back.map],
     `${wasIn} is gone; back in ${back.map}`);
@@ -1311,15 +1378,15 @@ await wait(1600);
     const key = SALVAGE_MODULES[0];
     const sv = await join('Salvager');
     sv.chat('/money 900000000');
-    await wait(150);
+    await sim(150);
     sv.send({ t: 'stake' });
-    await wait(250);
+    await sim(250);
     sv.chat('/admin');
-    await wait(150);
+    await sim(150);
     sv.chat('/tolab');
-    await wait(200);
+    await sim(200);
     sv.chat('/arenas');
-    await wait(250);
+    await sim(250);
     const before = sv.said.at(-1) ?? '';
 
     await foldOut(sv, { t: 'claim', key }, 100);
@@ -1329,13 +1396,13 @@ await wait(1600);
       && mapOf(sv.map).wreck && !mapOf(sv.map).rock,
       `${sv.map} — ${bag.arena?.left} of ${bag.arena?.total} standing around a hulk`);
     sv.chat('/arenas');
-    await wait(250);
+    await sim(250);
     check('and /arenas sees exactly one open where a moment ago there were none',
       /"open":0/.test(before) && /"open":1/.test(sv.said.at(-1) ?? ''),
       `${before.trim()} -> ${(sv.said.at(-1) ?? '').trim()}`);
 
     sv.chat('/clear');
-    await wait(500);
+    await sim(500);
     bag = await snap(sv);
     check('clearing it strips the wreck AND fits the module, on the same tick',
       sv.freed.length === 1 && sv.freed[0].key === key && sv.freed[0].salvage === 1
@@ -1350,18 +1417,18 @@ await wait(1600);
     // THE THING THE MODULE ACTUALLY DOES, over the wire, because a flag on a stat
     // block that never reaches the reactor would pass every test above.
     sv.send({ t: 'power', sys: 'weapons' });
-    await wait(120);
+    await sim(120);
     bag = await snap(sv);
     check('and the reactor is at full power one tick after the keypress, not three seconds',
       (bag.power?.lv?.weapons ?? 0) === 100 && (bag.power?.cap ?? 100) < 100,
       `weapons ${bag.power?.lv?.weapons}% and the capacitor already down to ${bag.power?.cap}% — ` +
       'a spooled reactor reads 3% at half a second');
 
-    await wait((LINGER + 1.5) * 1000);
+    await sim((LINGER + 1.5) * 1000);
     check('the station pulls you back out of a won salvage run exactly as it does a claim',
       !isArena(sv.map) && MAPS[sv.map], `${sv.map} after ${LINGER}s`);
     sv.chat('/arenas');
-    await wait(250);
+    await sim(250);
     check('and the sector closes behind you, by the same sweep and no new exit',
       /"open":0/.test(sv.said.at(-1) ?? ''), sv.said.at(-1));
 
@@ -1370,20 +1437,20 @@ await wait(1600);
     // would have caught a prize that only ever lived in memory.
     const svTok = sv.token;
     sv.close();
-    await wait(300);
+    await WALL(300);
     kill();
-    await wait(400);
+    await WALL(400);
     boot();
-    await wait(1600);
+    await WALL(1600);
     const again = await join('Salvager', svTok);
-    await wait(500);
+    await sim(500);
     const bag2 = await snap(again);
     check('and a stripped wreck survives a server restart, module and all',
       (bag2.salvage ?? []).includes(key) && hasMod(bag2.lab?.mods ?? 0, key),
       `salvage ${JSON.stringify(bag2.salvage)}, lab mask ${bag2.lab?.mods} — the list is the durable ` +
       'record and sanitiseAccount re-grants the bit from it');
     again.send({ t: 'power', sys: 'thrusters' });
-    await wait(120);
+    await sim(120);
     const bag3 = await snap(again);
     check('and the reactor still re-routes instantly on the far side of it',
       (bag3.power?.lv?.thrusters ?? 0) === 100,
@@ -1394,13 +1461,17 @@ await wait(1600);
 }
 
 done();
-// Where the seconds went, because this is the slowest file in the suite by a wide
-// margin and the next person deserves to know which half is costing them. Most of
-// the live half is the LINGER a won claim is watched through and the five seconds
-// a Recall Beacon takes: real clocks the server owns, not slack.
+// Where the seconds went, because this used to be the slowest file in the suite by
+// a wide margin and the next person deserves to know which half is costing them.
+// The live half is mostly the LINGER a won claim is watched through and the five
+// seconds a Recall Beacon takes — real durations the server owns, and under turbo
+// they cost sim seconds rather than somebody's afternoon. The ratio is printed
+// because it is the only thing that says turbo is actually on.
 const liveSecs = (Date.now() - began) / 1000 - simSecs;
+const flown = simSpent / 1000;
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}`
   : `PASS — ${ARENA_MODULES.length} claims at ${ARENA_MODULES.map(countOf).join('/')} hostiles and `
     + `${SALVAGE_MODULES.length} salvage run at ${SALVAGE_MODULES.map(countOf).join('/')}, `
-    + `paying nothing — ${simSecs.toFixed(1)}s simulating, ${liveSecs.toFixed(1)}s over the wire`}\n`);
+    + `paying nothing — ${simSecs.toFixed(1)}s simulating, ${liveSecs.toFixed(1)}s over the wire `
+    + `for ${flown.toFixed(0)}s of world (${(flown / liveSecs).toFixed(1)}x)`}\n`);
 process.exit(fails.length ? 1 : 0);
