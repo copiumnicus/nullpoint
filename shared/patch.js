@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.97';
+export const VERSION = '0.98';
 
 export const PATCHES = [
+  { v: '0.98', notes: [
+    'The Kedge no longer hauls you back. The lance is the whole fight now',
+    'It keeps changing how far out it stands, so no two swings are the same length',
+    'A Thresher throws DEBRIS, not lasers — slow tumbling chunks you can steer between',
+    'Every shot in the game is now the colour of whatever threw it',
+    "A Leviathan's orbs are green, an Ironhusk's red. They were both orange",
+  ] },
   { v: '0.97', notes: [
     'The Kedge stopped shooting. It swings a lance on a line at whatever range you hold',
     'Change your RANGE to duck it — and its fix drags you back to the range you left',

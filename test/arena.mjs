@@ -26,7 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { newShip, step, stepVitals, stepDrift, applyDamage, drainHull, havenKind } from '../shared/sim.js';
-import { fire, stepBolts, faceTarget, BOLT_SPEED } from '../shared/combat.js';
+import { fire, stepBolts, faceTarget } from '../shared/combat.js';
 import { throwOrbs, stepOrbs } from '../shared/orbs.js';
 // The three barrels that are not barrels. fire() returns nothing at all for the
 // hostiles that carry them — see the gate at the top of it — so a bench that called
@@ -42,7 +42,6 @@ import { newAlien, stepAlienAI, stepAlienRepair, stepEvade, jinkHeading, mayHarm
          effectiveHp, threatDps, ALIENS, WILD, storeHit, stepMirror,
          noLeash, noHorizon } from '../shared/aliens.js';
 import { stepSiphon, tetherHolds } from '../shared/siphon.js';
-import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from '../shared/kedge.js';
 import { burnOf, stepBurn, goadBurn, burnBite, pyreFor, inPyre, poolOf, inBurn } from '../shared/burn.js';
 import { holdShear, loudOf } from '../shared/tech.js';
 import { buildFor, stageDps, stageEhp, earnRate } from '../shared/balance.js';
@@ -146,16 +145,6 @@ function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
           vx: (b.ax - b.sx) / b.ttl, vy: (b.ay - b.sy) / b.ttl }))];
       const breaking = stepEvade(a, incoming, map, DT);
       const seen = tgt ? here.find(c => c.id === tgt) : null;
-      if (fixOf(a.def)) {
-        const held = seen ? fixHolds(a, seen.ship, seen.haven) : false;
-        const snap = stepFix(a, seen?.ship ?? null, held, DT);
-        if (fixWinding(a)) { a.tx = a.ty = a.dx = a.dy = null; }
-        if (snap && seen && seen.ship.hp > 0 && mayHarm(a, seen)) {
-          const hauled = collapseTo(seen.ship, snap.to);
-          const took = haulCost(hauled.px, poolOf(seen.ship));
-          if (took > 1) { applyDamage(seen.ship, took); taken += took; }
-        }
-      }
       step(a, DT); stepDrift(a, DT); stepVitals(a, DT, false); stepAlienRepair(a, DT);
       if (breaking && Math.hypot(a.vx, a.vy) > 20) a.heading = jinkHeading(a, seen?.ship);
       else faceTarget(a, seen?.ship);
@@ -173,7 +162,11 @@ function run(map, ship, list, policy, { limit = 600, curve = null } = {}) {
       for (const ob of throwOrbs(a, seen?.ship ?? null, DT)) orbs.push(ob);
       const swing = stepSweep(a, seen?.ship ?? null, DT);
       if (swing) arcs.push(swing);
-      for (const sh of throwShards(a, seen?.ship ?? null, DT, BOLT_SPEED)) bolts.push(sh);
+      // A mirror's debris goes in with the orbs rather than with the bolts, because it
+      // is a body and it is settled by the same stepOrbs the orbs are. No claim roster
+      // carries a Thresher today; this is here so that adding one is a line of data in
+      // shared/arena.js rather than a hostile that quietly stops shooting.
+      for (const sh of throwShards(a, seen?.ship ?? null, DT)) orbs.push(sh);
       const drop = stepPod(a, seen?.ship ?? null, !!seen, (a.brood?.length ?? 0) < (a.def.broods?.max ?? 0), DT);
       // A claim does not spawn escorts — the roster IS the encounter — so a pod that
       // lands is its damage and nothing else. That is stated rather than assumed,

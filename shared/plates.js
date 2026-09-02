@@ -520,6 +520,9 @@ export function stepWave(a, b, dt) {
     x: a.x, y: a.y, r: Math.max(1, a.r ?? 1), reach,
     g: plateMid(def, a.gap), h: plateArc(def) / 2,
     dmg: crestOf(def) * boostOf(a.power, 'weapons', a.stats),
+    // Whose it is, so the front is drawn in the colour of the ring that called it. See
+    // kindIx() in shared/aliens.js.
+    k: a.kx ?? 0,
     // Sanctuary travels WITH the front, by reference, exactly as an orb's does and a
     // sown patch's: a wave is in the air for a second and a half and who its thrower
     // was allowed to harm when it left is still the right answer when it arrives.

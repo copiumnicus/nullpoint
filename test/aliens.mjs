@@ -13,14 +13,15 @@ import { fire, stepBolts, faceTarget, BOLT_SPEED, HIT_R } from '../shared/combat
 // Every other trigger in the game, for the muzzle-flash claim below: a hostile whose
 // barrel became something else never calls fire(), so the line that fades the glow has
 // to live in whichever of these owns its clock.
-import { throwOrbs } from '../shared/orbs.js';
+import { throwOrbs, stepOrbs } from '../shared/orbs.js';
 import { stepSweep } from '../shared/sweep.js';
 import { stepLob } from '../shared/ground.js';
 import { stepWave } from '../shared/plates.js';
 // A mirror's barrel. fire() returns nothing at all for one now — see the gate at the
 // top of it — so the shared bench below has to pull the same trigger the server does,
 // or every measurement in this file reads a Thresher that never shot back.
-import { throwShards, shardCount, shardFan, shardSlots, shardsOf } from '../shared/shards.js';
+import { throwShards, shardCount, shardFan, shardSlots, shardsOf,
+         SHARD_R, SHARD_SPEED, SHARD_READ } from '../shared/shards.js';
 import { MAPS, MAP_W, MAP_H, PORTAL_R } from '../shared/maps.js';
 import { HULLS, resolve, DEFAULT_HULL } from '../shared/ships.js';
 import { BOOST } from '../shared/power.js';
@@ -67,9 +68,12 @@ const full = s => s.stats.hull + s.stats.shield;
 function fight(a, p, secs, { playerFires = false, drive = null, hold = null, immortal = false, route = null } = {}) {
   let t = 0, everTargeted = false, air = [], fired = 0;
   let took = 0, biggest = 0, peak = 0, mirrored = 0, lowest = Infinity;
-  // The biggest WALL, and how many splinters were in it. `biggest` is one hit; these two
-  // are the volley, and after the conversion the volley is what a pilot actually feels.
+  // The biggest WALL, and how many shards were in it. `biggest` is one hit; these two are
+  // the volley, and after the conversion the volley is what a pilot actually feels.
   let volley = 0, shards = 0;
+  // A mirror's debris, in flight. Its own list for the reason the server keeps one: it is
+  // a body, and stepOrbs is what settles bodies.
+  const grit = [];
   while (t < secs && a.hp > 0 && p.hp > 0) {
     if (drive) drive(p, t);
     if (route) p.power.to = route;
@@ -91,9 +95,15 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
     // about what the chamber threw. `mirrored` counts the same points and is what the
     // identity is read off; splitting a payload seven ways cannot move it, which is the
     // whole reason the conversion is a split rather than an addition.
-    const spat = [...fire(a, tgt ? p : null, dt), ...throwShards(a, tgt ? p : null, dt, BOLT_SPEED)];
+    const wallNow = throwShards(a, tgt ? p : null, dt);
+    const spat = [...fire(a, tgt ? p : null, dt), ...wallNow];
     let wall = 0;
-    for (const s1 of spat) { air.push(s1); fired++; wall += s1.dmg; mirrored += Math.max(0, s1.dmg - base / Math.max(1, spat.length)); }
+    for (const s1 of spat) { fired++; wall += s1.dmg; mirrored += Math.max(0, s1.dmg - base / Math.max(1, spat.length)); }
+    // A bolt goes in the bolt list and a SHARD goes in the body list, because they settle
+    // completely differently: one resolves once against the ship it was aimed at, the
+    // other is tested every tick against whatever it passes through. Getting this wrong
+    // is silent — the shards simply never landed and every line of play read as a win.
+    for (const s1 of spat) (wallNow.includes(s1) ? grit : air).push(s1);
     volley = Math.max(volley, wall);
     shards = Math.max(shards, spat.length);
     if (playerFires && !(hold && hold(t))) {
@@ -105,6 +115,12 @@ function fight(a, p, secs, { playerFires = false, drive = null, hold = null, imm
       const n = h.split.shield + h.split.hull;
       if (h.target === a) storeHit(a, n);
       else { took += n; biggest = Math.max(biggest, n); }
+    }
+    // And the debris, settled by the same stepOrbs the server uses. `[{ id, ship }]` is
+    // the shape it wants; there is one ship on this bench and no sanctuary in it.
+    for (const h of stepOrbs(grit, [{ id: 1, ship: p }], dt)) {
+      const n = h.split.shield + h.split.hull;
+      took += n; biggest = Math.max(biggest, n);
     }
     // AFTER the damage is applied, not before it. Restoring at the top of the tick
     // leaves the loop condition to see a pilot one bolt below zero, so the reader
@@ -825,7 +841,7 @@ console.log('\ntargeting');
       // that owns this hostile's clock, and it is the one that has to decay the glow.
       fire(a, null, dt);
       throwOrbs(a, null, dt);
-      throwShards(a, null, dt, BOLT_SPEED);
+      throwShards(a, null, dt);
       stepSweep(a, null, dt);
       stepLob(a, null, false, dt);
       stepWave(a, null, dt);
@@ -1039,29 +1055,57 @@ console.log('\nthe mirror');
     `${[0, 0.25, 0.5, 0.75, 1].map(l => `${(l * 100) | 0}% -> ${shardCount(T, l)}`).join(', ')} splinters, ` +
     `over ${(2 * shardFan(T, 1) * T.attrs.weaponRange * 0.7).toFixed(0)}px at the range it fights from. ` +
     'The count IS the meter, and it is the thing you can see get smaller when you stop shooting');
-  // The width is DERIVED from the one thing that must not move, and this is where the
-  // two ends are pinned together — shards.js writes the number down rather than
-  // importing HIT_R, because combat.js imports shards.js and reaching back is a cycle.
-  // That is SHOP_DPS's arrangement exactly, and this is SHOP_DPS's test.
-  check('the wall is exactly one slack radius wide, so a pilot who never moved still takes all of it',
-    Math.abs(shardsOf(T).fan - HIT_R / (T.attrs.weaponRange * 0.7)) < 1e-9 &&
-    shardSlots(T, 1).every(off => Math.abs(off) * T.attrs.weaponRange * 0.7 <= HIT_R + 1e-9),
-    `${shardsOf(T).fan.toFixed(6)} rad is ${HIT_R} / ${(T.attrs.weaponRange * 0.7).toFixed(0)} to nine places — ` +
-    `the outermost splinter's aim point is ${(shardFan(T, 1) * T.attrs.weaponRange * 0.7).toFixed(0)}px off ` +
-    `centre and a bolt lands within ${HIT_R} of its own, so every hull in the game is inside all ` +
-    `${shardsOf(T).n} discs at once`);
-  // And the half that is not free. A single bolt is all-or-nothing at one slack radius;
-  // a wall degrades from there, so a weave that half clears it half lands.
-  check('but clearing the whole wall asks for nearly twice the room clearing one bolt did',
+  // The width is DERIVED from the one thing that must not move, and this is where the two
+  // ends are pinned together. It used to read against HIT_R, because these used to be
+  // bolts; they are bodies now, so the disc that catches you is the shard's own plus a
+  // hull and the derivation follows the projectile rather than the other way round.
+  // REWRITTEN rather than deleted — the claim is the same claim.
+  check('the wall is exactly one hit disc wide, so a pilot who never moved still takes all of it',
     (() => {
-      const d = T.attrs.weaponRange * 0.7, r = 17;             // the hull that fights it
-      const one = HIT_R + r;
-      const all = HIT_R + r + shardFan(T, 1) * d;
-      return all > one * 1.6 && Math.abs(all - (one + HIT_R)) < 1e-9;
+      const small = Math.min(...Object.keys(HULLS).map(h => HULLS[h].r));
+      const d = T.attrs.weaponRange * 0.7;
+      return Math.abs(shardsOf(T).fan - (SHARD_R + small) / d) < 1e-9 &&
+             shardSlots(T, 1).every(off => Math.abs(off) * d <= SHARD_R + small + 1e-9);
     })(),
-    `${HIT_R + 17}px clears one bolt; ${(HIT_R + 17 + shardFan(T, 1) * T.attrs.weaponRange * 0.7).toFixed(0)}px ` +
-    'clears a full wall, and everything between the two takes a share. That is the chamber making the ' +
-    'DODGE harder as it fills rather than only the hit bigger, which is what a meter alone could never say');
+    (() => {
+      const small = Math.min(...Object.keys(HULLS).map(h => HULLS[h].r));
+      const d = T.attrs.weaponRange * 0.7;
+      return `${shardsOf(T).fan.toFixed(6)} rad is (${SHARD_R} + ${small}) / ${d.toFixed(0)} to nine places — ` +
+             `the outermost shard sits ${(shardFan(T, 1) * d).toFixed(0)}px off centre and catches anything ` +
+             `within ${SHARD_R} + its hull, so the SMALLEST hull in the game is still inside all ` +
+             `${shardsOf(T).n} discs at once. It was ${HIT_R}/630 while these were bolts`; })());
+  // And the half that is not free, which is what "a wall you read" has to mean as a
+  // number: getting off the middle of it is most of a flight to spare, and getting off
+  // ALL of it is the whole flight and a committed line. It was measured the other way
+  // round first — the arithmetic said clearing the whole wall was 1.03s against a 1.00s
+  // flight and therefore impossible — and that was the derivation's own edge-to-target
+  // 584px rather than the centre-to-centre 630px a collision actually uses. The honest
+  // flight is 1.08s and the whole wall is clearable with 5% of it left.
+  check('there is always room to leave the middle of it, and only just enough to leave all of it',
+    (() => {
+      const d = T.attrs.weaponRange * 0.7, r = HULLS.bulwark.r, v = 128;   // the hull this is for
+      const flight = d / SHARD_SPEED;
+      const mid = SHARD_READ + (SHARD_R + r) / v;
+      const all = SHARD_READ + (shardFan(T, 1) * d + SHARD_R + r) / v;
+      return mid < flight * 0.8 && all < flight && all > flight * 0.9;
+    })(),
+    (() => {
+      const d = T.attrs.weaponRange * 0.7, r = HULLS.bulwark.r, v = 128;
+      const flight = d / SHARD_SPEED;
+      return `${(SHARD_R + r)}px off the centre takes ` +
+             `${(SHARD_READ + (SHARD_R + r) / v).toFixed(2)}s of a ${flight.toFixed(2)}s flight; all ` +
+             `${(shardFan(T, 1) * d + SHARD_R + r).toFixed(0)}px of it takes ` +
+             `${(SHARD_READ + (shardFan(T, 1) * d + SHARD_R + r) / v).toFixed(2)}s, which is 96% of it. ` +
+             'So the answer is always there and it is never free'; })());
+  // THE ONE THAT LETS stepOrbs BE REUSED. A point-in-disc test per tick IS the swept test
+  // only while the thing cannot step over a hull in one tick, and that is an inequality
+  // rather than an opinion. orbs.js states it for ORB_SPEED; a shard is faster and this is
+  // the same seam checked for the same reason.
+  check('and a shard cannot fly through a ship between two ticks',
+    SHARD_SPEED / 30 < SHARD_R + Math.min(...Object.keys(HULLS).map(h => HULLS[h].r)),
+    `${(SHARD_SPEED / 30).toFixed(1)}px of travel a tick against a ` +
+    `${SHARD_R + Math.min(...Object.keys(HULLS).map(h => HULLS[h].r))}px smallest hit disc — the day that ` +
+    'stops being true, the segment form is what replaces the point test and this fails first, by name');
   check('breaking off for one second halves what the next bolt carries',
     (() => {
       const a = mirror(0, 0);

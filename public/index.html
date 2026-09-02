@@ -51,7 +51,7 @@ import { audioReady, setThrust, laser, rocket, explosion,
          startMusic, nextTrack, musicTrack, onMusicChange, MUSIC_VOL_STEP,
          setMood, musicMood, hasMood, setPicker, setLeveller, stopMusic } from '/audio.js';
 import { ALLY, FRESH, STALE, ALLY_DOT } from '/shared/radar.js';
-import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackFix, unpackSown, unpackPlates, unpackPing, unpackWave, unpackSweep, unpackHatch, PLATE_STEPS } from '/shared/net.js';
+import { unpackShip, unpackBolt, unpackRocket, unpackOrb, unpackBlast, unpackPod, unpackHit, unpackPyre, unpackSown, unpackPlates, unpackPing, unpackWave, unpackSweep, unpackHatch, unpackShard, PLATE_STEPS } from '/shared/net.js';
 import { pingLayout, pingChip, chipLine, onChip, whyNotPing, pingAlpha,
          PING_TINT, PING_FONT } from '/shared/ping.js';
 import { burnOf, burnR } from '/shared/burn.js';
@@ -64,7 +64,7 @@ import { newBase, absorbFull, decodeDelta } from '/shared/delta.js';
 import { MATERIALS, holdVol, holdValue, roomFor, holdFullFor, mayScoop, pirateValue, PIRATE_RATE, DEATH_TOLL, fmtCredits,
          pocketValue,
          SCOOP_R, CURRENCY, isBond, podName, podColour } from '/shared/cargo.js';
-import { ALIENS, outlineOf, payloadOf } from '/shared/aliens.js';
+import { ALIENS, outlineOf, payloadOf, tintOf } from '/shared/aliens.js';
 import { STEER_KEYS, steerVector } from '/shared/steer.js';
 import { seenAs } from '/shared/stealth.js';
 import { techSet, has as hasTech, seesClear, SPENDS, SHEAR_GRACE } from '/shared/tech.js';
@@ -97,6 +97,7 @@ import { ORB_SPEED } from '/shared/orbs.js';
 // can see and cannot be hit by is the same bug as a row you can see and cannot click.
 import { headAt } from '/shared/sweep.js';
 import { POD_R } from '/shared/brood.js';
+import { SHARD_R, SHARD_SPEED } from '/shared/shards.js';
 
 const c = document.getElementById('c'), g = c.getContext('2d');
 const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
@@ -280,10 +281,30 @@ const sysName = i => (i === 3 ? (abilityHere()?.name ?? 'NONE').toUpperCase() : 
 
 const defOf = s => s.co === 'x' ? ALIENS[s.hull] : HULLS[s.hull];
 const rOf   = s => defOf(s)?.r ?? 12;
+// WHOSE PROJECTILE IS THIS, as a colour. Every projectile and hazard on the wire now
+// carries `k`, a row in the bestiary — see kindIx() in shared/aliens.js for why an index
+// rather than a colour — and these two turn it into something a canvas will take.
+//
+// `rgbOf` gives "r,g,b" because almost every one of these draws wants an rgba() with a
+// computed alpha, and `liftOf` gives the same colour washed toward white for the hot
+// core of a heavy round. Both parse the hex rather than keeping a second table, which is
+// the entire point of putting an index on the wire: there is one place a hostile's
+// colour is written down and it is `ALIENS[kind].colour`.
+const rgbOf = hex => {
+  const n = parseInt(String(hex ?? '').replace('#', ''), 16);
+  return Number.isFinite(n) ? `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}` : '176,106,223';
+};
+const liftOf = (hex, k = 0.55) => {
+  const n = parseInt(String(hex ?? '').replace('#', ''), 16);
+  if (!Number.isFinite(n)) return '255,255,255';
+  const up = v => Math.round(v + (255 - v) * Math.max(0, Math.min(1, k)));
+  return `${up((n >> 16) & 255)},${up((n >> 8) & 255)},${up(n & 255)}`;
+};
+const tint = k => rgbOf(tintOf(k));
 const colOf = s => s.co === 'x' ? (ALIENS[s.hull]?.colour ?? '#b06adf')
                                 : (COMPANIES[s.co]?.color ?? '#8899aa');
 const ships = new Map();          // id -> { x,y,heading,charge, rx,ry }
-let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], fixes = [], ground = [], fronts = [], lances = [], seeds = [];   // rebuilt every snapshot
+let bolts = [], rockets = [], orbs = [], blasts = [], pyres = [], pods = [], numbers = [], ground = [], fronts = [], lances = [], seeds = [], grit = [];   // rebuilt every snapshot
 let mySnare = 0;                                  // s of engines-out left, from the bag
 let snapAt = 0;                                 // when the last snapshot landed, for dead reckoning
 let hold = {}, vault = {}, cargoCap = 60, credits = 0, atDock = false, scoop = null, want = null;
@@ -1478,10 +1499,10 @@ ws.onmessage = e => {
   // field that matters — the radius — changes on every tick.
   fronts = (m.waves ?? []).map(unpackWave);
   lances = (m.sweeps ?? []).map(unpackSweep);
+  grit   = (m.shards ?? []).map(unpackShard);
   snapAt = performance.now();
   blasts = (m.blasts ?? []).map(unpackBlast);
   pyres  = (m.pyres ?? []).map(unpackPyre);
-  fixes  = (m.fixes ?? []).map(unpackFix);
   {                                               // a blast is new the first time we see it low
     const self0 = ships.get(myId);
     for (const b of blasts) {
@@ -4589,7 +4610,12 @@ function drawFrame(now) {
     // A Lock used to override this and burn the bolt orange; Drumfire replaced it
     // and needs nothing here, because a rate of fire tells you what it is by how
     // many of these there are — so the grade gets the colour back to itself.
-    const shot = b.foe ? '#ff7a5c'
+    // A hostile's round is the colour of the hostile. It was a flat '#ff7a5c' for
+    // everything that was not yours, so a Drifter's violet, a Harrier's blue-white and
+    // a Bandit's cyan were one orange on the screen — `k` is the row in the bestiary
+    // that fixes it, and it is 0 and unread on anything a pilot fired. See kindIx() in
+    // shared/aliens.js.
+    const shot = b.foe ? `rgb(${tint(b.k)})`
                : b.gr > 1 ? gradeColour(b.gr) : '#8fe7ff';
     g.strokeStyle = shot;
     g.globalAlpha = 0.22; g.lineWidth = thick + 3.5;
@@ -4597,7 +4623,7 @@ function drawFrame(now) {
     g.globalAlpha = 1; g.lineWidth = thick;
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     if (thick > 3.2) {                            // heavy rounds run white hot down the middle
-      g.strokeStyle = b.foe ? '#ffd6c8' : b.gr > 1 ? '#ffffff' : '#e8fbff';
+      g.strokeStyle = b.foe ? `rgb(${liftOf(tintOf(b.k))})` : b.gr > 1 ? '#ffffff' : '#e8fbff';
       g.lineWidth = thick * 0.34;
       g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
     }
@@ -4658,20 +4684,24 @@ function drawFrame(now) {
       // A slow pulse, so a wall of them shimmers rather than sitting there as flat
       // discs. Bounded well inside 1 so no alpha can ever leave the legal range.
       const beat = 0.82 + Math.sin(now / 190 + o.x * 0.05) * 0.12;
-      const hot = o.foe ? '255,140,90' : '150,225,255';
+      // THE COLOUR OF WHATEVER THREW IT, and this is the bug the designer found first:
+      // there was no owner on an orb row at all, so an Ironhusk's #d0563f red and a
+      // Leviathan's #8fe04a green were the same orange ball and the two hostiles that
+      // throw them were indistinguishable in the air.
+      const hot = o.foe ? tint(o.k) : '150,225,255';
       const grd = g.createRadialGradient(x, y, 0, x, y, R);
       grd.addColorStop(0, `rgba(${hot},${(0.85 * beat).toFixed(3)})`);
       grd.addColorStop(0.55, `rgba(${hot},${(0.34 * beat).toFixed(3)})`);
       grd.addColorStop(1, `rgba(${hot},0)`);
       g.fillStyle = grd;
       g.beginPath(); g.arc(x, y, R, 0, 7); g.fill();
-      g.fillStyle = o.foe ? '#ffd9c4' : '#e8fbff';
+      g.fillStyle = o.foe ? `rgb(${liftOf(tintOf(o.k), 0.62)})` : '#e8fbff';
       g.globalAlpha = beat;
       g.beginPath(); g.arc(x, y, R * 0.42, 0, 7); g.fill();
       g.globalAlpha = 1;
       // The rim, so the edge of the thing is a line you can judge against your own
       // hull rather than a gradient that fades out somewhere around there.
-      g.strokeStyle = o.foe ? 'rgba(255,120,70,0.55)' : 'rgba(120,210,255,0.55)';
+      g.strokeStyle = o.foe ? `rgba(${hot},0.55)` : 'rgba(120,210,255,0.55)';
       g.lineWidth = 1.5;
       g.beginPath(); g.arc(x, y, R, 0, 7); g.stroke();
     }
@@ -4703,16 +4733,19 @@ function drawFrame(now) {
     if (!Number.isFinite(w.g) || !Number.isFinite(w.h)) continue;
     const R = Math.max(1, w.r ?? 1);
     const from = w.g + w.h, to = w.g - w.h + Math.PI * 2;
+    // The ring that called it, in its own colour rather than in a warm literal that
+    // happened to be near it. `k` is the row in the bestiary — see kindIx().
+    const call = tint(w.k), lit = liftOf(tintOf(w.k), 0.45), post = liftOf(tintOf(w.k), 0.62);
     // the wash ahead of the front, so it reads as pressure rather than as a hoop
-    g.strokeStyle = 'rgba(232,196,120,0.130)';
+    g.strokeStyle = `rgba(${call},0.130)`;
     g.lineWidth = 26;
     g.beginPath(); g.arc(w.x, w.y, R, from, to); g.stroke();
     // and the front itself
-    g.strokeStyle = 'rgba(255,232,170,0.880)';
+    g.strokeStyle = `rgba(${lit},0.880)`;
     g.lineWidth = 4;
     g.beginPath(); g.arc(w.x, w.y, R, from, to); g.stroke();
     // the two posts of the door, one wedge apart
-    g.strokeStyle = 'rgba(255,240,200,0.700)';
+    g.strokeStyle = `rgba(${post},0.700)`;
     g.lineWidth = 2;
     for (const edge of [w.g - w.h, w.g + w.h]) {
       const c = Math.cos(edge), s = Math.sin(edge);
@@ -4721,6 +4754,74 @@ function drawFrame(now) {
       g.lineTo(w.x + c * (R + 22), w.y + s * (R + 22));
       g.stroke();
     }
+  }
+
+  // --- a mirror's debris -----------------------------------------------------------
+  //
+  // A Thresher returns the damage you dealt it, and what comes back is the stuff that
+  // came off it: chips of hull, tumbling, dull rather than lit. They were bolts, which
+  // is to say they were lasers with the numbers changed, and a wall of seven lasers is
+  // not something you read — it is something you eat.
+  //
+  // WHAT MAKES IT DEBRIS ON THE SCREEN rather than in the patch notes:
+  //
+  //   it tumbles   each shard spins on its own phase, taken from its HEADING, which is
+  //                the one field on the row that never changes. So the tumble costs no
+  //                wire, is different for every shard in a wall, and is smooth — a
+  //                phase taken from the position would jitter every frame.
+  //   it is a CHIP an irregular quad rather than a disc, so a wall of seven reads as
+  //                seven separate pieces of something at a glance.
+  //   it is dull   a rim and a dim body rather than a hot core. Everything else a
+  //                hostile throws in this game glows; the one thing that is not a
+  //                weapon should not.
+  //
+  // IT IS FLOWN FORWARD between snapshots, exactly as an orb and a rocket are: at 584
+  // px/s a tick is 19px, which is two thirds of a shard and visibly steppy without it.
+  //
+  // SHARD_R comes off shared/shards.js and is NOT a 30 typed here — it is the disc
+  // stepOrbs resolves these against, so a shard drawn at any other size is the "a thing
+  // you can see and cannot be hit by" bug that ORB_FIELDS puts its own radius on the
+  // wire to prevent. There is nothing per-row to say here, so the constant is imported
+  // instead: one definition, both sides, no field.
+  //
+  // NOTHING HERE CAN PRODUCE undefined, NaN OR A BAD COLOUR: both coordinates and the
+  // heading go through Number.isFinite before they reach a path, every alpha is a
+  // literal, the colour comes from tint() which falls back rather than returning
+  // undefined, and the array is empty on every tick nobody is being shot at by a mirror.
+  for (const sd of grit) {
+    if (!Number.isFinite(sd.x) || !Number.isFinite(sd.y) || !Number.isFinite(sd.h)) continue;
+    const ahead = Math.min(0.12, (now - snapAt) / 1000) * SHARD_SPEED;
+    const x = sd.x + Math.cos(sd.h) * ahead, y = sd.y + Math.sin(sd.h) * ahead;
+    const own = tint(sd.k), rim = liftOf(tintOf(sd.k), 0.45);
+    // The tumble. `h` is constant per shard and different for every one in a wall, so
+    // it is both the seed and the phase — and it is already on the wire for the flight.
+    const spin = sd.h * 3 + now / 190;
+    g.save();
+    g.translate(x, y);
+    g.rotate(spin);
+    // A chip rather than a ball: four corners at uneven radii, so it reads as a piece
+    // of something broken from any angle.
+    const R = SHARD_R;
+    g.beginPath();
+    g.moveTo(R * 0.95, 0);
+    g.lineTo(R * 0.15, R * 0.62);
+    g.lineTo(-R * 0.80, R * 0.22);
+    g.lineTo(-R * 0.20, -R * 0.70);
+    g.closePath();
+    g.fillStyle = `rgba(${own},0.380)`;
+    g.fill();
+    g.strokeStyle = `rgba(${rim},0.820)`;
+    g.lineWidth = 1.6;
+    g.stroke();
+    // one bright facet, so it catches as it turns
+    g.beginPath();
+    g.moveTo(R * 0.95, 0);
+    g.lineTo(R * 0.15, R * 0.62);
+    g.lineTo(-R * 0.20, -R * 0.70);
+    g.closePath();
+    g.fillStyle = `rgba(${rim},0.260)`;
+    g.fill();
+    g.restore();
   }
 
   // --- a lance on a line ---------------------------------------------------------
@@ -4775,14 +4876,19 @@ function drawFrame(now) {
     // THE BAND STILL TO COME. From wherever the head is to the far end, so it shrinks
     // as the swing crosses it. During the wind-up that is the whole arc.
     const at = w.g + (w.e - w.g) * (live ? p : 0);
-    g.strokeStyle = `rgba(214,232,96,${al(live ? 0.16 : 0.10 + 0.10 * p)})`;
+    // The Kedge's own colour rather than a yellow-green somebody typed in beside this
+    // loop. `k` is the row in the bestiary — see kindIx() in shared/aliens.js — and the
+    // head is the same hue lifted, so the thing that cuts you is the bright end of the
+    // thing that is holding it.
+    const line = tint(w.k), fluke = liftOf(tintOf(w.k), 0.55), edge = liftOf(tintOf(w.k), 0.7);
+    g.strokeStyle = `rgba(${line},${al(live ? 0.16 : 0.10 + 0.10 * p)})`;
     g.lineWidth = Math.max(2, HR * 2);
     g.beginPath();
     g.arc(w.x, w.y, D, back > 0 ? at : w.e, back > 0 ? w.e : at);
     g.stroke();
     // and the two rails of it, so the RANGE you have to leave is a pair of lines you
     // can judge your own hull against rather than a soft wash
-    g.strokeStyle = `rgba(214,232,96,${al(live ? 0.40 : 0.20 + 0.25 * p)})`;
+    g.strokeStyle = `rgba(${line},${al(live ? 0.40 : 0.20 + 0.25 * p)})`;
     g.lineWidth = 1.2;
     for (const rr of [Math.max(1, D - HR), D + HR]) {
       g.beginPath();
@@ -4791,7 +4897,7 @@ function drawFrame(now) {
     }
     // the line itself, thin and dim: it is what the head is ON, not what cuts
     if (h && Number.isFinite(h.x) && Number.isFinite(h.y)) {
-      g.strokeStyle = `rgba(214,232,96,${al(live ? 0.55 : 0.22 + 0.40 * p)})`;
+      g.strokeStyle = `rgba(${line},${al(live ? 0.55 : 0.22 + 0.40 * p)})`;
       g.lineWidth = live ? 2 : 1 + 1.4 * p;
       if (!live) { g.setLineDash([12, 9]); g.lineDashOffset = -now / 45; }
       g.beginPath(); g.moveTo(w.x, w.y); g.lineTo(h.x, h.y); g.stroke();
@@ -4799,12 +4905,12 @@ function drawFrame(now) {
       // THE HEAD. Solid once it is moving, a held outline while the line is taut — a
       // fluke you can see filled in is a fluke that is already cutting.
       const grd = g.createRadialGradient(h.x, h.y, 0, h.x, h.y, HR);
-      grd.addColorStop(0, `rgba(238,255,150,${al(live ? 0.90 : 0.28)})`);
-      grd.addColorStop(0.55, `rgba(214,232,96,${al(live ? 0.42 : 0.14)})`);
-      grd.addColorStop(1, 'rgba(214,232,96,0)');
+      grd.addColorStop(0, `rgba(${fluke},${al(live ? 0.90 : 0.28)})`);
+      grd.addColorStop(0.55, `rgba(${line},${al(live ? 0.42 : 0.14)})`);
+      grd.addColorStop(1, `rgba(${line},0)`);
       g.fillStyle = grd;
       g.beginPath(); g.arc(h.x, h.y, HR, 0, 7); g.fill();
-      g.strokeStyle = `rgba(238,255,170,${al(live ? 0.85 : 0.30 + 0.35 * p)})`;
+      g.strokeStyle = `rgba(${edge},${al(live ? 0.85 : 0.30 + 0.35 * p)})`;
       g.lineWidth = live ? 2 : 1.4;
       g.beginPath(); g.arc(h.x, h.y, HR, 0, 7); g.stroke();
     }
@@ -4841,17 +4947,23 @@ function drawFrame(now) {
     const p = Number.isFinite(sd.p) ? Math.max(0, Math.min(1, sd.p)) : 0;
     const laden = sd.k === 1;
     const px = sd.x + (sd.tx - sd.x) * p, py = sd.y + (sd.ty - sd.y) * p;
-    const tint = laden ? '224,79,160' : '150,120,160';
+    const rim = liftOf(tintOf(sd.w), 0.55);
+    // The mothership's own colour, off `w` — it was hand-typed as '224,79,160', which
+    // IS a Hive's #e04fa0 and would have gone stale in silence the day anybody edited
+    // that field. An empty pod is the same hue drained most of the way to grey, so the
+    // two read apart at a glance without being two unrelated objects.
+    const own = tint(sd.w);
+    const shell = laden ? own : own.split(',').map(v => Math.round((+v + 320) / 3)).join(',');
     if (laden) {
       // where it is going to open, sitting still on the spot for the whole flight —
       // the sown ground's dashed marker, in the mothership's own colour
-      g.strokeStyle = `rgba(${tint},${al(0.22 + 0.45 * p)})`;
+      g.strokeStyle = `rgba(${shell},${al(0.22 + 0.45 * p)})`;
       g.lineWidth = 1 + 2 * p;
       g.setLineDash([16, 12]);
       g.lineDashOffset = -now / 40;
       g.beginPath(); g.arc(sd.tx, sd.ty, Math.max(2, POD_R), 0, 7); g.stroke();
       g.setLineDash([]);
-      g.strokeStyle = `rgba(${tint},${al(0.30 + 0.40 * p)})`;
+      g.strokeStyle = `rgba(${shell},${al(0.30 + 0.40 * p)})`;
       g.lineWidth = 1.5;
       g.beginPath();
       g.moveTo(sd.tx - 13, sd.ty); g.lineTo(sd.tx + 13, sd.ty);
@@ -4865,18 +4977,21 @@ function drawFrame(now) {
     const lift = 1 + 0.5 * Math.sin(Math.PI * p);
     const PR = Math.max(2, POD_R * lift * (laden ? 1 : 0.7));
     const grd = g.createRadialGradient(px, py, 0, px, py, PR);
-    grd.addColorStop(0, `rgba(${tint},${al(laden ? 0.85 : 0.45)})`);
-    grd.addColorStop(0.5, `rgba(${tint},${al(laden ? 0.36 : 0.18)})`);
-    grd.addColorStop(1, `rgba(${tint},0)`);
+    grd.addColorStop(0, `rgba(${shell},${al(laden ? 0.85 : 0.45)})`);
+    grd.addColorStop(0.5, `rgba(${shell},${al(laden ? 0.36 : 0.18)})`);
+    grd.addColorStop(1, `rgba(${shell},0)`);
     g.fillStyle = grd;
     g.beginPath(); g.arc(px, py, PR, 0, 7); g.fill();
     if (laden) {
-      g.strokeStyle = `rgba(255,190,225,${al(0.55 + 0.30 * p)})`;
+      g.strokeStyle = `rgba(${rim},${al(0.55 + 0.30 * p)})`;
       g.lineWidth = 1.6;
       g.beginPath(); g.arc(px, py, PR, 0, 7); g.stroke();
       // the raider folded up inside it — a dart-sized core, so what is in there reads
       // before it is out
-      g.fillStyle = `rgba(95,208,255,${al(0.50 + 0.40 * p)})`;
+      // and the raider folded up inside it, in the colour of the thing that comes out.
+      // A Bandit's index is not on this row and does not need to be: it is `broods.kind`,
+      // which is data on the definition both sides already read.
+      g.fillStyle = `rgba(${rgbOf(ALIENS[ALIENS.hive.broods.kind]?.colour)},${al(0.50 + 0.40 * p)})`;
       g.beginPath(); g.arc(px, py, Math.max(2, PR * 0.26), 0, 7); g.fill();
     }
   }
@@ -4886,7 +5001,7 @@ function drawFrame(now) {
   // Two kinds, drawn so they cannot be confused with each other at a glance, and so
   // that neither can be confused with a Censer's ring. Everything is in WORLD
   // coordinates — this pass runs inside the camera transform, the same as the pyres
-  // and the fixes below — and every moving part is driven by `now`, the timestamp
+  // and the pyres below — and every moving part is driven by `now`, the timestamp
   // the frame was handed, so a paused tab does not accumulate a spin.
   //
   //   White Heat   boils. It is bright, it is filled, and it moves OUTWARD: nine
@@ -4924,7 +5039,7 @@ function drawFrame(now) {
       // land, at the size it is going to be, for the whole flight — 2.25s at the
       // range these two stand off to and 3.93s at the full throw, so backing off buys
       // you time to read it. Dashed, because a dashed ring in this game has always
-      // meant "not yet": see the fix marker.
+      // meant "not yet".
       //
       // The GLOB itself is drawn travelling into it, from the hostile that threw it
       // to the middle of the circle. `gr.id` is the sower's own id — the server packs
@@ -4961,13 +5076,21 @@ function drawFrame(now) {
           // is the "a ball you can see and cannot be hit by" bug — the same one
           // ORB_FIELDS puts its own radius on the wire to prevent.
           const GR = GLOB_R * lift;
+          // THE THROWN THING IS ITS THROWER'S COLOUR, and the pool it becomes is not.
+          // `gr.w` is the row in the bestiary — see kindIx() in shared/aliens.js — and
+          // the split is the point rather than an inconsistency: a Crucible's glob is a
+          // Crucible, and White Heat on the floor is a substance. It was the palette for
+          // both, hand-typed, and the slack fill happened to equal a Doldrum's own
+          // #6b3cff exactly — a coincidence that would have gone stale in silence the
+          // day anybody edited that field.
+          const own = tint(gr.w), core = liftOf(tintOf(gr.w), 0.5);
           const grd = g.createRadialGradient(gx, gy, 0, gx, gy, GR);
-          grd.addColorStop(0, `rgba(${pal.fill},0.900)`);
-          grd.addColorStop(0.5, `rgba(${pal.fill},0.400)`);
-          grd.addColorStop(1, `rgba(${pal.fill},0)`);
+          grd.addColorStop(0, `rgba(${own},0.900)`);
+          grd.addColorStop(0.5, `rgba(${own},0.400)`);
+          grd.addColorStop(1, `rgba(${own},0)`);
           g.fillStyle = grd;
           g.beginPath(); g.arc(gx, gy, GR, 0, 7); g.fill();
-          g.fillStyle = `rgba(${pal.rim},0.950)`;
+          g.fillStyle = `rgba(${core},0.950)`;
           g.beginPath(); g.arc(gx, gy, Math.max(2, GR * 0.34), 0, 7); g.fill();
         }
         continue;
@@ -5951,7 +6074,11 @@ function drawFrame(now) {
     const left = 1 - py.p;                        // 1 at the moment it died, 0 as it goes
     const rr = py.r * (0.35 + 0.65 * left);       // closing on the wreck
     const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
-    g.strokeStyle = `rgba(255,214,90,${al(0.45 + 0.5 * py.p)})`;
+    // The containment ring is the REACTOR and takes its hostile's colour off `k`; the
+    // wash inside it stays fire, because a reactor coming apart is not the colour of the
+    // paint on the hull. That split is deliberate and it is the same one a sown patch
+    // makes: what a hostile throws is its own, what it turns into is a substance.
+    g.strokeStyle = `rgba(${liftOf(tintOf(py.k), 0.35)},${al(0.45 + 0.5 * py.p)})`;
     g.lineWidth = 2 + 5 * py.p;
     g.setLineDash([26, 18]);
     g.lineDashOffset = -now / 24;
@@ -5967,65 +6094,6 @@ function drawFrame(now) {
     grd.addColorStop(1, 'rgba(255,180,60,0)');
     g.fillStyle = grd;
     g.beginPath(); g.arc(py.x, py.y, Math.max(1, rr), 0, 7); g.fill();
-  }
-
-  // A fix: the place a pilot is about to be standing whether they like it or not.
-  //
-  // This is the whole warning, and it has to be readable as one — where, and when.
-  // WHERE is a bracket the exact size of the hull it is waiting for, so the shape a
-  // player recognises is their own ship's footprint. WHEN is a ring falling onto it,
-  // touching the bracket at the moment the collapse fires. Three seconds is the
-  // whole of the countdown and it is the same three seconds a portal takes, which is
-  // the decision the marker exists to put in front of you.
-  //
-  // Yours is drawn loud, with a line back to your hull so the two ends of it are one
-  // object; somebody else's is quiet furniture, exactly the way another pilot's
-  // scoop beam is. `own` comes off the wire per viewer, the way a damage number's
-  // `mine` does, so this client never has to match ids to know whose it is.
-  //
-  // Nothing here can produce undefined, NaN or a bad colour: `p` is clamped and
-  // fixed to three places before it reaches a string, every radius goes through
-  // Math.max, and the array is empty on every tick nobody is holding a sighting.
-  for (const fx of fixes) {
-    const p = Math.max(0, Math.min(1, fx.p ?? 0));
-    const rr = Math.max(3, fx.r ?? 10);
-    const mine = !!fx.own;
-    const al = v => Math.max(0, Math.min(1, v)).toFixed(3);
-    const tint = mine ? '212,232,64' : '124,136,36';
-    // the ring, falling from four hull-widths onto the bracket
-    g.strokeStyle = `rgba(${tint},${al((mine ? 0.45 : 0.22) + 0.45 * p)})`;
-    g.lineWidth = 1.2 + (mine ? 2.4 : 1.0) * p;
-    g.setLineDash([14, 10]);
-    g.lineDashOffset = now / 30;
-    g.beginPath(); g.arc(fx.x, fx.y, rr * (4.2 - 3.0 * p), 0, 7); g.stroke();
-    g.setLineDash([]);
-    // the bracket: your own outline, waiting
-    g.strokeStyle = `rgba(${tint},${al((mine ? 0.55 : 0.25) + 0.4 * p)})`;
-    g.lineWidth = mine ? 2 : 1.2;
-    for (let q = 0; q < 4; q++) {
-      const a0 = q * Math.PI / 2 + Math.PI / 4;
-      g.beginPath(); g.arc(fx.x, fx.y, rr * 1.25, a0 - 0.38, a0 + 0.38); g.stroke();
-    }
-    if (!mine) continue;
-    // and the line home, so a pilot who has run two thousand pixels can still see
-    // which way they are about to go. It brightens as the fix closes; the dashes run
-    // FROM the ship TO the marker, which is the direction the ship is going.
-    if (me && Number.isFinite(me.rx)) {
-      g.strokeStyle = `rgba(${tint},${al(0.10 + 0.35 * p)})`;
-      g.lineWidth = 1;
-      g.setLineDash([6, 14]);
-      g.lineDashOffset = -now / 55;
-      g.beginPath(); g.moveTo(me.rx, me.ry); g.lineTo(fx.x, fx.y); g.stroke();
-      g.setLineDash([]);
-    }
-    // the last second, when there is nothing left to decide
-    if (p > 0.66) {
-      const bite = (p - 0.66) / 0.34;
-      g.globalAlpha = al(0.10 + 0.30 * bite * (0.6 + 0.4 * Math.sin(now / 70)));
-      g.fillStyle = `rgb(${tint})`;
-      g.beginPath(); g.arc(fx.x, fx.y, rr * 1.25, 0, 7); g.fill();
-      g.globalAlpha = 1;
-    }
   }
 
   // A ping, out the window as well as on the chart.

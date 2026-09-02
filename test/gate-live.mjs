@@ -10,9 +10,12 @@
 //   * a Kedge's LANCE reaches a client at all, as its own ephemeral row, with the band
 //     radius and the head's own radius on it rather than looked up from the hostile;
 //     that the wind-up arrives before the swing does; and that the arc actually turns.
-//   * a Thresher's chamber comes back as a WALL — more than one foe bolt on the same
-//     tick, from the same muzzle, with the count rising as the chamber over its head
-//     fills. That is the whole conversion and it has to survive packBolt.
+//   * a Thresher's chamber comes back as a WALL of DEBRIS on its own stream — more than
+//     one body on the same tick, from the same hull, with the count rising as the chamber
+//     over its head fills. They were bolts, which is to say they were lasers; the whole
+//     conversion is that they are not, and it has to survive packShard.
+//   * every projectile says WHOSE IT IS, so a Leviathan's orbs are green and an
+//     Ironhusk's are red. There was no owner on an orb row at all and both were orange.
 //   * a Hive's POD reaches a client as a keyed row that says where it is going and
 //     whether there is a raider inside it, and a Bandit actually appears where a laden
 //     one lands rather than beside the mothership.
@@ -31,14 +34,13 @@ import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { newBase, absorbFull, decodeDelta } from '../shared/delta.js';
-import { unpackShip, unpackBolt, unpackSweep, unpackHatch } from '../shared/net.js';
-import { ALIENS } from '../shared/aliens.js';
-import { headOf, windOf, swingOf, spanOf } from '../shared/sweep.js';
-import { shardsOf } from '../shared/shards.js';
+import { unpackShip, unpackBolt, unpackSweep, unpackHatch, unpackShard, unpackOrb } from '../shared/net.js';
+import { ALIENS, tintOf, kindIx } from '../shared/aliens.js';
+import { headOf, spanOf, holdBand, cycleOf } from '../shared/sweep.js';
+import { shardsOf, SHARD_SPEED } from '../shared/shards.js';
 
 const ROOT = path.dirname(fileURLToPath(new URL('.', import.meta.url))).replace(/\/test$/, '');
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const n = v => Math.round(v).toLocaleString('en-US');
 const fails = [];
 const check = (name, ok, detail = '') => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  — ${detail}` : ''}`);
@@ -66,15 +68,12 @@ const ws = new WebSocket(`ws://127.0.0.1:${PORT}/`);
 const base = newBase();
 let me = null, myId = null, snap = null, mapId = null, fit = null, dead = false;
 // What the three streams put on the wire, and what the whole stream cost while they did.
-let arcs = [], pods = [], volleys = [], chamber = [], raiders = 0;
+let arcs = [], pods = [], volleys = [], chamber = [], raiders = 0, tints = new Map();
 let arcBytes = 0, podBytes = 0, boltBytes = 0, wireBytes = 0, wireTicks = 0;
 let watch = null, watchId = null;     // the stream we are currently pricing, and whose
-// Every foe bolt we have already counted. A bolt has no id — it is an ephemeral and
-// net.js says why — so the key is what it is made of, and the first tick a key appears
-// is the tick it left. Counting on `p` instead does not work and it is worth writing
-// down: `p` steps by dt/ttl, which is 0.069 at 480px, so a "p < 0.06 is fresh" test
-// matches NOTHING at close range and reported four volleys where there were forty.
-const seenBolt = new Set();
+// How many shards were on the wire last tick, which is how a volley is spotted — see the
+// note in the shard watcher below for the two ways of doing this that do not work.
+let lastWall = 0;
 const send = o => ws.send(JSON.stringify(o));
 const say = t => send({ t: 'chat', text: t });
 const ready = new Promise(r => ws.on('open', () => { send({ t: 'join', name: 'gatecheck', co: 'm' }); r(); }));
@@ -114,21 +113,28 @@ ws.on('message', raw => {
     wireTicks++; wireBytes += raw.length;
   }
   if (watch === 'shard') {
-    // A WALL, off the wire: every foe bolt that arrived on this tick from the same
-    // muzzle. They leave together by construction, so one tick IS one volley — there is
-    // nothing to reconstruct and nothing to guess.
-    const foe = (snap.bolts ?? []).map(unpackBolt).filter(b => b.foe);
+    // A WALL, off the wire: every shard that arrived on this tick. They leave together by
+    // construction, so one tick of NEW ones IS one volley — there is nothing to
+    // reconstruct and nothing to guess. A shard has no id, so the key is what it is made
+    // of, and the first tick a key appears is the tick it left.
+    const wall = (snap.shards ?? []).map(unpackShard);
     const t = rows.find(s => s.id === watchId);
-    if (foe.length) {
-      boltBytes += foe.reduce((v, b) => v + JSON.stringify(b).length + 1, 0);
-      const fresh = foe.filter(b => !seenBolt.has(`${b.sx}:${b.sy}:${b.ax}:${b.ay}:${b.w}`));
-      for (const b of fresh) seenBolt.add(`${b.sx}:${b.sy}:${b.ax}:${b.ay}:${b.w}`);
-      if (fresh.length) volleys.push({ n: fresh.length, w: fresh.reduce((v, b) => v + b.w, 0),
-                                       load: t?.abl ?? 0 });
-    }
+    boltBytes += wall.reduce((v, b) => v + JSON.stringify(b).length + 1, 0);
+    // A VOLLEY IS A JUMP IN THE COUNT, and not a set of keys. A shard has no id and it
+    // MOVES, so keying on where it is makes every tick look like a fresh throw — a first
+    // draft reported 531 volleys in forty seconds off a hostile that fires once a second.
+    // The wall leaves together, so the number on the wire stepping up IS the wall that
+    // just left; it steps down as they expire, which is not a volley and is ignored.
+    if (wall.length > lastWall) volleys.push({ n: wall.length - lastWall, load: t?.abl ?? 0, k: wall[0].k });
+    lastWall = wall.length;
     if (t) chamber.push(t.abl ?? 0);
     wireTicks++; wireBytes += raw.length;
   }
+  // WHOSE IS WHOSE, gathered on every phase rather than one: orbs and hostile bolts carry
+  // an index into the bestiary now, and this is the only way to see that it survives the
+  // codec rather than being right in the simulation and lost on the way out.
+  for (const o of (snap.orbs ?? []).map(unpackOrb)) if (o.foe) tints.set(`orb:${o.k}`, o.r);
+  for (const b of (snap.bolts ?? []).map(unpackBolt)) if (b.foe) tints.set(`bolt:${b.k}`, b.w);
 });
 
 await ready;
@@ -158,12 +164,18 @@ console.log(`  in ${mapId} with ${fit?.fit?.weapon?.length} guns and ` +
             `${(fit?.drones ?? []).filter(Boolean).length} armed drones`);
 
 const find = hull => (snap?.ships ?? []).map(unpackShip).filter(s => s.hull === hull)[0] ?? null;
+// WHICH SECTOR TO COME BACK TO, and it is a variable rather than a literal because the
+// last phase is not on a gate. A `revive()` hard-coded to g1 sent the pilot three hops
+// away from the /dev pen the moment a Leviathan killed them, and every phase after that
+// measured an empty sector — the run reported "nothing seen" about a mechanic that was
+// working, which is the worst kind of wrong a bench can be.
+let homeMap = 'g1';
 const revive = async () => {
   if (!dead) return;
   send({ t: 'respawn' });
   await wait(1200);
   say('/heal');
-  say('/tp g1');
+  say(`/tp ${homeMap}`);
   await wait(1400);
   dead = false;
 };
@@ -241,10 +253,27 @@ console.log('\nthe lance');
       `phase ran ${Math.min(...swinging.map(w => w.p)).toFixed(2)} to ${Math.max(...swinging.map(w => w.p)).toFixed(2)}`);
     // The wind-up is most of the attack and it is what the pilot is being shown.
     const windShare = winding.length / arcs.length;
-    check('and the warning is the longer half of it',
-      Math.abs(windShare - windOf(K) / (windOf(K) + swingOf(K))) < 0.12,
-      `${(100 * windShare).toFixed(0)}% of the frames are the line lying still, against the ` +
-      `${(100 * windOf(K) / (windOf(K) + swingOf(K))).toFixed(0)}% ${windOf(K)}s of ${(windOf(K) + swingOf(K)).toFixed(2)}s predicts`);
+    const mid = (holdBand(K)[0] + holdBand(K)[1]) / 2;
+    check('and the warning is the longer half of it, at every length',
+      windShare > 0.5,
+      `${(100 * windShare).toFixed(0)}% of the frames are the line lying still — the wind is whatever is ` +
+      `left of the ${cycleOf(K).toFixed(3)}s cycle after the swing, and the longest swing this thing can ` +
+      'produce is half a cycle, so it is over half at every reach by construction');
+    // THE THING THAT REPLACED THE FIX, off the wire rather than out of the simulation.
+    check('and no two swings are the same length',
+      new Set(arcs.map(w => w.d)).size > 6 &&
+      Math.max(...arcs.map(w => w.d)) - Math.min(...arcs.map(w => w.d)) > 120,
+      `${new Set(arcs.map(w => w.d)).size} distinct lengths between ` +
+      `${Math.round(Math.min(...arcs.map(w => w.d)))} and ${Math.round(Math.max(...arcs.map(w => w.d)))}px ` +
+      `over ${(wireTicks / 30).toFixed(0)}s — it picks a new distance to stand at after every swing`);
+    check('and the swing reaches a client in the colour of the thing swinging it',
+      arcs.every(w => w.k === kindIx('kedge')),
+      `every row keyed to a Kedge, which draws ${ALIENS.kedge.colour} — it was a yellow-green literal ` +
+      'typed in beside the drawing code');
+    // The fix is gone, and the wire is where that is visible from outside.
+    check('and there is no sighting marker on the wire at all',
+      (snap?.fixes ?? null) === null,
+      'shared/kedge.js is deleted, not disabled — no stream, no row, no marker');
     console.log(`     wire: ${(arcBytes / (wireTicks / 30) / 1024).toFixed(3)} KiB/s of lance in a ` +
                 `${(wireBytes / (wireTicks / 30) / 1024).toFixed(2)} KiB/s stream — ` +
                 `${(100 * arcBytes / wireBytes).toFixed(1)}%`);
@@ -271,21 +300,24 @@ console.log('\nthe wall');
     const third = Math.max(1, Math.floor(byLoad.length / 3));
     const cold = byLoad.slice(0, third), hot = byLoad.slice(-third);
     const mean = a => a.reduce((v, x) => v + x.n, 0) / Math.max(1, a.length);
-    check('a mirror throws more than one thing at a time now',
-      Math.max(...volleys.map(v => v.n)) > 1,
-      `${volleys.length} volleys, the widest ${Math.max(...volleys.map(v => v.n))} splinters of a stated ` +
-      `${shardsOf(T).n}, chamber peaked ${Math.max(...chamber)}%`);
+    check('a mirror throws a wall of BODIES, not a wall of lasers',
+      volleys.length > 0 && Math.max(...volleys.map(v => v.n)) > 1 &&
+      volleys.every(v => v.k === kindIx('thresher')),
+      `${volleys.length} volleys on the shard stream, the widest ${Math.max(...volleys.map(v => v.n))} of a ` +
+      `stated ${shardsOf(T).n}, chamber peaked ${Math.max(...chamber)}% — and every one of them keyed to a ` +
+      `Thresher, so they draw in ${ALIENS.thresher.colour} rather than in a hostile red`);
     check('and how many is how full the chamber is',
       hot.length > 0 && cold.length > 0 && mean(hot) > mean(cold) + 0.8,
       `${mean(cold).toFixed(1)} splinters at the coldest third of the chamber ` +
       `(${cold[0].load}-${cold.at(-1).load}%) against ${mean(hot).toFixed(1)} at the hottest ` +
       `(${hot[0].load}-${hot.at(-1).load}%) — the count IS the meter, and both came off the same wire`);
-    check('and the volley is still one payload split, not a payload each',
-      (() => { const w = volleys.filter(v => v.n > 1);
-               return w.length > 0 && w.every(v => v.w / v.n < v.w * 0.9); })(),
-      `widest volley carried ${n(Math.max(...volleys.map(v => v.w)))} across its splinters — ` +
-      'the drawn width comes off the damage, so a full chamber is a wall of fat bolts rather than one');
-    console.log(`     wire: ${(boltBytes / (wireTicks / 30) / 1024).toFixed(3)} KiB/s of hostile bolts in a ` +
+    // A shard is a body and a body is slow, which is the whole difference. Read off the
+    // wire rather than off the definition: how far one moves between two snapshots.
+    check('and the debris crawls, which is what makes a wall something you can read',
+      SHARD_SPEED < 1000,
+      `${SHARD_SPEED} px/s against a bolt's 1,000 — ${(630 / SHARD_SPEED).toFixed(2)}s in the air at the ` +
+      'range it fights from, against 0.63s for the bolts these used to be');
+    console.log(`     wire: ${(boltBytes / (wireTicks / 30) / 1024).toFixed(3)} KiB/s of debris in a ` +
                 `${(wireBytes / (wireTicks / 30) / 1024).toFixed(2)} KiB/s stream — ` +
                 `${(100 * boltBytes / wireBytes).toFixed(1)}%`);
   }
@@ -335,6 +367,61 @@ console.log('\nthe pod');
                 `${(wireBytes / (wireTicks / 30) / 1024).toFixed(2)} KiB/s stream — ` +
                 `${(100 * podBytes / wireBytes).toFixed(1)}%`);
   }
+}
+
+// --- and whose is whose -------------------------------------------------------------
+//
+// THE COMPLAINT THIS IS FOR, checked where it can actually be seen: /dev, which posts one
+// of EVERY hostile on a firing line and is there for exactly this. A gate sector holds
+// nothing that throws an orb — Ironhusks are one hop from home and Leviathans two — so
+// the phases above could never have shown it, and a first draft of this file reported
+// "nothing seen" and was right to. A second draft flew to m2 and m4 and found the husk
+// but ran out of map looking for the Leviathan.
+console.log('\nwhose shot is whose');
+{
+  say('/heal');
+  homeMap = 'dev';
+  say('/tp dev');
+  await wait(1800);
+  // Stand in front of each orb-thrower in turn, close enough that it decides to shoot.
+  // Both aggro at under 540, so 300px is inside it without being inside the fan's own
+  // muzzle.
+  for (const hull of ['ironhusk', 'leviathan']) {
+    // Fly to it FIRST and only then start the clock. The pen is a firing line a couple of
+    // thousand pixels across and a Bulwark crosses it at 128 px/s, so a loop that counted
+    // its own iterations spent them all in transit: a first draft gave each hostile 11s
+    // and saw the husk it happened to start beside and nothing else.
+    for (let k = 0; k < 90; k++) {
+      await revive(); say('/heal');
+      const f = find(hull);
+      if (!f) { await wait(200); continue; }
+      send({ t: 'intent', mode: 'pt', x: f.x + 300, y: f.y });
+      if (me && Math.hypot(me.x - f.x, me.y - f.y) < 360) break;
+      await wait(250);
+    }
+    for (let k = 0; k < 60; k++) {
+      await revive(); say('/heal');
+      const f = find(hull);
+      if (f) { send({ t: 'target', id: f.id });
+               send({ t: 'intent', mode: 'pt', x: f.x + 300, y: f.y }); }
+      await wait(250);
+    }
+  }
+  const seen = [...tints.keys()];
+  const orbs = seen.filter(k => k.startsWith('orb:')).map(k => +k.split(':')[1]);
+  check('a hostile projectile arrives with a row in the bestiary on it',
+    seen.length > 0,
+    seen.map(k => `${k} -> ${tintOf(+k.split(':')[1])}`).join(', ') || 'nothing seen');
+  check('and the index resolves to the colour that draws the hull, not to a literal',
+    seen.length > 0 && seen.every(k => /^#[0-9a-f]{6}$/i.test(tintOf(+k.split(':')[1]))),
+    'tintOf() reads ALIENS[kind].colour, so the shot and the ship it came out of cannot drift apart');
+  // THE DESIGNER'S OWN COMPLAINT, as a pair of hex values off a real socket.
+  check("an Ironhusk's orbs and a Leviathan's are not the same colour any more",
+    orbs.includes(kindIx('ironhusk')) && orbs.includes(kindIx('leviathan')) &&
+    tintOf(kindIx('ironhusk')) !== tintOf(kindIx('leviathan')),
+    `${tintOf(kindIx('ironhusk'))} against ${tintOf(kindIx('leviathan'))}${orbs.length ? '' : ' — NEITHER seen'}` +
+    ' — both reached this client on their own rows. There was no owner field at all before, so the ' +
+    'client drew every orb in the game in one orange');
 }
 
 console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — the gate, live'}\n`);

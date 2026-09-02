@@ -112,7 +112,7 @@ export const podHit = (at, s) =>
   !!at && !!s && Math.hypot(s.x - at.x, s.y - at.y) <= POD_R + (s.r ?? 0);
 
 // Clamped to charted space, exactly where driftDepth() stops being zero, for the reason
-// sowPoint() and fixPoint() both are: a raider hatched in the shear is a raider nobody
+// sowPoint() is: a raider hatched in the shear is a raider nobody
 // can be asked to fight. Applied when the throw is TAKEN, so the marker everyone can
 // see and the place the thing arrives are the same point — 61px apart is a bug this
 // codebase has already shipped once, and it was found live.

@@ -10,7 +10,7 @@
 
 import { ORB_SPEED, READ_TIME, orbsOf, orbCount, orbSlots, throwOrbs, stepOrbs } from '../shared/orbs.js';
 import { ALIENS, WILD, newAlien, stepAlienAI, stepAlienRepair, threatDps, effectiveHp,
-         bountyFor, xpFor } from '../shared/aliens.js';
+         bountyFor, xpFor, tintOf } from '../shared/aliens.js';
 import { newShip, step, stepVitals } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED } from '../shared/combat.js';
 import { ROCKET_SPEED } from '../shared/rockets.js';
@@ -255,17 +255,38 @@ check('and neither reads as a different threat than it did',
   `72 and 120, unchanged — the Leviathan is 300 x 0.4 where it was 150 x 0.8, and every ` +
   'reader of that table takes the product');
 
-// The wire. A body needs a place, a facing, its size and whose it is, and one field
-// per orb per tick is what a spread costs thirty times a second.
-check('an orb is five fields on the wire and the radius is one of them',
-  ORB_FIELDS.length === 5 && ORB_FIELDS.includes('r') && ORB_FIELDS.includes('h'),
-  ORB_FIELDS.join(' ') + ' — one fewer than a rocket, because every orb travels at ORB_SPEED ' +
-  'and one heading is one field where a velocity is two');
+// The wire. A body needs a place, a facing, its size and WHOSE IT IS, and one field per
+// orb per tick is what a spread costs thirty times a second.
+//
+// REWRITTEN, not deleted: this said five fields and it now says six, because the row was
+// missing the only thing that says which hostile threw it. Without `k` the client drew
+// every orb in the game in one colour, so an Ironhusk's #d0563f and a Leviathan's
+// #8fe04a were the same orange ball — the designer found it in a minute of flying. An
+// index into the bestiary rather than a colour, for the three reasons written down at
+// kindIx() in shared/aliens.js.
+check('an orb is six fields on the wire: a place, a facing, a radius and whose it is',
+  ORB_FIELDS.length === 6 && ORB_FIELDS.includes('r') && ORB_FIELDS.includes('h') &&
+  ORB_FIELDS.includes('k'),
+  ORB_FIELDS.join(' ') + ' — still one fewer than a rocket plus its owner, because every orb ' +
+  'travels at ORB_SPEED and one heading is one field where a velocity is two');
 check('and it survives the round trip', (() => {
-  const o = { x: 1234.7, y: 891.2, heading: -0.6789, r: 44, foe: true };
+  const o = { x: 1234.7, y: 891.2, heading: -0.6789, r: 44, foe: true, k: 6 };
   const back = unpackOrb(packOrb(o));
-  return back.x === 1235 && back.y === 891 && back.h === -0.68 && back.r === 44 && back.foe === 1;
-})(), JSON.stringify(unpackOrb(packOrb({ x: 1234.7, y: 891.2, heading: -0.6789, r: 44, foe: true }))));
+  return back.x === 1235 && back.y === 891 && back.h === -0.68 && back.r === 44 && back.foe === 1
+      && back.k === 6;
+})(), JSON.stringify(unpackOrb(packOrb({ x: 1234.7, y: 891.2, heading: -0.6789, r: 44, foe: true, k: 6 }))));
+// And the thrower actually reaches the row, which is the half a field count cannot say.
+check('and an orb knows which hostile threw it, so a Leviathan\'s are green',
+  (() => {
+    const husk = newAlien('ironhusk', 1, MAPS.m2, 5, { x: 0, y: 0 });
+    const levi = newAlien('leviathan', 2, MAPS.m2, 5, { x: 0, y: 0 });
+    const foe = { x: 300, y: 0, vx: 0, vy: 0, hp: 100, r: 17 };
+    const a = throwOrbs(husk, foe, 1 / 30), b = throwOrbs(levi, foe, 1 / 30);
+    return a.length && b.length && a[0].k !== b[0].k &&
+           tintOf(a[0].k) === ALIENS.ironhusk.colour && tintOf(b[0].k) === ALIENS.leviathan.colour;
+  })(),
+  `${ALIENS.ironhusk.colour} against ${ALIENS.leviathan.colour} — the colour comes off the same ` +
+  'ALIENS entry that draws the hull, so the two cannot drift apart');
 check('the radius the client draws IS the radius the server collides with',
   THROWERS.every(k => {
     const a = newAlien(k, 9, MAP, 5, null);

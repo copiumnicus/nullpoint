@@ -223,6 +223,12 @@ export function throwOrbs(a, b, dt) {
       x: a.x, y: a.y, heading: h,
       vx: Math.cos(h) * ORB_SPEED, vy: Math.sin(h) * ORB_SPEED,
       r: o.r, dmg: each, foe: !!a.isAlien,
+      // WHOSE IT IS, as a row in the bestiary. There was nothing here, so the client drew
+      // an Ironhusk's orbs and a Leviathan's in the same colour and the Leviathan's own
+      // green never left aliens.js. An index rather than a colour, because a colour on the
+      // wire is `ALIENS[kind].colour` kept in two places — see kindIx() in aliens.js for
+      // the rest of the argument and ORB_FIELDS for what it costs.
+      k: a.kx ?? 0,
       // Sanctuary travels WITH the orb, by reference, exactly as a sown patch carries
       // its sower's set: a pattern is in the air for over two seconds at a Leviathan's
       // reach and the hostile that threw it may be dead by the time it arrives, but

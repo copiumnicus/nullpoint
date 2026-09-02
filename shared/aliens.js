@@ -9,7 +9,6 @@ import { MAP_W, MAP_H } from './maps.js';
 import { newBody, inHaven, sizeOf } from './sim.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, burnBurst,
          pyreFor, inPyre, poolOf, inBurn } from './burn.js';
-import { fixOf } from './kedge.js';
 import { sowOf, HOLD } from './ground.js';
 import { platesOf, newRing, stepRing, storeBearing, softAt, hottest, dischargeOf,
          plateFill, plateHalf, plateCount, answer as ringAnswer } from './plates.js';
@@ -253,20 +252,18 @@ export const ALIENS = {
   // mirror again. Sharing a rung has to happen across sectors, not inside one.
   //
   // 45,500 credits and 14,000 experience follow, and they are the Leviathan's to the
-  // credit because bounty is farm hit points x BOUNTY_RATE and nothing else. There
-  // is no effort multiplier and there deliberately cannot be one: effort is what a
-  // thing's hit points are worth once you count the shots that never land, and a fix
-  // never costs you a shot. It always moves you TOWARD the thing shooting at you,
-  // because the point it returns you to is one you occupied while it was chasing —
-  // so what it takes is hull, and hull is `pressure`, not `effort`. Paying a bounty
-  // for danger rather than for time is the mistake bountyFor exists to prevent.
+  // credit because bounty is farm hit points x BOUNTY_RATE and nothing else. There is
+  // no effort multiplier and there deliberately cannot be one: effort is what a thing's
+  // hit points are worth once you count the shots that never land, and nothing this
+  // hostile does makes it harder to HIT. What it does is make itself harder to stand
+  // near, and that is hull — which is `pressure`, not `effort`. Paying a bounty for
+  // danger rather than for time is the mistake bountyFor exists to prevent.
   //
-  // WHAT IT ASKS. Every other hostile in this file is answered by position. Kite the
-  // husks, hold 85% of your reach off a Censer, out-range a Harrier, break a
-  // Lamprey's tether, sidestep a Thresher. This is the one that takes position back:
-  // a fix undoes the last three seconds of wherever you were going, every six. You
-  // can still leave — see escapeTax in shared/kedge.js, it costs exactly twice as
-  // long and never more — but you cannot leave for free, and that is the animal.
+  // WHAT IT ASKS. Every other hostile in this file is answered by position, and by a
+  // LATERAL one: kite the husks, hold 85% of your reach off a Censer, out-range a
+  // Harrier, break a Lamprey's tether, get off the line of an Ironhusk's cone, walk an
+  // Antiphon's lane. This is the one that asks for the other axis — see the lance
+  // below. It is the only hostile in the game a turn does not answer.
   //
   // 350.2125 dps is not a chosen number either: it is ANCHORS.pressure x the
   // effective hit points of the stage it is posted for, which is the model's own
@@ -291,77 +288,84 @@ export const ALIENS = {
   // bolt is the smaller lie.
   //
   // Reach 900 is the Leviathan's and the Thresher's, and it is the same number for
-  // the same reason: past every hull in the game (620-820), so you cannot out-range
-  // the problem. It was 560 for one draft, on the theory that kiting should be the
-  // obvious answer and the fix should be what takes it away. Measured, that draft
-  // was a pushover — a finished pilot holding 780px killed it in 8.5s and gave up
-  // 10% of a hull, because a Kedge that plants itself to take a sighting stops
-  // closing, so the kiter stops retreating, so the collapse has nothing of theirs to
-  // undo. A fix cannot punish standing still and should not try: it punishes
-  // LEAVING, and the gun has to be what makes you want to.
+  // the same reason: past every hull in the game (620-820), so you cannot out-range the
+  // problem. It was 560 for one draft, on the theory that kiting should be the obvious
+  // answer, and measured that draft was a pushover — a finished pilot holding 780px
+  // killed it in 8.5s and gave up 10% of a hull. It is also the length the lance can be
+  // paid out to, which is the same statement read from the other end: the line reaches
+  // wherever you are standing, so there is nowhere inside the sector to stand and be
+  // out of it.
   //
   // Speed 150, and it is NOT the Ironhusk's 190. That number carries an argument —
-  // "under a finished Bulwark's 234 with the reactor on its thrusters" — which is
-  // true and incomplete, because a chase outlasts a capacitor. Routing to thrusters
-  // costs charge, and once the charge is gone a system falls back to the free
-  // trickle: the slowest thing any pilot can hold indefinitely is a finished Bulwark
-  // at 152 x (1 + 0.54 x 0.52) = 195 px/s. A 190 Kedge is 5px/s under that, which
-  // measured as a hostile a finished Bulwark could not leave at all — 300 seconds of
-  // full burn and the leash never broke. 150 is a quarter under the floor rather
-  // than a hair under the ceiling, and every hull breaks off in under 33 seconds.
+  // "under a finished Bulwark's 234 with the reactor on its thrusters" — which is true
+  // and incomplete, because a chase outlasts a capacitor. Routing to thrusters costs
+  // charge, and once the charge is gone a system falls back to the free trickle: the
+  // slowest thing any pilot can hold indefinitely is a finished Bulwark at
+  // 152 x (1 + 0.54 x 0.52) = 195 px/s. A 190 Kedge is 5px/s under that, which measured
+  // as a hostile a finished Bulwark could not leave at all — 300 seconds of full burn
+  // and the leash never broke. 150 is a quarter under the floor rather than a hair
+  // under the ceiling, and every hull breaks off in under 33 seconds.
+  //
+  // It is also what makes the RANGE WANDER, which is the half of this hostile that
+  // replaced the fix. 150 is over a finished Bulwark's 128 and just over a cruiser's
+  // 142.4, so a Kedge that decides it wants to be somewhere else gets there — see
+  // `hold` on the sweep below. A slower one would announce a distance and never reach
+  // it, which is a mechanic you can read and cannot feel.
   //
   // Shield regen 0.012 rebuilds its shell in 83 seconds — deliberately not the
   // Leviathan's 0.045, because a rung-mate that ALSO punished breaking off would be
   // a second cooperation gate and this one is meant to be soloed.
-  // A Surveyor, and the only thing in the game that charges you for LEAVING.
+  // A Surveyor: it swings a lance on a line, and the lance is the whole hostile.
   //
-  // Its fix takes a sighting of where you are standing and three seconds later puts you
-  // back on it — see shared/kedge.js for why that is a toll rather than a trap, and why
-  // it has to hold station to do it. What sat underneath was a plain aimed bolt for 350
-  // a second, and an aimed bolt is not dodged by anybody: the table at the top of
-  // orbs.js measures 94% of what one fires landing on a hull weaving as hard as it can.
+  // IT USED TO HAUL YOU BACK. A fix took a sighting of where you were standing and
+  // three seconds later put you on it, and the whole of shared/kedge.js existed for
+  // that one ability. It is gone — deleted rather than disabled, along with its wire
+  // row, its per-sector list, its marker and its tests. The designer's word for it was
+  // "a bit too annoying", and the honest version of that complaint is that it is the
+  // only mechanic in the game that moves a ship its owner is not flying. Everything
+  // else here can be declined by flying well; that could not.
   //
-  // A LANCE ON A LINE, then, and it is the same 350 dps in a shape you can be somewhere
-  // else for. The line is paid out to YOUR range with a fluke on the end of it and swung
-  // through an arc; the head is what cuts you, and it arrives at your bearing half a
-  // swing after it starts moving. See shared/sweep.js — the numbers below are pinned
-  // there from both ends and this is what they came out as.
+  // WHAT REPLACES IT IS VARIETY IN THE LANCE ITSELF, which is the same design goal by
+  // a means that never takes the stick off anybody. The line is paid out to YOUR range
+  // with a fluke on the end of it and swung through an arc; the head is what cuts you.
+  // See shared/sweep.js — every number below is pinned there and this is what they came
+  // out as.
   //
-  //   span 2.4   rad. 137 degrees, and it is a FLOOR rather than a look: the fastest
-  //              thing in the game boosted covers 727px of arc at this hostile's 630px
-  //              standoff over the 1.30s the attack takes, which is 1.15rad a side. So
-  //              nothing in the shop can walk out of the side of it, and the answer has
-  //              to be the other one.
-  //   wind 0.70  s of the line taut and still, at the radius and over the arc it is
-  //              about to sweep. This is the read, and it is most of the budget.
-  //   swing 0.60 s to cross the arc. 0.70 + 0.60/2 = 1.00s from the throw to the head
-  //              arriving, against the 0.891 a cruiser needs to clear 77px at 142 px/s
-  //              with 0.35 of that spent reading it. 15px of margin, deliberately thin.
+  //   span 2.4   rad. 137 degrees, and a FLOOR rather than a look: the fastest thing in
+  //              the game boosted covers 745px of arc over the 1.333s the attack takes,
+  //              which is 1.18rad a side at the 630px this used to stand off to. Nothing
+  //              in the shop walks out of the side of it AT THAT RANGE — and at the
+  //              short end of the band below, a light hull can, which is the point.
   //   r 60       px of fluke, the largest ball this game throws. It is the CEILING in
-  //              the budget above: a bigger head is a head a jink no longer beats.
+  //              the dodge budget: a bigger head is a head a jink no longer beats.
+  //   tip 3240   px/s, the speed of the HEAD, and everything about the timing falls out
+  //              of it — swing = span x reach / tip, and the line lies taut for whatever
+  //              is left of the cycle. So a short lance is a fast swing after a long
+  //              warning and a long one is a slow swing after a short warning: the same
+  //              attack asks two different questions depending on how far out it is.
+  //              Derived: the longest swing this hostile can produce may take no more
+  //              than half its firing cycle, which is 2.4 x 900 / 0.6667 = 3240 exactly.
+  //   hold       the band it picks a new standing distance from, AFTER EVERY SWING, as
+  //              a share of its reach. 0.45 to 0.70 is 405px to 630px, and the TOP is
+  //              the number that was measured rather than chosen — see sweep.js.
   //
-  // AND THE DODGE IS RADIAL, WHICH IS NEW HERE. Every other pattern in the bestiary is
-  // answered by moving sideways; a lance paid out to your own range is answered by
-  // changing your RANGE. That is what makes the two halves of this hostile one fight
-  // instead of a gun beside an ability: a collapse is a radial displacement — it puts
-  // you back on a range you have left — so the sweep bills you for holding a range and
-  // the fix undoes a change of one. Measured together and separately in test/kedge.mjs,
-  // because "hauled back into a sweep you already dodged" is either the best thing in
-  // this bestiary or unplayable and only the bench can say which. It is neither: the
-  // haul lands inside a swing 22% of the time and the pair costs a pilot who answers
-  // both 20.9% of a hostile that reads 350 dps, against 100% for one who answers
-  // neither.
+  // THE BAND IS WHY THE LENGTH IS NOT PREDICTABLE, and it is the thing that had to be
+  // a property of the HOSTILE rather than of the swing. A lance that chose its own
+  // length independently of you would simply miss a pilot who never moved, and
+  // threatDps would quietly stop being true. So the pay-out is still your range, and
+  // what varies is where the Kedge decides to stand: it is 150 px/s against a cruiser's
+  // 142.4, so it actually gets there, and it backs off as readily as it closes. The
+  // range wanders, and every number that depends on the range wanders with it.
+  //
+  // AND THE DODGE IS RADIAL, WHICH IS STILL THE POINT. Every other pattern in the
+  // bestiary is answered by moving sideways; a lance paid out to your own range is
+  // answered by changing your RANGE. It is the only hostile in the game a turn does not
+  // answer, and test/kedge.mjs measures all five ways of flying it against each other
+  // at both ends of the band.
   kedge: {
     name: 'Kedge', cls: 'Surveyor', r: 34, colour: '#7c8824', shape: 'fluke',
-    tell: 'Swings a lance on a line at the range you are holding — change your range, not your bearing. Its fix then hauls you back to the range you just left.',
-    sweep: { span: 2.4, wind: 0.70, swing: 0.60, r: 60 },
-    fix: {
-      fuse: 3.0,      // s from the sighting to the collapse. JUMP_TIME exactly: the fix
-                      //   and the door cost the same three seconds, so reaching a portal
-                      //   mouth first is the answer and reaching it second is not
-      cool: 3.0,      // s before it may take another. Equal to the fuse, so leaving costs
-                      //   exactly x2 — see escapeTax
-    },
+    tell: 'Swings a lance on a line at the range you are holding — change your range, not your bearing. It keeps changing how far out it stands, so the swing is never the same length twice.',
+    sweep: { span: 2.4, r: 60, tip: 3240, hold: [0.45, 0.70] },
     attrs: { hull: 40000, shield: 25000, shieldRegen: 0.012, shieldDelay: 5,
              speed: 150, accel: 300, signature: 8,
              damage: 466.95, fireRate: 0.75, weaponRange: 900 },
@@ -437,33 +441,36 @@ export const ALIENS = {
   thresher: {
     name: 'Thresher', cls: 'Revenant', r: 46, colour: '#e4e4e4', shape: 'facet',
     returns: 1,
-    // AND WHAT IT COMES BACK AS. One fat bolt was a bigger number, and a bigger number
-    // is only legible after it has landed on you. The chamber returns a WALL now, and
-    // how much wall is how full it is: one splinter at nothing, seven at a full one,
-    // fanned across 76px at the range this thing fights from. The volley carries
-    // `payloadOf(def, load)` in TOTAL and is split evenly, so the identity above is
-    // untouched to the decimal — see shared/shards.js.
+    // AND WHAT IT COMES BACK AS. One fat bolt was a bigger number and a bigger number is
+    // only legible after it has landed on you. Seven bolts was worse: it was more lasers.
+    // The chamber returns a WALL OF DEBRIS now — bodies rather than aimed lines, tumbling
+    // back at 584 px/s, which is your own hull coming off it and takes a full second to
+    // cross the range this thing fights from. How much wall is how full the chamber is:
+    // one shard at nothing, seven at a full one. The volley carries `payloadOf(def, load)`
+    // in TOTAL and is split evenly, so the identity above is untouched to the decimal —
+    // see shared/shards.js.
     //
-    //   fan 0.06032  rad of half-width at a full chamber, and it is DERIVED from the one
-    //                thing that must not move: a pilot who never moved has to take all of
-    //                it. A bolt lands on anything within HIT_R + hull r of its aim point,
-    //                so the outermost splinter may sit at most one slack radius off the
-    //                middle — 38 / (900 x 0.7) = 38/630. At the standoff every hull in
-    //                the game is inside all seven discs at once and holding station costs
-    //                exactly what the single bolt cost. test/aliens.mjs pins this equal to
-    //                HIT_R / (weaponRange x 0.7) to eleven places.
-    //   n 7          splinters at a full chamber, and this one was ARGUED. Above: the
-    //                count IS the meter, and a meter you have to count is not a meter.
-    //                Below: a splinter has to be a number worth reading — the 10,053 a
-    //                finished pilot actually holds it at is 1,436 each at seven, 15% of
-    //                their ship; at twelve it is 838 and the wall is a light show.
+    //   fan 0.06349  rad of half-width at a full chamber, DERIVED from the one thing that
+    //                must not move: a pilot who never moved has to take all of it. A shard
+    //                catches anything within SHARD_R + hull r of its centre, so the
+    //                outermost may sit at most one hit disc off the middle, measured
+    //                against the SMALLEST hull in the game — (30 + 10) / (900 x 0.7) =
+    //                40/630. Every hull is then inside all seven discs at once and holding
+    //                station costs exactly what the single bolt cost. It was 38/630 while
+    //                these were bolts, off HIT_R; the projectile changed and so did the
+    //                number it is derived from. test/aliens.mjs pins the identity.
+    //   n 7          shards at a full chamber, and this one was ARGUED. Above: the count
+    //                IS the meter, and a meter you have to count is not a meter. Below: a
+    //                shard has to be a number worth reading — the 10,053 a finished pilot
+    //                actually holds it at is 1,436 each at seven, 15% of their ship; at
+    //                twelve it is 838 and the wall is a light show.
     //
-    // What it costs the pilot is the half that is not free: clearing the whole wall asks
-    // for twice the displacement clearing one bolt did, and a weave that half clears it
-    // now half lands instead of missing outright. So the chamber makes the DODGE harder
-    // as it fills rather than only the hit bigger, which is the thing a meter alone
-    // could never say.
-    shards: { n: 7, fan: 0.06031746031746032 },   // = 38 / 630, exactly
+    // What it costs the pilot is the half that is not free, and it is bigger than it was:
+    // clearing the CENTRE of the wall is 47px and a quarter of the flight, and clearing
+    // ALL of it is 87px and slightly more than the whole flight. So there is always an
+    // answer and it is never a free one, and which of the two you got is something you
+    // watch happen rather than something you find out about.
+    shards: { n: 7, fan: 0.06349206349206349 },   // = (30 + 10) / 630, exactly
     attrs: { hull: 175550, shield: 30000, shieldRegen: 0.0133, shieldDelay: 6,
              speed: 200, accel: 320, signature: 9,
              damage: 80, fireRate: 1.0, weaponRange: 900 },
@@ -957,8 +964,9 @@ export const ALIENS = {
   // your engines makes any difference.
   //
   // WHAT "ROOTED" MEANS, EXACTLY, because this game had never taken movement from a
-  // player and shared/kedge.js spends a paragraph on why a fix was allowed to exist
-  // where a stun was not. It is a stun now, and it did not start as one: the first
+  // player. A Kedge's fix used to, and it was removed for being exactly that — so this
+  // is now the ONLY thing in the game that does, and it is a stun rather than the fix's
+  // displacement. It did not start as one: the first
   // cut zeroed your acceleration for a second and a half and kept your momentum, so
   // the ship carried on going wherever it was pointed and what you lost was the
   // ability to change your mind. That is the better mechanic and it is not the one
@@ -1318,6 +1326,41 @@ export const ALIENS = {
 // the deeps derive their pay from their rung inside the table itself and a const
 // cannot be read before it is initialised. The argument for both rates is the
 // paragraph above; only the two lines moved.
+// WHOSE PROJECTILE IS THIS, in one integer.
+//
+// Every projectile in this game used to be drawn in a colour somebody typed into the
+// client. That is fine while one hostile throws each kind and wrong the moment two do:
+// ORB_FIELDS carried `x, y, h, r, foe` and nothing else, so an Ironhusk's orbs and a
+// Leviathan's were the same shade of red on the screen and the Leviathan's own #8fe04a
+// green never left this file. The designer found it in a minute of flying.
+//
+// So a projectile carries its thrower, and it carries it as an INDEX rather than as a
+// colour. Three reasons, and the first is the only one that would matter on its own:
+//
+//   * a colour kept on the wire is a colour kept in two places. `ALIENS[kind].colour`
+//     is the one that draws the hull, and a bolt that disagreed with the ship that
+//     fired it is the workshop dock all over again.
+//   * it is cheap. Orbs go WHOLE every tick — net.js says why — and a deep claim holds
+//     fifty of them: 1-2 bytes against 9 for "#8fe04a" is 10.5 KiB/s at 30Hz.
+//   * it is the shape this codebase already uses. GROUND_KINDS does exactly this for a
+//     patch of ground, and for the same stated reason.
+//
+// The order is `Object.keys(ALIENS)` and nothing else, so it cannot drift from the
+// table it indexes — there is no second list to maintain and therefore nothing to pin
+// with a test. Adding a hostile appends; the only thing that could break it is
+// REORDERING the table, which changes nothing about the game and everything about
+// what is already in the air, so the seam is named here: an index is stable for the
+// life of a connection, which is all it has to be, because both ends read the same
+// module.
+export const KINDS = Object.keys(ALIENS);
+export const KIND_IX = Object.fromEntries(KINDS.map((k, i) => [k, i]));
+export const kindIx = kind => KIND_IX[kind] ?? 0;
+// And back the other way, which is the only thing the client wants: the colour of
+// whatever threw this. Falls back to the Drifter's rather than to undefined, because a
+// projectile drawn in `undefined` is a frame the render harness rejects and a fight the
+// player cannot see.
+export const tintOf = ix => (ALIENS[KINDS[ix | 0]] ?? ALIENS[KINDS[0]]).colour;
+
 export const farmHp = kind => effectiveHp(kind) * (ALIENS[kind].effort ?? 1);
 export const effectiveHp = kind => ALIENS[kind].attrs.hull + ALIENS[kind].attrs.shield;
 
@@ -1686,7 +1729,11 @@ export function newAlien(kind, id, map, seed, post = null) {
   const at = post ?? roamPoint(map, rand);
   const a = newBody(at.x, at.y, alienStats(kind), def.r);
   return Object.assign(a, {
-    id, kind, def, rand, isAlien: true, post,
+    // `kx` is this hostile's row in the bestiary, cached once. Every projectile it
+    // throws copies it onto the row that goes out, so the client can draw the thing in
+    // the colour of what threw it — see kindIx above. Cached rather than looked up
+    // because throwOrbs runs for every orb of every fan of every husk in the galaxy.
+    id, kind, def, rand, kx: kindIx(kind), isAlien: true, post,
     target: null, provoked: new Set(), lost: 0, dead: 0, way: post ?? roamPoint(map, rand),
     // An answering ring, if this one has plates. Seeded here rather than lazily on the
     // first hit so that every reader — the packer, the client, the AI — sees an array
@@ -2036,6 +2083,12 @@ export function respawnAlien(a, map, away = []) {
   // shared/brood.js, and that is not an oversight: brood.js imports THIS file for
   // broodReady and BROOD_R, so importing it back would be a cycle that blows up in the
   // TDZ on whichever of the two loaded first. Same arrangement SHOP_DPS lives under.
+  a.hold = undefined;                                             // nor a stand-off it chose:
+                                                                  // a Kedge that came back holding
+                                                                  // the distance its last fight
+                                                                  // ended at would open the next
+                                                                  // one from somewhere nobody
+                                                                  // watched it walk to
   a.pod = 0; a.podAt = null; a.podFrom = null;                    // a mothership that came
   a.podFly = 0; a.podLaden = false; a.hatch = undefined;          // back five minutes later would drop
                                                                   // a raider on whoever was standing
@@ -2095,6 +2148,30 @@ export const standOff = a =>
   (a.def?.burn ? Math.max(a.def.burn.idle, burnR(a.def, a.spin ?? 0) * 0.7)
                : (a.stats.weaponRange || a.def?.sow?.reach || 0));
 
+// HOW FAR OUT IT ACTUALLY STANDS, which is standOff's 70% for everything in the game
+// except a hostile that has chosen a distance for itself.
+//
+// `a.hold` is written by shared/sweep.js after every swing, from a band on the
+// definition, and it is the whole of what replaced a Kedge's fix: the lance is paid out
+// to your range, so the only way to make its LENGTH vary without missing a pilot who
+// never moved is to move the hostile. It is one function rather than an `a.hold ??` at
+// the call site because "where does this thing stand" is a rule, and this codebase has
+// twice paid for keeping a rule in two places.
+//
+// It reads a live field rather than the definition, which dialOf() was rewritten for
+// getting wrong — but the failure mode there was picking the WRONG one of several, and
+// there is only ever one of these. A hostile that has not chosen falls through to the
+// number it always used.
+export const holdOf = a => a.hold ?? standOff(a) * 0.7;
+
+// And how much nearer than its hold a hostile will tolerate before it backs off. Only
+// something that CHOSE a distance does this — everything else closes and then stands,
+// which is the behaviour every hostile in this file has always had and none of them
+// should lose. 0.8 rather than 1.0 so a hull drifting a few pixels does not oscillate:
+// at the short end of a Kedge's band that is an 81px dead zone, which is wider than the
+// 5px a tick of its own speed covers.
+export const BACK_OFF = 0.8;
+
 // Sanctuary, and the one exception to it: an alien will not start on somebody
 // standing in a base ring, an outpost or a portal mouth — unless they shot it
 // first, and then nothing saves them.
@@ -2128,13 +2205,14 @@ export const noHorizon = map => !!map?.arena && !!map?.hunt;
 
 // --- the one dial a hostile shows about itself ---------------------------------
 //
-// `abl` on the wire is a single 0..100 integer, and five different mechanics now
-// ride it: a Lamprey's draw, a Censer's spin, a Kedge's sighting, a Thresher's
-// chamber and a sower's glob in the air. There is exactly one slot left in
-// SHIP_FIELDS — 30 of a hard 31 — so one field for all five is the right trade and it is not
-// changing. What was wrong was HOW the one was chosen.
+// `abl` on the wire is a single 0..100 integer, and four different mechanics ride it:
+// a Lamprey's draw, a Censer's spin, a Thresher's chamber and a sower's glob in the air.
+// It was five — a Kedge's sighting was one of them, and that mechanic is deleted. There
+// is exactly one slot left in SHIP_FIELDS — 30 of a hard 31 — so one field for all of
+// them is the right trade and it is not changing. What was wrong was HOW the one was
+// chosen.
 //
-// It was `a.draw ?? a.spin ?? a.fix ?? a.load ?? a.sow ?? 0`, reading the LIVE
+// It was `a.draw ?? a.spin ?? a.load ?? a.sow ?? 0`, reading the LIVE
 // fields in a fixed order. That is a silent wrong answer waiting to happen: the
 // moment a hostile carries two mechanics, the second one's dial simply never
 // reaches the client — nothing throws, nothing is logged, and what a pilot sees is
@@ -2149,7 +2227,6 @@ export const noHorizon = map => !!map?.arena && !!map?.hunt;
 export const DIALS = [
   ['siphon',  a => a.draw],    // a Lamprey's draw, 0..1
   ['burn',    a => a.spin],    // a Censer's ring, cold to full
-  ['fix',     a => a.fix],     // a Kedge's sighting, from taken to collapsed
   ['returns', a => a.load],    // a Thresher's chamber, empty to full
   ['sow',     a => a.sow],     // a sower's glob, from the throw to where it lands
 ];
@@ -2265,9 +2342,20 @@ export function stepAlienAI(a, map, contenders, dt) {
       }
       return null;                                           // fleeing, not firing
     }
-    const d = dist(t), hold = standOff(a) * 0.7;
+    const d = dist(t), hold = holdOf(a);
     a.dx = a.dy = null;
     if (d > hold) { a.tx = t.ship.x; a.ty = t.ship.y; }     // close
+    // AND BACKS OFF TO IT, but only if it chose the distance. A hostile that has picked
+    // a stand-off has to be able to reach it from both sides or the band is a band it
+    // can only ever fall out of the bottom of: a pilot who closes would pin a Kedge at
+    // point blank for the rest of the fight and the short/long variety would be a short
+    // one every time. Nothing else in the bestiary does this and nothing else should —
+    // an Ironhusk that retreated would be un-killable by the hull it is written for.
+    else if (a.hold !== undefined && d < hold * BACK_OFF) {
+      const away = Math.atan2(a.y - t.ship.y, a.x - t.ship.x);
+      a.tx = a.x + Math.cos(away) * (hold - d);
+      a.ty = a.y + Math.sin(away) * (hold - d);
+    }
     else           { a.tx = a.ty = null; }                   // hold station and shoot
     return t.id;
   }

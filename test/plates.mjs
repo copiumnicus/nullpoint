@@ -938,7 +938,7 @@ console.log('\nthe wire, and the shape that was priced against it');
     '       The shape that is CHEAPER still and did not ship: one packed 24-bit integer on the ship ' +
     'row, at 0.036 KiB/s, because a boss\'s row is already moving every tick. It spends the LAST ' +
     'field in SHIP_FIELDS — 30 of a hard 31 — on one hostile in one sector, and puts a column on ' +
-    'every Drifter and pod-hauler in the galaxy for it. FIX_FIELDS and SOWN_FIELDS both went this ' +
+    'every Drifter and pod-hauler in the galaxy for it. SOWN_FIELDS went this ' +
     'way for the same reason');
 }
 

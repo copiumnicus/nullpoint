@@ -323,14 +323,24 @@ console.log('\nwhat is deliberately not deltaed');
   // 4.0s and its front crosses its entire reach in 1.5 — it has no identity worth
   // diffing, it lives a second and a half, and the field that decides everything about
   // it, the radius it has grown to, changes on every single tick.
-  // And a Kedge's LANCE joined them, on the fix's argument and the front's together:
-  // there is at most one per hostile, it lives 1.30s — a 0.70s wind-up and a 0.60s
-  // swing, which is one firing cycle — it has no identity worth diffing, and the field
-  // that decides everything about it, how far through the swing the head has got,
-  // changes on every single tick. Note that a Kedge's OTHER stream, its fix, is
-  // ephemeral for the identical reason and there is no case where both are quiet.
-  check('bolts, rockets, orbs, blasts, hits, pyres, fixes, waves and lances go whole, and the list says so',
-    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes', 'waves', 'sweeps']),
+  // And a Kedge's LANCE joined them, on the front's argument: there is at most one per
+  // hostile, it lives exactly one firing cycle, it has no identity worth diffing, and the
+  // field that decides everything about it — how far through the swing the head has got —
+  // changes on every single tick.
+  //
+  // A Kedge's FIX left this list, and it is the only row that has ever left it. The
+  // mechanic was deleted outright rather than disabled: it was the one thing in the game
+  // that moved a ship its owner was not flying, the designer called it "a bit too
+  // annoying", and what replaced it is variety in the lance rather than a second ability.
+  // The claim is REWRITTEN rather than deleted — a list that only ever grows is a list
+  // nobody checks, and the count staying at nine while the set changed twice is exactly
+  // what this assertion is for.
+  //
+  // A mirror's SHARDS are the newest, and they are the ordinary case: a shard has no id,
+  // lives 1.08s at the range a Thresher fights from, and the two fields that decide where
+  // it is on the screen change every single tick.
+  check('bolts, rockets, orbs, blasts, hits, pyres, waves, lances and debris go whole, and the list says so',
+    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'waves', 'sweeps', 'shards']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost

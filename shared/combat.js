@@ -161,6 +161,11 @@ export function fire(a, b, dt, mag = null) {
       ox: a.x, oy: a.y,
       ax: b.x + b.vx * travel, ay: b.y + b.vy * travel,   // lead, don't chase
       dmg: each, target: b, foe: !!a.isAlien, w: Math.round(each), gr: mag?.tier ?? 0,
+      // Whose it is, when a hostile fired it. `gr` colours a pilot's rounds and always
+      // has; this is the same idea for the other side of the fight, because a Drifter's
+      // violet, a Harrier's blue-white and a Bandit's cyan were all one red on the screen.
+      // `a.kx` is undefined on a ship, which packs as 0 and is read only when `foe`.
+      k: a.kx ?? 0,
       t: travel, ttl: Math.max(0.001, travel),
     });
   }
