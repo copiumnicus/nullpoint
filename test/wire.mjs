@@ -318,8 +318,13 @@ console.log('\nwhat is deliberately not deltaed');
   // every single tick, so a keyed diff would pay an id and a mask to re-send exactly
   // what moved. Priced against a real server with a Kestrel standing in front of three
   // Ironhusks, fifteen orbs in the air at peak: 2.9 KiB/s of an 11.1 KiB/s stream.
-  check('bolts, rockets, orbs, blasts, hits, pyres and fixes go whole, and the list says so',
-    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes']),
+  // And a ring's CALL joined them, which is the ephemeral argument at its purest:
+  // there is at most ONE front in the whole galaxy at a time — an Antiphon's beat is
+  // 4.0s and its front crosses its entire reach in 1.5 — it has no identity worth
+  // diffing, it lives a second and a half, and the field that decides everything about
+  // it, the radius it has grown to, changes on every single tick.
+  check('bolts, rockets, orbs, blasts, hits, pyres, fixes and waves go whole, and the list says so',
+    same(EPHEMERAL, ['bolts', 'rockets', 'orbs', 'blasts', 'hits', 'pyres', 'fixes', 'waves']),
     '5% of a busy sector, no identity, and every field stale within a third of a second');
   // Research stations joined them, and they are the extreme case of the argument
   // rather than an exception to it: nothing on one ever moves, so 50 of them cost

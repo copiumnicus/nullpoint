@@ -39,8 +39,13 @@
 import { MAP_W, MAP_H } from './maps.js';
 // JUMP_TIME is sim.js's — the three seconds a portal takes to spool. Both clocks
 // below are read off it rather than written down again, so moving the door moves
-// the root and the test that pins it.
-import { JUMP_TIME } from './sim.js';
+// the root and the test that pins it. SHOT_FLASH is the muzzle glow every other
+// trigger in the game sets, and a lob is a trigger.
+import { JUMP_TIME, SHOT_FLASH } from './sim.js';
+// A glob carries the boosted gun, exactly as a bolt and an orb do — a hostile with
+// its reactor on the weapons throws harder, and reading the raw stat instead is the
+// mistake every mirror number in this repo carried until 0.63.
+import { boostOf } from './power.js';
 
 export const sowOf = def => def?.sow ?? null;
 
@@ -127,16 +132,23 @@ export const PORTAL_KEPT = 'duration and sanctuary, both';
 // needs a moment of steering between them.
 export const CALM = 2 * HOLD;                      // 10.0s
 
-// How long a marker stands before the ground under it goes live.
+// The shortest warning this game gives for anything that matters: half a portal
+// spool.
 //
-// This used to BE the hold — `wind: HOLD` on both definitions, and the equality was
-// the combo: a pilot who is not held has exactly enough warning to be somewhere
-// else, and a pilot who is held has exactly none. That identity is retired, and it
-// is retired because the radius replaced it. A pool is 560px wide now and the
-// fastest hull in the game covers 463px from rest inside a warning this long, so
-// NOBODY steps out of one on the clock any more — the warning stopped being a
-// dodge and went back to being a warning. So it is set to the shortest one this
-// game gives for anything that matters: half a portal spool.
+// It used to be a definition's `wind` — a flat clock a marker stood on before the
+// ground under it went live — and both sowers carried it. That is gone with the
+// wind-up itself: the warning is now the glob's FLIGHT, which is 2.25s at the range
+// these two stand off to and 3.93s at the full throw, so backing off buys you time
+// to read it. A number that grows with distance is a better warning than a flat one
+// and a flat one could never have said it.
+//
+// What it is still for is the FLOOR, and it is the one place the flight is not
+// simply distance over speed. A glob thrown from inside 420px would be in the air
+// under a second and a half, which is less warning than the game gives for a door,
+// and a pilot who has closed to point blank has already agreed to be answered by the
+// plate mechanics of this bestiary rather than deleted with no tell. So a throw is
+// never quicker than this, and the only throws it binds on are ones from inside the
+// pool's own radius.
 export const WARN = JUMP_TIME / 2;                 // 1.5s
 
 // May this ship be held right now? One predicate, because both halves of the
@@ -173,43 +185,187 @@ export function stepSnare(s, dt) {
 }
 export const held = s => (s?.snare ?? 0) > 0;
 
-// --- laying it -----------------------------------------------------------------
+// --- lobbing it ----------------------------------------------------------------
+//
+// THE GUN IS THE DELIVERY OF THE GROUND, and it used to be a second weapon beside
+// it. Both sowers carried a 438 dps aimed bolt AND laid ground on a separate clock,
+// which is two mechanics stapled together: the bolt was a plain hitscan-ish shot
+// nobody could dodge (see the table at the top of orbs.js — 94% of what is fired
+// lands on a hull weaving as hard as it can), and the ground appeared out of thin
+// air on the victim's own position.
+//
+// So the barrel is gone and the ground ARRIVES. A crucible pours and a doldrum
+// spreads; both of them now throw one slow glob on the cadence that used to be the
+// sowing cadence, it carries the whole of the gun's damage where it lands, and where
+// it lands is where the patch is. ONE clock, one act, and `damage x fireRate` is
+// untouched — so threatDps, the bounty, the experience and every derived number in
+// the bestiary report are the numbers they already were.
+//
+// WHAT THAT BUYS, and what it does not, because one of the two was expected and is
+// not there. It was asked for as a fix to a measured inversion — "standing still
+// beats circling at every radius down to 200px" — and re-measuring that claim
+// honestly says the inversion was a property of the BENCH: PLANS.kite in
+// test/ground.mjs does not stand still, it retreats, and it retreats 5,000px out of
+// charted space until sowPoint() below clamps every pool it is owed to the map edge
+// 1,783px behind it. A pilot who actually holds station took 13,050 a second from a
+// Crucible against 4,812 circling on the build this replaces, and takes 12,739 against
+// 5,534 on this one. Circling already won, x2.7, and it still wins, x2.3.
+//
+// What lobbing DOES buy is the half the bolt never had: the damage is now dodgeable.
+// A glob leads, so holding any course at all is answered — and a turn is what takes
+// you off it, which is the same sentence orbs.js writes about a fan.
+//
+// What it cannot buy is a dodgeable POOL, and the arithmetic says so up front rather
+// than after somebody flies it. A 560px pool needs 577px of clearance and the ship
+// that fights one covers 128px a second: 4.5 seconds, against a glob that is in the
+// air for 2.25 at the range this hostile stands at. No throw speed fixes that,
+// because a glob slow enough to give 4.5 seconds of flight is slower than the pilot
+// and cannot lead them at all. The pool is wider than anything a heavy hull can step
+// out of, on purpose — that is what `r: 560` is FOR — and the answer to it stays the
+// one it always was: leave, and pay for leaving.
 
-// The wind-up, 0..1, and where the patch will land.
+// HOW SLOW A GLOB IS, and it is pinned from both ends the way ORB_SPEED is.
 //
-// `wind` on a definition is HOLD — the same 1.5 seconds — and that equality IS the
-// combo, written as one number rather than as a special case. A pilot who is not
-// held has exactly enough warning to be somewhere else. A pilot who is held has
-// exactly none, because the two clocks are the same clock.
+// The ceiling is A TURN MUST BEAT IT. The throw solves the intercept along a
+// straight line, so a pilot flying an arc is missed by the sagitta between the
+// tangent it aimed down and the curve they actually flew — v^2 t^2 / 2d, and with
+// t = d/S that is v^2 d / 2S^2. Clearing the glob's own disc plus a hull asks
 //
-// The place is taken when the wind-up STARTS, on the victim's position, exactly
-// the way a Kedge's sighting is: laying it where the target will be at the end
-// would be undodgeable, and laying it on the hostile would be a ring, which this
-// bestiary already has one of.
+//     S  <=  v * sqrt( d / (2 (GLOB_R + hull r)) )
 //
-// Returns null, or { at } on the single tick the patch drops. The caller makes the
-// patch, because making things is the server's job.
-export function stepSow(a, victim, hold, dt) {
+// and at the numbers this fight is actually flown at — a finished Bulwark with its
+// reactor on the gun at 128px/s and a 17px hull, at the 630px both sowers stand off
+// to — that is 291. So 280, which misses a circling pilot by 66px against a 61px
+// disc: an 8% margin, the same order as the six pixels an Antiphon's answer clears
+// a turning ship by, and for the same reason. A pilot who turns is missed and a
+// pilot who turns lazily is not.
+//
+// The FLOOR is that it has to be able to lead anybody at all. The intercept solve
+// below cannot converge on a target moving faster than the glob, and a weapon that
+// misses everything is a light show rather than a hostile — the measurement that
+// cost orbs.js a design pass. 280 is over twice the 128px/s a finished ship flies at
+// out here and nearly four times the 74 a deep-shelf one does; it is under a bare
+// Hauler's 300, which is a hull that does not come to the deeps.
+//
+// What it costs in warning is the other half, and it went UP: the flight is 2.25s at
+// the standoff and 3.93s at the full throw, against the flat 1.5s wind-up it
+// replaces. Back off and you get more time to read it, which is the right shape and
+// is not a thing a fixed wind-up could ever say.
+export const GLOB_SPEED = 280;   // px/s
+
+// How big the thing that lands is. 44px, which is the smallest ball this game
+// already throws — an Ironhusk's orb — and it is a CEILING as much as a look: the
+// derivation above reads it, so a bigger glob is a glob a turn no longer beats.
+export const GLOB_R = 44;
+
+// A pilot is assumed to need this long to read a throw before they act on it. The
+// same 0.35s orbs.js uses, restated rather than imported because that file is the
+// low tier's and this one is the deeps': two hostiles' worth of pattern should not
+// be able to move each other's numbers by accident.
+export const GLOB_READ = 0.35;   // s
+
+// What one glob carries: the whole of the gun, boosted the same way a bolt is. The
+// cadence is `1 / fireRate`, so `damage x fireRate` is what it delivers a second if
+// every one of them lands — which is exactly what happens to a pilot who holds
+// station, and exactly what threatDps has always claimed.
+export const globDamage = a =>
+  Math.max(0, (a?.stats?.damage ?? 0) * boostOf(a?.power, 'weapons', a?.stats));
+
+// Where a glob in the air is right now, in world coordinates. Both sides want it —
+// the client draws the thing and the test asserts on the flight — so it lives here
+// and not in either of them.
+export const globAt = a => {
+  if (!a?.sowAt || !a?.sowFrom) return null;
+  const p = Math.max(0, Math.min(1, a.sow ?? 0));
+  return { x: a.sowFrom.x + (a.sowAt.x - a.sowFrom.x) * p,
+           y: a.sowFrom.y + (a.sowAt.y - a.sowFrom.y) * p };
+};
+
+// Did it land on this ship? The hull's radius counts, the same as a patch and a
+// pyre: the circle you can see is the circle that catches you.
+export const globHit = (at, s) =>
+  !!at && !!s && Math.hypot(s.x - at.x, s.y - at.y) <= GLOB_R + (s.r ?? 0);
+
+// A LOB, one tick of it. Returns null, or { at, dmg, from } on the single tick the
+// glob lands. The caller deals the damage and makes the patch, because hurting
+// things and making things are the server's job.
+//
+// `a.cool` is the same clock fire() uses and combat.js hands it over rather than
+// sharing it — see the gate at the top of fire(). Decrementing it in both places ran
+// every sower's gun at twice its rate the first time orbs did this, and the bench
+// read an Ironhusk at 142 dps against a book of 72.
+//
+// A GLOB IN THE AIR IS NOBODY'S BUSINESS BUT ITS OWN. It is not cancelled when its
+// target dies, jumps, reaches a haven or breaks the leash: it was thrown, and where
+// it lands is where the ground goes. That is the whole difference between this and
+// the wind-up it replaces, which was re-seated from nothing every time the victim
+// changed and therefore never landed on anybody a party had rotated away from.
+export function stepLob(a, victim, hold, dt) {
   const S = sowOf(a?.def);
   if (!S) return null;
-  if (!hold || !victim) { a.sow = 0; a.sowOn = null; a.sowAt = null; return null; }
-  // Re-seating on a new victim starts from nothing, the way a tether and a fix
-  // both do. Otherwise a party would be worse than a soloist: three pilots fed
-  // through one wind-up, and a patch landing on somebody who never saw it start.
-  if (a.sowOn !== a.target) { a.sow = 0; a.sowOn = a.target; a.sowAt = null; }
-  if ((a.sowCool ?? 0) > 0) { a.sowCool = Math.max(0, a.sowCool - dt); a.sow = 0; a.sowAt = null; return null; }
-  a.sowAt ??= sowPoint({ x: victim.x, y: victim.y });
-  a.sow = Math.min(1, (a.sow ?? 0) + dt / Math.max(0.01, S.wind ?? HOLD));
-  if (a.sow < 1) return null;
-  const at = a.sowAt;
-  a.sow = 0; a.sowAt = null;
-  // `every` is the cadence and it is life / max rather than a number anybody
-  // picked, so a definition cannot ask for more patches than it is allowed to
-  // have — see the note on `max` in aliens.js. The cooldown runs from the DROP,
-  // and the wind-up is inside it, so a Crucible's real cadence is `every` and not
-  // `every + wind`.
-  a.sowCool = Math.max(0, (S.every ?? 0) - (S.wind ?? HOLD));
-  return { at };
+  // BOTH CLOCKS FIRST, and the cooldown before the early return rather than after it.
+  // Behind the `if (a.sowAt)` below it stopped ticking for the whole flight, which
+  // makes the real cadence `1 / fireRate + flight` — 12.25s on a Crucible against a
+  // stated 10 — and quietly puts the hostile 18% under the dps its own definition
+  // claims. Nothing errors; threatDps just stops being true.
+  //
+  // Decrementing here is safe precisely BECAUSE fire() no longer runs for this
+  // hostile: two callers on one clock is what ran every orb-thrower's gun at twice its
+  // rate the first time, and the gate at the top of fire() is what stops it now.
+  a.cool = Math.max(0, a.cool - dt);
+  // The muzzle glow, and it is decayed here for the same reason. combat.js owns the
+  // only other copy of this line and it sits BELOW the gate that sends a sower home,
+  // so a hostile that never calls fire() would hold a full flash for ever. That is a
+  // live bug on the two orb-throwers today; this file at least does not add a third.
+  a.shotFlash = Math.max(0, (a.shotFlash ?? 0) - dt);
+  if (a.sowAt) {
+    a.sow = Math.min(1, (a.sow ?? 0) + dt / Math.max(0.01, a.sowFly || 0.01));
+    if (a.sow < 1) return null;
+    const at = a.sowAt, from = a.sowFrom;
+    a.sow = 0; a.sowAt = null; a.sowFrom = null; a.sowFly = 0;
+    return { at, from, dmg: globDamage(a) };
+  }
+  if (!hold || !victim || a.cool > 0) return null;
+  // Its OWN reach and not the barrel's. `reach` is 200px past `weaponRange` on both
+  // definitions and that layer is older than this change: weaponRange is where the
+  // hostile chooses to stand (standOff reads it) and this is how far it can throw,
+  // so backing off past the standoff does not stop the ground finding you.
+  const reach = Math.max(1, S.reach ?? a.stats?.weaponRange ?? 1);
+  if (Math.hypot(victim.x - a.x, victim.y - a.y) > reach) return null;
+  a.cool = 1 / Math.max(0.01, a.stats?.fireRate ?? 1);
+
+  // THE INTERCEPT IS SOLVED, NOT ESTIMATED, and it is orbs.js's three passes for
+  // orbs.js's reason: at this speed the target moves nearly as fast as the throw and
+  // a single guess lands a couple of hundred pixels behind them. It CANNOT converge
+  // on anything faster than the glob, which is correct rather than a limitation —
+  // and the clamp keeps a divergent solve inside the throw's own reach so it aims
+  // somewhere reachable instead of at the far wall.
+  const reachT = Math.max(0.1, reach / GLOB_SPEED);
+  let travel = Math.hypot(victim.x - a.x, victim.y - a.y) / GLOB_SPEED;
+  for (let i = 0; i < 3; i++)
+    travel = Math.min(reachT, Math.hypot(victim.x + (victim.vx ?? 0) * travel - a.x,
+                                         victim.y + (victim.vy ?? 0) * travel - a.y) / GLOB_SPEED);
+  // ITS FULL REACH AND NO FURTHER, which is orbs.js's rule about an orb outliving its
+  // own weapon range read from the other end. The lead point sits AHEAD of the target,
+  // so a pilot running outward at the edge of the throw drags it past 1,100 — and a
+  // hostile that lays ground somewhere it could not have thrown at is the one thing a
+  // pilot holding range is entitled to rely on not happening. Clamped along the line
+  // rather than refused, so breaking range still shortens the throw instead of
+  // silently cancelling it.
+  let ax = victim.x + (victim.vx ?? 0) * travel, ay = victim.y + (victim.vy ?? 0) * travel;
+  const out = Math.hypot(ax - a.x, ay - a.y);
+  if (out > reach) { ax = a.x + (ax - a.x) / out * reach; ay = a.y + (ay - a.y) / out * reach; }
+  a.sowAt = sowPoint({ x: ax, y: ay });
+  a.sowFrom = { x: a.x, y: a.y };
+  // Measured to the CLAMPED point rather than to the aim point, so a throw that ran
+  // into the edge of charted space still arrives when the marker says it will. The
+  // marker and the thing it is marking being 61px apart is a bug this file already
+  // shipped once, and it was found live.
+  a.sowFly = Math.max(WARN, Math.hypot(a.sowAt.x - a.x, a.sowAt.y - a.y) / GLOB_SPEED);
+  a.sow = 0;
+  a.shotFlash = SHOT_FLASH;
+  a.sinceShot = 0;                                 // and there goes the veil
+  return null;
 }
 
 // Clamped to charted space, exactly where driftDepth() stops being zero, for the

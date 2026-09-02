@@ -18,6 +18,11 @@ import { softAt } from './plates.js';
 // one predicate lives with the mechanic; orbs.js imports sim, power and plates and
 // nothing from here, so there is no cycle.
 import { orbsOf } from './orbs.js';
+// Nor does one that lobs its ground, nor one whose ring pulses. Same gate, same
+// reason, and the same one-predicate-per-mechanic arrangement: ground.js imports maps,
+// sim and power, and plates.js imports net and power, so neither reaches back here.
+import { sowOf } from './ground.js';
+import { waveOf } from './plates.js';
 
 // Bolt speed is a balance dial, not a cosmetic one. A shot has to be slow enough
 // that a ship can accelerate clear of where it was aimed: displacement goes with
@@ -73,7 +78,14 @@ export function fire(a, b, dt, mag = null) {
   // dps in one of them and not the other. Rule one, on a trigger. `a.cool` is left
   // alone on purpose: throwOrbs owns that clock, and decrementing it here as well
   // would run the volley at 60Hz.
-  if (orbsOf(a.def)) return [];
+  //
+  // A LOB and a PULSE are the same statement. A sower's gun is the thing that
+  // delivers its ground and an Antiphon's is the wave that leaves its hull; both own
+  // their own clock (`a.cool` for the lob, `a.crest` for the wave) and neither may
+  // also throw a bolt, or the hostile is at twice the dps its own definition claims.
+  // Three predicates on one line rather than three `def.x` tests, so the mechanic and
+  // the gate can never end up disagreeing about which hostiles they are about.
+  if (orbsOf(a.def) || sowOf(a.def) || waveOf(a.def)) return [];
   a.cool = Math.max(0, a.cool - dt);
   a.shotFlash = Math.max(0, a.shotFlash - dt);
 

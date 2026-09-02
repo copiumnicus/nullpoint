@@ -8,9 +8,15 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.93';
+export const VERSION = '0.94';
 
 export const PATCHES = [
+  { v: '0.94', notes: [
+    'Crucibles and Doldrums stopped shooting. They LOB their ground at you instead',
+    'One slow glob a cycle, thrown where you are heading — turn and it lands behind you',
+    'The Antiphon stopped shooting too. Its ring pulses, and one wedge of it is silent',
+    'The silent wedge steps round the ring every beat. Walk with it and nothing lands',
+  ] },
   { v: '0.93', notes: [
     "Lean on ONE of the Antiphon's plates long enough and it BREAKS. The core is open there",
     'A broken wedge stops deflecting and stops answering, and lets through double',

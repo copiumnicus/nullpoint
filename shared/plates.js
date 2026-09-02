@@ -42,13 +42,19 @@
 // cannot heat is the same bug as a row you can see and cannot click, and this
 // codebase has shipped that twice.
 //
-// The one import is the WIRE, and it is deliberately this way round: how many plates
-// there can be and how finely a charge is sent are facts about the snapshot, so
-// net.js owns both and this file reads them. Declaring them here as well would be
+// The first import is the WIRE, and it is deliberately this way round: how many
+// plates there can be and how finely a charge is sent are facts about the snapshot,
+// so net.js owns both and this file reads them. Declaring them here as well would be
 // the same number in two places, which is the thing the whole of shared/ exists to
 // prevent — and it would fail in the worst possible way, with the ring running one
 // plate wider than the snapshot can carry.
 import { PLATE_COLS, PLATE_STEPS } from './net.js';
+// The second is the REACTOR, and it arrived with the wave below. A hostile with its
+// power routed to the weapons throws harder, and every mirror number in this repo was
+// wrong until 0.63 because something read the raw stat instead. The answer does not
+// need it — a discharge is a share of the hostile's own hit points and the reactor
+// has nothing to say about those — but the wave carries the BARREL, so it does.
+import { boostOf } from './power.js';
 
 // --- the ring on a definition ---------------------------------------------------
 //
@@ -391,4 +397,173 @@ export function answer(a, dt, contenders = [], boltSpeed = 1000) {
            dmg, target: best, foe: true, w: Math.round(dmg), gr: 0,
            slack: spreadOf(def), plate: i,
            t: Math.max(0.001, travel), ttl: Math.max(0.001, travel) };
+}
+
+// --- THE CALL: an expanding ring ------------------------------------------------
+//
+// The answers above are the RESPONSE, and they were already a roguelike attack: one
+// voice, aimed at a bearing rather than at a pilot, dodged by turning, with a stated
+// width you have to beat. What sat underneath them was a plain aimed bolt for 711 a
+// second, and an aimed bolt is not dodged by anybody — 94% of what one fires lands on
+// a hull weaving as hard as it can (the table at the top of orbs.js). So half this
+// hostile asked a question and the other half was a tax.
+//
+// THE CALL is that half converted, and it is the same 711 dps arriving in a shape you
+// can be on the right side of: a pressure front that leaves the hull and grows
+// outward, silent over exactly one wedge, and the silent wedge STEPS ROUND THE RING
+// one place on every beat. A lighthouse. You are in the lane or you are not, and the
+// lane moves at a rate a pilot can walk.
+//
+// WHY THIS COMPOSES WITH THE PLATES RATHER THAN COMPETING WITH THEM, which is the
+// whole reason it is this shape and not a bigger bolt. The answers punish you for
+// holding a BEARING, and the miss you buy is your tangential speed times the round
+// trip — so the answers pay you to hold RANGE: "at 260px every build in the game is
+// answered and at 630 most are not". The call pays you the other way, because the
+// lane is an ANGLE: walking one wedge is a shorter walk on a smaller circle, so the
+// call is cheapest exactly where the answers are deadliest. One mechanic pushes you
+// out and the other pulls you in, they are the same eight wedges, and the fight is
+// the argument between them.
+//
+// AND WHAT IT DOES TO THE PARTY CURVE, because that is the property this hostile
+// exists for. A ring answers one bearing a cycle, so the answers divide: measured,
+// 1.00 / 0.50 / 0.31 / 0.14 per pilot at one, two, three and four bearings. A front
+// does NOT divide — it reaches everybody inside its own reach at once, which is
+// exactly the failure mode shared/balance.js's POSTING names about ground. What
+// saves the curve is that a wave is not a rate, it is a MISTAKE: the lane is the
+// same lane for everybody, so a party that walks it together takes nothing at all,
+// and there is no arrangement of pilots that makes it cheaper or dearer per head.
+// test/plates.mjs measures the curve with the call in and prints both columns.
+
+// HOW FAST THE FRONT TRAVELS, and it is read off two numbers already on the
+// definition rather than chosen: it crosses from the hull to the range this hostile
+// stands off to in exactly ONE of its own answering cycles.
+//
+//     (standOff - r) / plateHalf  =  (0.7 x 900 - 90) / 1.0  =  540 px/s
+//
+// That is the readable end — a full second of front between the flash and the arrival
+// at the range the fight is actually held at — and it is also what keeps the ring to
+// ONE VOICE AT A TIME, which is the whole fiction: at 540 the front crosses its
+// entire 810px of reach in 1.5s, so it is gone for two and a half seconds of every
+// beat and there is never more than one on the field. A slower front would stack
+// rings on top of each other; a faster one would arrive before the eye does.
+//
+// It is NOT the dodge. The dodge is the walk between beats, and the budget for that
+// is `beat` — see the wave block on the definition in aliens.js.
+export const WAVE_SPEED = 540;   // px/s
+
+// The whole of a wave on a definition is `def.plates.wave`, exactly the way
+// `def.sow` is the whole of sown ground and `def.returns` a mirror. A second hostile
+// that pulses is a block of data in aliens.js. THAT IS THE SEAM, and its name is
+// `wave`.
+export const waveOf = def => platesOf(def)?.wave ?? null;
+
+// Seconds between calls. Read off the definition so the derivation lives with the
+// hostile that has to be beaten, and floored well above a tick so a bad number cannot
+// spin the loop.
+export const waveBeat = def => Math.max(0.1, waveOf(def)?.beat ?? 0);
+
+// WHAT ONE CALL CARRIES. `damage x fireRate x beat` — the barrel's whole dps, banked
+// for a beat and spent in one front. So `damage x fireRate` is still the number
+// threatDps reads, still 711, and still exactly what a pilot who never walks the lane
+// takes per second. Nothing downstream had to be re-derived, which is the same trick
+// the sowers' lob plays with their own cadence.
+export const crestOf = def =>
+  (def?.attrs?.damage ?? 0) * (def?.attrs?.fireRate ?? 0) * waveBeat(def);
+
+// Is this bearing inside the silent wedge? One wedge wide, because the lane a pilot
+// has to stand in and the plate they are standing on had better be the same thing —
+// a lane you can see and cannot fit in is the same bug as a row you can see and
+// cannot click, and this codebase has shipped that twice.
+export function inLane(w, ang) {
+  if (!w || !Number.isFinite(ang)) return false;
+  let d = (ang - w.g) % (2 * Math.PI);
+  if (d > Math.PI) d -= 2 * Math.PI;
+  if (d < -Math.PI) d += 2 * Math.PI;
+  return Math.abs(d) <= (w.h ?? 0);
+}
+
+// Advances the call and returns a front to release, or null.
+//
+// `a.crest` is its own clock and NOT `a.cool`, deliberately: `a.cool` runs at
+// `fireRate`, which the plates read as their own half-life and their own answering
+// cycle, and a wave on that clock would be four times too often. combat.js hands the
+// trigger over rather than sharing it — see the gate at the top of fire().
+//
+// It is centred where the hostile was STANDING when it left, and it does not follow.
+// That is newRing's measurement restated one rung out: a hostile drifts up to 80px
+// while its own attack is in the air, and a front that re-centred on the hull would
+// slide its lane sideways off a pilot who had done everything right.
+export function stepWave(a, b, dt) {
+  const def = a?.def, W = waveOf(def);
+  if (!W) return null;
+  a.crest = Math.max(0, (a.crest ?? 0) - dt);
+  // And the muzzle glow. combat.js owns the only other copy of this line and it sits
+  // BELOW the gate that sends this hostile home, so a ring that never calls fire()
+  // would hold a full flash for ever — which it did, the moment the barrel became a
+  // call. Same line, same reason, in stepLob.
+  a.shotFlash = Math.max(0, (a.shotFlash ?? 0) - dt);
+  const reach = Math.max(1, a.stats?.weaponRange ?? 1);
+  // The same `live` test fire() uses, and the same reach: this IS the barrel, so a
+  // pilot who has backed off past 900 is outside it exactly as they were outside the
+  // bolt. The RING still answers out to 1,800 and that is untouched.
+  const live = b && b.hp > 0 && a.hp > 0 && Math.hypot(b.x - a.x, b.y - a.y) <= reach;
+  if (!live || a.crest > 0) return null;
+  a.crest = waveBeat(def);
+  // ONE WEDGE ANTICLOCKWISE, every beat, forever. The step is what makes the lane
+  // walkable rather than a lottery: a pilot who is in it stays in it by flying, and
+  // the direction never reverses, so there is nothing to guess.
+  const n = plateCount(def);
+  a.gap = ((((a.gap ?? -1) + 1) % n) + n) % n;
+  a.shotFlash = 1 / 15;
+  a.sinceShot = 0;
+  return {
+    x: a.x, y: a.y, r: Math.max(1, a.r ?? 1), reach,
+    g: plateMid(def, a.gap), h: plateArc(def) / 2,
+    dmg: crestOf(def) * boostOf(a.power, 'weapons', a.stats),
+    // Sanctuary travels WITH the front, by reference, exactly as an orb's does and a
+    // sown patch's: a wave is in the air for a second and a half and who its thrower
+    // was allowed to harm when it left is still the right answer when it arrives.
+    by: a.provoked,
+    // Everybody it has already reached. A front sweeps a hull ONCE — it is a wave,
+    // not a field — and without this the ship it caught would be caught again on
+    // every tick the front is still inside its own radius, which at 18px of travel a
+    // tick is three ticks on a big hull and one on a small one. That inconsistency is
+    // worse than either answer.
+    hit: new Set(),
+  };
+}
+
+// Flies every front one tick and settles whatever it swept. Same shape as stepOrbs
+// and for the same reasons — `bodies` is the `[{ id, ship, haven }]` list the AI is
+// handed, and `may` is the sanctuary predicate passed in rather than imported,
+// because "where is it safe to stand" is sim.js's rule and a second copy of it cost
+// this codebase a day of a workshop dock that refused to sell anything.
+export function stepWaves(list, bodies, dt, may = () => true) {
+  const hits = [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const w = list[i];
+    w.r += WAVE_SPEED * dt;
+    for (const c of bodies) {
+      const tg = c?.ship ?? c;
+      if (!tg || tg.hp <= 0) continue;
+      const id = c?.id ?? tg.id;
+      if (w.hit.has(id)) continue;
+      const dx = tg.x - w.x, dy = tg.y - w.y, d = Math.hypot(dx, dy);
+      if (d > w.r + (tg.r ?? 0)) continue;
+      // Reached, and marked reached WHATEVER happens next — before the lane and the
+      // sanctuary are asked. A pilot the front went past in the lane must not be
+      // swept a tick later when the geometry has moved on; being in the lane is a
+      // dodge, not a delay.
+      w.hit.add(id);
+      if (!may(w, c)) continue;
+      if (inLane(w, Math.atan2(dy, dx))) continue;
+      hits.push({ wave: w, target: tg, who: id, dmg: w.dmg,
+                  // Which way it arrived from, for the same two uses stepBolts and
+                  // stepOrbs have it: a pilot carrying plates one day would want the
+                  // bearing, and it is worked out in one place so it cannot disagree.
+                  from: { a: Math.atan2(w.y - tg.y, w.x - tg.x), x: w.x, y: w.y } });
+    }
+    if (w.r >= w.reach) list.splice(i, 1);
+  }
+  return hits;
 }

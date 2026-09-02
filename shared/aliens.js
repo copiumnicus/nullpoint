@@ -10,7 +10,7 @@ import { newBody, inHaven, sizeOf } from './sim.js';
 import { burnOf, burnR, stepBurn, goadBurn, burnBite, burnBurst,
          pyreFor, inPyre, poolOf, inBurn } from './burn.js';
 import { fixOf } from './kedge.js';
-import { sowOf, HOLD, WARN } from './ground.js';
+import { sowOf, HOLD } from './ground.js';
 import { platesOf, newRing, stepRing, storeBearing, softAt, hottest, dischargeOf,
          plateFill, plateHalf, plateCount, answer as ringAnswer } from './plates.js';
 
@@ -725,14 +725,21 @@ export const ALIENS = {
   // away against 0.301. Measured, the other rung is also the wrong FIGHT — see the
   // note on respawn below.
   //
-  // WHY THERE IS NO GUN ON EITHER. The balance model's own complaint, in
-  // test/balance.mjs: "content dps has not kept up with the player's hull". Every
-  // armed hostile throws a flat number of points, player effective hit points span
-  // x6.4 across the shop and another x32 across the research ladder, and the deeps
-  // are precisely where the pilots at the top of both live. A bolt for 220 is not a
-  // threat to 220,736 effective hit points and no honest number of them is. So both
-  // of these take a SHARE, the way a Censer's ring and a Lamprey's tether do, and
-  // the share is what makes them the same fight at x1 and at x32.
+  // WHY THE GROUND TAKES A SHARE AND THE GUN DOES NOT. The balance model's own
+  // complaint, in test/balance.mjs: "content dps has not kept up with the player's
+  // hull". Every armed hostile throws a flat number of points, player effective hit
+  // points span x6.4 across the shop and another x32 across the research ladder, and
+  // the deeps are precisely where the pilots at the top of both live. A bolt for 220
+  // is not a threat to 220,736 effective hit points and no honest number of them is.
+  // So the GROUND takes a share, the way a Censer's ring and a Lamprey's tether do,
+  // and the share is what makes it the same fight at x1 and at x32.
+  //
+  // The gun is the other half and it is a flat number on purpose: it is the model's
+  // own on-model figure, 438 dps at ANCHORS.pressure x stageEhp('finished'), so the
+  // model has something to read. Neither of them SHOOTS it any more — the gun is what
+  // throws the ground, one slow glob on the cadence the sowing was already on, and
+  // where it lands is where the pool or the still is. One clock, one act, and the
+  // product `damage x fireRate` untouched, so nothing derived from it moved.
   crucible: {
     name: 'Crucible', cls: 'Sower', r: 76, colour: '#f2ff1f', shape: 'crucible',
     // WHITE HEAT. It was White Heat, and the acid was chosen for a good reason: royal
@@ -779,49 +786,74 @@ export const ALIENS = {
     // hostile that holds more than a third of the ground its own fight is on has
     // stopped shaping the space and started being the space.
     //
-    // `every` is life / max as it always was, so a definition can never ask for more
-    // ground than it is allowed to hold. It USED to be CALM as well — one pool per
-    // thrust-window owed — and that identity is retired rather than honoured: CALM
-    // halved with the hold, and following it would have put ground down twice as often
-    // off a change made to make the fight easier.
+    // THE CADENCE IS THE TRIGGER NOW, and that is the whole of this conversion. It
+    // used to be `every: 10`, a separate clock beside a 0.75/s barrel, and the two of
+    // them together were two mechanics stapled to one hostile. There is one: the gun
+    // throws the ground. So the interval is `1 / fireRate` below and it is not
+    // written here at all, and the invariant `every` carried — a definition can never
+    // ask for more ground than it is allowed to hold — is now an identity between the
+    // two halves of the definition:
     //
-    // So the ten seconds stands on the thing that does not move when a clock does: it
-    // is over twice the time the slowest hull that fights one needs to CROSS OUT of a
-    // 560px pool from a dead stop. Measured through step(), that is 4.60s, so a pilot
-    // who leaves the moment they can is in the plasma for under half the interval —
-    // x2.17, and test/ground.mjs re-measures it rather than trusting this line.
+    //     fireRate  =  max / life
+    //
+    // test/ground.mjs asserts it on both sowers, so a definition still cannot ask for
+    // ground it is not allowed to keep, and now it cannot ask for a gun that disagrees
+    // with its own ground either.
+    //
+    // The ten seconds itself stands where it stood: it is over twice the time the
+    // slowest hull that fights one needs to CROSS OUT of a 560px pool from a dead
+    // stop. Measured through step(), that is 4.60s, so a pilot who leaves the moment
+    // they can is in the plasma for under half the interval — x2.17, and
+    // test/ground.mjs re-measures it rather than trusting this line.
     sow: { kind: 'white',
-           reach: 1100,            // the Hive's gun, and 200px past its OWN gun below:
-                                   //   back off and the barrel stops, the ground does not
+           reach: 1100,            // how far it can THROW, and 200px past the `weaponRange`
+                                   //   below: back off past the barrel's old reach and the
+                                   //   ground still finds you, which is the layer this
+                                   //   hostile already had and now has only one clock for
            r: 560,                 // SIGHT_R — the widest circle you can see all of
-           life: 10, max: 1, every: 10,       // life / max, and x2.17 the 4.60s it takes
-                                              //   the slowest hull to cross out of one
-           wind: WARN,             // 1.5s of marker before it goes live
+           life: 10, max: 1,       // and x2.17 the 4.60s it takes the slowest hull to
+                                   //   cross out of one. life / max IS the fireRate below
            rate: 0.045,            // ANCHORS.pressure, exactly
            hold: 0 },              // it takes ground, not the ship
     // 85/15 hull to shield, the Censer's split and the Thresher's: a vessel is mostly
     // what it is carrying. Derived from DEEP_HP so the rung is one edit, not five.
     //
-    // AND IT HAS A GUN NOW. It had none, and that made these two the first hostiles
-    // where balance.js's `pressure x ehp` was actively wrong rather than merely
-    // incomplete — the model wants a number of points a second and they threw none.
-    // 584 x 0.75 is 438 dps, which is ANCHORS.pressure x stageEhp('finished') to the
-    // decimal: the gun IS the model's own answer, so the gun is the on-model part and
-    // the ground is what sits above it. That closes the gap on the DAMAGE axis and
-    // narrows rather than closes the one named on alienFor's `dps` line, which is
-    // about fight LENGTH and is still there.
+    // AND THE GUN IS THE POUR. It had no gun at all, then a plain aimed bolt for
+    // 584 x 0.75; both were wrong in the same way and in opposite directions. With no
+    // gun these two were the first hostiles where balance.js's `pressure x ehp` was
+    // actively wrong rather than merely incomplete — the model wants a number of
+    // points a second and they threw none. With a bolt they threw an undodgeable one:
+    // 94% of what an aimed shot fires lands on a hull weaving as hard as it can (the
+    // table at the top of orbs.js), so the damage was a tax and the ground was the
+    // fight, which is two hostiles wearing one hull.
+    //
+    // 4380 x 0.1 is the same 438 dps to the decimal — ANCHORS.pressure x
+    // stageEhp('finished'), the model's own answer to "what must a hostile at that
+    // stage throw" — so threatDps, the bounty, the experience, the bestiary report
+    // and every claim roster are the numbers they already were. What moved is where
+    // it arrives: one slow glob every ten seconds, the same ten seconds the ground
+    // was already on, and where it lands is where the plasma is. See stepLob in
+    // shared/ground.js for what the throw is pinned by.
+    //
+    // A pilot who holds station takes every one of them and is therefore taking
+    // exactly what the bolt cost. A pilot who turns takes none, and that is the only
+    // thing about this hostile that changed.
     //
     // Reach 900 is the Leviathan's, the Thresher's and the Kedge's — past every hull
-    // in the shop (620-820), so out-ranging the barrel is not on the table. What IS
-    // on the table is backing off past 900 into the 200px band where the ground still
-    // reaches and the gun does not, which is the layer this hostile grew when it grew
-    // a barrel. test/ground.mjs asserts the two reaches stay in that order.
+    // in the shop (620-820) — and it is now purely where this thing STANDS: standOff
+    // reads it, and nothing else does. The throw is `sow.reach` at 1100, so the 200px
+    // band where the ground reaches and the gun does not is still there and is now
+    // the same statement twice rather than two mechanics. test/ground.mjs asserts the
+    // two reaches stay in that order.
     attrs: { ...deepSplit(0.15), shieldRegen: 0.005, shieldDelay: 6,
              // 120, between the Hive's 110 and the Kedge's 150. Leaving always works:
              // the slowest thing a fitted pilot can hold indefinitely is a finished
              // Bulwark at 195 px/s, and this is 75 under it.
              speed: 120, accel: 200, signature: 10,
-             damage: 584, fireRate: 0.75, weaponRange: 900 },
+             // 0.1 is `max / life` from the sow block above — one clock, and the
+             // identity is asserted rather than commented. 4380 is 438 / 0.1, so the
+             // product is untouched and nothing downstream had to be re-derived.
+             damage: 4380, fireRate: 0.1, weaponRange: 900 },
     mate: 'doldrum',  // it does not fly alone — see the seeding, and pairPost()
     aggro: 540,       // the Hive's, still inside SIGHT_R, so it is on screen first
     leash: 2600,
@@ -829,7 +861,7 @@ export const ALIENS = {
     flee: 0,          // it has nowhere to be; it is making the place
     respawn: 300,
     ...deepPay,       // DEEP_HP at BOUNTY_RATE and XP_RATE — nothing typed
-    tell: 'Pours White Heat where you were standing, and it stays. Never flies alone — a Doldrum comes with it, and the still is what holds you in the plasma.',
+    tell: 'Lobs White Heat where you are heading, and it stays. Turn and the glob lands behind you; hold your course and it lands on you.',
   },
 
   // The other half of the pair, and the dangerous one.
@@ -874,28 +906,32 @@ export const ALIENS = {
     sow: { kind: 'slack',
            reach: 1100,
            r: 720,                 // a Censer's ring at full spin, and wider than a pool
-           life: 15, max: 1, every: 15,       // life / max, and x2.57 the 5.83s it takes
-                                   //   the slowest hull to cross out of one. It used to
-                                   //   be HOLD + CALM — one still per cycle of the root's
-                                   //   own promise — and that identity went when the hold
-                                   //   halved: following it would have doubled how often
-                                   //   ground lands, off a change meant to make the fight
-                                   //   easier. The escape is what does not move
-           wind: WARN,
+           life: 15, max: 1,       // and x2.57 the 5.83s it takes the slowest hull to
+                                   //   cross out of one. life / max IS the fireRate below,
+                                   //   which is the Crucible's identity restated: the
+                                   //   trigger and the sowing are one clock, so a
+                                   //   definition cannot ask for more ground than it may
+                                   //   hold and cannot ask for a gun that disagrees with
+                                   //   its own ground either
            rate: 0.0225,           // DRAIN_RATE — half of on model, half of a pool
            hold: HOLD },           // stopped dead, once per entry. Two and a half seconds
     // 70/30, the Hive's split: more of it is field than plating, and the field is what
     // the stills come out of. Derived from DEEP_HP, like its mate's.
     //
-    // The same 438 dps as a Crucible and a slower trigger to deliver it — 876 x 0.5,
-    // the Hive's cadence. Same rung, same gun, and what differs between them is the
-    // ground, which is the whole point of posting them together.
+    // The same 438 dps as a Crucible and a slower, heavier throw to deliver it. Same
+    // rung, same gun, and what differs between them is the ground — which is the whole
+    // point of posting them together, and is now visible in the air as well as on the
+    // floor: a Crucible's glob comes every ten seconds and a Doldrum's every fifteen,
+    // so the one that is about to stop you dead is the rarer and the bigger of the
+    // two, and telling them apart is worth doing before either lands.
     attrs: { ...deepSplit(0.30), shieldRegen: 0.005, shieldDelay: 8,
              // 90 — the slowest thing in the game, under the Hive's 110. It does not
              // need to catch you. It needs you to come to it, and the ground is how it
              // arranges that.
              speed: 90, accel: 150, signature: 10,
-             damage: 876, fireRate: 0.5, weaponRange: 900 },
+             // 1/15 is `max / life` from the sow block above, and 6570 is 438 x 15, so
+             // the product is 438 to the decimal exactly as the Crucible's is.
+             damage: 6570, fireRate: 1 / 15, weaponRange: 900 },
     mate: 'crucible',
     aggro: 540,
     leash: 2600,
@@ -903,7 +939,7 @@ export const ALIENS = {
     flee: 0,
     respawn: 300,
     ...deepPay,       // the same rung, so the same pay, from the same line
-    tell: 'Its stills stop you dead for two and a half seconds — you keep your guns, you just cannot be anywhere else. Its Crucible pours into the same spot.',
+    tell: 'Lobs a still where you are heading. Cross into one and you stop dead for two and a half seconds, guns and all.',
   },
 
   // --- THE ANTIPHON, and it lives in Nullpoint ------------------------------------
@@ -1119,6 +1155,42 @@ export const ALIENS = {
       // weaponRange above — a boss you can shoot from outside its answer is a boss
       // with no mechanic, and the ring rather than the barrel is what closes that.
       reach: 1800,
+      // --- AND THE CALL, which is what the barrel became ---------------------------
+      //
+      // The 711 dps under the answers used to be a plain aimed bolt, and an aimed bolt
+      // is not dodged by anybody: 94% of one lands on a hull weaving as hard as it
+      // can. It is a pressure front now — it leaves the hull, grows outward, and is
+      // silent over exactly one wedge, and that wedge steps one place round the ring
+      // on every beat. shared/plates.js holds the machinery; this is the one number.
+      //
+      // FOUR SECONDS, and it is the walk rather than the look. The lane is one wedge,
+      // so staying in it means covering one wedge of arc between beats, and the budget
+      // has to be set by the slowest ship that actually fights this thing at the range
+      // it fights from:
+      //
+      //     2 x pi x standOff / n   =  2 x pi x 630 / 8  =  495px of arc
+      //     at a finished Bulwark's 128px/s               =  3.87s
+      //
+      // So 4.0, which is that with a tick of room, and test/plates.mjs re-measures the
+      // walk rather than trusting this line. Read the arithmetic the other way and it
+      // says what the fight is: a wedge is a SHORTER walk the closer in you are — 204px
+      // at 260px of range, 1.6 seconds — so the call is cheapest exactly where the
+      // answers are deadliest, and dearest out at the range that dodges them. That
+      // tension is the whole reason it is a ring with a lane and not a bigger bolt.
+      //
+      // What one front carries is `damage x fireRate x beat`, so `damage x fireRate`
+      // is untouched and threatDps, the bounty, the experience and the bestiary report
+      // are the numbers they already were. A pilot who never walks the lane takes 711
+      // a second, which is exactly what the bolt cost; a pilot who walks it takes
+      // none. Nothing else about this hostile moved.
+      //
+      // WHAT IT COSTS THE PARTY CURVE is stated rather than hidden, because it is the
+      // one property this boss exists for. A front does not divide: it reaches every
+      // pilot inside its reach at once. Measured through the real loop, the answers'
+      // curve is 1.00 / 0.50 / 0.31 / 0.14 and the call flattens what a party of four
+      // pays per head — the numbers are in test/plates.mjs, which prints both columns
+      // and fails if time-to-die ever stops rising with party size.
+      wave: { beat: 4.0 },
     },
     aggro: 540,       // the Hive's, inside SIGHT_R, so it is on screen before it decides
     leash: 2600,
@@ -1126,7 +1198,7 @@ export const ALIENS = {
     flee: 0,          // it does not run. It is the middle of the map
     respawn: 300,     // a boss's five minutes, the Hive's and the deeps'
     ...corePay,       // CORE_HP at BOUNTY_RATE and XP_RATE — nothing typed
-    tell: 'Eight plates. Hit one and it hardens, then answers down the exact line you shot from. Keep turning.',
+    tell: 'Eight plates that answer down the line you shot from, over a ring that pulses. One wedge of the pulse is silent, and it steps.',
   },
 
   // Range furniture, not a hostile. It has no weapon, does not chase and does not
@@ -1864,10 +1936,14 @@ export function respawnAlien(a, map, away = []) {
   a.sinceHit = 1e9; a.shieldHit = 0; a.cool = 0; a.shotFlash = 0;
   a.target = null; a.provoked.clear(); a.lost = 0; a.dead = 0;
   a.crowd = null; a.crowdT = 0; a.threat = null; a.threatT = 0;   // no grudges carried over
-  a.sow = 0; a.sowAt = null; a.sowOn = null; a.sowCool = 0;       // nor a wind-up. Ground it has
-                                                                  // already laid stays laid, which
-                                                                  // is the whole mechanic; the CAST
-                                                                  // does not survive the caster
+  a.sow = 0; a.sowAt = null; a.sowFrom = null; a.sowFly = 0;      // nor a glob in the air. Ground it
+                                                                  // has already laid stays laid,
+                                                                  // which is the whole mechanic; the
+                                                                  // THROW does not survive the thrower
+  a.crest = 0; a.gap = 0;                                         // and a ring comes back with its
+                                                                  // wave silent and its gap at due
+                                                                  // east, so a boss that respawned
+                                                                  // mid-lap does not pulse on arrival
   a.load = 0;                                                     // nor a chamber: a mirror that
                                                                   // respawned loaded would open the
                                                                   // next fight with your last one
@@ -1959,8 +2035,8 @@ export const noHorizon = map => !!map?.arena && !!map?.hunt;
 //
 // `abl` on the wire is a single 0..100 integer, and five different mechanics now
 // ride it: a Lamprey's draw, a Censer's spin, a Kedge's sighting, a Thresher's
-// chamber and a sower's wind-up. There is exactly one slot left in SHIP_FIELDS —
-// 30 of a hard 31 — so one field for all five is the right trade and it is not
+// chamber and a sower's glob in the air. There is exactly one slot left in
+// SHIP_FIELDS — 30 of a hard 31 — so one field for all five is the right trade and it is not
 // changing. What was wrong was HOW the one was chosen.
 //
 // It was `a.draw ?? a.spin ?? a.fix ?? a.load ?? a.sow ?? 0`, reading the LIVE
@@ -1980,7 +2056,7 @@ export const DIALS = [
   ['burn',    a => a.spin],    // a Censer's ring, cold to full
   ['fix',     a => a.fix],     // a Kedge's sighting, from taken to collapsed
   ['returns', a => a.load],    // a Thresher's chamber, empty to full
-  ['sow',     a => a.sow],     // a sower's wind-up, before the ground lands
+  ['sow',     a => a.sow],     // a sower's glob, from the throw to where it lands
 ];
 export const dialsOn = def => DIALS.filter(([k]) => def?.[k] !== undefined).map(([k]) => k);
 // Clamped here rather than at the call site, so a NaN out of any of the five draws
