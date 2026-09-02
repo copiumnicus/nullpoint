@@ -17,7 +17,7 @@ import { joinLayout } from '../shared/join.js';
 import { ROSTER_KEY, TOKEN_KEY as TOK } from '../shared/brand.js';
 import { audioOn, sfxOnly, musicOnly, sfxVolume, musicVolume,
          musicList, musicParked, musicMood, hasMood, setMusicVolume } from '../public/audio.js';
-import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, packWave, packSweep, packHatch, PLATE_STEPS } from '../shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packSown, packPlates, packPing, packWave, packSweep, packHatch, packShard, PLATE_STEPS } from '../shared/net.js';
 import { pingChip, pingLayout, PING_MAX } from '../shared/ping.js';
 import { newBase, encodeFull, encodeDelta } from '../shared/delta.js';
 import { MATERIALS, fmtCredits } from '../shared/cargo.js';
@@ -1062,13 +1062,13 @@ const dismiss = () => {
     for (const [g0, e0] of [[-1.2, 1.2], [1.2, -1.2]])
       for (const [pp, on] of [[0, 0], [0.4, 0], [1, 0], [0, 1], [0.35, 1], [0.8, 1], [1, 1]]) {
         feed({ t: 's', ships: [me5, kedge()],
-               sweeps: [packSweep({ x: 6600, y: 4000, d, r: 60, g: g0, e: e0, p: pp, on })] });
+               sweeps: [packSweep({ x: 6600, y: 4000, d, r: 60, g: g0, e: e0, p: pp, on, k: 2 })] });
         frame(t += 16); frames++; swung++;
       }
   // two at once, which one Kedge never produces and two standing together do
   feed({ t: 's', ships: [me5, kedge()],
-         sweeps: [packSweep({ x: 6600, y: 4000, d: 400, r: 60, g: 0, e: 2, p: 0.5, on: 1 }),
-                  packSweep({ x: 6300, y: 4200, d: 700, r: 60, g: 3, e: 1, p: 0.2, on: 0 })] });
+         sweeps: [packSweep({ x: 6600, y: 4000, d: 400, r: 60, g: 0, e: 2, p: 0.5, on: 1, k: 2 }),
+                  packSweep({ x: 6300, y: 4200, d: 700, r: 60, g: 3, e: 1, p: 0.2, on: 0, k: 2 })] });
   frame(t += 16); frames++; swung++;
   feed({ t: 's', ships: [me5, kedge()], sweeps: [[6600, 4000]] });
   frame(t += 16); frames++;
@@ -1117,6 +1117,52 @@ const dismiss = () => {
   frame(t += 16); frames++;
   feed({ t: 's', ships: [me5, hive()], hatch: [] });
   frame(t += 16); frames++;
+  // --- A MIRROR'S DEBRIS, and the bestiary index every projectile now carries ------
+  //
+  // Its own stream, empty on every map but the ones a Thresher holds, so nothing else in
+  // this suite enters the code path — rule three's reason again.
+  //
+  // The index is the thing worth sweeping. `k` is a row in ALIENS and the client turns it
+  // into a colour with tintOf(); the guards below are every way that can arrive wrong —
+  // missing (a short row), past the end of the table, negative, and a float. All of them
+  // have to draw SOMETHING rather than `rgba(undefined,...)`, which the harness rejects
+  // outright, and the fallback is the Drifter's own colour rather than a grey nobody
+  // chose.
+  let chipped = 0;
+  const thresher = () => packShip({ id: 1_000_803, x: 6600, y: 4000, heading: 2.2, charge: 0,
+    co: 'x', hull: 'thresher', hp: 100, sh: 100, flash: 0, tgt: 1, shot: 0, rk: 0, vis: 1, name: '' });
+  for (const k of [0, 3, 6, 13])
+    for (const h of [0, 1.4, -2.6, 3.14]) {
+      feed({ t: 's', ships: [me5, thresher()],
+             shards: [packShard({ x: 6300, y: 4000, heading: h, k }),
+                      packShard({ x: 6250, y: 4060, heading: h + 0.3, k }),
+                      packShard({ x: 6260, y: 3940, heading: h - 0.3, k })] });
+      frame(t += 16); frames++; chipped++;
+      frame(t += 90); frames++; chipped++;      // and again, so the tumble actually turns
+    }
+  feed({ t: 's', ships: [me5, thresher()], shards: [[6300, 4000]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, thresher()], shards: [[NaN, 4000, 0, 3], [6300, NaN, 0, 3],
+                                                    [6300, 4000, NaN, 3]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, thresher()], shards: [[6300, 4000, 0, 9e9], [6300, 4000, 0, -3],
+                                                    [6300, 4000, 0, 2.7], [6300, 4000, 0, undefined]] });
+  frame(t += 16); frames++;
+  feed({ t: 's', ships: [me5, thresher()], shards: [] });
+  frame(t += 16); frames++;
+  // And the same index arriving wrong on every OTHER stream that now carries one, which
+  // is all of them: an orb, a bolt, a front, a lance, a pod and a pyre.
+  feed({ t: 's', ships: [me5, thresher()],
+         orbs: [[6300, 4000, 0, 44, 1, 9e9], [6350, 4000, 1, 44, 1, -2], [6400, 4000, 1, 44, 1, 6]],
+         bolts: [[6300, 4000, 6100, 4000, 0.4, 1, 900, 0, 9e9], [6300, 4100, 6100, 4100, 0.4, 1, 900, 0, 5]],
+         waves: [[6600, 4000, 300, 0, 0.39, 9e9]],
+         sweeps: [[6600, 4000, 400, 60, 0, 2, 0.5, 1, -4]],
+         pyres: [[6600, 4000, 400, 0.5, 1, 9e9]],
+         hatch: [[1_000_802, 6600, 4000, 6050, 4100, 0.5, 1, 9e9]] });
+  frame(t += 16); frames++;
+  console.log(`debris: ${chipped} frames of a Thresher's wall — four throwers, four headings, ` +
+              'the tumble turning, plus a short row, a NaN in every column and an index past both ' +
+              'ends of the bestiary\n      and one frame of every other stream carrying a bad index');
   console.log(`lance: ${swung} frames of a Kedge's swing — four radii, both directions round, ` +
               'the taut wind-up and the whole of the sweep, two at once, plus a short row, a NaN in ' +
               `every column in turn and a phase past both ends\n      and ${flung} frames of a Hive's ` +

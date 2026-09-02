@@ -8,9 +8,16 @@
 // Add the new entry at the TOP and bump VERSION with it — the client shows
 // VERSION beside the icon, so the two drifting apart is immediately visible.
 
-export const VERSION = '0.98';
+export const VERSION = '0.99';
 
 export const PATCHES = [
+  { v: '0.99', notes: [
+    'The Kedge no longer hauls you back. The lance is the whole fight now',
+    'It keeps changing how far out it stands, so no two swings are the same length',
+    'A Thresher throws DEBRIS, not lasers — slow tumbling chunks you can steer between',
+    'Every shot in the game is now the colour of whatever threw it',
+    "A Leviathan's orbs are green, an Ironhusk's red. They were both orange",
+  ] },
   { v: '0.98', notes: [
     'The bottom three hostiles have thrown their lasers away, and none of them agree',
     'A Drifter lobs ONE slow ball. Move and it goes past — that is the whole lesson',

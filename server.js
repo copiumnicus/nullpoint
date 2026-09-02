@@ -33,10 +33,9 @@ import { routeTo, levelOf, chargePct, SYSTEMS } from './shared/power.js';
 import { SPECIAL, ABILITIES } from './shared/ability.js';
 import { FORMATIONS, FORMATION_KEYS, formationPrice, DEFAULT_FORMATION } from './shared/formation.js';
 import { stepContacts, ALLY } from './shared/radar.js';
-import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packLab, packPyre, packFix,
-         packSown, groundK, packPlates, packPing, packWave, packSweep, packHatch } from './shared/net.js';
+import { packShip, packBolt, packRocket, packOrb, packBlast, packPod, packHit, packLab, packPyre,
+         packSown, groundK, packPlates, packPing, packWave, packSweep, packHatch, packShard } from './shared/net.js';
 import { PING_COOLDOWN, PING_LIFE, PING_MAX, whyNotPing } from './shared/ping.js';
-import { stepFix, fixHolds, fixWinding, collapseTo, fixOf, haulCost } from './shared/kedge.js';
 import { storeHit, stepMirror } from './shared/aliens.js';
 // The answering ring, and the one thing it needs handed to it: bolt speed, because
 // shared/plates.js imports only the wire and combat.js owns how fast a bolt flies.
@@ -49,7 +48,7 @@ import { sowOf, stepLob, sowHolds, groundFor, inGround, groundBite, stepGround,
 // are not barrels. Each owns its own clock and none of them calls fire() — see the gate
 // at the top of it in shared/combat.js.
 import { stepSweep, stepSweeps } from './shared/sweep.js';
-import { throwShards } from './shared/shards.js';
+import { throwShards, SHARD_R } from './shared/shards.js';
 import { stepPod, podHolds, podOf, podHit, podFlight, hatchAt, POD_R } from './shared/brood.js';
 import { newBase, needsFull, encodeFull, encodeDelta } from './shared/delta.js';
 import { newAccount, sanitiseAccount, capture, carried } from './shared/account.js';
@@ -975,6 +974,11 @@ const waves = new Map();
 // projectiles by position can be reused on it, and it settles against everything it
 // crosses rather than against one ship it was aimed at.
 const sweeps = new Map();
+// mapId -> a mirror's debris, mid-flight. Its own list rather than part of `bolts` for
+// the reason `orbs` has one: the two settle completely differently — a bolt resolves
+// once against the one ship it was aimed at, and a shard is tested every tick against
+// everything it could pass through.
+const shards = new Map();
 
 // A rocket flies for four and a half seconds, which is long enough for its
 // target to jump out or die under it. Bolts land inside a third of a second and
@@ -987,10 +991,6 @@ const dropRocketsAt = (mapId, ship) => {
 };
 const blasts = new Map();    // mapId -> kill flashes still playing
 const pyres = new Map();     // mapId -> reactors that have died and not yet let go
-// Rebuilt from the live hostiles every tick rather than kept, because a fix has no
-// life of its own: it exists exactly while a Kedge is holding one, and a stale one
-// left lying about would be a marker for a collapse that is never coming.
-const fixes = new Map();
 const pods = new Map();      // mapId -> cargo adrift
 const hits = new Map();      // mapId -> damage numbers still climbing
 // Ground somebody sowed and has not yet expired. It is per SECTOR rather than per
@@ -1014,10 +1014,8 @@ let markId = 1;
 // destroy all EIGHT together: six of them are pushed to without a `?? []`
 // guard — `bolts.get(p.mapId).push(shot)` and its siblings — so a claim arena that
 // got six of them would throw on the frame somebody fired, and take the tick down
-// with it. `fixes` is the seventh and it arrived after this list was first
-// written, which is exactly the failure the list exists to stop: it is emptied and
-// refilled every tick by the sightings pass, and a sector missing from it throws
-// on `here.length = 0`. `sown` is the eighth and it arrived the same way — the
+// with it. `sown` is the seventh and it arrived after this list was first written,
+// which is exactly the failure the list exists to stop — the
 // deeps' ground pass reads it per sector with no guard, and a claim arena missing
 // from it would throw on the first frame anybody sowed anything in one.
 // `orbs` is the ninth, and it is pushed to without a `?? []` guard exactly like the
@@ -1029,10 +1027,16 @@ let markId = 1;
 // `waves` is the eleventh and it is the same story a fifth time: the ring pass does
 // `waves.get(mapId).push(...)` with no guard, so a sector missing from this list
 // would throw on the first beat an Antiphon called.
-// `sweeps` is the twelfth and it is the same story a sixth time: the lance pass does
+// `sweeps` is the eleventh and it is the same story a sixth time: the lance pass does
 // `sweeps.get(mapId).push(...)` with no guard, so a sector missing from this list would
-// throw on the first swing a Kedge took.
-const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, fixes, sown, marks, waves, sweeps];
+// throw on the first swing a Kedge took. `shards` is the twelfth and the same again.
+//
+// TWELVE IS NOT THE SAME TWELVE, which is worth saying out loud because the count is
+// what test/duel.mjs asserts and a count that happens to match is a count nobody
+// checked. `fixes` came OFF this list — a Kedge's fix was deleted outright, for being
+// the only mechanic in the game that moved a ship its owner was not flying — and
+// `shards` went on, so the total is unchanged and the set is not.
+const SECTOR_LISTS = [bolts, rockets, orbs, blasts, pyres, pods, hits, sown, marks, waves, sweeps, shards];
 const openLists  = id => { for (const L of SECTOR_LISTS) L.set(id, []); };
 const closeLists = id => { for (const L of SECTOR_LISTS) L.delete(id); };
 for (const id of Object.keys(MAPS)) openLists(id);
@@ -2632,48 +2636,9 @@ setInterval(() => {
       // were in the list: threatBreak divides by the thing's own speed to decide how
       // soon it arrives, and a parked orb has none.
       const breaking = stepEvade(a, incoming, map, dt);
-      // The fix, and it runs BEFORE the hull is stepped rather than after it. That is
-      // not tidiness: planting a Kedge means clearing the course stepAlienAI has just
-      // set, and a plant written after step() is a plant that never happens — the next
-      // tick sets the course again before anything moves. Measured with it in the
-      // wrong place, a Kedge chased at full speed through every sighting, which turns
-      // the toll below into a hostile no hull in the game can leave.
-      //
-      // Resolved before the fix rather than after the step: the Kedge needs to know
-      // who it is looking at in order to plant itself, and `const` in a temporal
-      // dead zone is a runtime crash that `node --check` cannot see.
+      // Resolved before the hull is stepped, because every weapon below reads it and a
+      // `const` in a temporal dead zone is a runtime crash `node --check` cannot see.
       const victim = tgt ? here.find(c => c.id === tgt) : null;
-      // It takes a sighting of where its target is standing and three seconds later
-      // puts them back on it — see shared/kedge.js for why holding station through
-      // the fuse is the whole of what makes that a toll on leaving rather than a
-      // trap. Sanctuary is the SAME `haven` the AI was just handed rather than a
-      // second lookup, for the reason the tether below says: one predicate, one
-      // answer.
-      if (fixOf(a.def)) {
-        const held = victim ? fixHolds(a, victim.ship, victim.haven) : false;
-        const snap = stepFix(a, victim?.ship ?? null, held, dt);
-        if (fixWinding(a)) { a.tx = a.ty = a.dx = a.dy = null; }
-        // Re-checked on the tick it fires, not only on the tick it started: three
-        // seconds is exactly a portal's spool, and reaching one has to be the answer
-        // rather than a delay.
-        //
-        // No flash is pushed for the arrival, deliberately. A blast is this game's
-        // "something died here", and firing one at a pilot who is merely somewhere
-        // else would play an explosion in their ears. The tell is the marker: it
-        // tightens for three seconds over the exact spot, and then the hull is in it.
-        if (snap && victim && victim.ship.hp > 0 && mayHarm(a, victim)) {
-          const hauled = collapseTo(victim.ship, snap.to);
-          // And it bills for the ground it undid. A pilot who stood still through
-          // the sighting pays nothing, because there was nothing to drag them back
-          // over — the cost is the distance, not the fix.
-          const took = haulCost(hauled.px, poolOf(victim.ship));
-          if (took > 1) {
-            const split = applyDamage(victim.ship, took);
-            hits.get(mapId).push({ x: victim.ship.x, y: victim.ship.y - victim.ship.r - 6,
-                                   n: took, sh: split.hull === 0, by: null, t: HIT_TIME, ttl: HIT_TIME });
-          }
-        }
-      }
       step(a, dt, boundsOf(map)); stepDrift(a, dt, 0, map); stepVitals(a, dt, false); stepAlienRepair(a, dt);
       // Breaking means turning, and turning is what takes its nose off you. The
       // camouflage and the evasion are the same mechanic from two sides.
@@ -2752,12 +2717,12 @@ setInterval(() => {
       // stepSweep for stepWave's measurement, which is why.
       const swing = stepSweep(a, victim?.ship ?? null, dt);
       if (swing) sweeps.get(mapId).push(swing);
-      // AND A WALL OF SPLINTERS, which is what a mirror's chamber comes back as. They
-      // are ordinary bolts in the ordinary list — same speed, same drawing, same slack —
-      // and only the aim is different: one volley fanned about the lead point, split
-      // evenly, so `payloadOf(def, load)` is still exactly what a volley carries.
-      // BOLT_SPEED is handed over rather than imported, the way ringAnswer takes it.
-      for (const sh of throwShards(a, victim?.ship ?? null, dt, BOLT_SPEED)) bolts.get(mapId).push(sh);
+      // AND A WALL OF DEBRIS, which is what a mirror's chamber comes back as. They were
+      // bolts, which is to say they were lasers, which is to say they were the thing this
+      // whole rework exists to get rid of. They are BODIES now — their own list, their own
+      // speed, tested every tick against whatever they pass through — and the volley still
+      // carries `payloadOf(def, load)` split evenly across them.
+      for (const sh of throwShards(a, victim?.ship ?? null, dt)) shards.get(mapId).push(sh);
       // The ring. It winds up while it has somebody and settles when it does not, and
       // it burns whoever is standing in it — everyone, not just its target, because a
       // field does not aim. Sanctuary is checked with mayHarm(), the same predicate
@@ -3074,6 +3039,28 @@ setInterval(() => {
       storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
     }
   }
+  // A mirror's debris, settled exactly the way the orbs above are and by the SAME
+  // function: stepOrbs is generic over a list of bodies and a shard is a body. Reusing it
+  // rather than copying it is rule one on a collision test — "does this circle overlap
+  // that circle" is a rule, and a second copy of it would drift the day one of them grew
+  // a swept test. The one thing that had to be re-checked is the one thing that decides
+  // whether a point test per tick IS the swept test: at 584 px/s a shard covers 19px in a
+  // tick against a 40px smallest hit disc, so it cannot step over a hull. test/aliens.mjs
+  // asserts that inequality by name.
+  for (const [mapId, list] of shards) {
+    if (!list.length) continue;
+    const map = mapOf(mapId);
+    const here = [];
+    for (const [id, p] of players)
+      if (p.mapId === mapId && !p.dead && !p.lobby && p.ship.hp > 0)
+        here.push({ id, ship: p.ship, haven: inHaven(map, p.ship) });
+    for (const h of stepOrbs(list, here, dt, (o, c) => mayHarm({ provoked: o.by }, c))) {
+      hits.get(mapId).push({ x: h.target.x, y: h.target.y - h.target.r - 6,
+                             n: h.split.shield + h.split.hull, sh: h.split.hull === 0,
+                             by: null, t: HIT_TIME, ttl: HIT_TIME });
+      storeHit(h.target, h.raw ?? (h.split.shield + h.split.hull), h.from);
+    }
+  }
   // And the fronts, in their own pass for the same three-lines-not-six reason the orb
   // pass gives: `here` is PILOTS, so a wave can only ever sweep a player. Nothing of
   // ours dies to one, there is nobody to credit, and there is no Censer to goad.
@@ -3171,12 +3158,14 @@ setInterval(() => {
         // `g.by` is the sower's provoked set by reference, so that answer keeps being
         // right for the thirty seconds a pool outlives the Crucible that laid it.
         //
-        // The HOLD does not. Sanctuary is refused to a still outright, provoked or
-        // not, and that is shared/kedge.js's rule rather than a new one: fixHolds()
-        // has broken on a haven since the day it was written, with no provocation
-        // exception, because taking a pilot's position away from them inside a portal
-        // mouth is taking the mouth away from them. A pool that burns you there is a
-        // price you chose to stand in. A still that holds you there is a door shut.
+        // The HOLD does not. Sanctuary is refused to a still outright, provoked or not,
+        // because taking a pilot's position away from them inside a portal mouth is
+        // taking the mouth away from them. That rule outlived the mechanic it was
+        // written beside — a Kedge's fix broke on a haven with no provocation exception
+        // for the same reason, and the fix has since been deleted for being the only
+        // thing in the game that moved a ship its owner was not flying. A pool that
+        // burns you there is a price you chose to stand in. A still that holds you
+        // there is a door shut.
         const inside = inGround(g, p.ship);
         const bit = groundBite(g, id, p.ship, inside && mayHarm({ provoked: g.by }, { id, haven }),
                                poolOf(p.ship), dt);
@@ -3200,19 +3189,6 @@ setInterval(() => {
         }
       }
       if (grab > 0) holdEngines(p.ship, grab);
-    }
-  }
-  // Rebuild the sightings from whoever is actually holding one. Placed here, in the
-  // same pass the pyres are settled in, so a fix and the hostile that owns it can
-  // never be a frame apart.
-  for (const [mapId, list] of aliens) {
-    const here = fixes.get(mapId);
-    here.length = 0;
-    for (const a of list) {
-      if (a.dead > 0 || !fixWinding(a)) continue;
-      const who = players.get(a.target);
-      if (!who || who.mapId !== mapId) continue;
-      here.push({ x: a.fixAt.x, y: a.fixAt.y, r: who.ship.r, p: a.fix, who: a.target });
     }
   }
   for (const [, list] of blasts)
@@ -3446,6 +3422,10 @@ setInterval(() => {
     // tell at all.
     const balls = (orbs.get(V.mapId) ?? []).filter(o =>
       Math.hypot(o.x - V.ship.x, o.y - V.ship.y) <= reach + o.r);
+    // A mirror's debris, on the orbs' rule and for the orbs' reason: you have to be able
+    // to see the wall you are picking a gap in from outside its own edge.
+    const grit = (shards.get(V.mapId) ?? []).filter(o =>
+      Math.hypot(o.x - V.ship.x, o.y - V.ship.y) <= reach + SHARD_R);
     // You see a kill you could have seen — and always your own, even though you
     // are already back at your home base by the time it plays.
     const flashes = (blasts.get(V.mapId) ?? []).filter(b =>
@@ -3458,12 +3438,6 @@ setInterval(() => {
     // bolt does: you have to be able to see the thing you are running out of.
     const alight = (pyres.get(V.mapId) ?? []).filter(py =>
       Math.hypot(py.x - V.ship.x, py.y - V.ship.y) <= reach + py.r);
-    // Your own fix always reaches you, however far you have run from it — the whole
-    // point of the thing is that you can see where you are going to be put back to,
-    // and it is three seconds of full burn away by definition. Everyone else's is
-    // radar-filtered like anything else on the field.
-    const sights = (fixes.get(V.mapId) ?? []).filter(fx =>
-      fx.who === V.id || Math.hypot(fx.x - V.ship.x, fx.y - V.ship.y) <= reach);
     // A front reaches you from outside your radar the same way a pyre and a patch of
     // ground do, and for the sharper version of the same reason: you cannot be on the
     // right side of a line you were not shown. The test is against the RING and not
@@ -3481,9 +3455,8 @@ setInterval(() => {
       Math.hypot(w.x - V.ship.x, w.y - V.ship.y) <= reach + w.d + w.r);
     const extra = { bolts: shown.map(packBolt), rockets: missiles.map(packRocket),
                     orbs: balls.map(packOrb), waves: fronts.map(packWave),
-                    sweeps: arcs.map(packSweep),
+                    sweeps: arcs.map(packSweep), shards: grit.map(packShard),
                     blasts: flashes.map(packBlast), pyres: alight.map(packPyre),
-                    fixes: sights.map(fx => packFix(fx, fx.who === V.id)),
                     hits: numbers.map(h => packHit(h, h.by === vid)) };
     // Every station in this sector, and which one is theirs. Not radar-filtered:
     // the radar rule keeps an enemy you have not DETECTED off the wire, and a lab
@@ -3512,7 +3485,8 @@ setInterval(() => {
     for (const a of aliens.get(V.mapId) ?? []) {
       if (a.dead > 0 || !a.sowAt) continue;
       field.push({ id: a.id, x: a.sowAt.x, y: a.sowAt.y, r: a.def.sow.r,
-                   k: groundK(a.def.sow.kind), on: 0, p: Math.max(0, Math.min(1, a.sow ?? 0)) });
+                   k: groundK(a.def.sow.kind), on: 0, p: Math.max(0, Math.min(1, a.sow ?? 0)),
+                   w: a.kx ?? 0 });
     }
     // An answering ring, for any hostile in this sector that has one and that THIS
     // pilot can see. The filter is `ships.has(a.id)` and not a second distance test:
@@ -3537,7 +3511,7 @@ setInterval(() => {
       if (Math.hypot(now2.x - V.ship.x, now2.y - V.ship.y) > reach + POD_R &&
           Math.hypot(a.podAt.x - V.ship.x, a.podAt.y - V.ship.y) > reach + POD_R) continue;
       flight.push({ id: a.id, x: a.podFrom.x, y: a.podFrom.y, tx: a.podAt.x, ty: a.podAt.y,
-                    p: Math.max(0, Math.min(1, a.pod ?? 0)), k: a.podLaden ? 1 : 0 });
+                    p: Math.max(0, Math.min(1, a.pod ?? 0)), k: a.podLaden ? 1 : 0, w: a.kx ?? 0 });
     }
     const streams = { ships, pods: new Map(cans.map(c => [c.id, packPod(c)])),
                       labs: new Map(yardHere.map(l => [l.id, packLab(l, l.token === V.token)])),

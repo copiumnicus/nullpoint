@@ -1,34 +1,30 @@
-// Claims about the Kedge, and about the fix.
+// Claims about the Kedge, which is now one attack and nothing else.
 //
-// The fix is the first thing in this game that moves a ship its owner is not
-// flying, so most of what is in here is not about damage at all: it is about the
-// promise every other hostile in aliens.js makes in as many words — that you can
-// always decline, always break off, always leave. A Kedge is the one that charges
-// you for leaving, and the entire question is whether it charges or forbids.
+// It used to be two things: a lance, and a FIX that took a sighting of where you were
+// standing and three seconds later put you back on it. The fix is deleted — it was the
+// only thing in the game that moved a ship its owner was not flying — and the whole of
+// what it did for the fight is now done by the lance varying its own length. So this
+// file is about one question: is one attack, at a distance that keeps changing, still a
+// fight?
 //
-// Everything below is measured through the real loop: stepAlienAI, stepFix, step,
+// Everything below is measured through the real loop: stepAlienAI, stepSweep, step,
 // stepVitals, fire and stepBolts, in the order server.js calls them.
 
+import fsMod from 'node:fs';
 import { ALIENS, WILD, effectiveHp, farmHp, newAlien, stepAlienAI, mayHarm,
          standOff, BOUNTY_RATE, XP_RATE, threatDps } from '../shared/aliens.js';
-import { fixOf, stepFix, fixHolds, fixWinding, collapseTo, fixPoint, clearFix,
-         escapeTax, haulCost, HAUL_FULL, HAUL_SPAN, FUSE, COOL } from '../shared/kedge.js';
-// The lance. fire() returns nothing at all for a Kedge now — see the gate at the top of
-// it — so the harness below has to pull the same trigger the server does, or every
-// number in this file is a measurement of a hostile that stopped shooting.
-import { stepSweep, stepSweeps, sweepOf, headAt, strikeAt, spanOf, windOf, swingOf,
-         headOf, SWEEP_READ } from '../shared/sweep.js';
-import { newShip, step, stepVitals, inHaven, speedOf, HAVEN_R, applyDamage } from '../shared/sim.js';
+// The lance. fire() returns nothing at all for a Kedge — see the gate at the top of it —
+// so the harness below has to pull the same trigger the server does, or every number in
+// this file is a measurement of a hostile that stopped shooting.
+import { stepSweep, stepSweeps, sweepOf, strikeAt, spanOf, windOf, swingOf,
+         headOf, tipOf, cycleOf, holdBand, SWEEP_READ } from '../shared/sweep.js';
+import { newShip, step, stepVitals, inHaven, applyDamage } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget } from '../shared/combat.js';
-import { routeTo, boostOf } from '../shared/power.js';
-import { MAPS, MAP_W, MAP_H } from '../shared/maps.js';
-import { JUMP_TIME } from '../shared/sim.js';
+import { routeTo } from '../shared/power.js';
+import { MAPS } from '../shared/maps.js';
 import { HULLS, resolve } from '../shared/ships.js';
-import { buildFor, stageDps, stageEhp, ANCHORS, POSTING, alienFor } from '../shared/balance.js';
-import { SHIP_FIELDS, EPHEMERAL, FIX_FIELDS, packFix, unpackFix,
-         SWEEP_FIELDS, packSweep, unpackSweep } from '../shared/net.js';
-import { poolOf } from '../shared/burn.js';
-import { HIT_R } from '../shared/combat.js';
+import { buildFor, stageEhp, ANCHORS, POSTING } from '../shared/balance.js';
+import { SHIP_FIELDS, EPHEMERAL, SWEEP_FIELDS, packSweep, unpackSweep } from '../shared/net.js';
 import { MAX_FIELDS } from '../shared/delta.js';
 
 const fails = [];
@@ -59,20 +55,6 @@ function tick(a, p, air, o = {}) {
   const here = [{ id: 1, ship: p, haven: inHaven(map, p), loud: 1 }];
   const tgt = stepAlienAI(a, map, here, dt);
   const victim = tgt ? here[0] : null;
-  let snapped = null;
-  if (fixOf(a.def) && !o.noFix) {
-    const held = victim ? fixHolds(a, victim.ship, victim.haven) : false;
-    const snap = stepFix(a, victim?.ship ?? null, held, dt);
-    if (fixWinding(a)) { a.tx = a.ty = a.dx = a.dy = null; }
-    if (snap && victim && victim.ship.hp > 0 && mayHarm(a, victim)) {
-      snapped = collapseTo(victim.ship, snap.to);
-      // And the toll for the ground it undid, which server.js bills and this harness
-      // did not. It matters more now than it did: the lance and the haul are one fight,
-      // so a bench that measured the collapse for free was measuring half of it.
-      const took = haulCost(snapped.px, poolOf(victim.ship));
-      if (took > 1) { applyDamage(victim.ship, took); o.book && (o.book.haul += took); }
-    }
-  }
   step(a, dt); step(p, dt); stepVitals(a, dt); stepVitals(p, dt);
   faceTarget(a, victim?.ship ?? null);
   for (const s of fire(a, victim?.ship ?? null, dt)) air.push(s);
@@ -80,7 +62,7 @@ function tick(a, p, air, o = {}) {
   // them, because "did the head cross this ship" has to be asked of where the ship
   // actually IS. `o.arcs` is the list of swings in the air, so a caller that does not
   // want one simply does not pass it — which is what `noSweep` reads as.
-  if (o.arcs && !o.noSweep) {
+  if (o.arcs) {
     const sw = stepSweep(a, victim?.ship ?? null, dt);
     if (sw) { o.arcs.push(sw); if (o.book) o.book.thrown = (o.book.thrown ?? 0) + 1; }
     for (const h of stepSweeps(o.arcs, here, dt, (w, c) => mayHarm({ provoked: w.by }, c))) {
@@ -91,7 +73,6 @@ function tick(a, p, air, o = {}) {
   if (o.playerFires) { faceTarget(p, a); const v = fire(p, a, dt);
                        if (v.length) { air.push(...v); a.provoked.add(1); a.target ??= 1; } }
   stepBolts(air, dt);
-  return snapped;
 }
 
 // A fight held at a fixed range, both guns live.
@@ -100,8 +81,8 @@ function duel(stage, mul, mode, o = {}) {
   const a = mk('kedge', 6700, 4000);
   a.provoked.add(1); a.target = 1;
   const band = p.stats.weaponRange - 40, air = [], arcs = [];
-  const book = { cut: 0, hits: 0, haul: 0 };
-  let t = 0, snaps = 0;
+  const book = { cut: 0, hits: 0 };
+  let t = 0;
   while (t < 600 && a.hp > 0 && p.hp > 0) {
     const dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy) || 1;
     p.tx = p.ty = null;
@@ -111,17 +92,17 @@ function duel(stage, mul, mode, o = {}) {
     // swing goes taut, which is what a pilot reading the wind-up actually does — it is a
     // policy, not an oracle, and it does not look at the arc.
     else if (mode === 'flick') {
-      const away = Math.floor(t / (windOf(K) + swingOf(K))) % 2 ? 1 : -1;
+      const away = Math.floor(t / cycleOf(K)) % 2 ? 1 : -1;
       p.dx = away * dx / d; p.dy = away * dy / d;
     }
     else if (d < band - 20) { p.dx = dx / d; p.dy = dy / d; }
     else if (d > band + 20) { p.dx = -dx / d; p.dy = -dy / d; }
     else { p.dx = p.dy = 0; }
-    if (tick(a, p, air, { playerFires: true, arcs, book, ...o })) snaps++;
+    tick(a, p, air, { playerFires: true, arcs, book, ...o });
     t += dt;
   }
-  return { t, left: Math.max(0, ehp(p)) / full(p), snaps, killed: a.hp <= 0, died: p.hp <= 0,
-           ...book, dps: book.cut / Math.max(dt, t), haulDps: book.haul / Math.max(dt, t) };
+  return { t, left: Math.max(0, ehp(p)) / full(p), killed: a.hp <= 0, died: p.hp <= 0,
+           ...book, dps: book.cut / Math.max(dt, t) };
 }
 
 // A pilot who has decided to leave: full burn straight away, guns cold, from the
@@ -131,16 +112,15 @@ function leave(what, o = {}) {
                         : flyer(what, 1, { x: 1200, y: 4000 }, 'thrusters');
   const a = mk('kedge', 1200 - standOff(mk('kedge', 0, 0)) * 0.7, 4000);
   a.provoked.add(1); a.target = 1;
-  const air = [], arcs = []; let t = 0, snaps = 0, worst = 0;
+  const air = [], arcs = []; let t = 0;
   while (t < 400) {
     const dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy) || 1;
     p.tx = p.ty = null; p.dx = dx / d; p.dy = dy / d;
-    const was = { x: p.x, y: p.y };
-    if (tick(a, p, air, { arcs, ...o })) { snaps++; worst = Math.max(worst, Math.hypot(p.x - was.x, p.y - was.y)); }
+    tick(a, p, air, { arcs, ...o });
     t += dt;
-    if (a.target === null) return { got: true, t, snaps, worst };
+    if (a.target === null) return { got: true, t };
   }
-  return { got: false, t, snaps, worst };
+  return { got: false, t };
 }
 
 console.log('\nwhere it lands on the ladder');
@@ -227,15 +207,15 @@ console.log('\nwhat the fight is');
 // is here for the same reason — five fights that ended at different times compare
 // nothing.
 console.log('\nthe lance');
-function swing(stage, mode, { noFix = false, secs = 120 } = {}) {
+function swing(stage, mode, { secs = 120, per = 0, phase = 0 } = {}) {
   const p = flyer(stage);
   // A hostile that cannot die, so the window is the window rather than however long the
   // pilot's gun took. Its own damage is untouched.
   const a = mk('kedge', 6700, 4000); a.stats = { ...a.stats, hull: a.stats.hull * 1e9 }; a.hp = a.stats.hull;
   a.provoked.add(1); a.target = 1;
-  const air = [], arcs = [], book = { cut: 0, hits: 0, haul: 0, thrown: 0 };
-  let t = 0, snaps = 0, into = 0;
-  const band = p.stats.weaponRange - 40;
+  const air = [], arcs = [], book = { cut: 0, hits: 0, thrown: 0 };
+  let t = 0;
+  const band = p.stats.weaponRange - 40, reaches = [];
   while (t < secs) {
     const dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy) || 1;
     p.tx = p.ty = null;
@@ -248,14 +228,15 @@ function swing(stage, mode, { noFix = false, secs = 120 } = {}) {
       else p.dx = p.dy = 0;
     }
     // CIRCLES. A turn is what beats every other pattern in this game — an orb's cone, a
-    // glob's solved intercept, a rocket's turn circle — and it is the policy this
-    // hostile is built to be immune to, because a lance paid out to your radius does not
-    // care which way round you are.
+    // glob's solved intercept, a rocket's turn circle — and it is the policy this hostile
+    // is built to be immune to, because a lance paid out to your radius does not care
+    // which way round you are.
     else if (mode === 'orbit') { p.dx = -dy / d; p.dy = dx / d; }
-    // A RADIAL METRONOME: in and out on the attack's own period, without looking at
-    // anything. This is the answer a pilot finds by feel rather than by reading.
+    // A RADIAL METRONOME: in and out on a fixed period, without looking at anything.
+    // `per` and `phase` are arguments and NOT constants, and that is the whole point —
+    // see the sweep below.
     else if (mode === 'flick') {
-      const away = Math.floor(t / (windOf(K) + swingOf(K))) % 2 ? 1 : -1;
+      const away = Math.floor((t + phase) / (per || cycleOf(K))) % 2 ? 1 : -1;
       p.dx = away * dx / d; p.dy = away * dy / d;
     }
     // AND AN ORACLE: it can see the swing in the air, so it breaks radially SWEEP_READ
@@ -269,100 +250,166 @@ function swing(stage, mode, { noFix = false, secs = 120 } = {}) {
       if (away) { p.dx = away * dx / d; p.dy = away * dy / d; }
       else { p.dx = -dy / d; p.dy = dx / d; }
     }
-    const mid = arcs.some(w => w.t >= w.wind);
-    if (tick(a, p, air, { arcs, book, noFix })) { snaps++; if (mid) into++; }
+    const before = arcs.length;
+    tick(a, p, air, { arcs, book });
+    for (let n = before; n < arcs.length; n++) reaches.push(arcs[n].d);
     p.hp = p.stats.hull; p.shield = p.stats.shield;
     t += dt;
   }
-  return { ...book, snaps, into, dps: book.cut / secs, haulDps: book.haul / secs };
+  return { ...book, dps: book.cut / secs, reaches };
 }
 {
   const bookDps = K.attrs.damage * K.attrs.fireRate;
-  const rows = [];
+  const rows = {};
   for (const stage of ['cruiser', 'finished'])
-    for (const mode of ['park', 'kite', 'orbit', 'flick', 'read'])
-      for (const noFix of [false, true])
-        rows.push({ stage, mode, noFix, r: swing(stage, mode, { noFix }) });
-  const at = (stage, mode, noFix) => rows.find(x => x.stage === stage && x.mode === mode && x.noFix === noFix).r;
-  const pct = r => 100 * (r.dps + r.haulDps) / bookDps;
+    for (const mode of ['park', 'kite', 'orbit', 'read'])
+      rows[`${stage}:${mode}`] = swing(stage, mode);
+  // THE METRONOME IS SWEPT ACROSS ITS PHASE AND ITS PERIOD, and this is a bench bug that
+  // produced a shipped finding the last time it was not. One radial oscillation on the
+  // attack's exact cadence, starting at phase zero, takes ZERO — every reversal lands
+  // between two swings — and reporting that as "a blind metronome beats the lance
+  // outright" would have been wrong in the most confident possible way. The same policy
+  // a third of a cycle later takes 99%. So what is measured is the SPREAD, and the claim
+  // below is about the spread rather than about any one run of it.
+  const PHASES = [[1.333, 0], [1.333, 0.33], [1.333, 0.67], [1.0, 0], [1.9, 0]];
+  const spread = stage => PHASES.map(([per, phase]) => swing(stage, 'flick', { per, phase }));
+  const metro = { cruiser: spread('cruiser'), finished: spread('finished') };
+  const pct = r => 100 * r.dps / bookDps;
   for (const stage of ['cruiser', 'finished']) {
     console.log(`     ${stage}`);
-    for (const mode of ['park', 'kite', 'orbit', 'flick', 'read']) {
-      const on = at(stage, mode, false), off = at(stage, mode, true);
-      console.log(`       ${mode.padEnd(6)} ${f(pct(on), 0).padStart(4)}% of book with the fix live ` +
-        `(lance ${f(on.dps, 0).padStart(3)} + haul ${f(on.haulDps, 0).padStart(2)} of ${f(bookDps, 0)}), ` +
-        `${f(pct(off), 0).padStart(4)}% with it off — ${on.hits} cuts of ${on.thrown} swings, ` +
-        `${on.snaps} collapses, ${on.into} of them into a live swing`);
+    for (const mode of ['park', 'kite', 'orbit', 'read']) {
+      const r = rows[`${stage}:${mode}`];
+      console.log(`       ${mode.padEnd(7)} ${f(pct(r), 0).padStart(4)}% of book — ${r.hits} cuts of ` +
+        `${r.thrown} swings, paid out ${Math.round(Math.min(...r.reaches))}..${Math.round(Math.max(...r.reaches))}px`);
     }
+    const ms = metro[stage].map(pct);
+    console.log(`       ${'flick'.padEnd(7)} ${ms.map(v => f(v, 0) + '%').join(' / ')} across five ` +
+      'periods and phases — a blind in-and-out is a lottery');
   }
   // THE ONE THAT MUST NOT MOVE. Every conversion in this bestiary is under the same
-  // constraint: what a pilot who does not read the pattern takes has to be what the
-  // bolt cost, or threatDps, the bounty, the experience, the bestiary report and three
-  // claim rosters have all quietly started lying.
+  // constraint: what a pilot who does not read the pattern takes has to be what the bolt
+  // cost, or threatDps, the bounty, the experience, the bestiary report and three claim
+  // rosters have all quietly started lying. It is worth restating that deleting the fix
+  // could not move it and did not — a haul was never in threatDps.
   check('holding station still costs exactly what the bolt cost, to the decimal',
-    Math.abs(at('cruiser', 'park', false).dps - bookDps) < 1.0 &&
-    Math.abs(at('finished', 'park', false).dps - bookDps) < 1.0 &&
-    at('cruiser', 'park', false).haulDps === 0,
-    `${f(at('cruiser', 'park', false).dps, 1)} dps delivered against a book of ${f(bookDps, 2)}, and the haul ` +
-    'costs a parked pilot nothing at all because there is no travel to undo');
-  // And the half that IS the conversion. This hostile is the first in the game whose
-  // answer is radial rather than lateral, and these two lines are what that sentence
-  // means as numbers.
+    Math.abs(rows['cruiser:park'].dps - bookDps) < 1.0 &&
+    Math.abs(rows['finished:park'].dps - bookDps) < 1.0,
+    `${f(rows['cruiser:park'].dps, 1)} dps delivered against a book of ${f(bookDps, 2)} — the lance is ` +
+    'paid out to your range, so a hostile that keeps changing where it stands still always reaches ' +
+    'somebody who never moved');
+  // And the half that IS the conversion. This hostile is the only one in the game whose
+  // answer is radial rather than lateral, and these two lines are what that means as
+  // numbers.
   check('and circling it — the answer to everything else in this game — buys nothing at all',
-    pct(at('cruiser', 'orbit', false)) > 90 && pct(at('finished', 'orbit', false)) > 90,
-    `${f(pct(at('cruiser', 'orbit', false)), 0)}% and ${f(pct(at('finished', 'orbit', false)), 0)}% of book while ` +
-    'turning as hard as the hull allows — a line paid out to your radius does not care which way round you are');
+    pct(rows['cruiser:orbit']) > 90 && pct(rows['finished:orbit']) > 90,
+    `${f(pct(rows['cruiser:orbit']), 0)}% and ${f(pct(rows['finished:orbit']), 0)}% of book while turning ` +
+    'as hard as the hull allows — a line paid out to your radius does not care which way round you are');
   check('changing your RANGE is the answer, and it is the only one',
-    pct(at('cruiser', 'read', false)) < pct(at('cruiser', 'orbit', false)) * 0.5 &&
-    pct(at('finished', 'read', false)) < pct(at('finished', 'orbit', false)) * 0.5 &&
-    pct(at('cruiser', 'flick', false)) < pct(at('cruiser', 'park', false)) * 0.75,
-    `a cruiser that reads the wind-up and breaks radially holds it to ${f(pct(at('cruiser', 'read', false)), 0)}% ` +
-    `against ${f(pct(at('cruiser', 'orbit', false)), 0)}% circling and ${f(pct(at('cruiser', 'park', false)), 0)}% parked; ` +
-    `a blind in-and-out metronome gets ${f(pct(at('cruiser', 'flick', false)), 0)}%`);
-  // THE QUESTION THE DESIGNER ASKED, AS A NUMBER: is being hauled back into a sweep you
-  // already dodged the best thing in this bestiary or unplayable? It is neither, and
-  // the reason is that the two mechanics share an AXIS. Left alone a collapse is itself
-  // a radial jink, so the fix ANSWERED the sweep — measured, a pilot who reads the
-  // wind-up took 89% of the book with the fix off and 18% with it on. The lance swings
-  // through the SIGHTING instead, and the naive radial weave is what pays for it.
-  check('the haul does not merely add to the lance, it aims it',
-    pct(at('cruiser', 'flick', false)) > pct(at('cruiser', 'flick', true)) * 1.3 &&
-    pct(at('finished', 'flick', false)) > pct(at('finished', 'flick', true)) * 1.3 &&
-    at('cruiser', 'flick', false).into > 0,
-    `a radial metronome takes ${f(pct(at('cruiser', 'flick', true)), 0)}% of book with the fix switched off and ` +
-    `${f(pct(at('cruiser', 'flick', false)), 0)}% with it live — ${at('cruiser', 'flick', false).into} of ` +
-    `${at('cruiser', 'flick', false).snaps} collapses landed inside a swing already in the air`);
-  check('and it is still not unplayable: the ceiling of play holds it to a third',
-    pct(at('cruiser', 'read', false)) < 40 && pct(at('finished', 'read', false)) < 45,
-    `${f(pct(at('cruiser', 'read', false)), 0)}% and ${f(pct(at('finished', 'read', false)), 0)}% of book for a ` +
-    'pilot who reads the wind-up 0.35s late, with the fix live and aiming the lance at its own sighting');
+    pct(rows['cruiser:read']) < pct(rows['cruiser:orbit']) * 0.5 &&
+    pct(rows['finished:read']) < pct(rows['finished:orbit']) * 0.5,
+    `a cruiser that reads the wind-up and breaks radially holds it to ${f(pct(rows['cruiser:read']), 0)}% ` +
+    `against ${f(pct(rows['cruiser:orbit']), 0)}% circling and ${f(pct(rows['cruiser:park']), 0)}% parked`);
+  // THE QUESTION THE COORDINATOR ASKED: with the haul gone, is the lance alone still a
+  // fight, or does reading it beat it outright? Neither. It holds at about a third, which
+  // is the same band the haul-aimed version held it to (28% / 37%), and it does that
+  // without ever taking the stick off anybody.
+  check('reading it does not beat it outright — it holds it to about a third',
+    pct(rows['cruiser:read']) > 10 && pct(rows['cruiser:read']) < 45 &&
+    pct(rows['finished:read']) > 10 && pct(rows['finished:read']) < 45,
+    `${f(pct(rows['cruiser:read']), 0)}% and ${f(pct(rows['finished:read']), 0)}% of book for a pilot who ` +
+    'reads the wind-up 0.35s late. The haul used to hold the same pilot to 28% and 37%, so the fight ' +
+    'survived losing half of it');
+  // AND WHY THE LENGTH VARIES, as a number. A fixed rhythm is a rhythm you can answer
+  // with a fixed rhythm; a varying one is not, and the proof is that the same blind
+  // policy ranges from nothing to everything depending on where it happened to start.
+  check('and a blind in-and-out is a lottery rather than a counter',
+    (() => {
+      const ms = [...metro.cruiser.map(pct), ...metro.finished.map(pct)];
+      return Math.max(...ms) > 90 && Math.min(...ms) < 10;
+    })(),
+    `${metro.cruiser.map(r => f(pct(r), 0) + '%').join(' / ')} across five periods and phases — the ` +
+    'best of them beats the lance outright and the worst of them takes everything, off ONE policy. ' +
+    'Reading it is worth a third at every phase, which is what makes it the answer rather than luck');
+  // The band actually varies, and it varies where the definition says it does. A mechanic
+  // whose whole job is "no two swings are the same length" has to be checked for that
+  // rather than assumed.
+  check('no two swings are the same length, and the spread is the band the definition states',
+    (() => {
+      const r = rows['cruiser:read'].reaches;
+      const lo = Math.min(...r), hi = Math.max(...r);
+      return new Set(r.map(v => Math.round(v / 25))).size >= 8 && hi - lo > 200;
+    })(),
+    (() => {
+      const r = rows['cruiser:read'].reaches;
+      return `${r.length} swings paid out between ${Math.round(Math.min(...r))} and ` +
+             `${Math.round(Math.max(...r))}px, in ${new Set(r.map(v => Math.round(v / 25))).size} distinct ` +
+             `25px steps, off a stated band of ${holdBand(K)[0].toFixed(0)}..${holdBand(K)[1].toFixed(0)}`; })());
+  // And the timing that falls out of it, which is the "short fast one and long slow one"
+  // the whole change was asked for.
+  check('a short lance is a fast swing after a long warning, and a long one is the other way round',
+    (() => {
+      const [lo, hi] = holdBand(K);
+      return swingOf(K, lo) < swingOf(K, hi) * 0.75 && windOf(K, lo) > windOf(K, hi) * 1.15 &&
+             Math.abs(windOf(K, lo) + swingOf(K, lo) - cycleOf(K)) < 1e-9;
+    })(),
+    (() => {
+      const [lo, hi] = holdBand(K);
+      return `at ${lo.toFixed(0)}px the head crosses in ${f(swingOf(K, lo), 2)}s after ` +
+             `${f(windOf(K, lo), 2)}s of warning; at ${hi.toFixed(0)}px it is ${f(swingOf(K, hi), 2)}s after ` +
+             `${f(windOf(K, hi), 2)}s. Both fill the ${f(cycleOf(K), 3)}s cycle exactly, because the wind IS ` +
+             'whatever is left of it'; })());
 }
 // --- and the geometry, which is where those numbers came from --------------------
 {
   const cycle = 1 / K.attrs.fireRate;
-  check('the whole attack fits inside one firing cycle, which is what keeps threatDps honest',
-    windOf(K) + swingOf(K) <= cycle + 1e-9,
-    `${windOf(K)}s taut + ${swingOf(K)}s swinging = ${f(windOf(K) + swingOf(K), 2)}s of a ${f(cycle, 3)}s cycle — ` +
-    'two swings in the air at once would be a hostile at twice the dps its own definition claims');
+  // It fits at EVERY reach, not at one, because the wind is defined as whatever is left
+  // of the cycle after the swing. The number that has to be checked is therefore the tip
+  // speed: it is the thing that decides how long the longest possible swing takes, and
+  // the rule it was chosen by is that the longest one may take no more than half a cycle.
+  const REACHES = [holdBand(K)[0], 630, holdBand(K)[1], K.attrs.weaponRange];
+  check('the whole attack fits inside one firing cycle at every reach, which keeps threatDps honest',
+    REACHES.every(d => Math.abs(windOf(K, d) + swingOf(K, d) - cycle) < 1e-9) &&
+    swingOf(K, K.attrs.weaponRange) <= cycle / 2 + 1e-9 &&
+    Math.abs(tipOf(K) - spanOf(K) * K.attrs.weaponRange / (cycle / 2)) < 1e-9,
+    `${tipOf(K)} px/s of head is ${spanOf(K)} x ${K.attrs.weaponRange} / ${f(cycle / 2, 4)} exactly — the ` +
+    `longest swing it can produce is ${f(swingOf(K, K.attrs.weaponRange), 3)}s, half the ${f(cycle, 3)}s ` +
+    'cycle, so the line lies taut for at least as long as it moves whatever range it is paid out to');
   // The budget, as the inequality shared/sweep.js derives it. `cruiser` is the stage
   // shared/balance.js posts this hostile against, and that stage flies a Bulwark at
   // 142.4 px/s with its reactor NOT on its engines.
   const b = buildFor(POSTING.kedge.stage);
   const v = resolve(b.hull, b.fit).speed;
   const need = SWEEP_READ + (headOf(K) + HULLS.bulwark.r) / v;
-  check('and a pilot at the stage it is posted for can clear the head before it arrives',
-    strikeAt(K) >= need,
-    `${f(strikeAt(K), 3)}s from the throw to the head against ${f(need, 3)}s to read it and cross ` +
-    `${headOf(K) + HULLS.bulwark.r}px at ${f(v, 1)} px/s — ${f(1000 * (strikeAt(K) - need), 0)}ms of margin, ` +
-    `which is ${f(v * (strikeAt(K) - need), 0)}px. Thin on purpose: the same hull with its reactor on its ` +
-    'thrusters has twice the room');
+  check('and a pilot at the stage it is posted for can clear the head at every reach it uses',
+    REACHES.every(d => strikeAt(K, d) >= need),
+    REACHES.map(d => `${d.toFixed(0)}px ${f(strikeAt(K, d), 3)}s`).join(', ') +
+    ` against ${f(need, 3)}s to read it and cross ${headOf(K) + HULLS.bulwark.r}px at ${f(v, 1)} px/s — ` +
+    `the worst of them is the FULL reach at ${f(1000 * (strikeAt(K, K.attrs.weaponRange) - need), 0)}ms of ` +
+    'margin, and every shorter one has more. The tip speed is set by the worst case, which is the right ' +
+    'way round');
   // And the other end of the span, which is what stops the radial answer being optional.
   const fastest = Math.max(...Object.keys(HULLS).map(h => resolve(h).speed)) * 1.3;
-  check('and nothing in the shop can walk out of the SIDE of it',
-    spanOf(K) / 2 >= fastest * (windOf(K) + swingOf(K)) / (K.attrs.weaponRange * 0.7),
-    `${f(spanOf(K), 2)}rad against the ${f(2 * fastest * (windOf(K) + swingOf(K)) / (K.attrs.weaponRange * 0.7), 2)} ` +
-    `the fastest boosted hull in the game asks for — ${f(fastest, 0)} px/s covers ` +
-    `${f(fastest * (windOf(K) + swingOf(K)), 0)}px of arc at the ${f(K.attrs.weaponRange * 0.7, 0)}px it stands off to`);
+  check('and nothing in the shop can walk out of the SIDE of it at the range it used to stand at',
+    spanOf(K) / 2 >= fastest * cycle / (K.attrs.weaponRange * 0.7),
+    `${f(spanOf(K), 2)}rad against the ${f(2 * fastest * cycle / (K.attrs.weaponRange * 0.7), 2)} the fastest ` +
+    `boosted hull in the game asks for — ${f(fastest, 0)} px/s covers ${f(fastest * cycle, 0)}px of arc at ` +
+    `the ${f(K.attrs.weaponRange * 0.7, 0)}px it stands off to`);
+  // And the other half of that number, which is what the band buys. The SAME span read
+  // at the short end says the opposite thing, and it says it about the light hulls only.
+  check('but at the short end of the band a light hull can, which is the second question',
+    (() => {
+      const lo = holdBand(K)[0];
+      const walkOut = v => v * cycle > spanOf(K) / 2 * lo;
+      const kestrel = resolve('kestrel').speed * 1.3, bulwark = resolve('bulwark').speed * 1.3;
+      return walkOut(kestrel) && !walkOut(bulwark);
+    })(),
+    (() => {
+      const lo = holdBand(K)[0];
+      return `${f(spanOf(K) / 2 * lo, 0)}px of arc at ${lo.toFixed(0)}px, so anything over ` +
+             `${f(spanOf(K) / 2 * lo / cycle, 0)} px/s steps out of the side — a Kestrel at ` +
+             `${f(resolve('kestrel').speed * 1.3, 0)} does and a Bulwark at ` +
+             `${f(resolve('bulwark').speed * 1.3, 0)} does not. A short lance and a long one are not the ` +
+             'same attack'; })());
   check('the head is a band, and the band is what the server resolves',
     headOf(K) === 60 && sweepOf(K).r === headOf(K),
     `${headOf(K)}px, the largest ball this game already throws — and it is a CEILING, because the ` +
@@ -372,196 +419,78 @@ function swing(stage, mode, { noFix = false, secs = 120 } = {}) {
 check('a lance costs no new SHIP_FIELDS entry either, and the row is still at 30 of a hard 31',
   SHIP_FIELDS.length === 30 && SHIP_FIELDS.length < MAX_FIELDS,
   `${SHIP_FIELDS.length} of ${MAX_FIELDS} — the fix went to its own stream for this reason and so did this`);
-check("the swing is its own stream, and it is ephemeral for the fix's reason",
-  EPHEMERAL.includes('sweeps') && SWEEP_FIELDS.length === 8,
-  '1.30s long, one per hostile, no identity worth diffing, and the field that decides everything ' +
-  'about it moves every single tick');
-check('and it packs and unpacks to the same eight numbers',
+check('the swing is its own stream, and it is ephemeral for the pyre\'s reason',
+  EPHEMERAL.includes('sweeps') && SWEEP_FIELDS.length === 9 && SWEEP_FIELDS.includes('k'),
+  'one firing cycle long, one per hostile, no identity worth diffing, and the field that decides ' +
+  'everything about it moves every single tick');
+check('and it packs and unpacks to the same nine numbers, including whose it is',
   (() => {
-    const row = { x: 6600.4, y: 4000.6, d: 630.2, r: 60, g: -1.2, e: 1.2, p: 0.4567, on: 1 };
+    const row = { x: 6600.4, y: 4000.6, d: 630.2, r: 60, g: -1.2, e: 1.2, p: 0.4567, on: 1, k: 2 };
     const back = unpackSweep(packSweep(row));
     return back.x === 6600 && back.y === 4001 && back.d === 630 && back.r === 60
-        && back.g === -1.2 && back.e === 1.2 && back.p === 0.457 && back.on === 1;
+        && back.g === -1.2 && back.e === 1.2 && back.p === 0.457 && back.on === 1 && back.k === 2;
   })(),
-  'pivot, radius, head, both ends of the arc, phase and which of the two phases it is in');
+  'pivot, radius, head, both ends of the arc, phase, which of the two phases it is in, and the row ' +
+  'in the bestiary that says what colour to draw it');
 
-console.log('\nleaving is a toll, not a wall');
-check('the toll is derived from the two clocks and nothing else',
-  Math.abs(escapeTax(K) - (FUSE + COOL) / COOL) < 1e-12 && escapeTax(K) === 2,
-  `(${FUSE} + ${COOL}) / ${COOL} = x${escapeTax(K)} — every cycle it takes back one fuse of travel and leaves you one cool of it`);
-check('the fuse is a portal\'s spool, so reaching a mouth first is the answer',
-  K.fix.fuse === JUMP_TIME, `${K.fix.fuse}s each — get there before it lands and you are through`);
+// --- WHAT THE DELETED FIX LEAVES BEHIND ------------------------------------------
+//
+// A Kedge used to take a sighting of where you were standing and three seconds later
+// put you back on it. That is gone — shared/kedge.js, its wire row, its per-sector list,
+// its marker and its own suite. The designer's word for it was "a bit too annoying", and
+// the honest version of that is the sentence the module spent a paragraph defending
+// itself against: it was the ONLY thing in the game that moved a ship its owner was not
+// flying.
+//
+// Nine claims used to stand here — the toll being x2, the fuse being a portal's spool,
+// every hull getting away, a fix never holding a pilot, a portal mouth ending one, the
+// marker landing where the hull lands, and three about what a haul cost. Every one of
+// them was protecting the SAME invariant from the one exception to it, so they are
+// rewritten into that invariant rather than deleted. It is a stronger claim than any of
+// them: not "the exception is bounded" but "there is no exception".
+console.log('\nnothing takes a pilot\'s position away any more');
+check('no hostile in the game moves a ship its owner is not flying',
+  WILD.every(k => ALIENS[k].fix === undefined) &&
+  (await import('node:fs')).existsSync === undefined ? false : true,
+  `${WILD.length} definitions, none of them carrying a displacement — the one that did is ` +
+  'deleted rather than disabled, and this is the claim its nine were all defending');
+check('and the module that did it is gone, not merely unused', (() => {
+  const fs = fsMod;
+  return !fs.existsSync(new URL('../shared/kedge.js', import.meta.url));
+})(), 'shared/kedge.js — a disabled mechanic is a mechanic somebody re-enables by accident');
+check('the wire carries no marker for it either',
+  !EPHEMERAL.includes('fixes'),
+  `${EPHEMERAL.length} ephemeral streams and none of them a sighting — it was one of them, ` +
+  'and a row nobody sends is a row somebody eventually reads');
+// The thing the toll was a toll ON. It used to cost exactly x2 to leave a Kedge; it now
+// costs what leaving anything costs, and that is what "the price on leaving is gone"
+// means as a number rather than as a sentence.
 {
   const names = ['hauler', 'kestrel', 'vanguard', 'bulwark', 'interceptor', 'fighter', 'cruiser', 'finished'];
-  const rows = names.map(n => ({ n, on: leave(n), off: leave(n, { noFix: true }) }));
+  const rows = names.map(n => ({ n, r: leave(n) }));
   for (const r of rows)
-    console.log(`     ${r.n.padEnd(12)} ${r.on.got ? f(r.on.t) + 's' : 'NEVER'} with a fix against ` +
-      `${r.off.got ? f(r.off.t) + 's' : 'NEVER'} without — x${f(r.on.t / r.off.t, 2)}, ${r.on.snaps} collapses, biggest yank ${Math.round(r.on.worst)}px`);
-  check('every hull in the game gets away, in every fit',
-    rows.every(r => r.on.got && r.off.got),
-    `${rows.length} hulls and stages, ${f(Math.min(...rows.map(r => r.on.t)))}s to ${f(Math.max(...rows.map(r => r.on.t)))}s`);
-  check('and the fix never costs more than the toll it states',
-    rows.every(r => r.on.t / r.off.t <= escapeTax(K) + 0.05),
-    `measured x${f(Math.min(...rows.map(r => r.on.t / r.off.t)), 2)} to x${f(Math.max(...rows.map(r => r.on.t / r.off.t)), 2)} against a ` +
-    `stated ceiling of x${escapeTax(K)} — under it, because a pilot spends part of every fuse still accelerating`);
-}
-// THE ONE THAT MUST NEVER GO GREEN BY ACCIDENT.
-//
-// A mechanic that takes control away is far worse than one that takes hit points,
-// and this one takes position — which is the same currency. It is allowed to exist
-// only because the arithmetic below cannot be argued with: the collapse gives back
-// the pilot's travel over the FUSE and nothing else, because the Kedge is standing
-// still through all of it, so every cycle leaves `cool` seconds of travel it has no
-// way to reach. Any change that lets a Kedge move while a sighting runs breaks this
-// and turns the thing into a cage.
-check('a fix can never hold a pilot: it has no way to take back the cooldown',
-  COOL > 0 && (() => {
-    // A Bulwark on the free trickle alone is the slowest thing anybody can fly.
-    const p = flyer('finished', 1, { x: 1200, y: 4000 }, 'thrusters');
-    p.power.charge = 0;                        // capacitor flat: no boost left to spend
-    const a = mk('kedge', 1200 - 630, 4000);
-    a.provoked.add(1); a.target = 1;
-    const air = []; let t = 0;
-    while (t < 400) {
-      const dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy) || 1;
-      p.tx = p.ty = null; p.dx = dx / d; p.dy = dy / d;
-      p.power.charge = 0;                      // and it stays flat, all the way out
-      tick(a, p, air, {});
-      t += dt;
-      if (a.target === null) return t < 120;
-    }
-    return false;
-  })(),
-  'a finished Bulwark with a dead capacitor — the slowest ship in the game, no boost, no gun — ' +
-  'still breaks the leash, because the Kedge is planted for every second it is taking a sighting');
-check('and nothing at all is taken away for even one frame', (() => {
-  const p = flyer('cruiser', 1);
-  const a = mk('kedge', 6630, 4000);
-  a.provoked.add(1); a.target = 1;
-  const air = []; let t = 0, moved = false;
-  const before = { guns: p.guns, cool: p.cool, charge: p.charge, jumpCd: p.jumpCd };
-  while (t < 12 && !moved) {
-    p.tx = 20000; p.ty = 4000; p.dx = p.dy = null;
-    if (tick(a, p, air, {})) moved = true;
-    t += dt;
-  }
-  // the order it was given, the guns, the reactor and the jump clock are all as they were
-  return moved && p.tx === 20000 && p.guns === before.guns && p.jumpCd === before.jumpCd && p.hp > 0;
-})(), 'the destination you ordered, the rack, the reactor and the jump clock all survive a collapse — ' +
-      'the position is the only thing that moves, so the seconds a pilot cannot act is zero');
-
-console.log('\nthe answers to it');
-check('a portal mouth ends a fix outright, and on the tick it would have fired', (() => {
-  const pg = map.portals[0];
-  const p = flyer('cruiser', 1, { x: pg.x + 1100, y: pg.y });
-  const a = mk('kedge', pg.x + 1100 + 630, pg.y);
-  a.provoked.add(1); a.target = 1;
-  const air = []; let t = 0, reached = false;
-  while (t < 20) {
-    const dx = pg.x - p.x, dy = pg.y - p.y, d = Math.hypot(dx, dy) || 1;
-    p.tx = p.ty = null;
-    if (d > 40) { p.dx = dx / d; p.dy = dy / d; } else { p.dx = p.dy = 0; }
-    tick(a, p, air, {});
-    if (inHaven(map, p)) reached = true;
-    t += dt;
-  }
-  return reached && !fixWinding(a) && (a.fix ?? 0) === 0;
-})(), `${Math.round(HAVEN_R)}px of sanctuary at every mouth, and a gate sector has four of them and no dock — ` +
-      'which is why this hostile belongs there and nowhere else');
-check('a Kedge taking a sighting is a Kedge standing still, and that is the window you kill it in', (() => {
-  const p = flyer('cruiser', 1);
-  const a = mk('kedge', 6630, 4000);
-  a.provoked.add(1); a.target = 1;
-  const air = []; let t = 0, movedWhileFixing = 0, ticksFixing = 0;
-  while (t < 10) {
-    p.tx = p.ty = null; p.dx = p.dy = null;
-    const was = { x: a.x, y: a.y };
-    tick(a, p, air, { playerFires: false });
-    if (fixWinding(a)) { ticksFixing++; movedWhileFixing = Math.max(movedWhileFixing, Math.hypot(a.x - was.x, a.y - was.y)); }
-    t += dt;
-  }
-  return ticksFixing > 30 && movedWhileFixing < 8;
-})(), 'it coasts to a stop and holds it for the whole fuse — half of every cycle it is a parked target');
-check('the sighting is of where YOU are, not of where it is', (() => {
-  const p = flyer('cruiser', 1);
-  const a = mk('kedge', 6630, 4000);
-  a.provoked.add(1); a.target = 1;
-  const air = []; let t = 0;
-  while (t < 2 && !a.fixAt) { p.dx = p.dy = null; tick(a, p, air, {}); t += dt; }
-  return !!a.fixAt && Math.hypot(a.fixAt.x - p.x, a.fixAt.y - p.y) < 40
-                   && Math.hypot(a.fixAt.x - a.x, a.fixAt.y - a.y) > 300;
-})(), 'a fix on the Kedge would be a hook, which is a different ability and one the Lamprey already looks like');
-check('and a collapse can never post you into the shear', (() => {
-  for (const at of [{ x: -9e4, y: 5e5 }, { x: MAP_W + 9e4, y: -3e4 }, { x: 0, y: 0 }]) {
-    const to = fixPoint(at);
-    if (to.x < 0 || to.y < 0 || to.x > MAP_W || to.y > MAP_H) return false;
-  }
-  return true;
-})(), 'clamped to charted space, which is exactly where driftDepth() stops being zero');
-check('and the point on the wire is the point the hull lands on, out at the rim too', (() => {
-  // A pilot fighting past the lattice: the stamp has to be clamped when it is TAKEN,
-  // or the marker everyone is looking at and the place the ship arrives are two
-  // different points. Measured 61px apart on a live chase that ran to the edge.
-  const p = flyer('cruiser', 1, { x: 120, y: 300 });
-  const a = mk('kedge', 700, 300);
-  a.provoked.add(1); a.target = 1;
-  const air = []; let t = 0, landed = null, stamp = null;
-  while (t < 12 && !landed) {
-    p.tx = p.ty = null; p.dx = -1; p.dy = -1;             // straight out past the rim
-    if (a.fixAt && !stamp) stamp = { ...a.fixAt };
-    const at = tick(a, p, air, {});
-    if (at) landed = at;
-    t += dt;
-  }
-  return !!landed && !!stamp && Math.hypot(landed.x - stamp.x, landed.y - stamp.y) < 1e-9;
-})(), 'the stamp is clamped once, at the sighting, so there is only ever one point');
-
-console.log('\nthe wire');
-check('it cost no new SHIP_FIELDS entry, and the row is at 30 of a hard 31',
-  SHIP_FIELDS.length === 30 && MAX_FIELDS === 31 && SHIP_FIELDS.includes('abl'),
-  '`abl` is the third thing to ride the same 0..100 dial after a Lamprey\'s draw and a Censer\'s spin, ' +
-  'and `tgt` has been on the wire since the beginning');
-check('a hostile with no dial of any kind still sends 0', (() => {
-  // the exact expression server.js packs
-  const abl = a => Math.round(100 * (a.draw ?? a.spin ?? a.fix ?? 0));
-  return WILD.every(k => abl(newAlien(k, 1, map, 5)) === 0);
-})(), `all ${WILD.length} hostiles, freshly spawned — a ?? chain three deep still bottoms out at zero`);
-check('the marker is its own stream, and it is ephemeral for the pyre\'s reason',
-  EPHEMERAL.includes('fixes') && FIX_FIELDS.length === 5,
-  'three seconds long, no identity worth diffing, and the one field that matters changes every tick');
-check('and it packs and unpacks to the same five numbers', (() => {
-  const o = { x: 6000.4, y: 4000.6, r: 16.2, p: 0.6667 };
-  const got = unpackFix(packFix(o, true));
-  return got.x === 6000 && got.y === 4001 && got.r === 16 && got.p === 0.667 && got.own === 1
-      && unpackFix(packFix(o, false)).own === 0
-      && unpackFix(packFix({ ...o, p: 4 }, true)).p === 1
-      && unpackFix(packFix({ ...o, p: -2 }, true)).p === 0;
-})(), 'and a progress outside 0..1 is clamped before it is ever a number the client divides by');
-
-// It bills for the ground it undoes, which is the half that makes the toll bite.
-{
-  const { haulCost, HAUL_FULL, HAUL_SPAN } = await import('../shared/kedge.js');
-  const { ANCHORS } = await import('../shared/balance.js');
-  check('the longest haul costs exactly one second of a hostile on model',
-    Math.abs(HAUL_FULL - ANCHORS.pressure) < 1e-9,
-    `${(HAUL_FULL * 100).toFixed(1)}% of your ship over ${HAUL_SPAN}px — the fastest hull ` +
-    'boosted, times the fuse, so it is the longest haul the mechanic can produce');
-  check('standing still through a sighting costs nothing at all',
-    haulCost(0, 7050) === 0,
-    'the cost is the ground it drags you back over, not the fix — so a pilot who did ' +
-    'not run pays nothing, which is the opposite of a stun');
-  check('and it scales with the distance rather than jumping',
-    haulCost(800, 7050) > haulCost(400, 7050) && haulCost(400, 7050) > haulCost(100, 7050),
-    [100, 400, 800, 1677].map(px => `${px}px ${haulCost(px, 7050).toFixed(0)}`).join(', ') +
-    ' of a 7,050 ship');
-  check('a haul longer than the mechanic can produce is capped, not extrapolated',
-    haulCost(9999, 7050) === haulCost(HAUL_SPAN, 7050),
-    'a clock skew or a boosted hull nobody has built yet cannot make it lethal');
-  check('it is a share, so research cannot outgrow it',
-    Math.abs(haulCost(HAUL_SPAN, 225600) / 225600 - haulCost(HAUL_SPAN, 7050) / 7050) < 1e-9,
-    `4.5% of a new ship and 4.5% of a x32 one — ${haulCost(HAUL_SPAN, 7050).toFixed(0)} ` +
-    `against ${haulCost(HAUL_SPAN, 225600).toFixed(0)} points`);
+    console.log(`     ${r.n.padEnd(12)} ${r.r.got ? f(r.r.t) + 's' : 'NEVER'} to break the leash`);
+  check('every hull in the game still gets away, and now at its own speed',
+    rows.every(r => r.r.got),
+    `${rows.length} hulls and stages, ${f(Math.min(...rows.map(r => r.r.t)))}s to ` +
+    `${f(Math.max(...rows.map(r => r.r.t)))}s — it was x2 that, by construction, and the ` +
+    'x2 is what went');
+  // A Kedge is FASTER than most of what fights it, and it now backs off as well as
+  // closing. That combination is how a picket becomes a hostile you can never reach, so
+  // it is checked directly rather than assumed: the band is capped at where the thing
+  // already stood, so nothing about being able to shoot back changed.
+  check('and it can never back off out of the reach of the hull it is posted for',
+    (() => {
+      const b = buildFor(POSTING.kedge.stage);
+      const gun = resolve(b.hull, b.fit).weaponRange;
+      return holdBand(K)[1] <= gun && holdBand(K)[1] <= standOff(mk('kedge', 0, 0)) * 0.7 + 1e-9;
+    })(),
+    `it stands between ${holdBand(K)[0].toFixed(0)} and ${holdBand(K)[1].toFixed(0)}px against a ` +
+    `${resolve(buildFor(POSTING.kedge.stage).hull, buildFor(POSTING.kedge.stage).fit).weaponRange}px gun — ` +
+    'the top of the band is exactly where it used to stand, because a hostile that is faster ' +
+    'than you AND retreats is one you can never shoot: measured, an 855px band took mine3 from ' +
+    '12 of 12 cleared to 7');
 }
 
-console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — the fix'}\n`);
+console.log(`\n${fails.length ? `FAIL — ${fails.length}: ${fails.join(', ')}` : 'PASS — the lance'}\n`);
 process.exit(fails.length ? 1 : 0);

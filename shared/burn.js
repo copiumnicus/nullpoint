@@ -126,6 +126,11 @@ export function burnBurst(def, spin, ehp) {
 export const pyreFor = (a, ehp) => ({
   x: a.x, y: a.y, r: burnR(a.def, a.spin ?? 0) * (burnOf(a.def)?.blast ?? 1), spin: clamp01(a.spin ?? 0),
   dmg: burnBurst(a.def, a.spin ?? 0, ehp),
+  // Whose reactor this was, as a row in the bestiary. A pyre is drawn as FIRE and stays
+  // drawn as fire — a reactor coming apart is not the colour of the paint on the hull —
+  // but the containment ring around it is the hostile, and every projectile and hazard in
+  // this game says whose it is now. See kindIx() in shared/aliens.js.
+  k: a.kx ?? 0,
   t: burnOf(a.def)?.fuse ?? 0, ttl: Math.max(0.001, burnOf(a.def)?.fuse ?? 0.001),
 });
 export const inPyre = (p, s) => Math.hypot(s.x - p.x, s.y - p.y) <= p.r + (s.r ?? 0);

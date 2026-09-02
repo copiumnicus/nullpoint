@@ -11,7 +11,7 @@
 import { ORB_SPEED, READ_TIME, STAND, orbsOf, orbCount, orbSlots, stayFor,
          SHAPES, shapeOf, throwOrbs, stepOrbs } from '../shared/orbs.js';
 import { ALIENS, WILD, newAlien, stepAlienAI, stepAlienRepair, threatDps, effectiveHp,
-         bountyFor, xpFor } from '../shared/aliens.js';
+         bountyFor, xpFor, tintOf } from '../shared/aliens.js';
 import { newShip, step, stepVitals } from '../shared/sim.js';
 import { fire, stepBolts, faceTarget, BOLT_SPEED } from '../shared/combat.js';
 import { ROCKET_SPEED } from '../shared/rockets.js';
@@ -431,30 +431,51 @@ check('so a Corsair Hive is exactly as dangerous as it was',
   `${threatDps('hive', 1e6, 1e6)} — its own barrel plus ${ALIENS.hive.broods.max} Bandits at 195, ` +
   'and hiveDps derives from the same term');
 
-// The wire. A body needs a place, a facing, its size and whose it is, and one field
-// per orb per tick is what a spread costs thirty times a second.
-// REWRITTEN. It read "an orb is five fields on the wire", which was true while every
-// orb in the game travelled at ORB_SPEED. A pattern that STAYS breaks that: a caltrop
-// sitting on its mark is doing 0 px/s, and the client dead-reckons between snapshots —
-// without the speed it flew a parked hazard 48px away from the disc the server
-// collides with, which is the "drawn at one radius, hit at another" bug in a
-// different axis.
-check('an orb is six fields on the wire, and the radius and the speed are two of them',
-  ORB_FIELDS.length === 6 && ORB_FIELDS.includes('r') && ORB_FIELDS.includes('v'),
-  ORB_FIELDS.join(' ') + ' — exactly a rocket\'s six. `v` arrived with the caltrops and it is ' +
-  'DERIVED from the velocity rather than stored beside it, so the two cannot disagree');
+// The wire. A body needs a place, a facing, its size, how fast it is going and WHOSE IT
+// IS, and one field per orb per tick is what a spread costs thirty times a second.
+//
+// REWRITTEN TWICE IN A WEEK, and both rewrites are the claim following the game rather
+// than the test being wrong. It read "an orb is five fields on the wire", which was true
+// while every orb travelled at ORB_SPEED and nothing on the row said who threw it.
+//
+//   `v` broke the first half. A pattern that STAYS is doing 0 px/s, and the client
+//       dead-reckons between snapshots — without the speed it flew a parked caltrop 48px
+//       away from the disc the server collides with, which is the "drawn at one radius,
+//       hit at another" bug in a different axis.
+//   `k` broke the second. There was no owner on the row at all, so the client drew every
+//       orb in the game in one colour and an Ironhusk's #d0563f and a Leviathan's
+//       #8fe04a were the same orange ball. An index into the bestiary rather than a
+//       colour, for the three reasons written down at kindIx() in shared/aliens.js.
+check('an orb is seven fields: a place, a facing, a radius, a speed and whose it is',
+  ORB_FIELDS.length === 7 && ORB_FIELDS.includes('r') && ORB_FIELDS.includes('v') &&
+  ORB_FIELDS.includes('k'),
+  ORB_FIELDS.join(' ') + ' — one more than a rocket. `v` arrived with the caltrops and is DERIVED ' +
+  'from the velocity rather than stored beside it, so the two cannot disagree; `k` arrived with ' +
+  'the colours and is a row in the bestiary rather than a colour, so it cannot go stale');
 check('and it survives the round trip', (() => {
-  const o = { x: 1234.7, y: 891.2, heading: -0.6789, r: 44, foe: true, vx: 240, vy: -320 };
+  const o = { x: 1234.7, y: 891.2, heading: -0.6789, r: 44, foe: true, vx: 240, vy: -320, k: 6 };
   const back = unpackOrb(packOrb(o));
   return back.x === 1235 && back.y === 891 && back.h === -0.68 && back.r === 44
-      && back.foe === 1 && back.v === 400;
+      && back.foe === 1 && back.v === 400 && back.k === 6;
 })(), JSON.stringify(unpackOrb(packOrb({ x: 1234.7, y: 891.2, heading: -0.6789, r: 44, foe: true,
-                                        vx: 240, vy: -320 }))));
+                                        vx: 240, vy: -320, k: 6 }))));
 check('and a parked one reaches the client parked', (() => {
   const back = unpackOrb(packOrb({ x: 10, y: 20, heading: 1.1, r: 50, foe: true, vx: 0, vy: 0 }));
   return back.v === 0;
 })(), 'v is 0 for a caltrop that has reached its mark, so the client stops flying it forward — ' +
       'at ORB_SPEED it drew the hazard up to 48px off the thing it is sitting on');
+// And the thrower actually reaches the row, which is the half a field count cannot say.
+check("and an orb knows which hostile threw it, so a Leviathan's are green",
+  (() => {
+    const husk = newAlien('ironhusk', 1, MAPS.m2, 5, { x: 0, y: 0 });
+    const levi = newAlien('leviathan', 2, MAPS.m2, 5, { x: 0, y: 0 });
+    const foe = { x: 300, y: 0, vx: 0, vy: 0, hp: 100, r: 17 };
+    const a = throwOrbs(husk, foe, 1 / 30), b = throwOrbs(levi, foe, 1 / 30);
+    return a.length && b.length && a[0].k !== b[0].k &&
+           tintOf(a[0].k) === ALIENS.ironhusk.colour && tintOf(b[0].k) === ALIENS.leviathan.colour;
+  })(),
+  `${ALIENS.ironhusk.colour} against ${ALIENS.leviathan.colour} — the colour comes off the same ` +
+  'ALIENS entry that draws the hull, so the two cannot drift apart');
 check('the radius the client draws IS the radius the server collides with',
   THROWERS.every(k => {
     const a = newAlien(k, 9, MAP, 5, null);

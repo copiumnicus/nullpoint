@@ -55,11 +55,12 @@ const pilot = (stage = 'finished', research = 0, route = 'weapons') => {
 
 // --- the root, and whether it is one ------------------------------------------
 //
-// This is the file's reason for existing. The game has never taken movement away
-// from a player and shared/kedge.js spends a paragraph on why a fix was allowed to
-// exist where a stun was not: "Maximum time without control from a fix: zero
-// seconds". Slack Water is not zero, so every one of those seconds has to be
-// argued for and pinned shut.
+// This is the file's reason for existing. The game has never taken movement away from a
+// player. A Kedge's fix came closest and it was deleted for being the only thing that
+// moved a ship its owner was not flying — and even that never took the STICK away:
+// "maximum time without control from a fix: zero seconds". Slack Water is not zero, so
+// it is now the only thing in the game that stops a pilot at all, and every one of those
+// seconds has to be argued for and pinned shut.
 console.log('\nthe root');
 {
   // REWRITTEN, and the property it used to assert is GONE rather than moved. The hold
